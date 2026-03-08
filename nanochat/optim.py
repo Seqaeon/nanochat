@@ -283,10 +283,15 @@ class MuonAdamW(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
+            active_params = [p for p in group['params'] if p.grad is not None]
+            if not active_params:
+                continue
+            active_group = dict(group)
+            active_group['params'] = active_params
             if group['kind'] == 'adamw':
-                self._step_adamw(group)
+                self._step_adamw(active_group)
             elif group['kind'] == 'muon':
-                self._step_muon(group)
+                self._step_muon(active_group)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
@@ -510,18 +515,25 @@ class DistMuonAdamW(torch.optim.Optimizer):
         world_size = dist.get_world_size()
 
         # Phase 1: launch all async reduce ops
+        active_groups: list[dict] = []
         reduce_infos: list[dict] = []
         for group in self.param_groups:
+            active_params = [p for p in group['params'] if p.grad is not None]
+            if not active_params:
+                continue
+            active_group = dict(group)
+            active_group['params'] = active_params
+            active_groups.append(active_group)
             if group['kind'] == 'adamw':
-                reduce_infos.append(self._reduce_adamw(group, world_size))
+                reduce_infos.append(self._reduce_adamw(active_group, world_size))
             elif group['kind'] == 'muon':
-                reduce_infos.append(self._reduce_muon(group, world_size))
+                reduce_infos.append(self._reduce_muon(active_group, world_size))
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
         # Phase 2: wait for reduces, compute updates, launch gathers
         gather_list: list[dict] = []
-        for group, info in zip(self.param_groups, reduce_infos):
+        for group, info in zip(active_groups, reduce_infos):
             if group['kind'] == 'adamw':
                 self._compute_adamw(group, info, gather_list, rank, world_size)
             elif group['kind'] == 'muon':
