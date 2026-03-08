@@ -33,6 +33,8 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+
+    # Research branches (GPT-native names)
     use_moe: bool = False
     use_perm: bool = False
     moe_num_experts: int = 8
@@ -42,10 +44,49 @@ class GPTConfig:
     use_remix_linear: bool = False
     remix_context_dim: int = 64
     remix_basis_size: int = 64
+    remixed_linear_kwargs: dict | None = None
+
+    # Notebook-compat keys (BigramLanguageModel kwargs)
+    num_experts: int = 8
+    total_embed_dim: int = 64
+    router_dim: int = 64
+    capacity_factor: float = 1.0
+    use_sparse_top_k: bool = False
+    top_k: int = 1
+    routing_mode: str = 'token_choice'
+    context_window: int = -1
+    causal: bool = True
+    use_expert_mlp: bool = True
+    use_output_projection: bool = True
+    use_expert_bias: bool = False
+    dropout: float = 0.0
+    use_shared_base: bool = False
+    shared_base_dim: int = 128
+    use_vocab_prior: bool = False
+    expert_residual: bool = False
+    allow_replacement: bool = True
+    use_embed_refine: bool = False
+    target_dim: int = 64
+    selection_mode: str = 'soft'
+    use_remixed_linear: bool = False
+    context_dim: int = 64
+    linear_basis_size: int = 64
+
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+
+
+RESEARCH_ALLOWED_KEYS = {
+    "use_moe", "num_experts", 'total_embed_dim', "router_dim", "capacity_factor",
+    "use_sparse_top_k", "top_k", "routing_mode", "context_window",
+    "causal", "use_expert_mlp", "use_output_projection",
+    "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
+    "use_vocab_prior", "expert_residual", 'allow_replacement',
+    'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
+    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
+}
 
 
 def norm(x):
@@ -241,27 +282,118 @@ class GlobalContextManager(nn.Module):
 
 
 class RemixedLinear(nn.Module):
-    def __init__(self, in_features, out_features, context_dim, basis_size=64):
+    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None):
         super().__init__()
+        if remixed_linear_kwargs is None:
+            remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         self.basis_size = basis_size
+        self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
+        self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
+        self.use_context = remixed_linear_kwargs.get('use_context', True)
+
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
         self.context_modulator = nn.Sequential(
-            Linear(context_dim, basis_size // 2, bias=False),
+            Linear(context_dim, max(1, basis_size // 2), bias=False),
             nn.GELU(),
-            Linear(basis_size // 2, basis_size + out_features, bias=False),
+            Linear(max(1, basis_size // 2), basis_size + out_features, bias=False),
         )
         self.bias = nn.Parameter(torch.zeros(out_features))
         self.ln_basis = nn.LayerNorm(basis_size)
 
     def forward(self, x, context_state):
         h_basis = self.ln_basis(self.basis(x))
-        gates = torch.sigmoid(self.context_modulator(context_state))
-        gate_basis = gates[..., :self.basis_size]
-        gate_out = gates[..., self.basis_size:]
+        if self.use_context:
+            gates = torch.sigmoid(self.context_modulator(context_state))
+            gate_basis = gates[..., :self.basis_size] if self.use_basis_gate else torch.ones_like(h_basis)
+            gate_out = gates[..., self.basis_size:]
+        else:
+            gate_basis = torch.ones_like(h_basis)
+            gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=x.dtype)
+        if not self.use_output_gate:
+            gate_out = torch.ones_like(gate_out)
         h_gated = h_basis * gate_basis
         pre_output = F.linear(h_gated, self.template_mixing.to(dtype=x.dtype))
         return pre_output * gate_out + self.bias
+
+
+class RemixedFeedForward(nn.Module):
+    """Feedforward path using RemixedLinear in the base MLP framework."""
+    def __init__(self, config):
+        super().__init__()
+        kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+
+    def forward(self, x, context_state):
+        x = self.c_fc(x, context_state)
+        x = F.relu(x).square()
+        x = self.c_proj(x, context_state)
+        return x
+
+
+class RemixedMultiAttention(nn.Module):
+    """Attention path using RemixedLinear for Q/K/V/proj while preserving GPT attention logic."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.n_head = config.n_head
+        self.n_kv_head = config.n_kv_head
+        self.n_embd = config.n_embd
+        self.head_dim = self.n_embd // self.n_head
+        self.ve_gate_channels = 32
+        kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_v = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_proj = RemixedLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        B, T, C = x.size()
+        q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+        v = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            if self.ve_gate is not None:
+                gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+                v = v + gate.unsqueeze(-1) * ve
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        if kv_cache is None:
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
+
+        y = y.contiguous().view(B, T, -1)
+        return self.c_proj(y, context_state)
+
+
+class RemixedBlock(nn.Module):
+    """Base block structure with remixed attention + remixed feedforward."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.attn = RemixedMultiAttention(config, layer_idx)
+        self.ffwd = RemixedFeedForward(config)
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state)
+        x = x + self.ffwd(norm(x), context_state)
+        return x
 
 
 def has_ve(layer_idx, n_layer):
@@ -341,21 +473,10 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.use_remix_linear = config.use_remix_linear
-        if self.use_remix_linear:
-            self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size)
-            self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size)
-        else:
-            self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-            self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x, context_state=None):
-        if self.use_remix_linear:
-            assert context_state is not None
-            x = self.c_fc(x, context_state)
-            x = F.relu(x).square()
-            x = self.c_proj(x, context_state)
-            return x
+    def forward(self, x):
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
@@ -368,9 +489,9 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state=None):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x), context_state=context_state)
+        x = x + self.mlp(norm(x))
         return x
 
 
@@ -386,42 +507,60 @@ class GPT(nn.Module):
         # Compute per-layer window sizes for sliding window attention
         # window_size is (left, right) tuple: (-1, 0) for full context, (N, 0) for sliding window
         self.window_sizes = self._compute_window_sizes(config)
+        # Resolve notebook aliases to GPT-native knobs
         self.use_moe = config.use_moe
         self.use_perm = config.use_perm
+        self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else config.num_experts
+        self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else config.router_dim
+        self.moe_embed_dim = config.moe_embed_dim if config.moe_embed_dim != 64 else config.target_dim
         self.moe_scale = config.moe_scale
-        self.use_remix_linear = config.use_remix_linear
+        self.use_remix_linear = config.use_remix_linear or config.use_remixed_linear
+        self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else config.context_dim
+        self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else config.linear_basis_size
+        if config.remixed_linear_kwargs is None:
+            self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        else:
+            self.remixed_linear_kwargs = config.remixed_linear_kwargs
+        config.remix_context_dim = self.remix_context_dim
+        config.remix_basis_size = self.remix_basis_size
+        config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
+        block_cls = RemixedBlock if self.use_remix_linear else Block
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+            "h": nn.ModuleList([block_cls(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.embedding_model = None
-        if config.use_moe:
-            if config.use_perm:
+        if self.use_moe:
+            if self.use_perm:
                 self.embedding_model = PermutationMoE(
                     vocab_size=padded_vocab_size,
                     block_size=config.sequence_len,
-                    base_embed_dim=config.moe_embed_dim,
-                    num_experts=config.moe_num_experts,
-                    router_dim=config.moe_router_dim,
+                    base_embed_dim=self.moe_embed_dim,
+                    num_experts=self.moe_num_experts,
+                    router_dim=self.moe_router_dim,
+                    selection_mode=config.selection_mode,
+                    allow_replacement=config.allow_replacement,
+                    dropout=config.dropout,
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
                     vocab_size=padded_vocab_size,
-                    dim=config.moe_embed_dim,
+                    dim=self.moe_embed_dim,
                     context_window=config.sequence_len,
+                    dropout=config.dropout,
                 )
-            assert config.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
+            assert self.moe_embed_dim == config.n_embd, "moe_embed_dim/target_dim must match n_embd"
         self.context_manager = None
-        if config.use_remix_linear:
+        if self.use_remix_linear:
             self.context_manager = GlobalContextManager(
                 vocab_size=padded_vocab_size,
                 d_model=config.n_embd,
-                router_dim=config.remix_context_dim,
+                router_dim=self.remix_context_dim,
                 context_window=config.sequence_len,
             )
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
@@ -469,18 +608,19 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            if getattr(block.mlp, 'use_remix_linear', False):
-                torch.nn.init.orthogonal_(block.mlp.c_fc.basis.weight)
-                torch.nn.init.kaiming_normal_(block.mlp.c_fc.template_mixing)
-                torch.nn.init.zeros_(block.mlp.c_fc.bias)
-                torch.nn.init.orthogonal_(block.mlp.c_proj.basis.weight)
-                torch.nn.init.kaiming_normal_(block.mlp.c_proj.template_mixing)
-                torch.nn.init.zeros_(block.mlp.c_proj.bias)
+            if isinstance(block, RemixedBlock):
+                for proj in [block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
+                             block.ffwd.c_fc, block.ffwd.c_proj]:
+                    torch.nn.init.orthogonal_(proj.basis.weight)
+                    torch.nn.init.kaiming_normal_(proj.template_mixing)
+                    torch.nn.init.zeros_(proj.bias)
+                if block.attn.ve_gate is not None:
+                    torch.nn.init.zeros_(block.attn.ve_gate.weight)
             else:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
                 torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
                 torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
@@ -603,14 +743,20 @@ class GPT(nn.Module):
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        research = 0
+        if self.embedding_model is not None:
+            research += sum(p.numel() for p in self.embedding_model.parameters())
+        if self.context_manager is not None:
+            research += sum(p.numel() for p in self.context_manager.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        total = wte + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'research': research,
             'scalars': scalars,
             'total': total,
         }
@@ -683,7 +829,10 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
+            if self.use_remix_linear:
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
+            else:
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
 
         # Forward the lm_head (compute logits)
