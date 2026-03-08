@@ -52,6 +52,21 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Research branches (notebook-compatible)
+parser.add_argument("--use-moe", action="store_true", help="enable research MoE embedding branch")
+parser.add_argument("--use-perm", action="store_true", help="use permutation MoE branch (only with --use-moe)")
+parser.add_argument("--num-experts", type=int, default=8, help="number of experts for research MoE branch")
+parser.add_argument("--router-dim", type=int, default=64, help="router dim for research branches")
+parser.add_argument("--target-dim", type=int, default=64, help="target embedding dim for research branches")
+parser.add_argument("--selection-mode", type=str, default="soft", choices=["soft", "hard"], help="selection mode for permutation MoE")
+parser.add_argument("--allow-replacement", action="store_true", help="allow repeated input dimensions in permutation MoE")
+parser.add_argument("--use-remixed-linear", action="store_true", help="enable remixed linear blocks")
+parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
+parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
+parser.add_argument("--moe-scale", type=float, default=1.0, help="scale applied to research embedding output")
+parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
+parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
+parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -132,13 +147,33 @@ def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    base_dim = depth * args.aspect_ratio
-    model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
+    if args.use_moe:
+        model_dim = args.target_dim
+        assert model_dim % args.head_dim == 0, f"target_dim must be divisible by head_dim ({args.head_dim}), got {model_dim}"
+    else:
+        base_dim = depth * args.aspect_ratio
+        model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     num_heads = model_dim // args.head_dim
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        use_moe=args.use_moe,
+        use_perm=args.use_perm,
+        moe_scale=args.moe_scale,
+        num_experts=args.num_experts,
+        router_dim=args.router_dim,
+        target_dim=args.target_dim,
+        selection_mode=args.selection_mode,
+        allow_replacement=args.allow_replacement,
+        use_remixed_linear=args.use_remixed_linear,
+        context_dim=args.context_dim,
+        linear_basis_size=args.linear_basis_size,
+        remixed_linear_kwargs=dict(
+            use_basis_gate=bool(args.remix_use_basis_gate),
+            use_output_gate=bool(args.remix_use_output_gate),
+            use_context=bool(args.remix_use_context),
+        ),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
