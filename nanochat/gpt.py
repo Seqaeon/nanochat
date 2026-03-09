@@ -70,6 +70,7 @@ class GPTConfig:
     use_remixed_linear: bool = False
     context_dim: int = 64
     linear_basis_size: int = 64
+    moe_use_abs_pos_embed: bool = True
 
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
@@ -84,7 +85,7 @@ RESEARCH_ALLOWED_KEYS = {
     "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
     "use_vocab_prior", "expert_residual", 'allow_replacement',
     'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
-    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
+    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs", "moe_use_abs_pos_embed",
 }
 
 
@@ -207,14 +208,15 @@ class DirectContextualEmbedding(nn.Module):
 
 
 class PermutationMoE(nn.Module):
-    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0):
+    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0, use_abs_pos_embed=True):
         super().__init__()
         self.base_embed_dim = base_embed_dim
         self.num_experts = num_experts
         self.selection_mode = selection_mode
         self.allow_replacement = allow_replacement
         self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
-        self.position_embeddings = nn.Embedding(block_size, base_embed_dim)
+        self.use_abs_pos_embed = use_abs_pos_embed
+        self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if use_abs_pos_embed else None
         self.dim_selectors = nn.ModuleList([
             nn.Sequential(
                 Linear(base_embed_dim, router_dim, bias=False),
@@ -241,7 +243,9 @@ class PermutationMoE(nn.Module):
     def forward(self, input_ids):
         batch_size, seq_len = input_ids.shape
         positions = torch.arange(seq_len, device=input_ids.device)
-        embeds = self.embeddings(input_ids) + self.position_embeddings(positions)
+        embeds = self.embeddings(input_ids)
+        if self.position_embeddings is not None:
+            embeds = embeds + self.position_embeddings(positions)
         expert_outputs = []
         for expert_idx in range(self.num_experts):
             selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
@@ -544,6 +548,7 @@ class GPT(nn.Module):
                     selection_mode=config.selection_mode,
                     allow_replacement=config.allow_replacement,
                     dropout=config.dropout,
+                    use_abs_pos_embed=config.moe_use_abs_pos_embed,
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
