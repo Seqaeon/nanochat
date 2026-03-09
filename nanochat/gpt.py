@@ -37,6 +37,7 @@ class GPTConfig:
     # Research branches (GPT-native names)
     use_moe: bool = False
     use_perm: bool = False
+    moe_use_abs_pos_embed: bool = False
     moe_num_experts: int = 8
     moe_router_dim: int = 64
     moe_embed_dim: int = 64
@@ -83,7 +84,7 @@ RESEARCH_ALLOWED_KEYS = {
     "causal", "use_expert_mlp", "use_output_projection",
     "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
     "use_vocab_prior", "expert_residual", 'allow_replacement',
-    'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
+    'use_embed_refine', 'target_dim', 'selection_mode', "use_perm", "moe_use_abs_pos_embed",
     "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
 }
 
@@ -207,14 +208,15 @@ class DirectContextualEmbedding(nn.Module):
 
 
 class PermutationMoE(nn.Module):
-    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0):
+    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0, use_abs_pos_embed=False):
         super().__init__()
         self.base_embed_dim = base_embed_dim
         self.num_experts = num_experts
         self.selection_mode = selection_mode
         self.allow_replacement = allow_replacement
+        self.use_abs_pos_embed = use_abs_pos_embed
         self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
-        self.position_embeddings = nn.Embedding(block_size, base_embed_dim)
+        self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if use_abs_pos_embed else None
         self.dim_selectors = nn.ModuleList([
             nn.Sequential(
                 Linear(base_embed_dim, router_dim, bias=False),
@@ -240,8 +242,10 @@ class PermutationMoE(nn.Module):
 
     def forward(self, input_ids):
         batch_size, seq_len = input_ids.shape
-        positions = torch.arange(seq_len, device=input_ids.device)
-        embeds = self.embeddings(input_ids) + self.position_embeddings(positions)
+        embeds = self.embeddings(input_ids)
+        if self.position_embeddings is not None:
+            positions = torch.arange(seq_len, device=input_ids.device)
+            embeds = embeds + self.position_embeddings(positions)
         expert_outputs = []
         for expert_idx in range(self.num_experts):
             selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
@@ -509,6 +513,7 @@ class GPT(nn.Module):
         # Resolve notebook aliases to GPT-native knobs
         self.use_moe = config.use_moe
         self.use_perm = config.use_perm
+        self.moe_use_abs_pos_embed = config.moe_use_abs_pos_embed
         self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else config.num_experts
         self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else config.router_dim
         self.moe_embed_dim = config.moe_embed_dim if config.moe_embed_dim != 64 else config.target_dim
@@ -544,6 +549,7 @@ class GPT(nn.Module):
                     selection_mode=config.selection_mode,
                     allow_replacement=config.allow_replacement,
                     dropout=config.dropout,
+                    use_abs_pos_embed=self.moe_use_abs_pos_embed,
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
@@ -893,4 +899,3 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
-
