@@ -391,6 +391,13 @@ print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
+# Research branches use a OneCycle-style schedule; base keeps the original warmup/flat/warmdown schedule
+use_research_scheduler = args.use_moe or args.use_perm or args.use_remixed_linear
+if use_research_scheduler:
+    print0("Using research scheduler: OneCycle-style LR multiplier")
+else:
+    print0("Using base scheduler: linear warmup/flat/linear warmdown")
+
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):
     warmup_iters = round(args.warmup_ratio * num_iterations)
@@ -402,6 +409,26 @@ def get_lr_multiplier(it):
     else:
         progress = (num_iterations - it) / warmdown_iters
         return progress * 1.0 + (1 - progress) * args.final_lr_frac
+
+
+def get_lr_multiplier_onecycle(it):
+    """
+    OneCycle-style multiplier in [final_lr_frac, 1.0].
+    - rise phase: cosine from final_lr_frac -> 1.0
+    - decay phase: cosine from 1.0 -> final_lr_frac
+    Uses warmup_ratio as pct_start for the peak.
+    """
+    if num_iterations <= 1:
+        return 1.0
+    t = min(max(it, 0), num_iterations - 1)
+    pct = t / (num_iterations - 1)
+    pct_start = min(max(args.warmup_ratio, 0.01), 0.99)
+    low = args.final_lr_frac
+    if pct <= pct_start:
+        phase = pct / pct_start
+        return low + (1.0 - low) * (1 - math.cos(math.pi * phase)) * 0.5
+    phase = (pct - pct_start) / (1 - pct_start)
+    return low + (1.0 - low) * (1 + math.cos(math.pi * phase)) * 0.5
 
 # Momentum scheduler for Muon optimizer (warms up to 0.95 over the first 300 steps)
 def get_muon_momentum(it):
@@ -545,7 +572,7 @@ while True:
             loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
     # step the optimizer
-    lrm = get_lr_multiplier(step)
+    lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
     for group in optimizer.param_groups:
