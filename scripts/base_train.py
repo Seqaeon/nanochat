@@ -55,6 +55,7 @@ parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding 
 # Research branches (notebook-compatible)
 parser.add_argument("--use-moe", action="store_true", help="enable research MoE embedding branch")
 parser.add_argument("--use-perm", action="store_true", help="use permutation MoE branch (only with --use-moe)")
+parser.add_argument("--moe-use-abs-pos-embed", action="store_true", help="enable absolute position embeddings inside permutation MoE (default: rotary-only)")
 parser.add_argument("--num-experts", type=int, default=8, help="number of experts for research MoE branch")
 parser.add_argument("--router-dim", type=int, default=64, help="router dim for research branches")
 parser.add_argument("--target-dim", type=int, default=64, help="target embedding dim for research branches")
@@ -159,6 +160,7 @@ def build_model_meta(depth):
         window_pattern=args.window_pattern,
         use_moe=args.use_moe,
         use_perm=args.use_perm,
+        moe_use_abs_pos_embed=args.moe_use_abs_pos_embed,
         num_experts=args.num_experts,
         router_dim=args.router_dim,
         target_dim=args.target_dim,
