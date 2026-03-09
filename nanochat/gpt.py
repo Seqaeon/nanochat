@@ -814,12 +814,20 @@ class GPT(nn.Module):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
-        assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
-        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
-        # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        T_total = T0 + T
+
+        if T_total > self.cos.size(1):
+            # Dynamic cache growth: double the cache or use T_total, whichever is larger
+            new_len = max(T_total, self.cos.size(1) * 2)
+            print0(f"Growing rotary embeddings cache from {self.cos.size(1)} to {new_len}")
+            head_dim = self.config.n_embd // self.config.n_head
+            cos, sin = self._precompute_rotary_embeddings(new_len, head_dim)
+            # Re-register buffers to update their size (persistent=False as in __init__)
+            self.register_buffer("cos", cos, persistent=False)
+            self.register_buffer("sin", sin, persistent=False)
+
+        cos_sin = self.cos[:, T0:T_total], self.sin[:, T0:T_total] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
         if self.embedding_model is None:
