@@ -68,6 +68,7 @@ parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
+parser.add_argument("--research-warmup-ratio", type=float, default=-1.0, help="research-only warmup ratio/pct_start for OneCycle (-1 = use --warmup-ratio)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -428,7 +429,8 @@ def get_lr_multiplier_onecycle(it):
         return 1.0
     t = min(max(it, 0), num_iterations - 1)
     pct = t / (num_iterations - 1)
-    pct_start = min(max(args.warmup_ratio, 0.01), 0.99)
+    warmup_src = args.warmup_ratio if args.research_warmup_ratio < 0 else args.research_warmup_ratio
+    pct_start = min(max(warmup_src, 0.01), 0.99)
     low = args.final_lr_frac
     if pct <= pct_start:
         phase = pct / pct_start
@@ -677,6 +679,7 @@ get_report().log(section="Base model training", data=[
         "warmup_ratio": args.warmup_ratio,
         "warmdown_ratio": args.warmdown_ratio,
         "final_lr_frac": args.final_lr_frac,
+        "research_warmup_ratio": args.research_warmup_ratio,
     },
     { # stats about training outcomes
         "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,

@@ -53,6 +53,8 @@ def build_base_train_cmd(args: argparse.Namespace, passthrough: list[str]) -> li
     cmd += ["--warmdown-ratio", str(args.warmdown_ratio)]
     cmd += ["--final-lr-frac", str(args.final_lr_frac)]
     cmd += ["--research-onecycle", str(int(args.research_onecycle))]
+    if args.research_warmup_ratio >= 0:
+        cmd += ["--research-warmup-ratio", str(args.research_warmup_ratio)]
 
     # Forward any additional base_train flags untouched.
     cmd.extend(passthrough)
@@ -89,6 +91,7 @@ def main() -> None:
     parser.add_argument("--warmdown-ratio", type=float, default=0.9)
     parser.add_argument("--final-lr-frac", type=float, default=0.1)
     parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--research-warmup-ratio", type=float, default=-1.0)
 
     args, passthrough = parser.parse_known_args()
 
