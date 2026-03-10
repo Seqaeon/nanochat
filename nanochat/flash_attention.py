@@ -77,6 +77,10 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
 
     # Full context, same length
     if (window < 0 or window >= Tq) and Tq == Tk:
+        # Ensure dtypes match to prevent "Expected query, key, and value to have the same dtype" RuntimeError
+        if q.dtype != k.dtype or q.dtype != v.dtype:
+            q = q.to(k.dtype)
+            v = v.to(k.dtype)
         return F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
 
     # Single token generation
@@ -86,6 +90,9 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
             start = max(0, Tk - (window + 1))
             k = k[:, :, start:, :]
             v = v[:, :, start:, :]
+        if q.dtype != k.dtype or q.dtype != v.dtype:
+            q = q.to(k.dtype)
+            v = v.to(k.dtype)
         return F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
 
     # Need explicit mask for sliding window/chunk inference
@@ -98,6 +105,10 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
     # sliding window (left)
     if window >= 0 and window < Tk:
         mask = mask & ((row_idx - col_idx) <= window)
+
+    if q.dtype != k.dtype or q.dtype != v.dtype:
+        q = q.to(k.dtype)
+        v = v.to(k.dtype)
 
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
 
