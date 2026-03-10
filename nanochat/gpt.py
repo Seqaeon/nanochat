@@ -33,10 +33,60 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+
+    # Research branches (GPT-native names)
+    use_moe: bool = False
+    use_perm: bool = False
+    moe_num_experts: int = 8
+    moe_router_dim: int = 64
+    moe_embed_dim: int = 64
+    use_remix_linear: bool = False
+    remix_context_dim: int = 64
+    remix_basis_size: int = 64
+    remixed_linear_kwargs: dict | None = None
+
+    # Notebook-compat keys (BigramLanguageModel kwargs)
+    num_experts: int = 8
+    total_embed_dim: int = 64
+    router_dim: int = 64
+    capacity_factor: float = 1.0
+    use_sparse_top_k: bool = False
+    top_k: int = 1
+    routing_mode: str = 'token_choice'
+    context_window: int = -1
+    causal: bool = True
+    use_expert_mlp: bool = True
+    use_output_projection: bool = True
+    use_expert_bias: bool = False
+    dropout: float = 0.0
+    use_shared_base: bool = False
+    shared_base_dim: int = 128
+    use_vocab_prior: bool = False
+    expert_residual: bool = False
+    allow_replacement: bool = True
+    use_embed_refine: bool = False
+    target_dim: int = 64
+    selection_mode: str = 'soft'
+    use_remixed_linear: bool = False
+    context_dim: int = 64
+    linear_basis_size: int = 64
+    moe_use_abs_pos_embed: bool = True
+
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+
+
+RESEARCH_ALLOWED_KEYS = {
+    "use_moe", "num_experts", 'total_embed_dim', "router_dim", "capacity_factor",
+    "use_sparse_top_k", "top_k", "routing_mode", "context_window",
+    "causal", "use_expert_mlp", "use_output_projection",
+    "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
+    "use_vocab_prior", "expert_residual", 'allow_replacement',
+    'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
+    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs", "moe_use_abs_pos_embed",
+}
 
 
 def norm(x):
@@ -48,6 +98,305 @@ class Linear(nn.Linear):
     but matmuls run in the activation dtype (typically bf16 from embeddings)."""
     def forward(self, x):
         return F.linear(x, self.weight.to(dtype=x.dtype))
+
+
+class ImprovedContextAwareRouter(nn.Module):
+    """Context-aware router used by research embedding branches."""
+    def __init__(
+        self,
+        vocab_size,
+        num_experts,
+        router_dim,
+        full_embed_dim,
+        context_window=-1,
+        causal=True,
+        num_heads=4,
+        num_queries=8,
+        n_layers=1,
+        use_vocab_prior=False,
+    ):
+        super().__init__()
+        self.num_experts = num_experts
+        self.router_dim = router_dim
+        self.context_window = context_window
+        self.causal = causal
+        self.num_heads = num_heads
+        self.head_dim = router_dim // num_heads
+        self.n_layers = n_layers
+        self.use_vocab_prior = use_vocab_prior
+
+        self.embed_proj = Linear(full_embed_dim, router_dim, bias=False)
+        self.qkv_proj = Linear(router_dim, 3 * router_dim, bias=False)
+        self.out_proj = Linear(router_dim, router_dim, bias=False)
+        self.ln = nn.LayerNorm(router_dim)
+        self.routing_queries = nn.Parameter(torch.randn(num_queries, router_dim))
+        self.temperature_predictor = Linear(router_dim, 1, bias=False)
+        self.expert_proj = Linear(router_dim, num_experts, bias=False)
+        self.cross_expert_proj = Linear(router_dim, num_experts, bias=False)
+        self.alpha_gate = Linear(router_dim, 1, bias=False)
+        if use_vocab_prior:
+            self.vocab_routing_bias = nn.Embedding(vocab_size, num_experts)
+
+    def _create_mask(self, seq_len, device):
+        positions = torch.arange(seq_len, device=device)
+        pos_diff = positions.unsqueeze(0) - positions.unsqueeze(1)
+        if self.context_window == -1:
+            return pos_diff > 0 if self.causal else torch.zeros(seq_len, seq_len, dtype=torch.bool, device=device)
+        if self.causal:
+            return (pos_diff > 0) | (pos_diff < -self.context_window)
+        window_half = self.context_window // 2
+        return torch.abs(pos_diff) > window_half
+
+    def _multi_head_attention(self, x):
+        batch_size, seq_len, _ = x.shape
+        qkv = self.qkv_proj(x).reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        mask = self._create_mask(seq_len, x.device).unsqueeze(0).unsqueeze(0)
+        attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        context = torch.matmul(attn_weights, v)
+        context = context.transpose(1, 2).reshape(batch_size, seq_len, self.router_dim)
+        return self.out_proj(context) + x
+
+    def _cross_attention(self, queries, context):
+        batch_size, seq_len, dim = context.shape
+        num_queries = queries.shape[0]
+        queries = queries.unsqueeze(0).expand(batch_size, num_queries, dim)
+        attn_scores = torch.matmul(queries, context.transpose(1, 2)) / (dim ** 0.5)
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attended = torch.matmul(attn_weights, context)
+        return attended.mean(dim=1).unsqueeze(1).expand(-1, seq_len, -1)
+
+    def forward(self, full_embeds, input_ids=None):
+        x = self.embed_proj(full_embeds)
+        for _ in range(self.n_layers):
+            x = self._multi_head_attention(x)
+        x = self.ln(x)
+        self_attn_logits = self.expert_proj(x)
+        cross_attn_logits = self.cross_expert_proj(self._cross_attention(self.routing_queries, x))
+        alpha = torch.sigmoid(self.alpha_gate(x))
+        expert_logits = alpha * self_attn_logits + (1 - alpha) * cross_attn_logits
+        if self.use_vocab_prior and input_ids is not None:
+            expert_logits = expert_logits + self.vocab_routing_bias(input_ids)
+        adaptive_temp = torch.sigmoid(self.temperature_predictor(x)) * 2.0 + 0.1
+        return expert_logits, adaptive_temp, self.expert_proj.weight
+
+
+class DirectContextualEmbedding(nn.Module):
+    def __init__(self, vocab_size, dim, context_window, dropout=0.0):
+        super().__init__()
+        self.seed_embeddings = nn.Embedding(vocab_size, dim)
+        self.router = ImprovedContextAwareRouter(
+            vocab_size=vocab_size,
+            num_experts=dim,
+            router_dim=dim,
+            full_embed_dim=dim,
+            context_window=context_window,
+            causal=True,
+            n_layers=2,
+            use_vocab_prior=False,
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.out_norm = nn.LayerNorm(dim)
+
+    def forward(self, input_ids):
+        seeds = self.seed_embeddings(input_ids)
+        remixed_embeds, _, _ = self.router(seeds, input_ids)
+        return self.out_norm(self.dropout(remixed_embeds)), {}
+
+
+class PermutationMoE(nn.Module):
+    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0, use_abs_pos_embed=True):
+        super().__init__()
+        self.base_embed_dim = base_embed_dim
+        self.num_experts = num_experts
+        self.selection_mode = selection_mode
+        self.allow_replacement = allow_replacement
+        self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
+        self.use_abs_pos_embed = use_abs_pos_embed
+        self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if use_abs_pos_embed else None
+        self.dim_selectors = nn.ModuleList([
+            nn.Sequential(
+                Linear(base_embed_dim, router_dim, bias=False),
+                nn.LayerNorm(router_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                Linear(router_dim, base_embed_dim * base_embed_dim, bias=False),
+            ) for _ in range(num_experts)
+        ])
+        self.expert_router = ImprovedContextAwareRouter(
+            vocab_size=vocab_size,
+            num_experts=num_experts,
+            router_dim=router_dim,
+            full_embed_dim=base_embed_dim,
+            context_window=-1,
+            causal=True,
+            n_layers=2,
+            use_vocab_prior=False,
+        )
+        self.ln = nn.LayerNorm(base_embed_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer('temperature', torch.tensor(1.0))
+
+    def forward(self, input_ids):
+        batch_size, seq_len = input_ids.shape
+        positions = torch.arange(seq_len, device=input_ids.device)
+        embeds = self.embeddings(input_ids)
+        if self.position_embeddings is not None:
+            embeds = embeds + self.position_embeddings(positions)
+        expert_outputs = []
+        for expert_idx in range(self.num_experts):
+            selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
+            if self.selection_mode == 'hard' and not self.allow_replacement:
+                selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=True, dim=-1)
+            elif self.selection_mode == 'hard':
+                selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=False, dim=-1)
+            else:
+                selection_weights = F.softmax(selection_logits / self.temperature, dim=-1)
+            selected = torch.einsum('bloi,bli->blo', selection_weights, embeds)
+            expert_outputs.append(selected)
+        expert_outputs = torch.stack(expert_outputs, dim=2)
+        expert_logits, adaptive_temp, _ = self.expert_router(embeds, input_ids)
+        expert_weights = F.softmax(expert_logits / (self.temperature * adaptive_temp), dim=-1)
+        expert_weights = self.dropout(expert_weights)
+        output = (expert_weights.unsqueeze(-1) * expert_outputs).sum(dim=2)
+        return self.ln(output), {'expert_weights': expert_weights}
+
+
+class GlobalContextManager(nn.Module):
+    def __init__(self, vocab_size, d_model, router_dim=64, context_window=128):
+        super().__init__()
+        self.router = ImprovedContextAwareRouter(
+            vocab_size=vocab_size,
+            num_experts=router_dim,
+            router_dim=router_dim,
+            full_embed_dim=d_model,
+            context_window=context_window,
+            causal=True,
+            num_heads=4,
+            n_layers=2,
+        )
+
+    def forward(self, x_embeds, input_ids=None):
+        context_logits, _, _ = self.router(x_embeds, input_ids)
+        return F.layer_norm(context_logits, context_logits.shape[-1:])
+
+
+class RemixedLinear(nn.Module):
+    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None):
+        super().__init__()
+        if remixed_linear_kwargs is None:
+            remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        self.basis_size = basis_size
+        self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
+        self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
+        self.use_context = remixed_linear_kwargs.get('use_context', True)
+
+        self.basis = Linear(in_features, basis_size, bias=False)
+        self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
+        self.context_modulator = nn.Sequential(
+            Linear(context_dim, max(1, basis_size // 2), bias=False),
+            nn.GELU(),
+            Linear(max(1, basis_size // 2), basis_size + out_features, bias=False),
+        )
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        self.ln_basis = nn.LayerNorm(basis_size)
+
+    def forward(self, x, context_state):
+        h_basis = self.ln_basis(self.basis(x))
+        if self.use_context:
+            gates = torch.sigmoid(self.context_modulator(context_state))
+            gate_basis = gates[..., :self.basis_size] if self.use_basis_gate else torch.ones_like(h_basis)
+            gate_out = gates[..., self.basis_size:]
+        else:
+            gate_basis = torch.ones_like(h_basis)
+            gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=x.dtype)
+        if not self.use_output_gate:
+            gate_out = torch.ones_like(gate_out)
+        h_gated = h_basis * gate_basis
+        pre_output = F.linear(h_gated, self.template_mixing.to(dtype=x.dtype))
+        return pre_output * gate_out + self.bias
+
+
+class RemixedFeedForward(nn.Module):
+    """Feedforward path using RemixedLinear in the base MLP framework."""
+    def __init__(self, config):
+        super().__init__()
+        kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+
+    def forward(self, x, context_state):
+        x = self.c_fc(x, context_state)
+        x = F.relu(x).square()
+        x = self.c_proj(x, context_state)
+        return x
+
+
+class RemixedMultiAttention(nn.Module):
+    """Attention path using RemixedLinear for Q/K/V/proj while preserving GPT attention logic."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.n_head = config.n_head
+        self.n_kv_head = config.n_kv_head
+        self.n_embd = config.n_embd
+        self.head_dim = self.n_embd // self.n_head
+        self.ve_gate_channels = 32
+        kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_v = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.c_proj = RemixedLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        B, T, C = x.size()
+        q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+        v = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            if self.ve_gate is not None:
+                gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+                v = v + gate.unsqueeze(-1) * ve
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        if kv_cache is None:
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
+
+        y = y.contiguous().view(B, T, -1)
+        return self.c_proj(y, context_state)
+
+
+class RemixedBlock(nn.Module):
+    """Base block structure with remixed attention + remixed feedforward."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.attn = RemixedMultiAttention(config, layer_idx)
+        self.ffwd = RemixedFeedForward(config)
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state)
+        x = x + self.ffwd(norm(x), context_state)
+        return x
 
 
 def has_ve(layer_idx, n_layer):
@@ -161,15 +510,62 @@ class GPT(nn.Module):
         # Compute per-layer window sizes for sliding window attention
         # window_size is (left, right) tuple: (-1, 0) for full context, (N, 0) for sliding window
         self.window_sizes = self._compute_window_sizes(config)
+        # Resolve notebook aliases to GPT-native knobs
+        self.use_moe = config.use_moe
+        self.use_perm = config.use_perm
+        self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else config.num_experts
+        self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else config.router_dim
+        self.moe_embed_dim = config.moe_embed_dim if config.moe_embed_dim != 64 else config.target_dim
+        self.use_remix_linear = config.use_remix_linear or config.use_remixed_linear
+        self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else config.context_dim
+        self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else config.linear_basis_size
+        if config.remixed_linear_kwargs is None:
+            self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        else:
+            self.remixed_linear_kwargs = config.remixed_linear_kwargs
+        config.remix_context_dim = self.remix_context_dim
+        config.remix_basis_size = self.remix_basis_size
+        config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
+        block_cls = RemixedBlock if self.use_remix_linear else Block
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+            "h": nn.ModuleList([block_cls(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
+        self.embedding_model = None
+        if self.use_moe:
+            if self.use_perm:
+                self.embedding_model = PermutationMoE(
+                    vocab_size=padded_vocab_size,
+                    block_size=config.sequence_len,
+                    base_embed_dim=self.moe_embed_dim,
+                    num_experts=self.moe_num_experts,
+                    router_dim=self.moe_router_dim,
+                    selection_mode=config.selection_mode,
+                    allow_replacement=config.allow_replacement,
+                    dropout=config.dropout,
+                    use_abs_pos_embed=config.moe_use_abs_pos_embed,
+                )
+            else:
+                self.embedding_model = DirectContextualEmbedding(
+                    vocab_size=padded_vocab_size,
+                    dim=self.moe_embed_dim,
+                    context_window=config.sequence_len,
+                    dropout=config.dropout,
+                )
+            assert self.moe_embed_dim == config.n_embd, "moe_embed_dim/target_dim must match n_embd"
+        self.context_manager = None
+        if self.use_remix_linear:
+            self.context_manager = GlobalContextManager(
+                vocab_size=padded_vocab_size,
+                d_model=config.n_embd,
+                router_dim=self.remix_context_dim,
+                context_window=config.sequence_len,
+            )
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -215,12 +611,21 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if isinstance(block, RemixedBlock):
+                for proj in [block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
+                             block.ffwd.c_fc, block.ffwd.c_proj]:
+                    torch.nn.init.orthogonal_(proj.basis.weight)
+                    torch.nn.init.kaiming_normal_(proj.template_mixing)
+                    torch.nn.init.zeros_(proj.bias)
+                if block.attn.ve_gate is not None:
+                    torch.nn.init.zeros_(block.attn.ve_gate.weight)
+            else:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
+                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
@@ -341,14 +746,20 @@ class GPT(nn.Module):
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        research = 0
+        if self.embedding_model is not None:
+            research += sum(p.numel() for p in self.embedding_model.parameters())
+        if self.context_manager is not None:
+            research += sum(p.numel() for p in self.context_manager.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        total = wte + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'research': research,
             'scalars': scalars,
             'total': total,
         }
@@ -358,13 +769,23 @@ class GPT(nn.Module):
         ddp, rank, local_rank, world_size = get_dist_info()
 
         # Separate out all parameters into groups
-        matrix_params = list(self.transformer.h.parameters())
+        candidate_matrix_params = list(self.transformer.h.parameters())
+        if self.context_manager is not None:
+            candidate_matrix_params += list(self.context_manager.parameters())
+        if self.embedding_model is not None:
+            candidate_matrix_params += list(self.embedding_model.parameters())
+
+        # Muon is only defined for matrix-like tensors (>=2D).
+        # Remixed/research branches introduce 1D params (biases/LN scales), route those to AdamW.
+        matrix_params = [p for p in candidate_matrix_params if p.ndim >= 2]
+        research_adamw_params = [p for p in candidate_matrix_params if p.ndim < 2]
+
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
+        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -376,6 +797,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=research_adamw_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
         ]
@@ -405,14 +827,21 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
-        x = self.transformer.wte(idx) # embed current token
+        if self.embedding_model is None:
+            x = self.transformer.wte(idx) # embed current token
+        else:
+            x, _ = self.embedding_model(idx)
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
+        context_state = self.context_manager(x, idx) if self.context_manager is not None else None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            if self.use_remix_linear:
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
+            else:
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
 
         # Forward the lm_head (compute logits)
