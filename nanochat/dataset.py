@@ -33,29 +33,15 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
     """ Looks into a data dir and returns full paths to all parquet files. """
     data_dir = DATA_DIR if data_dir is None else data_dir
 
-    # Legacy-supporting code due to the upgrade from FinewebEdu-100B to ClimbMix-400B
-    # This code will eventually be deleted.
+    # If the directory doesn't exist, create it in the current working directory
     if not os.path.exists(data_dir):
-        if warn_on_legacy:
-            print()
-            print("=" * 80)
-            print("  WARNING: DATASET UPGRADE REQUIRED")
-            print("=" * 80)
-            print()
-            print(f"  Could not find: {data_dir}")
-            print()
-            print("  nanochat recently switched from FinewebEdu-100B to ClimbMix-400B.")
-            print("  Everyone who does `git pull` as of March 4, 2026 is expected to see this message.")
-            print("  To upgrade to the new ClimbMix-400B dataset, run these two commands:")
-            print()
-            print("    python -m nanochat.dataset -n 170     # download ~170 shards, enough for GPT-2, adjust as desired")
-            print("    python -m scripts.tok_train           # re-train tokenizer on new ClimbMix data")
-            print()
-            print("  For now, falling back to your old FinewebEdu-100B dataset...")
-            print("=" * 80)
-            print()
-        # attempt a fallback to the legacy data directory
-        data_dir = os.path.join(base_dir, "base_data")
+        # Local fallback: create directory in the current working directory
+        folder_name = os.path.basename(data_dir)
+        new_data_dir = os.path.join(os.getcwd(), folder_name)
+        if not os.path.exists(new_data_dir):
+            print(f"Directory {data_dir} not found. Creating local fallback at: {new_data_dir}")
+            os.makedirs(new_data_dir, exist_ok=True)
+        data_dir = new_data_dir
 
     parquet_files = sorted([
         f for f in os.listdir(data_dir)
