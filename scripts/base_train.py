@@ -21,7 +21,7 @@ import argparse
 from dataclasses import asdict
 from contextlib import contextmanager
 
-import wandb
+# import wandb
 import torch
 import torch.distributed as dist
 
@@ -115,8 +115,8 @@ else:
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+use_dummy_wandb = True # args.run == "dummy" or not master_process
+wandb_run = DummyWandb() # if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
@@ -695,3 +695,4 @@ get_report().log(section="Base model training", data=[
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
+
