@@ -63,7 +63,8 @@ parser.add_argument("--allow-replacement", action="store_true", help="allow repe
 parser.add_argument("--use-remixed-linear", action="store_true", help="enable remixed linear blocks")
 parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
 parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
-parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1], help="use absolute positional embeddings inside PermutationMoE (1/0)")
+parser.add_argument("--use-pos-embed", action="store_true", help="add learned absolute positional embeddings on top of token/research embeddings")
+parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
@@ -170,6 +171,7 @@ def build_model_meta(depth):
         use_remixed_linear=args.use_remixed_linear,
         context_dim=args.context_dim,
         linear_basis_size=args.linear_basis_size,
+        use_pos_embed=args.use_pos_embed,
         moe_use_abs_pos_embed=bool(args.moe_use_abs_pos_embed),
         remixed_linear_kwargs=dict(
             use_basis_gate=bool(args.remix_use_basis_gate),
