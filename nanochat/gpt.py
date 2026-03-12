@@ -77,6 +77,7 @@ class GPTConfig:
     use_remixed_linear: bool = False
     context_dim: int = 64
     linear_basis_size: int = 64
+    moe_use_abs_pos_embed: bool = True
 
     # Shared context-aware router defaults used by embedding/context branches
     router_context_window: int = -1
@@ -268,7 +269,8 @@ class PermutationMoE(nn.Module):
         self.selection_mode = selection_mode
         self.allow_replacement = allow_replacement
         self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
-        self.position_embeddings = nn.Embedding(block_size, base_embed_dim)
+        self.use_abs_pos_embed = use_abs_pos_embed
+        self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if use_abs_pos_embed else None
         self.dim_selectors = nn.ModuleList([
             nn.Sequential(
                 Linear(base_embed_dim, router_dim, bias=False),
@@ -297,7 +299,9 @@ class PermutationMoE(nn.Module):
     def forward(self, input_ids):
         batch_size, seq_len = input_ids.shape
         positions = torch.arange(seq_len, device=input_ids.device)
-        embeds = self.embeddings(input_ids) + self.position_embeddings(positions)
+        embeds = self.embeddings(input_ids)
+        if self.position_embeddings is not None:
+            embeds = embeds + self.position_embeddings(positions)
         expert_outputs = []
         for expert_idx in range(self.num_experts):
             selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)

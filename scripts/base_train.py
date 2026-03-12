@@ -63,9 +63,12 @@ parser.add_argument("--allow-replacement", action="store_true", help="allow repe
 parser.add_argument("--use-remixed-linear", action="store_true", help="enable remixed linear blocks")
 parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
 parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
+parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1], help="use absolute positional embeddings inside PermutationMoE (1/0)")
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
+parser.add_argument("--research-warmup-ratio", type=float, default=-1.0, help="research-only warmup ratio/pct_start for OneCycle (-1 = use --warmup-ratio)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -167,6 +170,7 @@ def build_model_meta(depth):
         use_remixed_linear=args.use_remixed_linear,
         context_dim=args.context_dim,
         linear_basis_size=args.linear_basis_size,
+        moe_use_abs_pos_embed=bool(args.moe_use_abs_pos_embed),
         remixed_linear_kwargs=dict(
             use_basis_gate=bool(args.remix_use_basis_gate),
             use_output_gate=bool(args.remix_use_output_gate),
@@ -391,6 +395,16 @@ print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
+# Research branches use a OneCycle-style schedule; base keeps the original warmup/flat/warmdown schedule
+use_research_mode = args.use_moe or args.use_perm or args.use_remixed_linear
+use_research_scheduler = use_research_mode and bool(args.research_onecycle)
+if use_research_scheduler:
+    print0("Using research scheduler: OneCycle-style LR multiplier")
+elif use_research_mode:
+    print0("Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule")
+else:
+    print0("Using base scheduler: linear warmup/flat/linear warmdown")
+
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):
     warmup_iters = round(args.warmup_ratio * num_iterations)
@@ -402,6 +416,27 @@ def get_lr_multiplier(it):
     else:
         progress = (num_iterations - it) / warmdown_iters
         return progress * 1.0 + (1 - progress) * args.final_lr_frac
+
+
+def get_lr_multiplier_onecycle(it):
+    """
+    OneCycle-style multiplier in [final_lr_frac, 1.0].
+    - rise phase: cosine from final_lr_frac -> 1.0
+    - decay phase: cosine from 1.0 -> final_lr_frac
+    Uses warmup_ratio as pct_start for the peak.
+    """
+    if num_iterations <= 1:
+        return 1.0
+    t = min(max(it, 0), num_iterations - 1)
+    pct = t / (num_iterations - 1)
+    warmup_src = args.warmup_ratio if args.research_warmup_ratio < 0 else args.research_warmup_ratio
+    pct_start = min(max(warmup_src, 0.01), 0.99)
+    low = args.final_lr_frac
+    if pct <= pct_start:
+        phase = pct / pct_start
+        return low + (1.0 - low) * (1 - math.cos(math.pi * phase)) * 0.5
+    phase = (pct - pct_start) / (1 - pct_start)
+    return low + (1.0 - low) * (1 + math.cos(math.pi * phase)) * 0.5
 
 # Momentum scheduler for Muon optimizer (warms up to 0.95 over the first 300 steps)
 def get_muon_momentum(it):
@@ -545,7 +580,7 @@ while True:
             loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
     # step the optimizer
-    lrm = get_lr_multiplier(step)
+    lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
     for group in optimizer.param_groups:
@@ -592,7 +627,10 @@ while True:
     else:
         eta_str = ""
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    adamw_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "adamw"]
+    muon_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "muon"]
+    lr_msg = f"lr(adamw:{(sum(adamw_lrs)/len(adamw_lrs)) if adamw_lrs else 0:.3e}, muon:{(sum(muon_lrs)/len(muon_lrs)) if muon_lrs else 0:.3e})"
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | {lr_msg} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -641,6 +679,7 @@ get_report().log(section="Base model training", data=[
         "warmup_ratio": args.warmup_ratio,
         "warmdown_ratio": args.warmdown_ratio,
         "final_lr_frac": args.final_lr_frac,
+        "research_warmup_ratio": args.research_warmup_ratio,
     },
     { # stats about training outcomes
         "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
