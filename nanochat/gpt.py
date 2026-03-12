@@ -79,6 +79,14 @@ class GPTConfig:
     linear_basis_size: int = 64
     moe_use_abs_pos_embed: bool = True
 
+    # Shared context-aware router defaults used by embedding/context branches
+    router_context_window: int = -1
+    router_causal: bool = True
+    router_num_heads: int = 4
+    router_num_queries: int = 8
+    router_n_layers: int = 2
+    router_use_vocab_prior: bool = False
+
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
@@ -92,7 +100,9 @@ RESEARCH_ALLOWED_KEYS = {
     "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
     "use_vocab_prior", "expert_residual", 'allow_replacement',
     'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
-    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs", "moe_use_abs_pos_embed",
+    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
+    "router_context_window", "router_causal", "router_num_heads",
+    "router_num_queries", "router_n_layers", "router_use_vocab_prior",
 }
 
 
@@ -108,7 +118,11 @@ class Linear(nn.Linear):
 
 
 class ImprovedContextAwareRouter(nn.Module):
-    """Context-aware router used by research embedding branches."""
+    """Context-aware router used by research embedding branches.
+
+    Defaults: ``context_window=-1``, ``causal=True``, ``num_heads=4``,
+    ``num_queries=8``, ``n_layers=1``, ``use_vocab_prior=False``.
+    """
     def __init__(
         self,
         vocab_size,
@@ -192,7 +206,20 @@ class ImprovedContextAwareRouter(nn.Module):
 
 
 class DirectContextualEmbedding(nn.Module):
-    def __init__(self, vocab_size, dim, context_window, dropout=0.0):
+    """Direct contextual embedding with a configurable context-aware router."""
+
+    def __init__(
+        self,
+        vocab_size,
+        dim,
+        context_window,
+        dropout=0.0,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+    ):
         super().__init__()
         self.seed_embeddings = nn.Embedding(vocab_size, dim)
         self.router = ImprovedContextAwareRouter(
@@ -201,9 +228,11 @@ class DirectContextualEmbedding(nn.Module):
             router_dim=dim,
             full_embed_dim=dim,
             context_window=context_window,
-            causal=True,
-            n_layers=2,
-            use_vocab_prior=False,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
         self.dropout = nn.Dropout(dropout)
         self.out_norm = nn.LayerNorm(dim)
@@ -215,7 +244,25 @@ class DirectContextualEmbedding(nn.Module):
 
 
 class PermutationMoE(nn.Module):
-    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0, use_abs_pos_embed=True):
+    """Permutation MoE embedding with configurable expert router defaults."""
+
+    def __init__(
+        self,
+        vocab_size,
+        block_size,
+        base_embed_dim,
+        num_experts=8,
+        router_dim=64,
+        selection_mode='soft',
+        allow_replacement=True,
+        dropout=0.0,
+        router_context_window=-1,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+    ):
         super().__init__()
         self.base_embed_dim = base_embed_dim
         self.num_experts = num_experts
@@ -238,10 +285,12 @@ class PermutationMoE(nn.Module):
             num_experts=num_experts,
             router_dim=router_dim,
             full_embed_dim=base_embed_dim,
-            context_window=-1,
-            causal=True,
-            n_layers=2,
-            use_vocab_prior=False,
+            context_window=router_context_window,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
         self.ln = nn.LayerNorm(base_embed_dim)
         self.dropout = nn.Dropout(dropout)
@@ -273,7 +322,24 @@ class PermutationMoE(nn.Module):
 
 
 class GlobalContextManager(nn.Module):
-    def __init__(self, vocab_size, d_model, router_dim=64, context_window=128):
+    """Global context manager built on the context-aware router.
+
+    Defaults: ``router_num_heads=4``, ``router_num_queries=8``,
+    ``router_n_layers=2``, ``router_use_vocab_prior=False``.
+    """
+
+    def __init__(
+        self,
+        vocab_size,
+        d_model,
+        router_dim=64,
+        context_window=128,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+    ):
         super().__init__()
         self.router = ImprovedContextAwareRouter(
             vocab_size=vocab_size,
@@ -281,9 +347,11 @@ class GlobalContextManager(nn.Module):
             router_dim=router_dim,
             full_embed_dim=d_model,
             context_window=context_window,
-            causal=True,
-            num_heads=4,
-            n_layers=2,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
 
     def forward(self, x_embeds, input_ids=None):
@@ -555,14 +623,24 @@ class GPT(nn.Module):
                     selection_mode=config.selection_mode,
                     allow_replacement=config.allow_replacement,
                     dropout=config.dropout,
-                    use_abs_pos_embed=config.moe_use_abs_pos_embed,
+                    router_context_window=config.router_context_window,
+                    router_causal=config.router_causal,
+                    router_num_heads=config.router_num_heads,
+                    router_num_queries=config.router_num_queries,
+                    router_n_layers=config.router_n_layers,
+                    router_use_vocab_prior=config.router_use_vocab_prior,
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
                     vocab_size=padded_vocab_size,
                     dim=self.moe_embed_dim,
-                    context_window=config.sequence_len,
+                    context_window=config.router_context_window,
                     dropout=config.dropout,
+                    router_causal=config.router_causal,
+                    router_num_heads=config.router_num_heads,
+                    router_num_queries=config.router_num_queries,
+                    router_n_layers=config.router_n_layers,
+                    router_use_vocab_prior=config.router_use_vocab_prior,
                 )
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim/target_dim must match n_embd"
         self.context_manager = None
@@ -571,7 +649,12 @@ class GPT(nn.Module):
                 vocab_size=padded_vocab_size,
                 d_model=config.n_embd,
                 router_dim=self.remix_context_dim,
-                context_window=config.sequence_len,
+                context_window=config.router_context_window,
+                router_causal=config.router_causal,
+                router_num_heads=config.router_num_heads,
+                router_num_queries=config.router_num_queries,
+                router_n_layers=config.router_n_layers,
+                router_use_vocab_prior=config.router_use_vocab_prior,
             )
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
