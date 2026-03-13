@@ -736,6 +736,28 @@ class GPT(nn.Module):
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
 
+        # Research branches are also on to_empty() storage and need explicit init.
+        def _init_research_module(mod: nn.Module):
+            for sub in mod.modules():
+                if isinstance(sub, (Linear, nn.Linear)):
+                    torch.nn.init.xavier_uniform_(sub.weight)
+                    if sub.bias is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, nn.Embedding):
+                    torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
+                elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
+                    if getattr(sub, 'weight', None) is not None:
+                        torch.nn.init.ones_(sub.weight)
+                    if getattr(sub, 'bias', None) is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, ImprovedContextAwareRouter):
+                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
+
+        if self.embedding_model is not None:
+            _init_research_module(self.embedding_model)
+        if self.context_manager is not None:
+            _init_research_module(self.context_manager)
+
         # Gate weights init to zero so gates start at sigmoid(0) = 0.5, scaled by 2 -> 1.0 (neutral)
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
