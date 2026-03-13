@@ -1,7 +1,7 @@
 """
 GPT model (rewrite, a lot simpler)
 Notable features:
-- rotary embeddings (and no positional embeddings)
+- rotary embeddings (optionally combined with learned absolute positional embeddings)
 - QK norm
 - untied weights for token embedding and lm_head
 - relu^2 activation in MLP
@@ -27,6 +27,13 @@ from nanochat.flash_attention import flash_attn
 
 @dataclass
 class GPTConfig:
+    """Configuration for :class:`GPT` and optional research branches.
+
+    Router defaults are explicit to keep notebook experiments reproducible:
+    ``router_context_window=-1`` (full context), ``router_causal=True``,
+    ``router_num_heads=4``, ``router_num_queries=8``, ``router_n_layers=2``,
+    and ``router_use_vocab_prior=False``.
+    """
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
@@ -70,6 +77,16 @@ class GPTConfig:
     use_remixed_linear: bool = False
     context_dim: int = 64
     linear_basis_size: int = 64
+    use_pos_embed: bool = False
+    moe_use_abs_pos_embed: bool = True
+
+    # Shared context-aware router defaults used by embedding/context branches
+    router_context_window: int = -1
+    router_causal: bool = True
+    router_num_heads: int = 4
+    router_num_queries: int = 8
+    router_n_layers: int = 2
+    router_use_vocab_prior: bool = False
 
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
@@ -85,6 +102,9 @@ RESEARCH_ALLOWED_KEYS = {
     "use_vocab_prior", "expert_residual", 'allow_replacement',
     'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
     "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
+    "use_pos_embed", "moe_use_abs_pos_embed",
+    "router_context_window", "router_causal", "router_num_heads",
+    "router_num_queries", "router_n_layers", "router_use_vocab_prior",
 }
 
 
@@ -100,7 +120,11 @@ class Linear(nn.Linear):
 
 
 class ImprovedContextAwareRouter(nn.Module):
-    """Context-aware router used by research embedding branches."""
+    """Context-aware router used by research embedding branches.
+
+    Defaults: ``context_window=-1``, ``causal=True``, ``num_heads=4``,
+    ``num_queries=8``, ``n_layers=1``, ``use_vocab_prior=False``.
+    """
     def __init__(
         self,
         vocab_size,
@@ -184,7 +208,20 @@ class ImprovedContextAwareRouter(nn.Module):
 
 
 class DirectContextualEmbedding(nn.Module):
-    def __init__(self, vocab_size, dim, context_window, dropout=0.0):
+    """Direct contextual embedding with a configurable context-aware router."""
+
+    def __init__(
+        self,
+        vocab_size,
+        dim,
+        context_window,
+        dropout=0.0,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+    ):
         super().__init__()
         self.seed_embeddings = nn.Embedding(vocab_size, dim)
         self.router = ImprovedContextAwareRouter(
@@ -193,9 +230,11 @@ class DirectContextualEmbedding(nn.Module):
             router_dim=dim,
             full_embed_dim=dim,
             context_window=context_window,
-            causal=True,
-            n_layers=2,
-            use_vocab_prior=False,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
         self.dropout = nn.Dropout(dropout)
         self.out_norm = nn.LayerNorm(dim)
@@ -207,14 +246,36 @@ class DirectContextualEmbedding(nn.Module):
 
 
 class PermutationMoE(nn.Module):
-    def __init__(self, vocab_size, block_size, base_embed_dim, num_experts=8, router_dim=64, selection_mode='soft', allow_replacement=True, dropout=0.0):
+    """Permutation MoE embedding with configurable expert router defaults.
+
+    Defaults to learned absolute positional embeddings (``moe_use_abs_pos_embed=True``).
+    """
+
+    def __init__(
+        self,
+        vocab_size,
+        block_size,
+        base_embed_dim,
+        num_experts=8,
+        router_dim=64,
+        selection_mode='soft',
+        allow_replacement=True,
+        dropout=0.0,
+        router_context_window=-1,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+        moe_use_abs_pos_embed=True,
+    ):
         super().__init__()
         self.base_embed_dim = base_embed_dim
         self.num_experts = num_experts
         self.selection_mode = selection_mode
         self.allow_replacement = allow_replacement
         self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
-        self.position_embeddings = nn.Embedding(block_size, base_embed_dim)
+        self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if moe_use_abs_pos_embed else None
         self.dim_selectors = nn.ModuleList([
             nn.Sequential(
                 Linear(base_embed_dim, router_dim, bias=False),
@@ -229,10 +290,12 @@ class PermutationMoE(nn.Module):
             num_experts=num_experts,
             router_dim=router_dim,
             full_embed_dim=base_embed_dim,
-            context_window=-1,
-            causal=True,
-            n_layers=2,
-            use_vocab_prior=False,
+            context_window=router_context_window,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
         self.ln = nn.LayerNorm(base_embed_dim)
         self.dropout = nn.Dropout(dropout)
@@ -240,8 +303,10 @@ class PermutationMoE(nn.Module):
 
     def forward(self, input_ids):
         batch_size, seq_len = input_ids.shape
-        positions = torch.arange(seq_len, device=input_ids.device)
-        embeds = self.embeddings(input_ids) + self.position_embeddings(positions)
+        embeds = self.embeddings(input_ids)
+        if self.position_embeddings is not None:
+            positions = torch.arange(seq_len, device=input_ids.device)
+            embeds = embeds + self.position_embeddings(positions)
         expert_outputs = []
         for expert_idx in range(self.num_experts):
             selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
@@ -262,7 +327,24 @@ class PermutationMoE(nn.Module):
 
 
 class GlobalContextManager(nn.Module):
-    def __init__(self, vocab_size, d_model, router_dim=64, context_window=128):
+    """Global context manager built on the context-aware router.
+
+    Defaults: ``router_num_heads=4``, ``router_num_queries=8``,
+    ``router_n_layers=2``, ``router_use_vocab_prior=False``.
+    """
+
+    def __init__(
+        self,
+        vocab_size,
+        d_model,
+        router_dim=64,
+        context_window=128,
+        router_causal=True,
+        router_num_heads=4,
+        router_num_queries=8,
+        router_n_layers=2,
+        router_use_vocab_prior=False,
+    ):
         super().__init__()
         self.router = ImprovedContextAwareRouter(
             vocab_size=vocab_size,
@@ -270,9 +352,11 @@ class GlobalContextManager(nn.Module):
             router_dim=router_dim,
             full_embed_dim=d_model,
             context_window=context_window,
-            causal=True,
-            num_heads=4,
-            n_layers=2,
+            causal=router_causal,
+            num_heads=router_num_heads,
+            num_queries=router_num_queries,
+            n_layers=router_n_layers,
+            use_vocab_prior=router_use_vocab_prior,
         )
 
     def forward(self, x_embeds, input_ids=None):
@@ -515,6 +599,7 @@ class GPT(nn.Module):
         self.use_remix_linear = config.use_remix_linear or config.use_remixed_linear
         self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else config.context_dim
         self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else config.linear_basis_size
+        self.use_pos_embed = config.use_pos_embed
         if config.remixed_linear_kwargs is None:
             self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         else:
@@ -532,6 +617,8 @@ class GPT(nn.Module):
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([block_cls(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
+        if self.use_pos_embed:
+            self.transformer["wpe"] = nn.Embedding(config.sequence_len, config.n_embd)
         self.embedding_model = None
         if self.use_moe:
             if self.use_perm:
@@ -544,13 +631,25 @@ class GPT(nn.Module):
                     selection_mode=config.selection_mode,
                     allow_replacement=config.allow_replacement,
                     dropout=config.dropout,
+                    router_context_window=config.router_context_window,
+                    router_causal=config.router_causal,
+                    router_num_heads=config.router_num_heads,
+                    router_num_queries=config.router_num_queries,
+                    router_n_layers=config.router_n_layers,
+                    router_use_vocab_prior=config.router_use_vocab_prior,
+                    moe_use_abs_pos_embed=config.moe_use_abs_pos_embed,
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
                     vocab_size=padded_vocab_size,
                     dim=self.moe_embed_dim,
-                    context_window=config.sequence_len,
+                    context_window=config.router_context_window,
                     dropout=config.dropout,
+                    router_causal=config.router_causal,
+                    router_num_heads=config.router_num_heads,
+                    router_num_queries=config.router_num_queries,
+                    router_n_layers=config.router_n_layers,
+                    router_use_vocab_prior=config.router_use_vocab_prior,
                 )
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim/target_dim must match n_embd"
         self.context_manager = None
@@ -559,7 +658,12 @@ class GPT(nn.Module):
                 vocab_size=padded_vocab_size,
                 d_model=config.n_embd,
                 router_dim=self.remix_context_dim,
-                context_window=config.sequence_len,
+                context_window=config.router_context_window,
+                router_causal=config.router_causal,
+                router_num_heads=config.router_num_heads,
+                router_num_queries=config.router_num_queries,
+                router_n_layers=config.router_n_layers,
+                router_use_vocab_prior=config.router_use_vocab_prior,
             )
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
@@ -600,6 +704,8 @@ class GPT(nn.Module):
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+        if "wpe" in self.transformer:
+            torch.nn.init.normal_(self.transformer.wpe.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
@@ -629,6 +735,28 @@ class GPT(nn.Module):
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
+
+        # Research branches are also on to_empty() storage and need explicit init.
+        def _init_research_module(mod: nn.Module):
+            for sub in mod.modules():
+                if isinstance(sub, (Linear, nn.Linear)):
+                    torch.nn.init.xavier_uniform_(sub.weight)
+                    if sub.bias is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, nn.Embedding):
+                    torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
+                elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
+                    if getattr(sub, 'weight', None) is not None:
+                        torch.nn.init.ones_(sub.weight)
+                    if getattr(sub, 'bias', None) is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, ImprovedContextAwareRouter):
+                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
+
+        if self.embedding_model is not None:
+            _init_research_module(self.embedding_model)
+        if self.context_manager is not None:
+            _init_research_module(self.context_manager)
 
         # Gate weights init to zero so gates start at sigmoid(0) = 0.5, scaled by 2 -> 1.0 (neutral)
         for block in self.transformer.h:
@@ -712,7 +840,8 @@ class GPT(nn.Module):
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
+        wpe_numel = self.transformer.wpe.weight.numel() if "wpe" in self.transformer else 0
+        nparams_exclude = (self.transformer.wte.weight.numel() + wpe_numel + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
@@ -738,6 +867,7 @@ class GPT(nn.Module):
         """
         # Count each group separately (mirrors the grouping in setup_optimizers)
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
+        wpe = sum(p.numel() for p in self.transformer.wpe.parameters()) if "wpe" in self.transformer else 0
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
@@ -747,10 +877,11 @@ class GPT(nn.Module):
         if self.context_manager is not None:
             research += sum(p.numel() for p in self.context_manager.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + research + scalars
+        total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
+            'wpe': wpe,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
@@ -777,6 +908,8 @@ class GPT(nn.Module):
 
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
+        if "wpe" in self.transformer:
+            embedding_params += list(self.transformer.wpe.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
@@ -834,6 +967,10 @@ class GPT(nn.Module):
             x = self.transformer.wte(idx) # embed current token
         else:
             x, _ = self.embedding_model(idx)
+        if "wpe" in self.transformer:
+            assert T_total <= self.config.sequence_len, f"use_pos_embed=True requires sequence <= {self.config.sequence_len}, got {T_total}"
+            positions = torch.arange(T0, T_total, device=idx.device)
+            x = x + self.transformer.wpe(positions)
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
@@ -893,4 +1030,3 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
-
