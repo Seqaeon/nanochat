@@ -164,6 +164,7 @@ def build_model_meta(depth):
         use_moe=args.use_moe,
         use_perm=args.use_perm,
         num_experts=args.num_experts,
+        moe_num_experts=args.num_experts,
         router_dim=args.router_dim,
         target_dim=args.target_dim,
         selection_mode=args.selection_mode,
