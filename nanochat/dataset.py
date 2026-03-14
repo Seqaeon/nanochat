@@ -38,6 +38,13 @@ def resolve_data_dir(data_dir=None):
         return data_dir
     return os.environ.get("NANOCHAT_DATA_DIR", default_data_dir())
 
+
+def resolve_data_dir(data_dir=None):
+    """Resolve dataset path from explicit arg, env override, or default."""
+    if data_dir is not None:
+        return data_dir
+    return os.environ.get("NANOCHAT_DATA_DIR", DATA_DIR)
+
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
