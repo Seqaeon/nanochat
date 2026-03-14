@@ -41,6 +41,8 @@ print_banner()
 parser = argparse.ArgumentParser(description="Pretrain base model")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+parser.add_argument("--data-dir", type=str, default=None, help="dataset parquet directory (default: nanochat.dataset.DATA_DIR)")
+parser.add_argument("--checkpoints-dir", type=str, default=None, help="base checkpoint root directory (default: <base_dir>/base_checkpoints)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # FP8 training
@@ -193,9 +195,9 @@ model.to_empty(device=device) # 2) All tensors get storage on target device but 
 model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+checkpoints_root = args.checkpoints_dir if args.checkpoints_dir else os.path.join(get_base_dir(), "base_checkpoints")
+checkpoint_dir = os.path.join(checkpoints_root, output_dirname)
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
@@ -370,8 +372,23 @@ if scaler is not None:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
+    tokenizer,
+    args.device_batch_size,
+    args.max_seq_len,
+    split="train",
+    device=device,
+    resume_state_dict=dataloader_resume_state_dict,
+    data_dir=args.data_dir,
+)
+build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
+    tokenizer,
+    args.device_batch_size,
+    args.max_seq_len,
+    split="val",
+    device=device,
+    data_dir=args.data_dir,
+)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -698,4 +715,3 @@ get_report().log(section="Base model training", data=[
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
-
