@@ -24,8 +24,19 @@ from nanochat.common import get_base_dir
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
-base_dir = get_base_dir()
-DATA_DIR = os.path.join(base_dir, "base_data_climbmix")
+def default_data_dir():
+    """Default dataset directory under the current nanochat base dir."""
+    return os.path.join(get_base_dir(), "base_data_climbmix")
+
+
+DATA_DIR = default_data_dir()
+
+
+def resolve_data_dir(data_dir=None):
+    """Resolve dataset path from explicit arg, env override, or default."""
+    if data_dir is not None:
+        return data_dir
+    return os.environ.get("NANOCHAT_DATA_DIR", default_data_dir())
 
 
 def resolve_data_dir(data_dir=None):
@@ -131,7 +142,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download pretraining dataset shards")
     parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of train shards to download (default: -1), -1 = disable")
     parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
-    parser.add_argument("--data-dir", type=str, default=None, help="dataset output directory (default: NANOCHAT_DATA_DIR or nanochat base dir)")
+    parser.add_argument("--data-dir", type=str, default=None, help="dataset output directory (default: NANOCHAT_DATA_DIR or <base_dir>/base_data_climbmix)")
     args = parser.parse_args()
 
     data_dir = resolve_data_dir(args.data_dir)
