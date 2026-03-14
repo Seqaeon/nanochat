@@ -10,6 +10,7 @@ For details of how the dataset was prepared, see `repackage_data_reference.py`.
 import os
 import argparse
 import time
+from functools import partial
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
@@ -26,12 +27,19 @@ index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the f
 base_dir = get_base_dir()
 DATA_DIR = os.path.join(base_dir, "base_data_climbmix")
 
+
+def resolve_data_dir(data_dir=None):
+    """Resolve dataset path from explicit arg, env override, or default."""
+    if data_dir is not None:
+        return data_dir
+    return os.environ.get("NANOCHAT_DATA_DIR", DATA_DIR)
+
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
 def list_parquet_files(data_dir=None, warn_on_legacy=False):
     """ Looks into a data dir and returns full paths to all parquet files. """
-    data_dir = DATA_DIR if data_dir is None else data_dir
+    data_dir = resolve_data_dir(data_dir)
 
     # If the directory doesn't exist, create it in the current working directory
     if not os.path.exists(data_dir):
@@ -67,12 +75,12 @@ def parquets_iter_batched(split, start=0, step=1):
             yield texts
 
 # -----------------------------------------------------------------------------
-def download_single_file(index):
+def download_single_file(index, data_dir):
     """ Downloads a single file index, with some backoff """
 
     # Construct the local filepath for this file and skip if it already exists
     filename = index_to_filename(index)
-    filepath = os.path.join(DATA_DIR, filename)
+    filepath = os.path.join(data_dir, filename)
     if os.path.exists(filepath):
         print(f"Skipping {filepath} (already exists)")
         return True
@@ -123,10 +131,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download pretraining dataset shards")
     parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of train shards to download (default: -1), -1 = disable")
     parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
+    parser.add_argument("--data-dir", type=str, default=None, help="dataset output directory (default: NANOCHAT_DATA_DIR or nanochat base dir)")
     args = parser.parse_args()
 
+    data_dir = resolve_data_dir(args.data_dir)
+
     # Prepare the output directory
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
 
     # The way this works is that the user specifies the number of train shards to download via the -n flag.
     # In addition to that, the validation shard is *always* downloaded and is pinned to be the last shard.
@@ -136,11 +147,12 @@ if __name__ == "__main__":
 
     # Download the shards
     print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
-    print(f"Target directory: {DATA_DIR}")
+    print(f"Target directory: {data_dir}")
     print()
+    download = partial(download_single_file, data_dir=data_dir)
     with Pool(processes=args.num_workers) as pool:
-        results = pool.map(download_single_file, ids_to_download)
+        results = pool.map(download, ids_to_download)
 
     # Report results
     successful = sum(1 for success in results if success)
-    print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {DATA_DIR}")
+    print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {data_dir}")
