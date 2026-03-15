@@ -212,22 +212,32 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
     Wrap the model for distributed or data parallel training, and optionally compile it.
     Automatically propagates custom methods from the inner model to the wrapper.
     """
+    import os
     import torch.nn as nn
-    from nanochat.common import get_dist_info
+    from nanochat.common import get_dist_info, print0
+
+    # Environment override for parallel_type (useful for notebooks)
+    env_parallel = os.environ.get("NANOCHAT_PARALLEL", "").lower()
+    if env_parallel in ["dp", "ddp"]:
+        parallel_type = env_parallel
 
     inner_model = model
     ddp_requested, rank, local_rank, world_size = get_dist_info()
 
     # 1) Parallel wrapping
     if parallel_type == "ddp" and ddp_requested:
-        # device is already set in compute_init
+        print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank})")
         model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
     elif parallel_type == "dp":
-        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        num_gpus = torch.cuda.device_count()
+        if torch.cuda.is_available() and num_gpus > 1:
+            print0(f"✓ Wrapping model with DataParallel (detected {num_gpus} GPUs)")
             model = nn.DataParallel(model)
             # Add a get_device method if it doesn't exist
             if not hasattr(model, "get_device"):
                 model.get_device = lambda: next(model.parameters()).device
+        elif parallel_type == "dp":
+            print0(f"i DataParallel requested but only {num_gpus} GPUs available. Skipping wrapper.")
 
     # 2) Compilation
     if compile:

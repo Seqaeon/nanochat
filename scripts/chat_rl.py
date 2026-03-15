@@ -69,11 +69,14 @@ ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type
 # nn.DataParallel optimization (multi-GPU without torchrun)
 is_dp = args.parallel == "dp" and device_type == "cuda" and torch.cuda.device_count() > 1
 if is_dp:
-    print0(f"✓ Using nn.DataParallel (detected {torch.cuda.device_count()} GPUs)")
     # When using DP, we act like a single world but with larger device_batch_size
     ddp_world_size = torch.cuda.device_count()
     ddp_rank = 0
     ddp_local_rank = 0
+    print0(f"✓ Using nn.DataParallel (detected {ddp_world_size} GPUs)")
+else:
+    if args.parallel == "dp":
+        print0(f"i DataParallel requested but suppressed: device_type={device_type}, gpu_count={torch.cuda.device_count()}")
 
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 
