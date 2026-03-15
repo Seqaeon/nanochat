@@ -45,6 +45,7 @@ parser.add_argument("--data-dir", type=str, default=None, help="dataset parquet 
 parser.add_argument("--checkpoints-dir", type=str, default=None, help="base checkpoint root directory (default: <base_dir>/base_checkpoints)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--parallel", type=str, default="ddp", choices=["ddp", "dp"], help="ddp: DistributedDataParallel (via torchrun), dp: nn.DataParallel (for Kaggle/notebooks)")
 # FP8 training
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU and torchao)")
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
@@ -106,6 +107,16 @@ user_config = vars(args).copy()  # for logging
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+# nn.DataParallel optimization (multi-GPU without torchrun)
+is_dp = args.parallel == "dp" and device_type == "cuda" and torch.cuda.device_count() > 1
+if is_dp:
+    print0(f"✓ Using nn.DataParallel (detected {torch.cuda.device_count()} GPUs)")
+    # When using DP, we act like a single world but with larger device_batch_size
+    ddp_world_size = torch.cuda.device_count()
+    ddp_rank = 0
+    ddp_local_rank = 0
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
@@ -116,6 +127,8 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+if is_dp:
+    print0(f"DataParallel enabled: world_size={ddp_world_size}")
 
 # wandb logging init
 use_dummy_wandb = True # args.run == "dummy" or not master_process
@@ -286,6 +299,10 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
+
+if is_dp:
+    model = torch.nn.DataParallel(model)
+
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
@@ -374,7 +391,7 @@ if scaler is not None:
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     tokenizer,
-    args.device_batch_size,
+    args.device_batch_size * (ddp_world_size if is_dp else 1),
     args.max_seq_len,
     split="train",
     device=device,
@@ -383,7 +400,7 @@ train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
 )
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
     tokenizer,
-    args.device_batch_size,
+    args.device_batch_size * (ddp_world_size if is_dp else 1),
     args.max_seq_len,
     split="val",
     device=device,
@@ -487,8 +504,9 @@ else:
     total_training_time = loop_state["total_training_time"]
 
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
-tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
+effective_device_batch_size = args.device_batch_size * (ddp_world_size if is_dp else 1)
+tokens_per_fwdbwd = effective_device_batch_size * args.max_seq_len # tokens per iteration for a single rank
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * (1 if is_dp else ddp_world_size) # total tokens per iteration for all ranks
 assert total_batch_size % world_tokens_per_fwdbwd == 0
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
