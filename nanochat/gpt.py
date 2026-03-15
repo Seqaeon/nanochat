@@ -398,7 +398,11 @@ class RemixedLinear(nn.Module):
         if not self.use_output_gate:
             gate_out = torch.ones_like(gate_out)
         h_gated = (h_basis * gate_basis).to(dtype=x.dtype)
-        pre_output = F.linear(h_gated, self.template_mixing.to(dtype=x.dtype))
+        weight = self.template_mixing.to(dtype=x.dtype)
+        # Debug check to catch the culprit
+        if h_gated.dtype != weight.dtype:
+             raise RuntimeError(f"DTYPE_MISMATCH_DEBUG: x.dtype={x.dtype}, h_basis.dtype={h_basis.dtype}, gate_basis.dtype={gate_basis.dtype}, h_gated.dtype={h_gated.dtype}, weight.dtype={weight.dtype}, mixing_orig={self.template_mixing.dtype}")
+        pre_output = F.linear(h_gated, weight)
         return (pre_output * gate_out + self.bias.to(dtype=x.dtype)).to(dtype=x.dtype)
 
 
