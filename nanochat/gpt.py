@@ -385,25 +385,26 @@ class RemixedLinear(nn.Module):
         self.ln_basis = nn.LayerNorm(basis_size)
 
     def forward(self, x, context_state):
+        # Activation dtype (e.g. bf16 or float32)
+        dtype = x.dtype
         # Ensure input to LayerNorm matches its weight dtype (crucial for inference in different precisions)
-        h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=x.dtype)
+        h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
         if self.use_context and context_state is not None:
-            # Ensure context_state matches the compute dtype x.dtype to prevent upcasting of gates
-            gates = torch.sigmoid(self.context_modulator(context_state.to(dtype=x.dtype)))
-            gate_basis = gates[..., :self.basis_size].to(dtype=x.dtype) if self.use_basis_gate else torch.ones_like(h_basis)
-            gate_out = gates[..., self.basis_size:].to(dtype=x.dtype)
+            # Ensure context_state matches the compute dtype to prevent upcasting of gates
+            gates = torch.sigmoid(self.context_modulator(context_state.to(dtype=dtype)))
+            gate_basis = gates[..., :self.basis_size].to(dtype=dtype) if self.use_basis_gate else torch.ones_like(h_basis)
+            gate_out = gates[..., self.basis_size:].to(dtype=dtype)
         else:
             gate_basis = torch.ones_like(h_basis)
-            gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=x.dtype)
+            gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=dtype)
         if not self.use_output_gate:
             gate_out = torch.ones_like(gate_out)
-        h_gated = (h_basis * gate_basis).to(dtype=x.dtype)
-        weight = self.template_mixing.to(dtype=x.dtype)
-        # Debug check to catch the culprit
-        if h_gated.dtype != weight.dtype:
-             raise RuntimeError(f"DTYPE_MISMATCH_DEBUG: x.dtype={x.dtype}, h_basis.dtype={h_basis.dtype}, gate_basis.dtype={gate_basis.dtype}, h_gated.dtype={h_gated.dtype}, weight.dtype={weight.dtype}, mixing_orig={self.template_mixing.dtype}")
-        pre_output = F.linear(h_gated, weight)
-        return (pre_output * gate_out + self.bias.to(dtype=x.dtype)).to(dtype=x.dtype)
+        
+        # Multiply in the activation dtype
+        h_gated = (h_basis * gate_basis).to(dtype=dtype)
+        # Linear layer expects weight matching input, and return value added with bias
+        pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
+        return (pre_output * gate_out + self.bias.to(dtype=dtype)).to(dtype=dtype)
 
 
 class RemixedFeedForward(nn.Module):
