@@ -387,16 +387,17 @@ class RemixedLinear(nn.Module):
     def forward(self, x, context_state):
         # Ensure input to LayerNorm matches its weight dtype (crucial for inference in different precisions)
         h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=x.dtype)
-        if self.use_context:
-            gates = torch.sigmoid(self.context_modulator(context_state))
-            gate_basis = gates[..., :self.basis_size] if self.use_basis_gate else torch.ones_like(h_basis)
-            gate_out = gates[..., self.basis_size:]
+        if self.use_context and context_state is not None:
+            # Ensure context_state matches the compute dtype x.dtype to prevent upcasting of gates
+            gates = torch.sigmoid(self.context_modulator(context_state.to(dtype=x.dtype)))
+            gate_basis = gates[..., :self.basis_size].to(dtype=x.dtype) if self.use_basis_gate else torch.ones_like(h_basis)
+            gate_out = gates[..., self.basis_size:].to(dtype=x.dtype)
         else:
             gate_basis = torch.ones_like(h_basis)
             gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=x.dtype)
         if not self.use_output_gate:
             gate_out = torch.ones_like(gate_out)
-        h_gated = h_basis * gate_basis
+        h_gated = (h_basis * gate_basis).to(dtype=x.dtype)
         pre_output = F.linear(h_gated, self.template_mixing.to(dtype=x.dtype))
         return (pre_output * gate_out + self.bias.to(dtype=x.dtype)).to(dtype=x.dtype)
 
