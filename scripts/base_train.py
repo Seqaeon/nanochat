@@ -309,12 +309,12 @@ model = torch.compile(model, dynamic=False) # the inputs to model will never cha
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
 
 # Get the parameter counts of our model
-param_counts = model.num_scaling_params()
+param_counts = orig_model.num_scaling_params()
 print0(f"Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
 num_params = param_counts['total']
-num_flops_per_token = model.estimate_flops()
+num_flops_per_token = orig_model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
 # 1) Use scaling laws to determine the optimal training horizon in tokens
@@ -325,7 +325,7 @@ def get_scaling_params(m):
     params_counts = m.num_scaling_params()
     scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
     return scaling_params
-num_scaling_params = get_scaling_params(model)
+num_scaling_params = get_scaling_params(orig_model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
 
 # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
@@ -365,7 +365,7 @@ if weight_decay_scaled != args.weight_decay:
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
-optimizer = model.setup_optimizer(
+optimizer = orig_model.setup_optimizer(
     # AdamW hyperparameters
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
