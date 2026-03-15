@@ -385,7 +385,8 @@ class RemixedLinear(nn.Module):
         self.ln_basis = nn.LayerNorm(basis_size)
 
     def forward(self, x, context_state):
-        h_basis = self.ln_basis(self.basis(x))
+        # Ensure input to LayerNorm matches its weight dtype (crucial for inference in different precisions)
+        h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=x.dtype)
         if self.use_context:
             gates = torch.sigmoid(self.context_modulator(context_state))
             gate_basis = gates[..., :self.basis_size] if self.use_basis_gate else torch.ones_like(h_basis)
@@ -397,7 +398,7 @@ class RemixedLinear(nn.Module):
             gate_out = torch.ones_like(gate_out)
         h_gated = h_basis * gate_basis
         pre_output = F.linear(h_gated, self.template_mixing.to(dtype=x.dtype))
-        return pre_output * gate_out + self.bias
+        return (pre_output * gate_out + self.bias.to(dtype=x.dtype)).to(dtype=x.dtype)
 
 
 class RemixedFeedForward(nn.Module):
