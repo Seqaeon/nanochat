@@ -22,7 +22,7 @@ import itertools
 # import wandb
 import torch
 import torch.distributed as dist
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type, wrap_model
 from nanochat.checkpoint_manager import save_checkpoint, load_model
 from nanochat.engine import Engine
 from tasks.gsm8k import GSM8K
@@ -34,6 +34,7 @@ parser = argparse.ArgumentParser(description="Reinforcement learning on GSM8K")
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--parallel", type=str, default="ddp", choices=["ddp", "dp"], help="ddp: DistributedDataParallel (via torchrun), dp: nn.DataParallel (for Kaggle/notebooks)")
 # Model loading
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
@@ -64,6 +65,16 @@ user_config = vars(args).copy()
 # Init compute/precision
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+# nn.DataParallel optimization (multi-GPU without torchrun)
+is_dp = args.parallel == "dp" and device_type == "cuda" and torch.cuda.device_count() > 1
+if is_dp:
+    print0(f"✓ Using nn.DataParallel (detected {torch.cuda.device_count()} GPUs)")
+    # When using DP, we act like a single world but with larger device_batch_size
+    ddp_world_size = torch.cuda.device_count()
+    ddp_rank = 0
+    ddp_local_rank = 0
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 
 # wandb logging init
@@ -72,6 +83,8 @@ wandb_run = DummyWandb() # if use_dummy_wandb else wandb.init(project="nanochat-
 
 # Init model and tokenizer
 model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+orig_model = model
+model = wrap_model(model, parallel_type=args.parallel, compile=False, device=device)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -85,7 +98,8 @@ print0(f"Calculated number of steps: {num_steps}")
 @torch.no_grad()
 def get_batch():
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
-    rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
+    # each rank is responsible for different examples in the training data
+    rank_indices = range(ddp_rank, len(train_task), ddp_world_size) 
     for example_idx in itertools.cycle(rank_indices):
 
         # First get the full conversation of both user and assistant messages
@@ -251,11 +265,13 @@ for step in range(num_steps):
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        assert inputs_all.size(0) % args.device_batch_size == 0
-        num_passes = inputs_all.size(0) // args.device_batch_size
+        num_samples_total = inputs_all.size(0)
+        # in DP mode, we use the whole batch at once
+        current_batch_size = args.device_batch_size * ddp_world_size if is_dp else args.device_batch_size
+        num_passes = num_samples_total // current_batch_size
         for pass_idx in range(num_passes):
             # Pluck out the batch for this pass
-            b0, b1 = pass_idx * args.device_batch_size, (pass_idx + 1) * args.device_batch_size
+            b0, b1 = pass_idx * current_batch_size, (pass_idx + 1) * current_batch_size
             inputs = inputs_all[b0:b1]
             targets = targets_all[b0:b1]
             rewards = rewards_all[b0:b1]

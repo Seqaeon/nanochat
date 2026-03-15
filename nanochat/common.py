@@ -207,6 +207,42 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     return is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size, device
 
+def wrap_model(model, parallel_type="ddp", compile=False, device=None):
+    """
+    Wrap the model for distributed or data parallel training, and optionally compile it.
+    Automatically propagates custom methods from the inner model to the wrapper.
+    """
+    import torch.nn as nn
+    from nanochat.common import get_dist_info
+
+    inner_model = model
+    ddp_requested, rank, local_rank, world_size = get_dist_info()
+
+    # 1) Parallel wrapping
+    if parallel_type == "ddp" and ddp_requested:
+        # device is already set in compute_init
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
+    elif parallel_type == "dp":
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            model = nn.DataParallel(model)
+            # Add a get_device method if it doesn't exist
+            if not hasattr(model, "get_device"):
+                model.get_device = lambda: next(model.parameters()).device
+
+    # 2) Compilation
+    if compile:
+        model = torch.compile(model)
+
+    # 3) Method Propagation
+    # We want these methods to be accessible on the wrapper as well
+    # (DataParallel and torch.compile hide them)
+    methods_to_propagate = ["setup_optimizer", "estimate_flops", "num_scaling_params", "get_device"]
+    for method_name in methods_to_propagate:
+        if hasattr(inner_model, method_name) and not hasattr(model, method_name):
+            setattr(model, method_name, getattr(inner_model, method_name))
+
+    return model
+
 def compute_cleanup():
     """Companion function to compute_init, to clean things up before script exit"""
     if is_ddp_initialized():

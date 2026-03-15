@@ -16,7 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 # import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, wrap_model
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -39,6 +39,7 @@ parser = argparse.ArgumentParser(description="Supervised fine-tuning (SFT) the m
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--parallel", type=str, default="ddp", choices=["ddp", "dp"], help="ddp: DistributedDataParallel (via torchrun), dp: nn.DataParallel (for Kaggle/notebooks)")
 # Model loading
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
@@ -73,6 +74,16 @@ user_config = vars(args).copy()
 # Compute init
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+# nn.DataParallel optimization (multi-GPU without torchrun)
+is_dp = args.parallel == "dp" and device_type == "cuda" and torch.cuda.device_count() > 1
+if is_dp:
+    print0(f"✓ Using nn.DataParallel (detected {torch.cuda.device_count()} GPUs)")
+    # When using DP, we act like a single world but with larger device_batch_size
+    ddp_world_size = torch.cuda.device_count()
+    ddp_rank = 0
+    ddp_local_rank = 0
+
 master_process = ddp_rank == 0
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
@@ -117,7 +128,7 @@ for name, fallback, source in [
         print0(f"Using {name}={arg_val}")
 
 orig_model = model
-model = torch.compile(model, dynamic=False)
+model = wrap_model(model, parallel_type=args.parallel, compile=True, device=device)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -224,7 +235,9 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
         rows = []
         mask_rows = []
         row_lengths = []  # Track actual content length (excluding padding) for each row
-        for _ in range(args.device_batch_size):
+        # In DP mode, we load a batch for all GPUs at once
+        loader_batch_size = args.device_batch_size * ddp_world_size if is_dp else args.device_batch_size
+        for _ in range(loader_batch_size):
             row = []
             mask_row = []
             padded = False
