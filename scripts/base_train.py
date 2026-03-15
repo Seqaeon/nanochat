@@ -302,6 +302,9 @@ orig_model = model # original, uncompiled model, for saving raw model state_dict
 
 if is_dp:
     model = torch.nn.DataParallel(model)
+    # Add get_device to the wrapper so that evaluation functions (like evaluate_bpb) work
+    import types
+    model.get_device = types.MethodType(lambda self: device, model)
 
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
