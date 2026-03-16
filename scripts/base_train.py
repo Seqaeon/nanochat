@@ -216,6 +216,8 @@ model.init_weights() # 3) All tensors get initialized
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
 checkpoints_root = args.checkpoints_dir if args.checkpoints_dir else os.path.join(get_base_dir(), "base_checkpoints")
+if not os.path.isabs(checkpoints_root):
+    checkpoints_root = os.path.join(get_base_dir(), checkpoints_root)
 checkpoint_dir = os.path.join(checkpoints_root, output_dirname)
 resuming = args.resume_from_step != -1
 if resuming:
