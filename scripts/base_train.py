@@ -23,6 +23,8 @@ from contextlib import contextmanager
 
 # import wandb
 import torch
+import torch._dynamo
+torch._dynamo.config.cache_size_limit = 1000
 import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
@@ -98,6 +100,7 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -310,7 +313,7 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = wrap_model(model, parallel_type=args.parallel, compile=True, device=device)
+model = wrap_model(model, parallel_type=args.parallel, compile=args.compile, device=device)
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -498,7 +501,7 @@ def get_weight_decay(it):
 # Loop state (variables updated by the training loop)
 if not resuming:
     step = 0
-    val_bpb = None # will be set if eval_every > 0
+    val_bpb = 0.0 # will be set if eval_every > 0
     min_val_bpb = float("inf")
     smooth_train_loss = 0 # EMA of training loss
     total_training_time = 0 # total wall-clock time of training
