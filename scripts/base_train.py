@@ -168,7 +168,7 @@ def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    if args.use_moe:
+    if args.use_moe or args.use_remixed_linear:
         model_dim = args.target_dim
         assert model_dim % args.head_dim == 0, f"target_dim must be divisible by head_dim ({args.head_dim}), got {model_dim}"
     else:
