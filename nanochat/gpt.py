@@ -116,7 +116,7 @@ class Linear(nn.Linear):
     Replaces autocast: master weights stay fp32 for optimizer precision,
     but matmuls run in the activation dtype (typically bf16 from embeddings)."""
     def forward(self, x):
-        return F.linear(x, self.weight.to(dtype=x.dtype))
+        return F.linear(x, self.weight.to(dtype=x.dtype), self.bias.to(dtype=x.dtype) if self.bias is not None else None)
 
 
 class ImprovedContextAwareRouter(nn.Module):
@@ -377,9 +377,9 @@ class RemixedLinear(nn.Module):
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
         self.context_modulator = nn.Sequential(
-            Linear(context_dim, max(1, basis_size // 2), bias=False),
+            Linear(context_dim, max(1, basis_size // 2)),
             nn.GELU(),
-            Linear(max(1, basis_size // 2), basis_size + out_features, bias=False),
+            Linear(max(1, basis_size // 2), basis_size + out_features),
         )
         self.bias = nn.Parameter(torch.zeros(out_features))
         self.ln_basis = nn.LayerNorm(basis_size)
@@ -611,6 +611,10 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         else:
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
+        
+        # Sync all aliases back to the config object for consistent logging/reporting
+        config.use_remix_linear = self.use_remix_linear
+        config.use_remixed_linear = self.use_remix_linear
         config.remix_context_dim = self.remix_context_dim
         config.remix_basis_size = self.remix_basis_size
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
@@ -708,6 +712,35 @@ class GPT(nn.Module):
             mlp.c_fc:        uniform, std=1/sqrt(n_embd)
             mlp.c_proj:      zeros
         """
+        # Research branches are also on to_empty() storage and need explicit init.
+        def _init_research_module(mod: nn.Module):
+            for sub in mod.modules():
+                if isinstance(sub, (Linear, nn.Linear)):
+                    torch.nn.init.xavier_uniform_(sub.weight)
+                    if sub.bias is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, nn.Embedding):
+                    torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
+                elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
+                    if getattr(sub, 'weight', None) is not None:
+                        torch.nn.init.ones_(sub.weight)
+                    if getattr(sub, 'bias', None) is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, ImprovedContextAwareRouter):
+                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
+                elif isinstance(sub, RemixedLinear):
+                    torch.nn.init.orthogonal_(sub.basis.weight)
+                    torch.nn.init.kaiming_normal_(sub.template_mixing)
+                    torch.nn.init.zeros_(sub.bias)
+                    # Initialize modulator: final layer bias to 2.0 to start with open gates
+                    for m in sub.context_modulator.modules():
+                        if isinstance(m, (Linear, nn.Linear)):
+                            torch.nn.init.xavier_uniform_(m.weight)
+                            if m.bias is not None:
+                                torch.nn.init.zeros_(m.bias)
+                    # The very last bias should be 2.0
+                    last_linear = [m for m in sub.context_modulator.modules() if isinstance(m, (Linear, nn.Linear))][-1]
+                    torch.nn.init.constant_(last_linear.bias, 2.0)
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
@@ -720,11 +753,7 @@ class GPT(nn.Module):
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
             if isinstance(block, RemixedBlock):
-                for proj in [block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
-                             block.ffwd.c_fc, block.ffwd.c_proj]:
-                    torch.nn.init.orthogonal_(proj.basis.weight)
-                    torch.nn.init.kaiming_normal_(proj.template_mixing)
-                    torch.nn.init.zeros_(proj.bias)
+                _init_research_module(block)
                 if block.attn.ve_gate is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.weight)
             else:
@@ -742,23 +771,6 @@ class GPT(nn.Module):
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
-
-        # Research branches are also on to_empty() storage and need explicit init.
-        def _init_research_module(mod: nn.Module):
-            for sub in mod.modules():
-                if isinstance(sub, (Linear, nn.Linear)):
-                    torch.nn.init.xavier_uniform_(sub.weight)
-                    if sub.bias is not None:
-                        torch.nn.init.zeros_(sub.bias)
-                elif isinstance(sub, nn.Embedding):
-                    torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
-                elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
-                    if getattr(sub, 'weight', None) is not None:
-                        torch.nn.init.ones_(sub.weight)
-                    if getattr(sub, 'bias', None) is not None:
-                        torch.nn.init.zeros_(sub.bias)
-                elif isinstance(sub, ImprovedContextAwareRouter):
-                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
 
         if self.embedding_model is not None:
             _init_research_module(self.embedding_model)
