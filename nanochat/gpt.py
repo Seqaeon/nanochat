@@ -148,15 +148,15 @@ class ImprovedContextAwareRouter(nn.Module):
         self.n_layers = n_layers
         self.use_vocab_prior = use_vocab_prior
 
-        self.embed_proj = Linear(full_embed_dim, router_dim, bias=False)
+        self.embed_proj = Linear(full_embed_dim, router_dim, bias=True)
         self.qkv_proj = Linear(router_dim, 3 * router_dim, bias=False)
-        self.out_proj = Linear(router_dim, router_dim, bias=False)
+        self.out_proj = Linear(router_dim, router_dim, bias=True)
         self.ln = nn.LayerNorm(router_dim)
         self.routing_queries = nn.Parameter(torch.randn(num_queries, router_dim))
-        self.temperature_predictor = Linear(router_dim, 1, bias=False)
-        self.expert_proj = Linear(router_dim, num_experts, bias=False)
-        self.cross_expert_proj = Linear(router_dim, num_experts, bias=False)
-        self.alpha_gate = Linear(router_dim, 1, bias=False)
+        self.temperature_predictor = Linear(router_dim, 1, bias=True)
+        self.expert_proj = Linear(router_dim, num_experts, bias=True)
+        self.cross_expert_proj = Linear(router_dim, num_experts, bias=True)
+        self.alpha_gate = Linear(router_dim, 1, bias=True)
         if use_vocab_prior:
             self.vocab_routing_bias = nn.Embedding(vocab_size, num_experts)
 
@@ -714,8 +714,41 @@ class GPT(nn.Module):
         """
         # Research branches are also on to_empty() storage and need explicit init.
         def _init_research_module(mod: nn.Module):
+            # We use a non-recursive approach to avoid overwriting specialized inits
             for sub in mod.modules():
+                if isinstance(sub, RemixedLinear):
+                    torch.nn.init.orthogonal_(sub.basis.weight)
+                    torch.nn.init.kaiming_normal_(sub.template_mixing)
+                    torch.nn.init.zeros_(sub.bias)
+                    # Initialize modulator: final layer bias to 2.0 to start with open gates
+                    for m in sub.context_modulator.modules():
+                        if isinstance(m, (Linear, nn.Linear)):
+                            torch.nn.init.xavier_uniform_(m.weight)
+                            if m.bias is not None:
+                                torch.nn.init.zeros_(m.bias)
+                    # Force final bias to 2.0
+                    last_linear = [m for m in sub.context_modulator.modules() if isinstance(m, (Linear, nn.Linear))][-1]
+                    torch.nn.init.constant_(last_linear.bias, 2.0)
+                    continue # Skip further processing of this module's sub-components here
+
+                if isinstance(sub, ImprovedContextAwareRouter):
+                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
+                    # Research projections use std=0.02 (matches notebook)
+                    torch.nn.init.normal_(sub.expert_proj.weight, mean=0.0, std=0.02)
+                    torch.nn.init.normal_(sub.cross_expert_proj.weight, mean=0.0, std=0.02)
+                    if sub.expert_proj.bias is not None: torch.nn.init.zeros_(sub.expert_proj.bias)
+                    if sub.cross_expert_proj.bias is not None: torch.nn.init.zeros_(sub.cross_expert_proj.bias)
+                    
+                    # Projections and gates (Xavier or Normal)
+                    for m in [sub.embed_proj, sub.out_proj, sub.temperature_predictor, sub.alpha_gate]:
+                        torch.nn.init.xavier_uniform_(m.weight)
+                        if m.bias is not None: torch.nn.init.zeros_(m.bias)
+                    continue
+
+                # Fallback for remaining research linear layers/embeddings
                 if isinstance(sub, (Linear, nn.Linear)):
+                    # Check if already initialized by a parent (RemixedLinear/Router)
+                    # In this simplified logic, we just check if it's a direct child of research
                     torch.nn.init.xavier_uniform_(sub.weight)
                     if sub.bias is not None:
                         torch.nn.init.zeros_(sub.bias)
@@ -726,21 +759,6 @@ class GPT(nn.Module):
                         torch.nn.init.ones_(sub.weight)
                     if getattr(sub, 'bias', None) is not None:
                         torch.nn.init.zeros_(sub.bias)
-                elif isinstance(sub, ImprovedContextAwareRouter):
-                    torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
-                elif isinstance(sub, RemixedLinear):
-                    torch.nn.init.orthogonal_(sub.basis.weight)
-                    torch.nn.init.kaiming_normal_(sub.template_mixing)
-                    torch.nn.init.zeros_(sub.bias)
-                    # Initialize modulator: final layer bias to 2.0 to start with open gates
-                    for m in sub.context_modulator.modules():
-                        if isinstance(m, (Linear, nn.Linear)):
-                            torch.nn.init.xavier_uniform_(m.weight)
-                            if m.bias is not None:
-                                torch.nn.init.zeros_(m.bias)
-                    # The very last bias should be 2.0
-                    last_linear = [m for m in sub.context_modulator.modules() if isinstance(m, (Linear, nn.Linear))][-1]
-                    torch.nn.init.constant_(last_linear.bias, 2.0)
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
