@@ -11,14 +11,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
-def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5) -> int:
+def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_dir: str = None) -> int:
     # Replica of base_train's logic
     from nanochat.gpt import GPT, GPTConfig
     
     vocab_size = 32768 # fallback
     try:
         from nanochat.tokenizer import get_tokenizer
-        tokenizer = get_tokenizer()
+        tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
         vocab_size = tokenizer.get_vocab_size()
     except Exception:
         pass
@@ -86,7 +86,7 @@ def run_training_sweep(args):
     run_dir_path = Path(run_dir)
     run_dir_path.mkdir(parents=True, exist_ok=True)
     
-    target_tokens = estimate_tokens_from_base(depth)
+    target_tokens = estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
     print("=" * 64)
     print(f"Starting Sweep for Depth {depth}")
     print(f"Calculated Target Tokens: {target_tokens:,}")
