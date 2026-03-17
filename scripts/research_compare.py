@@ -73,7 +73,7 @@ def check_and_prepare_env(args):
     if not os.path.exists(tokenizer_pkl):
         print(f"Tokenizer not found at {tokenizer_pkl}. Training...")
         # Train on a small subset for speed.
-        cmd = [sys.executable, "scripts/tok_train.py", "--max-chars", "10000000", "--data-dir", data_dir, "--tokenizer-dir", tokenizer_dir]
+        cmd = [sys.executable, "-m", "scripts.tok_train", "--max-chars", "10000000", "--data-dir", data_dir, "--tokenizer-dir", tokenizer_dir]
         print(f"Running: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
 
