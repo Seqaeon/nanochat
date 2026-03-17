@@ -95,7 +95,7 @@ parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of 
 parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
 # Evaluation
-parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
+parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = only at end, 0 = disable)")
 parser.add_argument("--eval-tokens", type=int, default=80*524288, help="number of tokens to evaluate val loss on")
 parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluate CORE metric every N steps (-1 = disable)")
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
@@ -511,7 +511,7 @@ def get_weight_decay(it):
 # Loop state (variables updated by the training loop)
 if not resuming:
     step = 0
-    val_bpb = 0.0 # will be set if eval_every > 0
+    val_bpb = None
     min_val_bpb = float("inf")
     smooth_train_loss = 0 # EMA of training loss
     total_training_time = 0 # total wall-clock time of training
@@ -539,7 +539,8 @@ while True:
     flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
+    do_eval = (args.eval_every > 0 and (last_step or step % args.eval_every == 0)) or (last_step and args.eval_every == -1)
+    if do_eval:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)

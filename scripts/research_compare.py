@@ -96,7 +96,7 @@ def run_training_sweep(args):
     head_dim = 16
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = max(model_dim // 8, 64)
+    target_dim = model_dim # target_dim MUST match model_dim in this architecture
     
     # Common kwargs for all models
     common_args = [
@@ -110,6 +110,8 @@ def run_training_sweep(args):
         "--eval-every", "-1",        # We only evaluate at end for speed
         "--core-metric-every", "-1",
         "--sample-every", "-1",
+        "--warmup-ratio", "0.3",    # Safer for research models
+        "--adam-beta2", "0.99",     # Matches notebook
     ]
     if args.compile:
         common_args.append("--compile")
@@ -132,6 +134,9 @@ def run_training_sweep(args):
             "--router-dim", "64",
             "--target-dim", str(target_dim),
             "--embedding-lr", "0.05",
+            "--matrix-lr", "0.05",
+            "--unembedding-lr", "0.05",
+            "--scalar-lr", "0.05",
         ],
         "moe_perm": [
             "--use-moe",
@@ -141,14 +146,20 @@ def run_training_sweep(args):
             "--target-dim", str(target_dim),
             "--selection-mode", "soft",
             "--embedding-lr", "0.05",
+            "--matrix-lr", "0.05",
+            "--unembedding-lr", "0.05",
+            "--scalar-lr", "0.05",
         ],
-        "remixed_linear": [
+        "remixed-linear": [
             "--use-remixed-linear",
             "--target-dim", str(target_dim),
             "--router-dim", "64",
             "--context-dim", "32",
             "--linear-basis-size", "16",
             "--embedding-lr", "0.05",
+            "--matrix-lr", "0.05",
+            "--unembedding-lr", "0.05",
+            "--scalar-lr", "0.05",
         ]
     }
     
@@ -188,22 +199,23 @@ def run_training_sweep(args):
             # Base train saves it with step index. We find the largest one.
             model_ckpt_dir = ckpt_dir / "model"
             if model_ckpt_dir.exists():
-                ckpts = glob.glob(str(model_ckpt_dir / "checkpoint_*.pt"))
-                if ckpts:
-                    ckpts.sort()
-                    last_ckpt = ckpts[-1]
+                meta_files = glob.glob(str(model_ckpt_dir / "meta_*.json"))
+                if meta_files:
+                    meta_files.sort()
+                    last_meta = meta_files[-1]
                     try:
-                        checkpoint = torch.load(last_ckpt, map_location="cpu", weights_only=False)
-                        if "metadata" in checkpoint:
-                            val_bpb = float(checkpoint["metadata"].get("val_bpb", float("inf")))
-                            results[model_name] = {"val_bpb": val_bpb, "checkpoint": last_ckpt}
+                        with open(last_meta, "r") as f:
+                            meta_data = json.load(f)
+                        if "val_bpb" in meta_data and meta_data["val_bpb"] is not None:
+                            val_bpb = float(meta_data["val_bpb"])
+                            results[model_name] = {"val_bpb": val_bpb, "checkpoint": last_meta}
                             print(f"Final Validation BPB for {model_name}: {val_bpb:.4f}")
                         else:
-                            print(f"No metadata found in {last_ckpt}")
+                            print(f"No val_bpb found in {last_meta}")
                     except Exception as e:
-                        print(f"Failed to load checkpoint {last_ckpt}: {e}")
+                        print(f"Failed to load metadata {last_meta}: {e}")
                 else:
-                    print(f"No checkpoints found in {model_ckpt_dir}")
+                    print(f"No meta_*.json files found in {model_ckpt_dir}")
             else:
                  print(f"Checkpoint directory {model_ckpt_dir} does not exist.")
                  
