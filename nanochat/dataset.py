@@ -36,13 +36,6 @@ def resolve_data_dir(data_dir=None):
     """Resolve dataset path from explicit arg, env override, or default."""
     if data_dir is not None:
         return data_dir
-    return os.environ.get("NANOCHAT_DATA_DIR", default_data_dir())
-
-
-def resolve_data_dir(data_dir=None):
-    """Resolve dataset path from explicit arg, env override, or default."""
-    if data_dir is not None:
-        return data_dir
     return os.environ.get("NANOCHAT_DATA_DIR", DATA_DIR)
 
 # -----------------------------------------------------------------------------
@@ -77,14 +70,14 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False, max_shards=None):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
-def parquets_iter_batched(split, start=0, step=1):
+def parquets_iter_batched(split, start=0, step=1, data_dir=None, max_shards=None):
     """
     Iterate through the dataset, in batches of underlying row_groups for efficiency.
     - split can be "train" or "val". the last parquet file will be val.
     - start/step are useful for skipping rows in DDP. e.g. start=rank, step=world_size
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
-    parquet_paths = list_parquet_files()
+    parquet_paths = list_parquet_files(data_dir=data_dir, max_shards=max_shards)
     parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
     for filepath in parquet_paths:
         pf = pq.ParquetFile(filepath)

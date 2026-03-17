@@ -46,7 +46,41 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5) -> int:
     
     return int(scaling_params * target_ratio)
 
+def check_and_prepare_env(args):
+    # 1. Resolve data_dir and tokenizer_dir
+    from nanochat.common import get_base_dir
+    from nanochat.dataset import resolve_data_dir, list_parquet_files
+    
+    data_dir = args.data_dir if args.data_dir else resolve_data_dir()
+    tokenizer_dir = args.tokenizer_dir if args.tokenizer_dir else os.path.join(get_base_dir(), "tokenizer")
+    
+    # Ensure directories exist
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(tokenizer_dir, exist_ok=True)
+    
+    # 2. Check for data shards
+    shards = list_parquet_files(data_dir=data_dir)
+    if not shards:
+        print(f"No data shards found in {data_dir}. Downloading...")
+        # If max_shards is set, use it. Otherwise download at least 2 (1 train, 1 val).
+        num_files = args.max_shards if (args.max_shards and args.max_shards > 0) else 2
+        cmd = [sys.executable, "-m", "nanochat.dataset", "-n", str(num_files), "--data-dir", data_dir]
+        print(f"Running: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+    
+    # 3. Check for tokenizer
+    tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
+    if not os.path.exists(tokenizer_pkl):
+        print(f"Tokenizer not found at {tokenizer_pkl}. Training...")
+        # Train on a small subset for speed.
+        cmd = [sys.executable, "scripts/tok_train.py", "--max-chars", "10000000", "--data-dir", data_dir, "--tokenizer-dir", tokenizer_dir]
+        print(f"Running: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
 def run_training_sweep(args):
+    # Ensure environment is ready
+    check_and_prepare_env(args)
+    
     depth = args.depth
     run_dir = args.run_dir
     run_dir_path = Path(run_dir)
