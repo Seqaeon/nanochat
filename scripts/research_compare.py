@@ -23,7 +23,7 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
     except Exception:
         pass
         
-    aspect_ratio = 4
+    aspect_ratio = 64
     head_dim = 16
     
     base_dim = depth * aspect_ratio
@@ -96,7 +96,7 @@ def run_training_sweep(args):
     head_dim = 16
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = model_dim // 8
+    target_dim = min(model_dim // 8, 64)
     
     # Common kwargs for all models
     common_args = [
