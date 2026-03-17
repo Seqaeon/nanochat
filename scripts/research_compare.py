@@ -96,7 +96,7 @@ def run_training_sweep(args):
     head_dim = 16
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = min(model_dim // 8, 64)
+    target_dim = max(model_dim // 8, 64)
     
     # Common kwargs for all models
     common_args = [
