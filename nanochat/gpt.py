@@ -431,7 +431,7 @@ class RemixedMultiAttention(nn.Module):
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
-        self.ve_gate_channels = 32
+        self.ve_gate_channels = min(self.n_embd, 32)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
         self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
@@ -512,7 +512,7 @@ class CausalSelfAttention(nn.Module):
         self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
-        self.ve_gate_channels = 32
+        self.ve_gate_channels = min(self.n_embd, 32)
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
