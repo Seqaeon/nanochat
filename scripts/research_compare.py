@@ -120,7 +120,7 @@ def run_training_sweep(args):
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
         env = os.environ.copy()
         
-        cmd = ["/home/seqaeon/Downloads/nanochat/.venv/bin/python", "-m", "scripts.base_train"] + args
+        cmd = [sys.executable, "-m", "scripts.base_train"] + args
         print(f"Running: {' '.join(cmd)}")
         
         try:

@@ -28,8 +28,14 @@ fi
 echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
-# Use the absolute path to the venv python to be safe
-PYTHON_BIN="/home/seqaeon/Downloads/nanochat/.venv/bin/python"
+# Use the current python or fallback to venv if it exists locally
+if [ -n "$VIRTUAL_ENV" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+elif [ -d ".venv" ]; then
+    PYTHON_BIN=".venv/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
 
 for DEPTH in "$@"; do
     echo "================================================================"
