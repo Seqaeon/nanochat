@@ -110,8 +110,11 @@ def run_training_sweep(args):
         "--eval-every", "-1",        # We only evaluate at end for speed
         "--core-metric-every", "-1",
         "--sample-every", "-1",
-        "--compile",
     ]
+    if args.compile:
+        common_args.append("--compile")
+    else:
+        common_args.append("--no-compile")
     if getattr(args, "fp8", False):
         common_args.append("--fp8")
     if getattr(args, "tokenizer_dir", None):
@@ -252,6 +255,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
     parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
     parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     args = parser.parse_args()
     
     run_training_sweep(args)

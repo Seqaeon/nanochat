@@ -19,6 +19,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS="$EXTRA_ARGS --fp8"
             shift
             ;;
+        --no-compile)
+            EXTRA_ARGS="$EXTRA_ARGS --no-compile"
+            shift
+            ;;
         --max-shards)
             EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
             shift 2
