@@ -58,6 +58,12 @@ def run_training_sweep(args):
     print(f"Calculated Target Tokens: {target_tokens:,}")
     print("=" * 64)
     
+    aspect_ratio = 4
+    head_dim = 16
+    base_dim = depth * aspect_ratio
+    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
+    target_dim = model_dim // 8
+    
     # Common kwargs for all models
     common_args = [
         "--depth", str(depth),
@@ -74,15 +80,20 @@ def run_training_sweep(args):
     ]
     if getattr(args, "fp8", False):
         common_args.append("--fp8")
+    if getattr(args, "tokenizer_dir", None):
+        common_args.extend(["--tokenizer-dir", args.tokenizer_dir])
+    if getattr(args, "data_dir", None):
+        common_args.extend(["--data-dir", args.data_dir])
+    if getattr(args, "max_shards", -1) != -1:
+        common_args.extend(["--max-shards", str(args.max_shards)])
     
-    # Define models
     models = {
         "base": [],
         "moe_no_perm": [
             "--use-moe",
             "--num-experts", "8",
             "--router-dim", "64",
-            "--target-dim", "64",
+            "--target-dim", str(target_dim),
             "--embedding-lr", "0.05",
         ],
         "moe_perm": [
@@ -90,13 +101,13 @@ def run_training_sweep(args):
             "--use-perm",
             "--num-experts", "8",
             "--router-dim", "64",
-            "--target-dim", "64",
+            "--target-dim", str(target_dim),
             "--selection-mode", "soft",
             "--embedding-lr", "0.05",
         ],
         "remixed_linear": [
             "--use-remixed-linear",
-            "--target-dim", "64",
+            "--target-dim", str(target_dim),
             "--router-dim", "64",
             "--context-dim", "32",
             "--linear-basis-size", "16",
@@ -204,6 +215,9 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--run-dir", type=str, required=True)
     parser.add_argument("--fp8", action="store_true", help="Enable FP8 training (Blackwell optimization)")
+    parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
+    parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
+    parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
     args = parser.parse_args()
     
     run_training_sweep(args)

@@ -48,7 +48,7 @@ def resolve_data_dir(data_dir=None):
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
-def list_parquet_files(data_dir=None, warn_on_legacy=False):
+def list_parquet_files(data_dir=None, warn_on_legacy=False, max_shards=None):
     """ Looks into a data dir and returns full paths to all parquet files. """
     data_dir = resolve_data_dir(data_dir)
 
@@ -66,6 +66,14 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
         f for f in os.listdir(data_dir)
         if f.endswith('.parquet') and not f.endswith('.tmp')
     ])
+
+    if max_shards is not None and max_shards > 0:
+        # We assume the last file is validation. We keep it and take up to max_shards-1 train shards.
+        if len(parquet_files) > max_shards:
+            val_shard = parquet_files[-1]
+            train_shards = parquet_files[:-1][:max_shards-1]
+            parquet_files = train_shards + [val_shard]
+
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 

@@ -102,6 +102,8 @@ parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="e
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
+parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory (overrides default)")
+parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -160,7 +162,7 @@ else:
 
 # -----------------------------------------------------------------------------
 # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
-tokenizer = get_tokenizer()
+tokenizer = get_tokenizer(tokenizer_dir=args.tokenizer_dir)
 token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
@@ -413,6 +415,7 @@ train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     device=device,
     resume_state_dict=dataloader_resume_state_dict,
     data_dir=args.data_dir,
+    max_shards=args.max_shards,
 )
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
     tokenizer,
@@ -421,6 +424,7 @@ build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
     split="val",
     device=device,
     data_dir=args.data_dir,
+    max_shards=args.max_shards,
 )
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 

@@ -11,17 +11,41 @@ fi
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/research_sweep_${TIMESTAMP}"
 
-FP8_FLAG=""
-case "$1" in
-    --fp8)
-        FP8_FLAG="--fp8"
-        shift
-        ;;
-esac
+EXTRA_ARGS=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --fp8)
+            EXTRA_ARGS="$EXTRA_ARGS --fp8"
+            shift
+            ;;
+        --max-shards)
+            EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            shift 2
+            ;;
+        --tokenizer-dir)
+            EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
+            shift 2
+            ;;
+        --data-dir)
+            EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
+            shift 2
+            ;;
+        *)
+            # Stop parsing flags when we hit a depth
+            if [[ "$1" =~ ^[0-9]+$ ]]; then
+                break
+            else
+                echo "Unknown argument: $1"
+                exit 1
+            fi
+            ;;
+    esac
+done
 
 # Check for depths again after potential shift
 if [ $# -eq 0 ]; then
-    echo "Usage: ./scripts/research_sweep.sh [--fp8] <depth1> [depth2] ..."
+    echo "Usage: ./scripts/research_sweep.sh [flags] <depth1> [depth2] ..."
     exit 1
 fi
 
@@ -45,7 +69,7 @@ for DEPTH in "$@"; do
     RUN_DIR="${ROOT_OUT_DIR}/depth_${DEPTH}"
     mkdir -p "${RUN_DIR}"
     
-    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $FP8_FLAG
+    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
     if [ $? -ne 0 ]; then
         echo "Error: Sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."
