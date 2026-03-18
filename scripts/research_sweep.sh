@@ -142,7 +142,7 @@ done
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run SFT and eval the model
-torchrun --standalone --nproc_per_node=1 -m scripts.chat_sft -- --device-batch-size=16 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=1 -m scripts.chat_sft -- --device-batch-size=16 #--run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=1 -m scripts.chat_eval -- -i sft
 python -m nanochat.report generate
 echo "================================================================"
