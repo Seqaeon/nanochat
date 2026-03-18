@@ -310,6 +310,8 @@ class PermutationMoE(nn.Module):
         expert_outputs = []
         for expert_idx in range(self.num_experts):
             selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
+            selection_logits = selection_logits.clamp(-30, 30)  # ← add before softmax
+
             if self.selection_mode == 'hard' and not self.allow_replacement:
                 selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=True, dim=-1)
             elif self.selection_mode == 'hard':
