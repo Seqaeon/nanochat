@@ -1,6 +1,9 @@
 #!/bin/bash
 # research_sweep.sh
 # Automates the research comparison script across multiple depths
+export OMP_NUM_THREADS=1
+export NANOCHAT_BASE_DIR="out"
+mkdir -p $NANOCHAT_BASE_DIR
 
 if [ $# -eq 0 ]; then
     echo "Usage: ./scripts/research_sweep.sh <depth1> [depth2] [depth3] ..."
@@ -56,6 +59,26 @@ fi
 echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
+
+# ── 1. Install uv if missing ──────────────────────────────────────────────────
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# ── 2. Create venv and install dependencies ───────────────────────────────────
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu
+
+# ── 3. Activate venv ──────────────────────────────────────────────────────────
+source .venv/bin/activate
+
+# ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
+if command -v torchrun &> /dev/null; then
+    RUNNER="torchrun --standalone --nproc_per_node=1"
+else
+    echo "Warning: torchrun not found, falling back to python -m torch.distributed.run"
+    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=1"
+fi
+
+
 # Use the current python or fallback to venv if it exists locally
 if [ -n "$VIRTUAL_ENV" ]; then
     PYTHON_BIN="$VIRTUAL_ENV/bin/python"
@@ -72,8 +95,12 @@ for DEPTH in "$@"; do
     
     RUN_DIR="${ROOT_OUT_DIR}/depth_${DEPTH}"
     mkdir -p "${RUN_DIR}"
+
+
+    # After:
+    $RUNNER -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
-    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
+#    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
     if [ $? -ne 0 ]; then
         echo "Error: Sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."
