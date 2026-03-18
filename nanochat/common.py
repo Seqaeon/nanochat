@@ -228,7 +228,7 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
     if parallel_type == "ddp" and ddp_requested:
         print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank})")
         if dist.get_world_size() > 1:
-            model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
+            model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
         else:
             model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
     elif parallel_type == "dp":
