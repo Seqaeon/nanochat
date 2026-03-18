@@ -134,7 +134,7 @@ def run_training_sweep(args):
         common_args.extend(["--max-shards", str(args.max_shards)])
     
     models = {
-        "base": [],
+#        "base": [],
         "moe_no_perm": [
             "--use-moe",
             "--num-experts", "8",
