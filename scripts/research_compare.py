@@ -51,8 +51,8 @@ def check_and_prepare_env(args):
     from nanochat.common import get_base_dir
     from nanochat.dataset import resolve_data_dir, list_parquet_files
     
-    data_dir = args.data_dir if args.data_dir else resolve_data_dir()
-    tokenizer_dir = args.tokenizer_dir if args.tokenizer_dir else os.path.join(get_base_dir(), "tokenizer")
+    data_dir = resolve_data_dir() #args.data_dir if args.data_dir else resolve_data_dir()
+    tokenizer_dir = os.path.join(get_base_dir(), "tokenizer") #args.tokenizer_dir if args.tokenizer_dir else os.path.join(get_base_dir(), "tokenizer")
     
     # Ensure directories exist
     os.makedirs(data_dir, exist_ok=True)
