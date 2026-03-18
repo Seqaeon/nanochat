@@ -78,7 +78,17 @@ else
     RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=1"
 fi
 
+python -m nanochat.report reset
+python -m nanochat.dataset -n 8 &
+DATASET_DOWNLOAD_PID=$!
 
+python -m scripts.tok_train
+# evaluate the tokenizer (report compression ratio etc.)
+python -m scripts.tok_eval
+
+
+echo "Waiting for dataset download to complete..."
+wait $DATASET_DOWNLOAD_PID
 # Use the current python or fallback to venv if it exists locally
 #if [ -n "$VIRTUAL_ENV" ]; then
 #    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
@@ -107,7 +117,12 @@ for DEPTH in "$@"; do
         exit 1
     fi
 done
+curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
+# run SFT and eval the model
+torchrun --standalone --nproc_per_node=1 -m scripts.chat_sft -- --device-batch-size=16 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=1 -m scripts.chat_eval -- -i sft
+python -m nanochat.report generate
 echo "================================================================"
 echo "Sweep Complete! Results saved to ${ROOT_OUT_DIR}"
 echo "================================================================"
