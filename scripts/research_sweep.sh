@@ -80,13 +80,13 @@ fi
 
 
 # Use the current python or fallback to venv if it exists locally
-if [ -n "$VIRTUAL_ENV" ]; then
-    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
-elif [ -d ".venv" ]; then
-    PYTHON_BIN=".venv/bin/python"
-else
-    PYTHON_BIN="python3"
-fi
+#if [ -n "$VIRTUAL_ENV" ]; then
+#    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+#elif [ -d ".venv" ]; then
+#    PYTHON_BIN=".venv/bin/python"
+#else
+#    PYTHON_BIN="python3"
+#fi
 
 for DEPTH in "$@"; do
     echo "================================================================"
