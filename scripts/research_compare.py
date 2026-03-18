@@ -29,9 +29,9 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    
+    max_seq_len = 64
     config = GPTConfig(
-        sequence_len=64, # fixed max_seq_len for sweep
+        sequence_len=max_seq_len, # fixed max_seq_len for sweep
         vocab_size=vocab_size,
         n_layer=depth,
         n_head=num_heads,
@@ -92,26 +92,33 @@ def run_training_sweep(args):
     print(f"Calculated Target Tokens: {target_tokens:,}")
     print("=" * 64)
     
-    aspect_ratio = 4
+    aspect_ratio = 64
     head_dim = 16
+    max_seq_len = 64
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = model_dim # target_dim MUST match model_dim in this architecture
+    device_batch_size = 16
+    total_batch_size = 524288
+    eval_every = 1000
+    warm_up_ratio = 0.3
+    adam_beta2 = 0.99
+#    core_metric_every=-1
+    target_dim = min(model_dim //8, model_dim) if model_dim >= 512 else min(model_dim //8, model_dim) 
     
     # Common kwargs for all models
     common_args = [
         "--depth", str(depth),
-        "--aspect-ratio", "4",
-        "--head-dim", "16",
-        "--max-seq-len", "64",
-        "--device-batch-size", "16",
-        "--total-batch-size", "524288", # standard for reference
+        "--aspect-ratio", str(aspect_ratio),
+        "--head-dim", str(head_dim),
+        "--max-seq-len", str(max_seq_len),
+        "--device-batch-size", str(device_batch_size),
+        "--total-batch-size", str(total_batch_size), # standard for reference
         "--target-tokens", str(target_tokens),
         "--eval-every", "-1",        # We only evaluate at end for speed
         "--core-metric-every", "-1",
-        "--sample-every", "-1",
-        "--warmup-ratio", "0.3",    # Safer for research models
-        "--adam-beta2", "0.99",     # Matches notebook
+#        "--sample-every", "-1",
+        "--warmup-ratio", str(warm_up_ratio),    # Safer for research models
+        "--adam-beta2", str(adam_beta2),     # Matches notebook
     ]
     if args.compile:
         common_args.append("--compile")
@@ -168,7 +175,7 @@ def run_training_sweep(args):
     for model_name, extra_args in models.items():
         print(f"\n--- Training {model_name} ---")
         
-        ckpt_dir = run_dir_path / f"ckpt_{model_name}"
+        ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
         
         args = common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),

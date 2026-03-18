@@ -218,10 +218,14 @@ model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoints_root = args.checkpoints_dir if args.checkpoints_dir else os.path.join(get_base_dir(), "base_checkpoints")
-if not os.path.isabs(checkpoints_root):
-    checkpoints_root = os.path.join(get_base_dir(), checkpoints_root)
-checkpoint_dir = os.path.join(checkpoints_root, output_dirname)
+if args.checkpoints_dir:
+    checkpoints_root = os.path.abspath(args.checkpoints_dir)
+else:
+    # default to a "base_checkpoints" folder inside the nanochat base directory
+    checkpoints_root = os.path.join(get_base_dir(), "base_checkpoints")
+
+checkpoint_dir = os.path.abspath(os.path.join(checkpoints_root, output_dirname))
+print0(f"Checkpoints directory: {checkpoint_dir}")
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
