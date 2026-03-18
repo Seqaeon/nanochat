@@ -227,10 +227,7 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
     # 1) Parallel wrapping
     if parallel_type == "ddp" and ddp_requested:
         print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank})")
-        if dist.get_world_size() > 1:
-            model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
-        else:
-            model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True,)
     elif parallel_type == "dp":
         num_gpus = torch.cuda.device_count()
         if torch.cuda.is_available() and num_gpus > 1:
