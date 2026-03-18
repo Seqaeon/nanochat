@@ -204,6 +204,7 @@ class ImprovedContextAwareRouter(nn.Module):
         if self.use_vocab_prior and input_ids is not None:
             expert_logits = expert_logits + self.vocab_routing_bias(input_ids)
         adaptive_temp = torch.sigmoid(self.temperature_predictor(x)) * 2.0 + 0.1
+        adaptive_temp = torch.clamp(adaptive_temp, min=1e-6) # Add this line
         return expert_logits, adaptive_temp, self.expert_proj.weight
 
 
