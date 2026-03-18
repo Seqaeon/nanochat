@@ -4,17 +4,17 @@
 export OMP_NUM_THREADS=1
 
 # ── 0. Clone or update the repo ───────────────────────────────────────────────
-#REPO_URL="https://github.com/Seqaeon/nanochat.git"
-#REPO_DIR="nanochat"
-#
-#if [ ! -d "$REPO_DIR" ]; then
-#    git clone "$REPO_URL"
-#else
-#    echo "Repo already exists, pulling latest..."
-#    git -C "$REPO_DIR" pull origin master
-#fi
-#
-#cd "$REPO_DIR"
+REPO_URL="https://github.com/Seqaeon/nanochat.git"
+REPO_DIR="nanochat"
+
+if [ ! -d "$REPO_DIR" ]; then
+    git clone "$REPO_URL"
+else
+    echo "Repo already exists, pulling latest..."
+    git -C "$REPO_DIR" pull origin master
+fi
+
+cd "$REPO_DIR"
 
 export NANOCHAT_BASE_DIR="out"
 mkdir -p $NANOCHAT_BASE_DIR
