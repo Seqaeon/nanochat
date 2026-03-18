@@ -2,8 +2,26 @@
 # research_sweep.sh
 # Automates the research comparison script across multiple depths
 export OMP_NUM_THREADS=1
+
+# ── 0. Clone or update the repo ───────────────────────────────────────────────
+REPO_URL="https://github.com/Seqaeon/nanochat.git"
+REPO_DIR="nanochat"
+
+if [ ! -d "$REPO_DIR" ]; then
+    git clone "$REPO_URL"
+else
+    echo "Repo already exists, pulling latest..."
+    git -C "$REPO_DIR" pull origin master
+fi
+
+cd "$REPO_DIR"
+
 export NANOCHAT_BASE_DIR="out"
 mkdir -p $NANOCHAT_BASE_DIR
+set -euo pipefail
+
+echo "===== GPU Info ====="
+nvidia-smi || true
 
 if [ $# -eq 0 ]; then
     echo "Usage: ./scripts/research_sweep.sh <depth1> [depth2] [depth3] ..."
