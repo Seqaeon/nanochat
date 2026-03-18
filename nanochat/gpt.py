@@ -763,6 +763,11 @@ class GPT(nn.Module):
                     if getattr(sub, 'bias', None) is not None:
                         torch.nn.init.zeros_(sub.bias)
 
+                # Buffers also need explicit initialization if to_empty was used
+                if hasattr(sub, 'temperature'):
+                    # sub.temperature is a buffer, not a parameter, so we set its value directly
+                    sub.temperature.fill_(1.0)
+
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         if "wpe" in self.transformer:
