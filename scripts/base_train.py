@@ -565,7 +565,7 @@ while True:
     # use the original uncompiled model because the inputs keep changing shape
     # disable FP8 for evaluation to use BF16 for more consistent/accurate results
     results = {}
-    if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
+    if (args.core_metric_every != 0) and (last_step or (args.core_metric_every > 0 and step > 0 and step % args.core_metric_every == 0)):
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
@@ -732,7 +732,10 @@ if val_bpb is not None:
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Base model training", data=[
+section_name = "Base model training"
+if args.model_tag:
+    section_name += f" ({args.model_tag})"
+get_report().log(section=section_name, data=[
     user_config, # CLI args
     { # stats about the training setup
         "Number of parameters": num_params,

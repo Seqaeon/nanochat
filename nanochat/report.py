@@ -209,7 +209,6 @@ EXPECTED_FILES = [
     "tokenizer-training.md",
     "tokenizer-evaluation.md",
     "base-model-training.md",
-    "base-model-loss.md",
     "base-model-evaluation.md",
     "chat-sft.md",
     "chat-evaluation-sft.md",
@@ -299,28 +298,61 @@ class Report:
                 start_time = None # will cause us to not write the total wall clock time
                 bloat_data = "[bloat data missing]"
                 print(f"Warning: {header_file} does not exist. Did you forget to run `nanochat reset`?")
+
+            # collect all files in the report directory
+            all_files = set(os.listdir(report_dir))
+
             # process all the individual sections
-            for file_name in EXPECTED_FILES:
-                section_file = os.path.join(report_dir, file_name)
-                if not os.path.exists(section_file):
-                    print(f"Warning: {section_file} does not exist, skipping")
-                    continue
-                with open(section_file, "r", encoding="utf-8") as in_file:
-                    section = in_file.read()
-                # Extract timestamp from this section (the last section's timestamp will "stick" as end_time)
-                if "rl" not in file_name:
-                    # Skip RL sections for end_time calculation because RL is experimental
-                    end_time = extract_timestamp(section, "timestamp:")
-                # extract the most important metrics from the sections
-                if file_name == "base-model-evaluation.md":
-                    final_metrics["base"] = extract(section, "CORE")
-                if file_name == "chat-evaluation-sft.md":
-                    final_metrics["sft"] = extract(section, chat_metrics)
-                if file_name == "chat-evaluation-rl.md":
-                    final_metrics["rl"] = extract(section, "GSM8K") # RL only evals GSM8K
-                # append this section of the report
-                out_file.write(section)
-                out_file.write("\n")
+            for entry in EXPECTED_FILES:
+                if entry == "base-model-training.md":
+                    # Dynamic discovery of base model training reports
+                    base_files = sorted([f for f in all_files if f.startswith("base-model-training") and f.endswith(".md")])
+                    files_to_process = base_files
+                else:
+                    files_to_process = [entry] if entry in all_files else []
+
+                for file_name in files_to_process:
+                    section_file = os.path.join(report_dir, file_name)
+                    with open(section_file, "r", encoding="utf-8") as in_file:
+                        section = in_file.read()
+
+                    # Extract timestamp from this section (the last section's timestamp will "stick" as end_time)
+                    if "rl" not in file_name:
+                        # Skip RL sections for end_time calculation because RL is experimental
+                        tmp_end_time = extract_timestamp(section, "timestamp:")
+                        if tmp_end_time:
+                            end_time = tmp_end_time
+
+                    # extract the most important metrics from the sections
+                    if "base-model-training" in file_name:
+                        # Extract model name from filename if possible: base-model-training-(tag).md
+                        tag = "base"
+                        match = re.search(r"base-model-training-\((.*?)\)\.md", file_name)
+                        if match:
+                            tag = match.group(1)
+                        m = extract(section, ["val_bpb", "core_metric", "CORE metric"])
+                        # normalize keys
+                        if "CORE metric" in m: m["CORE"] = m.pop("CORE metric")
+                        if "core_metric" in m: m["CORE"] = m.pop("core_metric")
+                        if "val_bpb" in m: m["val bpb"] = m.pop("val_bpb")
+                        if tag not in final_metrics: final_metrics[tag] = {}
+                        final_metrics[tag].update(m)
+
+                    if file_name == "base-model-evaluation.md":
+                        m = extract(section, "CORE metric")
+                        if "CORE metric" in m:
+                            if "base" not in final_metrics: final_metrics["base"] = {}
+                            final_metrics["base"]["CORE"] = m["CORE metric"]
+
+                    if file_name == "chat-evaluation-sft.md":
+                        final_metrics["sft"] = extract(section, chat_metrics)
+                    if file_name == "chat-evaluation-rl.md":
+                        final_metrics["rl"] = extract(section, "GSM8K") # RL only evals GSM8K
+
+                    # append this section of the report
+                    out_file.write(section)
+                    out_file.write("\n")
+
             # add the final metrics table
             out_file.write("## Summary\n\n")
             # Copy over the bloat metrics from the header
@@ -333,9 +365,13 @@ class Report:
             # Custom ordering: CORE first, ChatCORE last, rest in middle
             all_metrics = sorted(all_metrics, key=lambda x: (x != "CORE", x == "ChatCORE", x))
             # Fixed column widths
-            stages = ["base", "sft", "rl"]
+            stages = sorted(final_metrics.keys())
+            if "base" in stages: # keep base first if present
+                stages.remove("base")
+                stages = ["base"] + stages
+            
             metric_width = 15
-            value_width = 8
+            value_width = 12
             # Write table header
             header = f"| {'Metric'.ljust(metric_width)} |"
             for stage in stages:
@@ -370,15 +406,10 @@ class Report:
 
     def reset(self):
         """Reset the report."""
-        # Remove section files
-        for file_name in EXPECTED_FILES:
-            file_path = os.path.join(self.report_dir, file_name)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        # Remove report.md if it exists
-        report_file = os.path.join(self.report_dir, "report.md")
-        if os.path.exists(report_file):
-            os.remove(report_file)
+        # Remove all .md files in the report directory to start fresh
+        for f in os.listdir(self.report_dir):
+            if f.endswith(".md"):
+                os.remove(os.path.join(self.report_dir, f))
         # Generate and write the header section with start timestamp
         header_file = os.path.join(self.report_dir, "header.md")
         header = generate_header()
@@ -395,6 +426,8 @@ class DummyReport:
     def log(self, *args, **kwargs):
         pass
     def reset(self, *args, **kwargs):
+        pass
+    def generate(self, *args, **kwargs):
         pass
 
 def get_report():

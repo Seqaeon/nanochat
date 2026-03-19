@@ -179,7 +179,7 @@ def run_training_sweep(args):
         
         args = common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),
-            "--model-tag", "model"
+            "--model-tag", model_name
         ]
         
         
