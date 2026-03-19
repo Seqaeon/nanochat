@@ -134,17 +134,17 @@ def run_training_sweep(args):
         common_args.extend(["--max-shards", str(args.max_shards)])
     
     models = {
-#        "base": [],
-#        "moe_no_perm": [
-#            "--use-moe",
-#            "--num-experts", "8",
-#            "--router-dim", "64",
-#            "--target-dim", str(target_dim),
-#            "--embedding-lr", "0.05",
-#            "--matrix-lr", "0.05",
-#            "--unembedding-lr", "0.05",
-#            "--scalar-lr", "0.05",
-#        ],
+        "base": [],
+        "moe_no_perm": [
+            "--use-moe",
+            "--num-experts", "8",
+            "--router-dim", "64",
+            "--target-dim", str(target_dim),
+            "--embedding-lr", "0.05",
+            "--matrix-lr", "0.05",
+            "--unembedding-lr", "0.05",
+            "--scalar-lr", "0.05",
+        ],
         "moe_perm": [
             "--use-moe",
             "--use-perm",
