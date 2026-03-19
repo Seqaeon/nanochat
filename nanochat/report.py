@@ -225,8 +225,10 @@ def extract(section, keys):
     out = {}
     for line in section.split("\n"):
         for key in keys:
-            if key in line:
-                out[key] = line.split(":")[1].strip()
+            # Match exact markdown list item: "- key: value"
+            prefix = f"- {key}: "
+            if line.startswith(prefix):
+                out[key] = line[len(prefix):].strip()
     return out
 
 def extract_timestamp(content, prefix):
@@ -330,10 +332,12 @@ class Report:
                         match = re.search(r"base-model-training-\((.*?)\)\.md", file_name)
                         if match:
                             tag = match.group(1)
-                        m = extract(section, ["val_bpb", "core_metric", "CORE metric"])
+                        m = extract(section, ["val_bpb", "core_metric", "CORE metric", "Final validation bpb", "CORE metric estimate"])
                         # normalize keys
+                        if "CORE metric estimate" in m: m["CORE"] = m.pop("CORE metric estimate")
                         if "CORE metric" in m: m["CORE"] = m.pop("CORE metric")
                         if "core_metric" in m: m["CORE"] = m.pop("core_metric")
+                        if "Final validation bpb" in m: m["val bpb"] = m.pop("Final validation bpb")
                         if "val_bpb" in m: m["val bpb"] = m.pop("val_bpb")
                         if tag not in final_metrics: final_metrics[tag] = {}
                         final_metrics[tag].update(m)
