@@ -1,7 +1,7 @@
 #!/bin/bash
 # research_sweep.sh
 # Automates the research comparison script across multiple depths
-export OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=8
 
 # ── 0. Clone or update the repo ───────────────────────────────────────────────
 #REPO_URL="https://github.com/Seqaeon/nanochat.git"
@@ -90,25 +90,25 @@ source .venv/bin/activate
 
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
 if command -v torchrun &> /dev/null; then
-    RUNNER="torchrun --standalone --nproc_per_node=1"
+    RUNNER="torchrun --standalone --nproc_per_node=8"
 else
     echo "Warning: torchrun not found, falling back to python -m torch.distributed.run"
-    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=1"
+    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=8"
 fi
 
 python -m nanochat.report reset
 python -m nanochat.dataset -n 8 
 
-#python -m nanochat.dataset -n 170 &
-#DATASET_DOWNLOAD_PID=$!
+python -m nanochat.dataset -n 170 &
+DATASET_DOWNLOAD_PID=$!
 
 python -m scripts.tok_train
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
 
-#echo "Waiting for dataset download to complete..."
-#wait $DATASET_DOWNLOAD_PID
+echo "Waiting for dataset download to complete..."
+wait $DATASET_DOWNLOAD_PID
 
 
 # Use the current python or fallback to venv if it exists locally

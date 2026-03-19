@@ -24,12 +24,12 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
         pass
         
     aspect_ratio = 64
-    head_dim = 16
+    head_dim = 128
     
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    max_seq_len = 64
+    max_seq_len = 2048
     config = GPTConfig(
         sequence_len=max_seq_len, # fixed max_seq_len for sweep
         vocab_size=vocab_size,
@@ -93,8 +93,8 @@ def run_training_sweep(args):
     print("=" * 64)
     
     aspect_ratio = 64
-    head_dim = 16
-    max_seq_len = 64
+    head_dim = 128
+    max_seq_len = 2046
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     device_batch_size = 16
@@ -138,7 +138,7 @@ def run_training_sweep(args):
         "moe_no_perm": [
             "--use-moe",
             "--num-experts", "8",
-            "--router-dim", "64",
+            "--router-dim", str(target_dim),
             "--target-dim", str(target_dim),
             "--embedding-lr", "0.05",
             "--matrix-lr", "0.05",
@@ -149,7 +149,7 @@ def run_training_sweep(args):
             "--use-moe",
             "--use-perm",
             "--num-experts", "8",
-            "--router-dim", "64",
+            "--router-dim", str(target_dim),
             "--target-dim", str(target_dim),
             "--selection-mode", "soft",
             "--embedding-lr", "0.05",
@@ -160,9 +160,9 @@ def run_training_sweep(args):
         "remixed-linear": [
             "--use-remixed-linear",
             "--target-dim", str(target_dim),
-            "--router-dim", "64",
-            "--context-dim", "64",
-            "--linear-basis-size", "64",
+            "--router-dim", str(target_dim),
+            "--context-dim", str(target_dim),
+            "--linear-basis-size", str(target_dim),
             "--embedding-lr", "0.05",
             "--matrix-lr", "0.05",
             "--unembedding-lr", "0.05",
