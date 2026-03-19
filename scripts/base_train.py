@@ -13,6 +13,10 @@ python -m scripts.base_train --depth=4 --max-seq-len=512 --device-batch-size=1 -
 
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["OMP_NUM_THREADS"] = "8"
+os.environ["MKL_NUM_THREADS"] = "8"
+import torch
+torch.set_num_threads(8)
 import gc
 import json
 import time

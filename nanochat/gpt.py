@@ -307,6 +307,8 @@ class PermutationMoE(nn.Module):
         embeds = self.embeddings(input_ids)
         if self.position_embeddings is not None:
             positions = torch.arange(seq_len, device=input_ids.device)
+            # Cap positions to block_size to avoid CUDA device-side assert if seq_len > block_size
+            positions = torch.clamp(positions, max=self.position_embeddings.num_embeddings - 1)
             embeds = embeds + self.position_embeddings(positions)
         expert_outputs = []
         for expert_idx in range(self.num_experts):
@@ -746,6 +748,8 @@ class GPT(nn.Module):
                     for m in [sub.embed_proj, sub.out_proj, sub.temperature_predictor, sub.alpha_gate]:
                         torch.nn.init.xavier_uniform_(m.weight)
                         if m.bias is not None: torch.nn.init.zeros_(m.bias)
+                    if sub.use_vocab_prior:
+                        torch.nn.init.normal_(sub.vocab_routing_bias.weight, mean=0.0, std=0.02)
                     continue
 
                 # Fallback for remaining research linear layers/embeddings
@@ -869,6 +873,11 @@ class GPT(nn.Module):
 
     def get_device(self):
         return self.transformer.wte.weight.device
+
+    @property
+    def max_seq_len(self):
+        """Property for use by external evaluation scripts (like core_eval.py)."""
+        return self.config.sequence_len
 
     def estimate_flops(self):
         """
