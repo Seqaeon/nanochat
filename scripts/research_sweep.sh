@@ -1,7 +1,7 @@
 #!/bin/bash
 # research_sweep.sh
 # Automates the research comparison script across multiple depths
-export OMP_NUM_THREADS=8
+export OMP_NUM_THREADS=1
 
 # ── 0. Clone or update the repo ───────────────────────────────────────────────
 #REPO_URL="https://github.com/Seqaeon/nanochat.git"
@@ -90,10 +90,10 @@ source .venv/bin/activate
 
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
 if command -v torchrun &> /dev/null; then
-    RUNNER="torchrun --standalone --nproc_per_node=8"
+    RUNNER="torchrun --standalone --nproc_per_node=1"
 else
     echo "Warning: torchrun not found, falling back to python -m torch.distributed.run"
-    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=8"
+    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=1"
 fi
 
 python -m nanochat.report reset
