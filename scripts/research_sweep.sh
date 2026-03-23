@@ -20,6 +20,17 @@ export NANOCHAT_BASE_DIR="out"
 mkdir -p $NANOCHAT_BASE_DIR
 set -euo pipefail
 
+# Default to 8-way launch (for full 8xGPU nodes), but allow override via env
+# and cap to locally visible GPUs when fewer are allocated.
+NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
+AVAILABLE_GPUS=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l | tr -d ' ')
+if [[ "${AVAILABLE_GPUS}" =~ ^[0-9]+$ ]] && [ "$AVAILABLE_GPUS" -gt 0 ] && [ "$NPROC_PER_NODE" -gt "$AVAILABLE_GPUS" ]; then
+    echo "Requested NPROC_PER_NODE=${NPROC_PER_NODE}, but only ${AVAILABLE_GPUS} GPU(s) visible. Capping."
+    NPROC_PER_NODE="${AVAILABLE_GPUS}"
+fi
+echo "Using NPROC_PER_NODE=${NPROC_PER_NODE}"
+echo "NANOCHAT_SKIP_ENV_SETUP=${NANOCHAT_SKIP_ENV_SETUP:-0}"
+
 echo "===== GPU Info ====="
 nvidia-smi || true
 
@@ -78,22 +89,26 @@ echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
 
-# ── 1. Install uv if missing ──────────────────────────────────────────────────
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+if [ "${NANOCHAT_SKIP_ENV_SETUP:-0}" = "1" ]; then
+    echo "Skipping environment setup because NANOCHAT_SKIP_ENV_SETUP=1"
+else
+    # ── 1. Install uv if missing ──────────────────────────────────────────────
+    command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# ── 2. Create venv and install dependencies ───────────────────────────────────
-[ -d ".venv" ] || uv venv
-uv sync --extra gpu
+    # ── 2. Create venv and install dependencies ───────────────────────────────
+    [ -d ".venv" ] || uv venv
+    uv sync --extra gpu
 
-# ── 3. Activate venv ──────────────────────────────────────────────────────────
-source .venv/bin/activate
+    # ── 3. Activate venv ──────────────────────────────────────────────────────
+    source .venv/bin/activate
+fi
 
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
 if command -v torchrun &> /dev/null; then
-    RUNNER="torchrun --standalone --nproc_per_node=8"
+    RUNNER="torchrun --standalone --nproc_per_node=${NPROC_PER_NODE}"
 else
     echo "Warning: torchrun not found, falling back to python -m torch.distributed.run"
-    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=8"
+    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=${NPROC_PER_NODE}"
 fi
 
 python -m nanochat.report reset
