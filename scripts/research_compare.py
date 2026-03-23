@@ -94,7 +94,10 @@ def run_training_sweep(args):
     
     aspect_ratio = 64
     head_dim = 128
-    max_seq_len = 2046
+    # Keep sequence length aligned to powers of two so the default total batch
+    # size can be cleanly factorized into micro-batches across DDP workers.
+    # (2046 caused divisibility assertion failures in base_train.)
+    max_seq_len = 2048
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     device_batch_size = 16
@@ -103,7 +106,12 @@ def run_training_sweep(args):
     warm_up_ratio = 0.3
     adam_beta2 = 0.99
 #    core_metric_every=-1
-    target_dim = min(model_dim //8, model_dim) if model_dim >= 512 else min(model_dim //8, model_dim) 
+    # Research branches require target_dim % head_dim == 0 in base_train.
+    # Start from a reduced dimension (~1/8th of model dim), then round UP to
+    # the nearest valid multiple of head_dim.
+    raw_target_dim = max(model_dim // 8, 1)
+    target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
+    target_dim = min(target_dim, model_dim)
     
     # Common kwargs for all models
     common_args = [
