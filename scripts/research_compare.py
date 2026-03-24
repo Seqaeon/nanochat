@@ -16,10 +16,18 @@ import numpy as np
 def _resolve_runner() -> list[str]:
     """Return the torchrun command prefix for launching base_train.py with DDP.
 
-    Uses NANOCHAT_NPROC env var (set by research_sweep.sh) for the worker count.
-    Falls back to torch.cuda.device_count() or 1 if not set.
+    NANOCHAT_NPROC is the *requested* worker count (set by research_sweep.sh,
+    default 8). It is capped to the number of available CUDA devices so that
+    running on a machine with fewer GPUs than requested Just Works.
     """
-    nproc = int(os.environ.get("NANOCHAT_NPROC", 0)) or max(torch.cuda.device_count(), 1)
+    nproc_requested = int(os.environ.get("NANOCHAT_NPROC", 8))
+    gpu_count = max(torch.cuda.device_count(), 1)
+    nproc = min(nproc_requested, gpu_count)
+    if nproc < nproc_requested:
+        print(
+            f"[research_compare] Requested {nproc_requested} DDP workers but only "
+            f"{gpu_count} GPU(s) available — using {nproc}."
+        )
     torchrun = shutil.which("torchrun")
     if torchrun:
         return [torchrun, "--standalone", f"--nproc_per_node={nproc}"]

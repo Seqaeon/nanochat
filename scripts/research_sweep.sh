@@ -88,15 +88,12 @@ uv sync --extra gpu
 # ── 3. Activate venv ──────────────────────────────────────────────────────────
 source .venv/bin/activate
 
-# ── 4. Determine number of GPUs to use per training job ──────────────────────
-# NANOCHAT_NPROC controls how many DDP workers each base_train.py run gets.
-# Default: all visible CUDA devices. Override with NANOCHAT_NPROC env var.
-if [ -z "${NANOCHAT_NPROC:-}" ]; then
-    GPU_COUNT=$(python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 1)
-    NANOCHAT_NPROC=${GPU_COUNT:-1}
-fi
+# ── 4. Determine number of DDP workers per training job ──────────────────────
+# NANOCHAT_NPROC is the *requested* number of workers (default: 8).
+# research_compare.py will cap this to the number of available GPUs at runtime.
+NANOCHAT_NPROC=${NANOCHAT_NPROC:-8}
 export NANOCHAT_NPROC
-echo "DDP workers per training job: ${NANOCHAT_NPROC}"
+echo "Requested DDP workers per training job: ${NANOCHAT_NPROC} (capped to available GPUs)"
 
 python -m nanochat.report reset
 python -m nanochat.dataset -n 8 
