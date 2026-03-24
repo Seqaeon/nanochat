@@ -88,13 +88,15 @@ uv sync --extra gpu
 # ── 3. Activate venv ──────────────────────────────────────────────────────────
 source .venv/bin/activate
 
-# ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
-if command -v torchrun &> /dev/null; then
-    RUNNER="torchrun --standalone --nproc_per_node=8"
-else
-    echo "Warning: torchrun not found, falling back to python -m torch.distributed.run"
-    RUNNER="python -m torch.distributed.run --standalone --nproc_per_node=8"
+# ── 4. Determine number of GPUs to use per training job ──────────────────────
+# NANOCHAT_NPROC controls how many DDP workers each base_train.py run gets.
+# Default: all visible CUDA devices. Override with NANOCHAT_NPROC env var.
+if [ -z "${NANOCHAT_NPROC:-}" ]; then
+    GPU_COUNT=$(python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 1)
+    NANOCHAT_NPROC=${GPU_COUNT:-1}
 fi
+export NANOCHAT_NPROC
+echo "DDP workers per training job: ${NANOCHAT_NPROC}"
 
 python -m nanochat.report reset
 python -m nanochat.dataset -n 8 
@@ -129,8 +131,10 @@ for DEPTH in "$@"; do
     mkdir -p "${RUN_DIR}"
 
 
-    # After:
-    $RUNNER -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
+    # The coordinator (research_compare.py) is a plain Python script that
+    # internally launches each base_train.py via torchrun. Run it directly
+    # with the venv Python; no torchrun wrapping needed here.
+    python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
 #    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
