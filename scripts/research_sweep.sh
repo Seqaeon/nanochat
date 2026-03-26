@@ -90,22 +90,28 @@ fi
 echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
+# ── 1. Install uv if missing ──────────────────────────────────────────────────
+SKIP_ENV_SETUP="${NANOCHAT_SKIP_ENV_SETUP:-0}"
 
-if [ "${NANOCHAT_SKIP_ENV_SETUP:-0}" = "1" ]; then
+if [[ "$SKIP_ENV_SETUP" == "1" ]]; then
     echo "Skipping environment setup because NANOCHAT_SKIP_ENV_SETUP=1"
+    if [[ ! -d ".venv" ]]; then
+        echo "Error: .venv not found, cannot skip setup. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
+        exit 1
+    fi
 else
-    # ── 1. Install uv if missing ──────────────────────────────────────────────
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
     # ── 2. Create venv and install dependencies ───────────────────────────────
     [ -d ".venv" ] || uv venv
     uv sync --extra gpu
-
-    # ── 3. Activate venv ──────────────────────────────────────────────────────
-    source .venv/bin/activate
 fi
 
+# ── 3. Activate venv ──────────────────────────────────────────────────────────
+source .venv/bin/activate
+
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
+NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 if command -v torchrun &> /dev/null; then
     RUNNER="torchrun --standalone --nproc_per_node=${NPROC_PER_NODE}"
 else
@@ -145,10 +151,8 @@ for DEPTH in "$@"; do
     RUN_DIR="${ROOT_OUT_DIR}/depth_${DEPTH}"
     mkdir -p "${RUN_DIR}"
 
-
-    # The coordinator (research_compare.py) is a plain Python script that
-    # internally launches each base_train.py via torchrun. Run it directly
-    # with the venv Python; no torchrun wrapping needed here.
+    # research_compare orchestrates multiple training subprocesses itself.
+    # Running it under torchrun causes nested distributed launches and rank/env collisions.
     python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
 #    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS

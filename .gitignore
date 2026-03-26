@@ -12,3 +12,9 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+# Training artifacts and large outputs
+out/
+*.pt
+*.pth
+*.ckpt
