@@ -142,6 +142,7 @@ def download_single_file(index, data_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download pretraining dataset shards")
     parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of train shards to download (default: -1), -1 = disable")
+    parser.add_argument("--max-shards", type=int, default=None, help="Override -n if specified")
     parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
     parser.add_argument("--data-dir", type=str, default=None, help="dataset output directory (default: NANOCHAT_DATA_DIR or <base_dir>/base_data_climbmix)")
     args = parser.parse_args()
@@ -153,7 +154,8 @@ if __name__ == "__main__":
 
     # The way this works is that the user specifies the number of train shards to download via the -n flag.
     # In addition to that, the validation shard is *always* downloaded and is pinned to be the last shard.
-    num_train_shards = MAX_SHARD if args.num_files == -1 else min(args.num_files, MAX_SHARD)
+    num_files = args.max_shards if args.max_shards is not None else args.num_files
+    num_train_shards = MAX_SHARD if num_files == -1 else min(num_files, MAX_SHARD)
     ids_to_download = list(range(num_train_shards))
     ids_to_download.append(MAX_SHARD) # always download the validation shard
 

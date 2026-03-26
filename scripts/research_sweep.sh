@@ -44,6 +44,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/research_sweep_${TIMESTAMP}"
 
 EXTRA_ARGS=""
+MAX_SHARDS=170
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,6 +57,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --max-shards)
+            MAX_SHARDS=$2
             EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
             shift 2
             ;;
@@ -114,7 +116,7 @@ fi
 python -m nanochat.report reset
 python -m nanochat.dataset -n 8 
 
-python -m nanochat.dataset -n 170 &
+python -m nanochat.dataset -n $MAX_SHARDS &
 DATASET_DOWNLOAD_PID=$!
 #
 python -m scripts.tok_train
