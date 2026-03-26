@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import glob
+import shutil
 from pathlib import Path
 import subprocess
 
@@ -10,6 +11,33 @@ import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+
+
+def _resolve_runner() -> list[str]:
+    """Return the torchrun command prefix for launching base_train.py with DDP.
+
+    NANOCHAT_NPROC is the *requested* worker count (set by research_sweep.sh,
+    default 8). It is capped to the number of available CUDA devices so that
+    running on a machine with fewer GPUs than requested Just Works.
+    """
+    nproc_requested = int(os.environ.get("NANOCHAT_NPROC", 8))
+    gpu_count = max(torch.cuda.device_count(), 1)
+    nproc = min(nproc_requested, gpu_count)
+    if nproc < nproc_requested:
+        print(
+            f"[research_compare] Requested {nproc_requested} DDP workers but only "
+            f"{gpu_count} GPU(s) available — using {nproc}."
+        )
+    torchrun = shutil.which("torchrun")
+    if torchrun:
+        return [torchrun, "--standalone", f"--nproc_per_node={nproc}"]
+    return [
+        sys.executable, "-m", "torch.distributed.run",
+        "--standalone", f"--nproc_per_node={nproc}",
+    ]
+
+
+RUNNER = _resolve_runner()
 
 def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_dir: str = None) -> int:
     # Replica of base_train's logic
@@ -193,8 +221,9 @@ def run_training_sweep(args):
         
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
         env = os.environ.copy()
-        
-        cmd = [sys.executable, "-m", "scripts.base_train"] + args
+
+        # Each model is trained as a proper DDP job via torchrun.
+        cmd = RUNNER + ["-m", "scripts.base_train"] + args
         print(f"Running: {' '.join(cmd)}")
         
         try:

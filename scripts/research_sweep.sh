@@ -114,16 +114,16 @@ fi
 python -m nanochat.report reset
 python -m nanochat.dataset -n 8 
 
-python -m nanochat.dataset -n 170 &
-DATASET_DOWNLOAD_PID=$!
-
+# python -m nanochat.dataset -n 170 &
+# DATASET_DOWNLOAD_PID=$!
+#
 python -m scripts.tok_train
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
-
-echo "Waiting for dataset download to complete..."
-wait $DATASET_DOWNLOAD_PID
+#
+# echo "Waiting for dataset download to complete..."
+# wait $DATASET_DOWNLOAD_PID
 
 
 # Use the current python or fallback to venv if it exists locally
@@ -144,8 +144,10 @@ for DEPTH in "$@"; do
     mkdir -p "${RUN_DIR}"
 
 
-    # After:
-    $RUNNER -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
+    # The coordinator (research_compare.py) is a plain Python script that
+    # internally launches each base_train.py via torchrun. Run it directly
+    # with the venv Python; no torchrun wrapping needed here.
+    python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
 #    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
