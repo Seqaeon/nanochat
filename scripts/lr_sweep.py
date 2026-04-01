@@ -100,12 +100,12 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
 # Base LRs for each model type.  These are the ×1 reference values.
 # Changing these here changes what every scale factor multiplies against.
 BASE_LRS: dict[str, dict[str, float]] = {
-    "base": {
-        "embedding_lr":   0.3,
-        "unembedding_lr": 0.004,
-        "matrix_lr":      0.02,
-        "scalar_lr":      0.5,
-    },
+#    "base": {
+#        "embedding_lr":   0.3,
+#        "unembedding_lr": 0.004,
+#        "matrix_lr":      0.02,
+#        "scalar_lr":      0.5,
+#    },
     "moe_perm": {
         # CCL reference: all LR groups set uniformly (matches research_compare.py)
         "embedding_lr":   0.05,
@@ -235,7 +235,7 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
         "--total-batch-size", str(total_batch_size),
         "--target-tokens", str(args.target_tokens),
         "--eval-every", str(args.eval_every),
-        "--core-metric-every", "-1",
+        "--core-metric-every", "0",
         "--sample-every", "-1",
         "--warmup-ratio", "0.3",
         "--adam-beta2", "0.99",
