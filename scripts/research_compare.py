@@ -114,7 +114,7 @@ def run_training_sweep(args):
     run_dir_path = Path(run_dir)
     run_dir_path.mkdir(parents=True, exist_ok=True)
     
-    target_tokens = estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
+    target_tokens = args.target_tokens if args.target_tokens and args.target_tokens > 0 else estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
     print("=" * 64)
     print(f"Starting Sweep for Depth {depth}")
     print(f"Calculated Target Tokens: {target_tokens:,}")
@@ -311,6 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
     parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
     parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
+    parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     args = parser.parse_args()
     

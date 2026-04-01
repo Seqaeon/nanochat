@@ -35,8 +35,14 @@ echo "===== GPU Info ====="
 nvidia-smi || true
 
 if [ $# -eq 0 ]; then
-    echo "Usage: ./scripts/research_sweep.sh <depth1> [depth2] [depth3] ..."
-    echo "Example: ./scripts/research_sweep.sh 2 4 8"
+    echo "Usage: ./scripts/research_sweep.sh [flags] <depth1> [depth2] ..."
+    echo "Flags:"
+    echo "  --fp8               Enable FP8 training"
+    echo "  --no-compile        Disable torch.compile"
+    echo "  --target-tokens N   Explicit token budget per run (default: auto-estimated)"
+    echo "  --max-shards N      Step through up to N data shards"
+    echo ""
+    echo "Example: ./scripts/research_sweep.sh --fp8 --target-tokens 100000000 8"
     exit 1
 fi
 
@@ -59,6 +65,10 @@ while [[ $# -gt 0 ]]; do
         --max-shards)
             MAX_SHARDS=$2
             EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            shift 2
+            ;;
+        --target-tokens)
+            EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
             shift 2
             ;;
         --tokenizer-dir)

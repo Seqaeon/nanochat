@@ -106,8 +106,20 @@ BASE_LRS: dict[str, dict[str, float]] = {
 #        "matrix_lr":      0.02,
 #        "scalar_lr":      0.5,
 #    },
-    "moe_perm": {
-        # CCL reference: all LR groups set uniformly (matches research_compare.py)
+#    "moe_perm": {
+#        # CCL reference: all LR groups set uniformly (matches research_compare.py)
+#        "embedding_lr":   0.05,
+#        "unembedding_lr": 0.05,
+#        "matrix_lr":      0.05,
+#        "scalar_lr":      0.05,
+#    },
+    "moe_no_perm": {
+        "embedding_lr":   0.05,
+        "unembedding_lr": 0.05,
+        "matrix_lr":      0.05,
+        "scalar_lr":      0.05,
+    },
+    "remixed-linear": {
         "embedding_lr":   0.05,
         "unembedding_lr": 0.05,
         "matrix_lr":      0.05,
@@ -117,13 +129,20 @@ BASE_LRS: dict[str, dict[str, float]] = {
 
 # Architecture flags per model type (depth-dependent args added dynamically)
 MODEL_ARCH_FLAGS: dict[str, list[str]] = {
-    "base": [],
-    "moe_perm": [
+#    "base": [],
+#    "moe_perm": [
+#        "--use-moe",
+#        "--use-perm",
+#        "--num-experts", "8",
+#        "--selection-mode", "soft",
+#        # --target-dim and --router-dim appended dynamically in run_lr_sweep()
+#    ],
+    "moe_no_perm": [
         "--use-moe",
-        "--use-perm",
         "--num-experts", "8",
-        "--selection-mode", "soft",
-        # --target-dim and --router-dim appended dynamically in run_lr_sweep()
+    ],
+    "remixed-linear": [
+        "--use-remixed-linear",
     ],
 }
 
@@ -204,16 +223,6 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Filter requested models to only those present in BASE_LRS
-    valid_models = [m for m in args.models if m in BASE_LRS]
-    missing_models = [m for m in args.models if m not in BASE_LRS]
-    if missing_models:
-        print(f"[lr_sweep] Warning: Models {missing_models} requested but not in BASE_LRS. Skipping.")
-    if not valid_models:
-        print(f"[lr_sweep] Error: No valid models found in BASE_LRS. Available: {list(BASE_LRS.keys())}")
-        return
-    args.models = valid_models
-
     # Architecture sizing (mirrors research_compare.py exactly)
     aspect_ratio = 64
     head_dim = 128
@@ -278,6 +287,11 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
                 "--target-dim", str(target_dim),
                 "--router-dim", str(target_dim),
             ]
+            if model_name == "remixed-linear":
+                arch_flags += [
+                    "--context-dim", str(target_dim),
+                    "--linear-basis-size", str(target_dim),
+                ]
 
         print(f"\n{'='*64}")
         print(f"Model: {model_name}")
@@ -469,9 +483,9 @@ if __name__ == "__main__":
         help="scale factors applied to each model's base LRs (default: 1 3 5 7 10)",
     )
     parser.add_argument(
-        "--models", type=str, nargs="+", default=["base", "moe_perm"],
-        choices=["base", "moe_perm"],
-        help="model types to sweep (default: base moe_perm)",
+        "--models", type=str, nargs="+", default=["base", "moe_no_perm", "moe_perm", "remixed-linear"],
+        choices=["base", "moe_no_perm", "moe_perm", "remixed-linear"],
+        help="model types to sweep (default: all research branches)",
     )
     parser.add_argument(
         "--eval-every", type=int, default=500,
