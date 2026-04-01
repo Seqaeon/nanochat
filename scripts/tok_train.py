@@ -19,10 +19,27 @@ parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum charact
 parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
 parser.add_argument('--data-dir', type=str, default=None, help='Dataset directory')
 parser.add_argument('--tokenizer-dir', type=str, default=None, help='Tokenizer output directory')
+parser.add_argument('--force', action='store_true', help='Force re-training even if tokenizer exists')
 args = parser.parse_args()
 print(f"max_chars: {args.max_chars:,}")
 print(f"doc_cap: {args.doc_cap:,}")
 print(f"vocab_size: {args.vocab_size:,}")
+
+# -----------------------------------------------------------------------------
+# Determine output directory and check if tokenizer already exists
+
+if args.tokenizer_dir is None:
+    tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
+else:
+    tokenizer_dir = args.tokenizer_dir
+
+if not args.force:
+    tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
+    token_bytes_pt = os.path.join(tokenizer_dir, "token_bytes.pt")
+    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_pt):
+        print(f"Tokenizer already exists in {tokenizer_dir}, skipping training. Use --force to re-train.")
+        import sys
+        sys.exit(0)
 
 # -----------------------------------------------------------------------------
 # Text iterator
@@ -53,14 +70,7 @@ t1 = time.time()
 train_time = t1 - t0
 print(f"Training time: {train_time:.2f}s")
 
-# -----------------------------------------------------------------------------
 # Save the tokenizer to disk
-if args.tokenizer_dir is None:
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
-else:
-    tokenizer_dir = args.tokenizer_dir
-
 tokenizer.save(tokenizer_dir)
 
 # -----------------------------------------------------------------------------

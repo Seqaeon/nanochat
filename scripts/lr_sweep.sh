@@ -147,8 +147,12 @@ python -m nanochat.dataset -n 8
 python -m nanochat.dataset -n $MAX_SHARDS &
 DATASET_DOWNLOAD_PID=$!
 
-python -m scripts.tok_train
-python -m scripts.tok_eval
+if [ ! -f "$NANOCHAT_BASE_DIR/tokenizer/tokenizer.pkl" ]; then
+    python -m scripts.tok_train
+    python -m scripts.tok_eval
+else
+    echo "Tokenizer already exists in $NANOCHAT_BASE_DIR/tokenizer, skipping training."
+fi
 
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID

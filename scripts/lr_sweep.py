@@ -204,6 +204,16 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Filter requested models to only those present in BASE_LRS
+    valid_models = [m for m in args.models if m in BASE_LRS]
+    missing_models = [m for m in args.models if m not in BASE_LRS]
+    if missing_models:
+        print(f"[lr_sweep] Warning: Models {missing_models} requested but not in BASE_LRS. Skipping.")
+    if not valid_models:
+        print(f"[lr_sweep] Error: No valid models found in BASE_LRS. Available: {list(BASE_LRS.keys())}")
+        return
+    args.models = valid_models
+
     # Architecture sizing (mirrors research_compare.py exactly)
     aspect_ratio = 64
     head_dim = 128
