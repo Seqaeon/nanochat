@@ -100,19 +100,19 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
 # Base LRs for each model type.  These are the ×1 reference values.
 # Changing these here changes what every scale factor multiplies against.
 BASE_LRS: dict[str, dict[str, float]] = {
-#    "base": {
-#        "embedding_lr":   0.3,
-#        "unembedding_lr": 0.004,
-#        "matrix_lr":      0.02,
-#        "scalar_lr":      0.5,
-#    },
-#    "moe_perm": {
-#        # CCL reference: all LR groups set uniformly (matches research_compare.py)
-#        "embedding_lr":   0.05,
-#        "unembedding_lr": 0.05,
-#        "matrix_lr":      0.05,
-#        "scalar_lr":      0.05,
-#    },
+    "base": {
+        "embedding_lr":   0.3,
+        "unembedding_lr": 0.004,
+        "matrix_lr":      0.02,
+        "scalar_lr":      0.5,
+    },
+    "moe_perm": {
+        # CCL reference: all LR groups set uniformly (matches research_compare.py)
+        "embedding_lr":   0.05,
+        "unembedding_lr": 0.05,
+        "matrix_lr":      0.05,
+        "scalar_lr":      0.05,
+    },
     "moe_no_perm": {
         "embedding_lr":   0.05,
         "unembedding_lr": 0.05,
@@ -129,14 +129,14 @@ BASE_LRS: dict[str, dict[str, float]] = {
 
 # Architecture flags per model type (depth-dependent args added dynamically)
 MODEL_ARCH_FLAGS: dict[str, list[str]] = {
-#    "base": [],
-#    "moe_perm": [
-#        "--use-moe",
-#        "--use-perm",
-#        "--num-experts", "8",
-#        "--selection-mode", "soft",
-#        # --target-dim and --router-dim appended dynamically in run_lr_sweep()
-#    ],
+    "base": [],
+    "moe_perm": [
+        "--use-moe",
+        "--use-perm",
+        "--num-experts", "8",
+        "--selection-mode", "soft",
+        # --target-dim and --router-dim appended dynamically in run_lr_sweep()
+    ],
     "moe_no_perm": [
         "--use-moe",
         "--num-experts", "8",
