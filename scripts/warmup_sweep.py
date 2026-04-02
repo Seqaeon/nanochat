@@ -13,8 +13,9 @@ After all runs finish, reads per-step val_bpb and produces:
       3. Final BPB   — tiebreaker
 
 Warmup fracs (e.g. 0.01, 0.05) are expressed as fractions of --target-tokens (the
-FULL training budget, e.g. 20B). Each candidate run is capped to --run-tokens (e.g.
-100M). Warmup step counts are thus consistent across all candidate runs.
+FULL training budget, e.g. 20B). Each candidate run is capped to --early-stop-tokens
+(or legacy --run-tokens), e.g. 100M. Warmup step counts are thus consistent across
+all candidate runs.
 
 Usage:
     python -m scripts.warmup_sweep \\
@@ -309,8 +310,11 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # Steps in the full training budget — used to convert warmup fracs to absolute steps
     full_budget_steps = target_tokens // total_batch_size
 
-    # Global early stop based on run-tokens; default to full training budget
-    if getattr(args, "run_tokens", 0) > 0:
+    # Global early stop based on explicit early-stop arg (preferred) or legacy run-tokens.
+    # Default remains full training budget.
+    if getattr(args, "early_stop_tokens", -1) > 0:
+        global_early_stop_tokens = args.early_stop_tokens
+    elif getattr(args, "run_tokens", 0) > 0:
         global_early_stop_tokens = args.run_tokens
     else:
         global_early_stop_tokens = target_tokens
@@ -677,7 +681,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--run-tokens", type=int, default=0,
-        help="per-run early stop length in tokens (default: 0 = full --target-tokens budget)",
+        help="legacy alias for per-run early stop tokens (default: 0 = ignored unless --early-stop-tokens is unset)",
+    )
+    parser.add_argument(
+        "--early-stop-tokens", type=int, default=-1,
+        help="per-run early stop length in tokens (default: -1 = full --target-tokens budget)",
     )
     parser.add_argument(
         "--log-every", type=int, default=1,
