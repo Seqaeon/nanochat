@@ -15,7 +15,7 @@
 #   bash scripts/warmup_sweep.sh --models "moe_perm remixed-linear" 8 16
 #
 # Note: --target-tokens is the FULL training budget (e.g. 20B) used for warmup step
-# calculation. --run-tokens is the per-run early-stop length (e.g. 100M default).
+# calculation. --early-stop-tokens (or legacy --run-tokens) controls per-run early stop.
 #
 # Env-var overrides:
 #   NPROC_PER_NODE      — DDP worker count (default: 8, auto-capped to GPU count)
@@ -44,7 +44,8 @@ if [ $# -eq 0 ]; then
     echo "  --no-compile               Disable torch.compile"
     echo "  --max-shards N             Maximum number of dataset shards (default: 170)"
     echo "  --target-tokens N          Full training budget for warmup step calc (default: 20B)"
-    echo "  --run-tokens N             Per-run early stop length in tokens (default: dynamic based on max warmup)"
+    echo "  --early-stop-tokens N      Per-run early stop length in tokens (recommended)"
+    echo "  --run-tokens N             Legacy alias for --early-stop-tokens"
     echo "  --warmup-fracs '0.0 0.01'  Space-separated warmup fractions of full budget"
     echo "  --log-every N              Print logs every N steps (default: 1)"
     echo "  --models 'moe_perm ...'    Models to sweep"
@@ -63,7 +64,7 @@ ROOT_OUT_DIR="out/warmup_sweep_${TIMESTAMP}"
 
 EXTRA_ARGS=""
 MAX_SHARDS=170
-TARGET_TOKENS=100000000
+TARGET_TOKENS=20000000000
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -87,6 +88,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --run-tokens)
             EXTRA_ARGS="$EXTRA_ARGS --run-tokens $2"
+            shift 2
+            ;;
+        --early-stop-tokens)
+            EXTRA_ARGS="$EXTRA_ARGS --early-stop-tokens $2"
             shift 2
             ;;
         --warmup-fracs)
@@ -147,7 +152,7 @@ fi
 source .venv/bin/activate
 
 echo "Starting Warmup Sweep. Output directory: ${ROOT_OUT_DIR}"
-echo "Target tokens per run: ${TARGET_TOKENS}"
+echo "Full-budget target tokens: ${TARGET_TOKENS}"
 mkdir -p "${ROOT_OUT_DIR}"
 
 # ── One-time data + tokenizer setup ──────────────────────────────────────────

@@ -73,12 +73,13 @@ parser.add_argument("--use-remixed-linear", action="store_true", help="enable re
 parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
 parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
 parser.add_argument("--use-pos-embed", action="store_true", help="add learned absolute positional embeddings on top of token/research embeddings")
-parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
+parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
-parser.add_argument("--research-warmup-ratio", type=float, default=-1.0, help="research-only warmup ratio/pct_start for OneCycle (-1 = use --warmup-ratio)")
+parser.add_argument("--use-onecycle", type=int, default=None, choices=[0, 1], help="alias for --research-onecycle")
+parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-only warmup ratio/pct_start for OneCycle")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for (-1 = disable)")
@@ -112,7 +113,10 @@ parser.add_argument("--max-shards", type=int, default=-1, help="maximum number o
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
+parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
 args = parser.parse_args()
+if args.use_onecycle is not None:
+    args.research_onecycle = args.use_onecycle
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
@@ -180,13 +184,27 @@ def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
+    base_dim = depth * args.aspect_ratio
+    base_model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
+    base_num_heads = base_model_dim // args.head_dim
     if args.use_moe or args.use_remixed_linear:
         model_dim = args.target_dim
-        assert model_dim % args.head_dim == 0, f"target_dim must be divisible by head_dim ({args.head_dim}), got {model_dim}"
+        # Keep research branches compatible with repo attention constraints while
+        # preferring a head count close to the base model's count.
+        def _choose_research_heads(embed_dim: int, preferred_heads: int) -> int:
+            pow2 = [1 << i for i in range(0, 12)]  # up to 2048 heads, way above practical usage
+            valid_pow2 = [h for h in pow2 if h <= embed_dim and embed_dim % h == 0 and (embed_dim // h) % 8 == 0]
+            if valid_pow2:
+                return min(valid_pow2, key=lambda h: (abs(h - preferred_heads), -h))
+            # Fallback: any divisor that keeps integer head_dim.
+            valid_any = [h for h in range(1, embed_dim + 1) if embed_dim % h == 0]
+            return min(valid_any, key=lambda h: abs(h - preferred_heads)) if valid_any else 1
+
+        num_heads = _choose_research_heads(model_dim, base_num_heads)
+        assert model_dim % num_heads == 0, f"target_dim must be divisible by n_head ({num_heads}), got {model_dim}"
     else:
-        base_dim = depth * args.aspect_ratio
-        model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
-    num_heads = model_dim // args.head_dim
+        model_dim = base_model_dim
+        num_heads = base_num_heads
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
@@ -195,6 +213,9 @@ def build_model_meta(depth):
         use_perm=args.use_perm,
         num_experts=args.num_experts,
         moe_num_experts=args.num_experts,
+        total_embed_dim=args.target_dim,
+        moe_router_dim=args.target_dim,
+        moe_embed_dim=args.target_dim,
         router_dim=args.router_dim,
         target_dim=args.target_dim,
         selection_mode=args.selection_mode,
@@ -232,6 +253,13 @@ else:
 
 checkpoint_dir = os.path.abspath(os.path.join(checkpoints_root, output_dirname))
 print0(f"Checkpoints directory: {checkpoint_dir}")
+if args.step_loss_file and master_process:
+    step_loss_dir = os.path.dirname(os.path.abspath(args.step_loss_file))
+    if step_loss_dir:
+        os.makedirs(step_loss_dir, exist_ok=True)
+    # Fresh file per run.
+    with open(args.step_loss_file, "w", encoding="utf-8"):
+        pass
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
@@ -542,6 +570,7 @@ grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+EMA_BETA = 0.9
 
 # Go!
 while True:
@@ -638,6 +667,10 @@ while True:
 
     # termination conditions
     if last_step:
+        # Ensure sweep parsers always see an end-of-run loss line, even when
+        # early-stop triggers before hitting a log_every boundary.
+        debiased_at_step = smooth_train_loss / (1 - EMA_BETA**max(step, 1))
+        print0(f"step {step:05d}/{num_iterations:05d} (final) | loss: {debiased_at_step:.6f} | early_stop: {int(args.early_stop_tokens > 0)}")
         break
 
     # -------------------------------------------------------------------------
@@ -685,9 +718,15 @@ while True:
     # -------------------------------------------------------------------------
 
     # logging (CPU action only)
-    ema_beta = 0.9 # EMA decay factor for some smoothing just for nicer logging
-    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f # EMA the training loss
-    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
+    smooth_train_loss = EMA_BETA * smooth_train_loss + (1 - EMA_BETA) * train_loss_f # EMA the training loss
+    debiased_smooth_loss = smooth_train_loss / (1 - EMA_BETA**(step + 1)) # debias the EMA
+    if args.step_loss_file and master_process:
+        with open(args.step_loss_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step": int(step),
+                "tokens": int(step * total_batch_size),
+                "loss": float(debiased_smooth_loss),
+            }) + "\n")
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(total_batch_size / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
@@ -707,7 +746,7 @@ while True:
     adamw_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "adamw"]
     muon_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "muon"]
     lr_msg = f"lr(adamw:{(sum(adamw_lrs)/len(adamw_lrs)) if adamw_lrs else 0:.3e}, muon:{(sum(muon_lrs)/len(muon_lrs)) if muon_lrs else 0:.3e})"
-    if step % args.log_every == 0 or step == num_iterations - 1:
+    if step % args.log_every == 0 or step == num_iterations - 1 or last_step:
         print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | {lr_msg} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
