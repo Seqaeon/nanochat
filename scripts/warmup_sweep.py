@@ -3,14 +3,13 @@ Warmup-ratio sweep for CCL research models.
 
 For each depth, runs N training jobs — one per (model_type, warmup_frac) pair —
 sequentially under DDP via torchrun. Learning rates are fixed to the LR-sweep winners.
-After all runs finish, reads per-step val_bpb and produces:
+After all runs finish, reads training loss curve and produces:
 
   • warmup_sweep_depth_{D}.png  — loss-curve overlay, spiky runs marked ⚠
   • warmup_sweep_depth_{D}.tsv  — per-run metrics table
-  • Console rankings using 3-priority ordering:
+  • Console rankings:
       1. Stability   — runs with loss spike after 5M tokens are deprioritised
-      2. Speed       — warmup that crosses BPB_THRESHOLD first wins
-      3. Final BPB   — tiebreaker
+      2. Final Loss  — lower loss at peak wins
 
 Warmup fracs (e.g. 0.01, 0.05) are expressed as fractions of --target-tokens (the
 FULL training budget, e.g. 20B). Each candidate run is capped to --run-tokens (e.g.
@@ -186,69 +185,41 @@ def check_and_prepare_env(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Loss-curve reader (same as lr_sweep.py)
-# ---------------------------------------------------------------------------
-
-def read_loss_curve(checkpoint_dir: Path) -> tuple[list[int], list[float]]:
-    """Read all meta_*.json files and return (training_token_counts, val_bpbs)."""
-    meta_files = sorted(glob.glob(str(checkpoint_dir / "meta_*.json")))
-    tokens_list: list[int] = []
-    bpbs_list: list[float] = []
-
-    for mf in meta_files:
-        try:
-            with open(mf) as f:
-                data = json.load(f)
-            bpb = data.get("val_bpb")
-            if bpb is None:
-                continue
-            step = data.get("step", 0)
-            tbs = data.get("total_batch_size", 524288)
-            tokens_list.append(step * tbs)
-            bpbs_list.append(float(bpb))
-        except Exception:
-            continue
-
-    return tokens_list, bpbs_list
-
-
-# ---------------------------------------------------------------------------
 # Per-run analysis
 # ---------------------------------------------------------------------------
 
 def analyse_run(
     tokens: list[int],
-    bpbs: list[float],
-    bpb_threshold: float,
+    losses: list[float],
     spike_window_tokens: int = 5_000_000,
-    spike_tolerance: float = 0.005,
+    spike_tolerance: float = 0.1,
 ) -> dict:
     """
-    Compute per-run metrics for ranking:
-      - has_spike: True if any step after spike_window_tokens has bpb increase
-                   larger than spike_tolerance vs the previous measurement.
-      - first_below_threshold_tokens: first token count crossing bpb_threshold.
-      - final_bpb: last measured bpb.
-      - min_bpb: minimum measured bpb.
+    Analyse training loss curve for stability and final loss at peak.
     """
+    if not tokens or not losses:
+        return {
+            "has_spike": False,
+            "final_loss": 0.0,
+            "min_loss": 0.0,
+        }
+
+    final_loss = losses[-1]
+    min_loss = min(losses)
+
+    # Spike detection in training loss (noisy, use 0.1 tolerance)
     has_spike = False
-    first_below_threshold_tokens: Optional[int] = None
-
-    for i, (tok, bpb) in enumerate(zip(tokens, bpbs)):
-        # Spike detection: only after the warmup window, with tolerance
-        if tok >= spike_window_tokens and i > 0:
-            if bpb > bpbs[i - 1] + spike_tolerance:
-                has_spike = True
-
-        # Descent speed
-        if first_below_threshold_tokens is None and bpb < bpb_threshold:
-            first_below_threshold_tokens = tok
+    for i in range(1, len(tokens)):
+        if tokens[i] < spike_window_tokens:
+            continue
+        if losses[i] > losses[i-1] + spike_tolerance:
+            has_spike = True
+            break
 
     return {
         "has_spike": has_spike,
-        "first_below_threshold_tokens": first_below_threshold_tokens,
-        "final_bpb": bpbs[-1] if bpbs else float("inf"),
-        "min_bpb": min(bpbs) if bpbs else float("inf"),
+        "final_loss": final_loss,
+        "min_loss": min_loss,
     }
 
 
@@ -303,16 +274,14 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     print("=" * 64)
     print(f"Warmup Sweep | Depth {depth}")
     print(f"Full budget (warmup basis): {args.target_tokens:,} ({full_budget_steps:,} steps)")
-    print(f"Per-run tokens (early stop): {args.run_tokens:,} ({run_steps:,} steps)")
     print(f"Warmup fracs: {args.warmup_fracs}")
-    print(f"BPB threshold: {args.bpb_threshold}")
     print(f"Models: {valid_models}")
-    print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every={eval_every}")
+    print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every=Disabled")
     print("=" * 64)
 
     # Args shared by every run
     # --target-tokens sets the full LR schedule (20B)
-    # --early-stop-tokens cuts the run short at run_tokens without changing the schedule
+    # --eval-every 0 disables validation to speed up this sweep
     common_args = [
         "--depth", str(depth),
         "--aspect-ratio", str(aspect_ratio),
@@ -321,8 +290,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size),
         "--target-tokens", str(args.target_tokens),        # full LR schedule
-        "--early-stop-tokens", str(args.run_tokens),       # actual stop point
-        "--eval-every", str(eval_every),
+        "--eval-every", "0",                               # disable eval
         "--core-metric-every", "0",
         "--sample-every", "-1",
         "--adam-beta2", "0.99",
@@ -342,7 +310,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
     env = os.environ.copy()
 
-    # results[model_name][warmup_frac] = {tokens, bpbs, has_spike, first_below, final_bpb, min_bpb}
+    # results[model_name][warmup_frac] = {tokens, losses, has_spike, final_loss, min_loss}
     results: dict[str, dict[float, dict]] = {m: {} for m in valid_models}
 
     for model_name in valid_models:
@@ -371,9 +339,13 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
         for warmup_frac in args.warmup_fracs:
             # Absolute warmup steps = frac × full_budget_steps
-            # warmup_ratio = warmup_steps / full_budget_steps (expressed relative to the 20B schedule)
             warmup_steps = int(warmup_frac * full_budget_steps)
-            warmup_ratio = warmup_frac  # already a fraction of the full schedule
+            warmup_ratio = warmup_frac
+
+            # Peak LR Stop Point: run exactly until the peak is reached
+            run_tokens = int(warmup_frac * args.target_tokens)
+            # Ensure at least one step if warmup-frac is 0.0
+            run_tokens = max(run_tokens, total_batch_size)
 
             warmup_pct = warmup_frac * 100
             run_name = f"{model_name}_wu{warmup_pct:.1f}pct"
@@ -387,6 +359,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 + lr_args
                 + [
                     "--warmup-ratio", f"{warmup_ratio:.6g}",
+                    "--early-stop-tokens", str(run_tokens),
                     "--checkpoints-dir", str(ckpts_root),
                     "--model-tag", run_name,
                 ]
@@ -398,7 +371,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             print(
                 f"  warmup_frac={warmup_frac:.1%} of full budget  "
                 f"→ {warmup_steps:,} warmup steps  "
-                f"→ LR at step {run_steps:,} (100M stop) = {warmup_frac/1.0 * 100:.1f}% through schedule"
+                f"→ Stopping exactly at peak: {run_tokens:,} tokens"
             )
             print(f"  cmd: {' '.join(cmd)}")
 
@@ -411,18 +384,22 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                     env=env,
                 )
                 tokens_list: list[int] = []
-                bpbs_list: list[float] = []
+                losses_list: list[float] = []
 
                 if process.stdout:
                     for line in iter(process.stdout.readline, ""):
                         print(line, end="", flush=True)
-                        if " | Validation bpb: " in line:
+                        # step X/Y ... | loss: Z.ZZZ |
+                        if " | loss: " in line:
                             try:
-                                parts = line.strip().split(" | Validation bpb: ")
-                                step = int(parts[0].replace("Step ", "").strip())
-                                bpb = float(parts[1])
+                                parts = line.split(" | loss: ")
+                                # parts[0] = "step 00045/14616 (0.31%)"
+                                # parts[1] = "6.2345 | lrm: ..."
+                                step_part = parts[0].split("/")[0].split("step ")[-1].strip()
+                                step = int(step_part)
+                                loss = float(parts[1].split(" | ")[0].strip())
                                 tokens_list.append(step * total_batch_size)
-                                bpbs_list.append(bpb)
+                                losses_list.append(loss)
                             except Exception:
                                 pass
                 process.communicate()
@@ -430,34 +407,27 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 if process.returncode != 0:
                     print(f"[warmup_sweep] {run_name} failed (exit {process.returncode}), skipping.")
                     continue
-                if bpbs_list:
+                if losses_list:
                     metrics = analyse_run(
-                        tokens_list, bpbs_list,
-                        bpb_threshold=args.bpb_threshold,
+                        tokens_list, losses_list,
                         spike_window_tokens=5_000_000,
-                        spike_tolerance=0.005,
+                        spike_tolerance=0.1,
                     )
                     results[model_name][warmup_frac] = {
                         "tokens":    tokens_list,
-                        "bpbs":      bpbs_list,
+                        "losses":    losses_list,
                         "warmup_steps": warmup_steps,
                         "run_name":  run_name,
                         **metrics,
                     }
                     spike_flag = " ⚠ SPIKE" if metrics["has_spike"] else ""
-                    threshold_str = (
-                        f"{metrics['first_below_threshold_tokens']/1e6:.1f}M tok"
-                        if metrics["first_below_threshold_tokens"] is not None
-                        else "never"
-                    )
                     print(
                         f"[warmup_sweep] {run_name}: "
-                        f"final_bpb={metrics['final_bpb']:.4f}  "
-                        f"min_bpb={metrics['min_bpb']:.4f}  "
-                        f"threshold@{threshold_str}{spike_flag}"
+                        f"final_loss={metrics['final_loss']:.4f}  "
+                        f"min_loss={metrics['min_loss']:.4f}{spike_flag}"
                     )
                 else:
-                    print(f"[warmup_sweep] {run_name}: no val_bpb values found in {checkpoint_dir}")
+                    print(f"[warmup_sweep] {run_name}: no loss values found in stdout.")
 
             except Exception as exc:
                 print(f"[warmup_sweep] Exception during {run_name}: {exc}")
@@ -468,7 +438,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         if results[model_name]:
             _plot_and_rank_model(
                 model_name, results[model_name], depth,
-                args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir,
+                args.run_tokens, args.target_tokens, run_dir,
             )
         else:
             print(f"[warmup_sweep] {model_name}: no successful runs — skipping per-model plot.")
@@ -476,7 +446,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # -----------------------------------------------------------------------
     # Aggregate report: combined plot + TSV across all models
     # -----------------------------------------------------------------------
-    _generate_aggregate_report(results, depth, args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir)
+    _generate_aggregate_report(results, depth, args.run_tokens, args.target_tokens, run_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -485,18 +455,12 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
 def _rank_key(data: dict) -> tuple:
     """
-    Three-priority ranking key (lower is better):
+    Priority ranking for warmup (lower is better):
       1. Stability — spiky runs last
-      2. Speed     — first_below_threshold ascending (None = infinity)
-      3. Final BPB — tiebreaker
+      2. Final Loss — tiebreaker
     """
     spike_penalty = 1 if data["has_spike"] else 0
-    threshold_tok = (
-        data["first_below_threshold_tokens"]
-        if data["first_below_threshold_tokens"] is not None
-        else float("inf")
-    )
-    return (spike_penalty, threshold_tok, data["final_bpb"])
+    return (spike_penalty, data["final_loss"])
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +473,6 @@ def _plot_and_rank_model(
     depth: int,
     run_tokens: int,
     full_budget_tokens: int,
-    bpb_threshold: float,
     run_dir: Path,
 ) -> None:
     print(f"\n{'='*64}")
@@ -525,31 +488,24 @@ def _plot_and_rank_model(
     sorted_items = sorted(model_results.items())
     for i, (warmup_frac, data) in enumerate(sorted_items):
         x = [t / 1e9 for t in data["tokens"]]
-        y = data["bpbs"]
+        y = data["losses"]
         spike_tag = " ⚠" if data["has_spike"] else ""
-        threshold_str = (
-            f"{data['first_below_threshold_tokens']/1e6:.1f}M"
-            if data["first_below_threshold_tokens"] is not None
-            else "never"
-        )
         label = (
             f"{warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
-            f"final={data['final_bpb']:.4f}  @{threshold_str}{spike_tag}"
+            f"final_loss={data['final_loss']:.4f}{spike_tag}"
         )
         color = palette[i % len(palette)]
         lw = 1.5 if data["has_spike"] else 2.5
         ls = "--" if data["has_spike"] else "-"
         ax.plot(x, y, color=color, label=label, linewidth=lw, linestyle=ls, marker=".", markersize=3)
 
-    ax.axhline(bpb_threshold, color="red", linestyle=":", linewidth=1.2,
-               label=f"BPB threshold ({bpb_threshold})")
     ax.set_title(
         f"{model_name} — Depth {depth}  "
-        f"({run_tokens/1e6:.0f}M tok runs, warmup basis: {full_budget_tokens/1e9:.0f}B)",
+        f"(Peak LR Stops, warmup basis: {full_budget_tokens/1e9:.0f}B)",
         fontsize=13,
     )
     ax.set_xlabel("Training Tokens (Billions)", fontsize=12)
-    ax.set_ylabel("Validation BPB ↓", fontsize=12)
+    ax.set_ylabel("Training Loss ↓", fontsize=12)
     ax.legend(title="Warmup (% of full budget)", fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -562,20 +518,14 @@ def _plot_and_rank_model(
 
     # Console ranking for this model
     sorted_runs = sorted(model_results.items(), key=lambda kv: _rank_key(kv[1]))
-    print(f"\n  Rankings for {model_name} (stability > threshold-speed > final-bpb):")
+    print(f"\n  Rankings for {model_name} (stability > final-loss-at-peak):")
     for rank, (warmup_frac, data) in enumerate(sorted_runs, 1):
         winner = " ← WINNER" if rank == 1 else ""
         spike_flag = " ⚠ SPIKE" if data["has_spike"] else ""
-        threshold_str = (
-            f"{data['first_below_threshold_tokens']/1e6:.1f}M tok"
-            if data["first_below_threshold_tokens"] is not None
-            else "never"
-        )
         print(
             f"    #{rank}: {warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
-            f"threshold@{threshold_str}  "
-            f"final_bpb={data['final_bpb']:.4f}  "
-            f"min_bpb={data['min_bpb']:.4f}"
+            f"final_loss={data['final_loss']:.4f}  "
+            f"min_loss={data['min_loss']:.4f}"
             f"{spike_flag}{winner}"
         )
 
@@ -589,7 +539,6 @@ def _generate_aggregate_report(
     depth: int,
     run_tokens: int,
     full_budget_tokens: int,
-    bpb_threshold: float,
     run_dir: Path,
 ) -> None:
     models_with_data = [m for m in results if results[m]]
@@ -611,16 +560,11 @@ def _generate_aggregate_report(
         sorted_items = sorted(model_results.items())
         for i, (warmup_frac, data) in enumerate(sorted_items):
             x = [t / 1e9 for t in data["tokens"]]
-            y = data["bpbs"]
+            y = data["losses"]
             spike_tag = " ⚠" if data["has_spike"] else ""
-            threshold_str = (
-                f"{data['first_below_threshold_tokens']/1e6:.1f}M"
-                if data["first_below_threshold_tokens"] is not None
-                else "never"
-            )
             label = (
                 f"{warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
-                f"final={data['final_bpb']:.4f}  @{threshold_str}{spike_tag}"
+                f"final_loss={data['final_loss']:.4f}{spike_tag}"
             )
             color = palette[i % len(palette)]
             lw = 1.5 if data["has_spike"] else 2.5
@@ -628,17 +572,15 @@ def _generate_aggregate_report(
             ax.plot(x, y, color=color, label=label, linewidth=lw, linestyle=ls,
                     marker=".", markersize=3)
 
-        ax.axhline(bpb_threshold, color="red", linestyle=":", linewidth=1.2,
-                   label=f"BPB threshold ({bpb_threshold})")
         ax.set_title(f"{model_name} — Depth {depth}", fontsize=14)
         ax.set_xlabel("Training Tokens (Billions)", fontsize=12)
-        ax.set_ylabel("Validation BPB ↓", fontsize=12)
+        ax.set_ylabel("Training Loss ↓", fontsize=12)
         ax.legend(title="Warmup (% of full budget)", fontsize=8, loc="upper right")
         ax.grid(True, alpha=0.3)
 
     fig.suptitle(
         f"Warmup Sweep — Depth {depth}  "
-        f"({run_tokens/1e6:.0f}M tok runs, warmup basis: {full_budget_tokens/1e9:.0f}B)",
+        f"(Peak LR Stops, warmup basis: {full_budget_tokens/1e9:.0f}B)",
         fontsize=15,
     )
     plt.tight_layout()
@@ -653,20 +595,14 @@ def _generate_aggregate_report(
     with open(tsv_path, "w") as f:
         f.write(
             "model\twarmup_frac\twarmup_steps"
-            "\thas_spike\tfirst_below_threshold_tokens\tfinal_bpb\tmin_bpb\n"
+            "\thas_spike\tfinal_loss\tmin_loss\n"
         )
         for model_name in models_with_data:
             for warmup_frac, data in sorted(results[model_name].items()):
-                threshold_val = (
-                    str(data["first_below_threshold_tokens"])
-                    if data["first_below_threshold_tokens"] is not None
-                    else "None"
-                )
                 f.write(
                     f"{model_name}\t{warmup_frac:.4f}\t{data['warmup_steps']}"
                     f"\t{int(data['has_spike'])}"
-                    f"\t{threshold_val}"
-                    f"\t{data['final_bpb']:.6f}\t{data['min_bpb']:.6f}\n"
+                    f"\t{data['final_loss']:.6f}\t{data['min_loss']:.6f}\n"
                 )
     print(f"Saved aggregate TSV:  {tsv_path}")
 
@@ -696,7 +632,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--bpb-threshold", type=float, default=1.6,
-        help="BPB value used to measure descent speed (default: 1.6)",
+        help="DEPRECATED (loss sweep removed eval bpb threshold)",
     )
     parser.add_argument(
         "--models", type=str, nargs="+",
