@@ -78,7 +78,7 @@ class GPTConfig:
     context_dim: int = 64
     linear_basis_size: int = 64
     use_pos_embed: bool = False
-    moe_use_abs_pos_embed: bool = True
+    moe_use_abs_pos_embed: bool = False
 
     # Shared context-aware router defaults used by embedding/context branches
     router_context_window: int = -1
