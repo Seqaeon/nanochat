@@ -13,8 +13,9 @@ After all runs finish, reads per-step val_bpb and produces:
       3. Final BPB   — tiebreaker
 
 Warmup fracs (e.g. 0.01, 0.05) are expressed as fractions of --target-tokens (the
-FULL training budget, e.g. 20B). Each candidate run is capped to --run-tokens (e.g.
-100M). Warmup step counts are thus consistent across all candidate runs.
+FULL training budget, e.g. 20B). Each candidate run is capped to --early-stop-tokens
+(or legacy --run-tokens), e.g. 100M. Warmup step counts are thus consistent across
+all candidate runs.
 
 Usage:
     python -m scripts.warmup_sweep \\
@@ -29,6 +30,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -308,12 +310,14 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # Steps in the full training budget — used to convert warmup fracs to absolute steps
     full_budget_steps = target_tokens // total_batch_size
 
-    # Global early stop based on run-tokens or longest warmup candidate
-    if getattr(args, "run_tokens", 0) > 0:
+    # Global early stop based on explicit early-stop arg (preferred) or legacy run-tokens.
+    # Default remains full training budget.
+    if getattr(args, "early_stop_tokens", -1) > 0:
+        global_early_stop_tokens = args.early_stop_tokens
+    elif getattr(args, "run_tokens", 0) > 0:
         global_early_stop_tokens = args.run_tokens
     else:
-        max_warmup_frac = max(args.warmup_fracs) if args.warmup_fracs else 0.10
-        global_early_stop_tokens = int(max_warmup_frac * target_tokens)
+        global_early_stop_tokens = target_tokens
     global_early_stop_steps = global_early_stop_tokens // total_batch_size
 
     # Filter requested models against what we have config for
@@ -326,7 +330,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     print(f"Warmup Sweep | Depth {depth}")
     print(f"Full budget (warmup basis): {target_tokens:,} ({full_budget_steps:,} steps)")
     print(f"Warmup fracs: {args.warmup_fracs}")
-    print(f"Global early stop: {global_early_stop_tokens/1e6:.1f}M tokens ({global_early_stop_steps:,} steps) [max warmup peak]")
+    print(f"Global early stop: {global_early_stop_tokens/1e6:.1f}M tokens ({global_early_stop_steps:,} steps)")
     print(f"Models: {valid_models}")
     print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every=0 (disabled)")
     print("=" * 64)
@@ -410,6 +414,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
             ckpts_root = run_dir / f"ckpt_{run_name}"
             checkpoint_dir = ckpts_root / run_name
+            step_loss_file = run_dir / f"{run_name}_step_loss.jsonl"
 
             run_args = (
                 common_args
@@ -418,6 +423,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 + [
                     "--warmup-ratio", f"{warmup_ratio:.6g}",
                     "--early-stop-tokens", str(early_stop_tokens),
+                    "--step-loss-file", str(step_loss_file),
                     "--checkpoints-dir", str(ckpts_root),
                     "--model-tag", run_name,
                 ]
@@ -447,22 +453,35 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 if process.stdout:
                     for line in iter(process.stdout.readline, ""):
                         print(line, end="", flush=True)
-                        if " | loss: " in line:
-                            try:
-                                parts = line.strip().split(" | loss: ")
-                                step_str = parts[0].split(" ")[1].split("/")[0] # "00062"
-                                step = int(step_str)
-                                loss_str = parts[1].split(" | ")[0]
-                                bpb = float(loss_str)
+                        if " | loss: " in line and "step " in line:
+                            # Robust parse even with logger/timestamp prefixes.
+                            m = re.search(r"step\s+(\d+)\s*/\s*\d+.*?\|\s*loss:\s*([0-9eE+\-\.]+)", line)
+                            if m:
+                                step = int(m.group(1))
+                                bpb = float(m.group(2))
                                 tokens_list.append(step * total_batch_size)
                                 bpbs_list.append(bpb)
-                            except Exception:
-                                pass
                 process.communicate()
 
                 if process.returncode != 0:
                     print(f"[warmup_sweep] {run_name} failed (exit {process.returncode}), skipping.")
                     continue
+                # Prefer per-step loss file if available (captures every optimizer step).
+                if step_loss_file.exists():
+                    try:
+                        step_tokens: list[int] = []
+                        step_losses: list[float] = []
+                        with open(step_loss_file, "r", encoding="utf-8") as f:
+                            for raw in f:
+                                rec = json.loads(raw)
+                                step_tokens.append(int(rec["tokens"]))
+                                step_losses.append(float(rec["loss"]))
+                        if step_losses:
+                            tokens_list = step_tokens
+                            bpbs_list = step_losses
+                    except Exception as exc:
+                        print(f"[warmup_sweep] {run_name}: failed to read step loss file ({exc}); using stdout parser fallback.")
+
                 if bpbs_list:
                     metrics = analyse_run(
                         tokens_list, bpbs_list,
@@ -680,7 +699,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--run-tokens", type=int, default=0,
-        help="per-run early stop length in tokens (default: 0 = dynamic calculation based on max warmup)",
+        help="legacy alias for per-run early stop tokens (default: 0 = ignored unless --early-stop-tokens is unset)",
+    )
+    parser.add_argument(
+        "--early-stop-tokens", type=int, default=-1,
+        help="per-run early stop length in tokens (default: -1 = full --target-tokens budget)",
     )
     parser.add_argument(
         "--log-every", type=int, default=1,
