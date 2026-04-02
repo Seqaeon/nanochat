@@ -292,6 +292,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     raw_target_dim = max(model_dim // 8, 1)
     target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
     target_dim = min(target_dim, model_dim)
+
     # Determine the full budget
     target_tokens = getattr(args, "target_tokens", 0)
     if target_tokens <= 0:
@@ -299,6 +300,11 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
     # Steps in the full training budget — used to convert warmup fracs to absolute steps
     full_budget_steps = target_tokens // total_batch_size
+
+    # Global early stop based on longest warmup candidate
+    max_warmup_frac = max(args.warmup_fracs) if args.warmup_fracs else 0.10
+    global_early_stop_tokens = int(max_warmup_frac * target_tokens)
+    global_early_stop_steps = global_early_stop_tokens // total_batch_size
 
     # Filter requested models against what we have config for
     valid_models = [m for m in args.models if m in FIXED_LRS]
@@ -309,7 +315,8 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     print("=" * 64)
     print(f"Warmup Sweep | Depth {depth}")
     print(f"Full budget (warmup basis): {target_tokens:,} ({full_budget_steps:,} steps)")
-    print(f"Warmup fracs (early stop points): {args.warmup_fracs}")
+    print(f"Warmup fracs: {args.warmup_fracs}")
+    print(f"Global early stop: {global_early_stop_tokens/1e6:.1f}M tokens ({global_early_stop_steps:,} steps) [max warmup peak]")
     print(f"Models: {valid_models}")
     print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every=0 (disabled)")
     print("=" * 64)
@@ -376,7 +383,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             # warmup_ratio = warmup_steps / full_budget_steps (expressed relative to the 20B schedule)
             warmup_steps = int(warmup_frac * full_budget_steps)
             warmup_ratio = warmup_frac  # already a fraction of the full schedule
-            early_stop_tokens = int(warmup_frac * target_tokens)
+            early_stop_tokens = global_early_stop_tokens
 
             warmup_pct = warmup_frac * 100
             run_name = f"{model_name}_wu{warmup_pct:.1f}pct"
@@ -400,8 +407,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
             print(f"\n--- {run_name} ---")
             print(
-                f"  warmup_frac={warmup_frac:.1%} of budget  "
-                f"→ stops exactly at peak LR: {warmup_steps:,} steps ({early_stop_tokens/1e6:.1f}M tokens)"
+                f"  warmup_frac={warmup_frac:.1%}  "
+                f"→ peak at: {warmup_steps:,} steps  "
+                f"→ stops at global peak: {global_early_stop_steps:,} steps ({early_stop_tokens/1e6:.1f}M tokens)"
             )
             print(f"  cmd: {' '.join(cmd)}")
 
