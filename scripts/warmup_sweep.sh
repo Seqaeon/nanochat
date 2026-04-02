@@ -14,6 +14,9 @@
 #   bash scripts/warmup_sweep.sh --fp8 --max-shards 170 --warmup-fracs "0.0 0.01 0.05 0.10" 8
 #   bash scripts/warmup_sweep.sh --models "moe_perm remixed-linear" 8 16
 #
+# Note: --target-tokens is the FULL training budget (e.g. 20B) used for warmup step
+# calculation. --run-tokens is the per-run early-stop length (e.g. 100M default).
+#
 # Env-var overrides:
 #   NPROC_PER_NODE      — DDP worker count (default: 8, auto-capped to GPU count)
 #   NANOCHAT_SKIP_ENV_SETUP=1  — skip uv/venv setup if already activated
@@ -40,8 +43,8 @@ if [ $# -eq 0 ]; then
     echo "  --fp8                      Enable FP8 training"
     echo "  --no-compile               Disable torch.compile"
     echo "  --max-shards N             Maximum number of dataset shards (default: 170)"
-    echo "  --target-tokens N          Token budget per run (default: 100M)"
-    echo "  --full-token-budget N      Full training budget for warmup step calc (default: 20B)"
+    echo "  --target-tokens N          Full training budget for warmup step calc (default: 20B)"
+    echo "  --run-tokens N             Per-run early-stop token count (default: 100M)"
     echo "  --warmup-fracs '0.0 0.01'  Space-separated warmup fractions of full budget"
     echo "  --bpb-threshold N          BPB threshold for descent speed metric (default: 1.6)"
     echo "  --models 'moe_perm ...'    Models to sweep"
@@ -50,6 +53,7 @@ if [ $# -eq 0 ]; then
     echo ""
     echo "Examples:"
     echo "  bash scripts/warmup_sweep.sh --fp8 --max-shards 170 8 16"
+    echo "  bash scripts/warmup_sweep.sh --fp8 --target-tokens 20000000000 --run-tokens 100000000 8"
     echo "  bash scripts/warmup_sweep.sh --fp8 --warmup-fracs '0.0 0.01 0.05' 8"
     exit 1
 fi
@@ -78,12 +82,11 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --target-tokens)
-            TARGET_TOKENS=$2
             EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
             shift 2
             ;;
-        --full-token-budget)
-            EXTRA_ARGS="$EXTRA_ARGS --full-token-budget $2"
+        --run-tokens)
+            EXTRA_ARGS="$EXTRA_ARGS --run-tokens $2"
             shift 2
             ;;
         --warmup-fracs)
@@ -168,7 +171,7 @@ wait $DATASET_DOWNLOAD_PID
 # ── Per-depth sweep ───────────────────────────────────────────────────────────
 for DEPTH in "$@"; do
     echo "================================================================"
-    echo "Warmup Sweep for Depth: ${DEPTH}  |  Test tokens: ${TARGET_TOKENS}"
+    echo "Warmup Sweep for Depth: ${DEPTH}"
     echo "================================================================"
 
     RUN_DIR="${ROOT_OUT_DIR}/depth_${DEPTH}"

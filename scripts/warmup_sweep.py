@@ -12,14 +12,15 @@ After all runs finish, reads per-step val_bpb and produces:
       2. Speed       — warmup that crosses BPB_THRESHOLD first wins
       3. Final BPB   — tiebreaker
 
-Warmup fracs (e.g. 0.01, 0.05) are expressed as fractions of the FULL training
-budget (--full-token-budget, default 20B) so that absolute warmup step counts
-are consistent regardless of the shorter 100M test run length.
+Warmup fracs (e.g. 0.01, 0.05) are expressed as fractions of --target-tokens (the
+FULL training budget, e.g. 20B). Each candidate run is capped to --run-tokens (e.g.
+100M). Warmup step counts are thus consistent across all candidate runs.
 
 Usage:
     python -m scripts.warmup_sweep \\
         --depth 8 --run-dir out/warmup_sweep \\
-        --target-tokens 100000000 --max-shards 170 --fp8
+        --target-tokens 20000000000 --run-tokens 100000000 \\
+        --max-shards 170 --fp8
     # or via warmup_sweep.sh which handles env setup.
 """
 from __future__ import annotations
@@ -275,11 +276,15 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
     target_dim = min(target_dim, model_dim)
 
-    # Steps in the full-budget training — used to convert warmup fracs to steps
-    full_budget_steps = args.full_token_budget // total_batch_size
+    # Steps in the full training budget — used to convert warmup fracs to absolute steps
+    full_budget_steps = args.target_tokens // total_batch_size
+    # Steps in the short test run — this is what base_train actually trains for
+    run_steps = args.run_tokens // total_batch_size
 
-    # Eval cadence: aim for ~1M tokens between eval points
-    eval_every = max(1, 1_000_000 // total_batch_size)
+    # Eval cadence: aim for ~5M tokens between eval points
+    # With total_batch_size=524288: 5M / 524K ≈ 9.5 → 10 steps → ~19 points over 100M run
+    eval_every_auto = max(1, int(5_000_000 / total_batch_size))
+    eval_every = args.eval_every if args.eval_every > 0 else eval_every_auto
 
     # Filter requested models against what we have config for
     valid_models = [m for m in args.models if m in FIXED_LRS]
@@ -288,15 +293,16 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         print(f"[warmup_sweep] WARNING: skipping unknown models: {skipped}")
 
     print("=" * 64)
-    print(f"Warmup Sweep | Depth {depth} | Test tokens: {args.target_tokens:,}")
-    print(f"Full budget: {args.full_token_budget:,} ({full_budget_steps:,} steps)")
+    print(f"Warmup Sweep | Depth {depth}")
+    print(f"Full budget (warmup basis): {args.target_tokens:,} ({full_budget_steps:,} steps)")
+    print(f"Per-run tokens (early stop): {args.run_tokens:,} ({run_steps:,} steps)")
     print(f"Warmup fracs: {args.warmup_fracs}")
     print(f"BPB threshold: {args.bpb_threshold}")
     print(f"Models: {valid_models}")
     print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every={eval_every}")
     print("=" * 64)
 
-    # Args shared by every run
+    # Args shared by every run — base_train stops at run_tokens
     common_args = [
         "--depth", str(depth),
         "--aspect-ratio", str(aspect_ratio),
@@ -304,7 +310,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--max-seq-len", str(max_seq_len),
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size),
-        "--target-tokens", str(args.target_tokens),
+        "--target-tokens", str(args.run_tokens),   # <-- early stop at run_tokens
         "--eval-every", str(eval_every),
         "--core-metric-every", "0",
         "--sample-every", "-1",
@@ -353,14 +359,11 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         print(f"{'='*64}")
 
         for warmup_frac in args.warmup_fracs:
-            # Convert frac → ratio relative to the full budget, then pass as --warmup-ratio
-            # base_train interprets warmup_ratio as fraction of its own num_iterations,
-            # so we convert: warmup_ratio = (frac * full_budget_steps) / test_steps
-            test_steps = args.target_tokens // total_batch_size
+            # Absolute warmup steps = frac × full_budget_steps
+            # warmup_ratio seen by base_train = warmup_steps / run_steps (clamped to ≤1.0)
             warmup_steps = int(warmup_frac * full_budget_steps)
-            # Clamp: can't warm up for more steps than we actually train
-            warmup_steps = min(warmup_steps, test_steps)
-            warmup_ratio = warmup_steps / max(test_steps, 1)
+            warmup_steps_clamped = min(warmup_steps, run_steps)
+            warmup_ratio = warmup_steps_clamped / max(run_steps, 1)
 
             warmup_pct = warmup_frac * 100
             run_name = f"{model_name}_wu{warmup_pct:.1f}pct"
@@ -383,9 +386,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
             print(f"\n--- {run_name} ---")
             print(
-                f"  warmup_frac={warmup_frac:.1%} of 20B  "
-                f"→ {warmup_steps:,} steps  "
-                f"→ warmup_ratio={warmup_ratio:.4f} of test run"
+                f"  warmup_frac={warmup_frac:.1%} of full budget  "
+                f"→ {warmup_steps:,} steps target ({warmup_steps_clamped:,} effective)  "
+                f"→ warmup_ratio={warmup_ratio:.4f} of {run_steps:,}-step test run"
             )
             print(f"  cmd: {' '.join(cmd)}")
 
@@ -442,7 +445,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # -----------------------------------------------------------------------
     # Report
     # -----------------------------------------------------------------------
-    _generate_report(results, depth, args.target_tokens, args.bpb_threshold, run_dir)
+    _generate_report(results, depth, args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +475,8 @@ def _rank_key(data: dict) -> tuple:
 def _generate_report(
     results: dict[str, dict[float, dict]],
     depth: int,
-    target_tokens: int,
+    run_tokens: int,
+    full_budget_tokens: int,
     bpb_threshold: float,
     run_dir: Path,
 ) -> None:
@@ -523,7 +527,8 @@ def _generate_report(
         ax.grid(True, alpha=0.3)
 
     fig.suptitle(
-        f"Warmup Sweep — Depth {depth}  ({target_tokens/1e6:.0f}M token runs)",
+        f"Warmup Sweep — Depth {depth}  "
+        f"({run_tokens/1e6:.0f}M tok runs, warmup basis: {full_budget_tokens/1e9:.0f}B)",
         fontsize=15,
     )
     plt.tight_layout()
@@ -588,13 +593,12 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, required=True, help="model depth")
     parser.add_argument("--run-dir", type=str, required=True, help="output root directory")
     parser.add_argument(
-        "--target-tokens", type=int, default=100_000_000,
-        help="tokens per warmup candidate run (default: 100M)",
+        "--target-tokens", type=int, default=20_000_000_000,
+        help="full training budget used to calculate warmup step counts (default: 20B)",
     )
     parser.add_argument(
-        "--full-token-budget", type=int, default=20_000_000_000,
-        help="full training budget used to convert warmup fracs to absolute steps "
-             "(default: 20B). Does NOT affect run length.",
+        "--run-tokens", type=int, default=100_000_000,
+        help="tokens each candidate run is trained for, i.e. the early-stop point (default: 100M)",
     )
     parser.add_argument(
         "--warmup-fracs", type=float, nargs="+",
@@ -613,7 +617,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--eval-every", type=int, default=-1,
-        help="override auto-computed eval cadence (steps). -1 = auto (~1M tok intervals)",
+        help="override auto-computed eval cadence (steps). -1 = auto (~5M tok intervals)",
     )
     parser.add_argument("--fp8", action="store_true", help="enable FP8 training")
     parser.add_argument("--tokenizer-dir", type=str, default=None)
