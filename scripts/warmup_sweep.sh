@@ -45,7 +45,7 @@ if [ $# -eq 0 ]; then
     echo "  --max-shards N             Maximum number of dataset shards (default: 170)"
     echo "  --target-tokens N          Full training budget for warmup step calc (default: 20B)"
     echo "  --warmup-fracs '0.0 0.01'  Space-separated warmup fractions of full budget"
-    echo "  --bpb-threshold N          BPB threshold for descent speed metric (default: 1.6)"
+    echo "  --log-every N              Print logs every N steps (default: 1)"
     echo "  --models 'moe_perm ...'    Models to sweep"
     echo "  --tokenizer-dir PATH       Explicit tokenizer directory"
     echo "  --data-dir PATH            Explicit data directory"
@@ -89,8 +89,8 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS="$EXTRA_ARGS --warmup-fracs $2"
             shift 2
             ;;
-        --bpb-threshold)
-            EXTRA_ARGS="$EXTRA_ARGS --bpb-threshold $2"
+        --log-every)
+            EXTRA_ARGS="$EXTRA_ARGS --log-every $2"
             shift 2
             ;;
         --models)

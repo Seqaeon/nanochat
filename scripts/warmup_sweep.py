@@ -331,6 +331,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size),
         "--target-tokens", str(target_tokens),        # full LR schedule
+        "--log-every", str(args.log_every),
         "--eval-every", "0",                               # NO evals (purely train loss)
         "--core-metric-every", "0",
         "--sample-every", "-1",
@@ -657,6 +658,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--target-tokens", type=int, default=0,
         help="full training budget used to calculate warmup step counts (default: 0 = dynamic calculation from Depth)",
+    )
+    parser.add_argument(
+        "--log-every", type=int, default=1,
+        help="print base_train logs to console every N steps (default: 1)",
     )
     parser.add_argument(
         "--warmup-fracs", type=float, nargs="+",
