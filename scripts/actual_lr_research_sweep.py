@@ -270,7 +270,6 @@ def _run_one(
         lr_flags += [f"--{k.replace('_', '-')}", f"{run.lrs[k]:.8g}"]
 
     cmd = RUNNER + ["-m", "scripts.base_train"] + common_train_args + arch_flags + lr_flags + [
-        "--run",             f"actual-lr-{run.run_name}",
         "--model-tag",       run.run_name,
         "--checkpoints-dir", str(run_root / "checkpoints" / run.run_name),
         "--step-loss-file",  str(step_loss_file),
