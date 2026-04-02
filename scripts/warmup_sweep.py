@@ -376,6 +376,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             # warmup_ratio = warmup_steps / full_budget_steps (expressed relative to the 20B schedule)
             warmup_steps = int(warmup_frac * full_budget_steps)
             warmup_ratio = warmup_frac  # already a fraction of the full schedule
+            early_stop_tokens = int(warmup_frac * target_tokens)
 
             warmup_pct = warmup_frac * 100
             run_name = f"{model_name}_wu{warmup_pct:.1f}pct"
