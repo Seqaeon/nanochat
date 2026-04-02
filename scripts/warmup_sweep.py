@@ -694,7 +694,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--models", type=str, nargs="+",
         default=["moe_no_perm", "moe_perm", "remixed-linear"],
-        choices=["moe_no_perm", "moe_perm", "remixed-linear"],
+        choices=["base" ,"moe_no_perm", "moe_perm", "remixed-linear"],
         help="model types to sweep",
     )
     parser.add_argument("--fp8", action="store_true", help="enable FP8 training")
