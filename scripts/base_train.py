@@ -73,12 +73,13 @@ parser.add_argument("--use-remixed-linear", action="store_true", help="enable re
 parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
 parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
 parser.add_argument("--use-pos-embed", action="store_true", help="add learned absolute positional embeddings on top of token/research embeddings")
-parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
+parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
-parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
-parser.add_argument("--research-warmup-ratio", type=float, default=-1.0, help="research-only warmup ratio/pct_start for OneCycle (-1 = use --warmup-ratio)")
+parser.add_argument("--research-onecycle", type=int, default=0, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
+parser.add_argument("--use-onecycle", type=int, default=None, choices=[0, 1], help="alias for --research-onecycle")
+parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-only warmup ratio/pct_start for OneCycle")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for (-1 = disable)")
@@ -113,6 +114,8 @@ parser.add_argument("--max-shards", type=int, default=-1, help="maximum number o
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 args = parser.parse_args()
+if args.use_onecycle is not None:
+    args.research_onecycle = args.use_onecycle
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
@@ -180,13 +183,16 @@ def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
+    base_dim = depth * args.aspect_ratio
+    base_model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
+    base_num_heads = base_model_dim // args.head_dim
     if args.use_moe or args.use_remixed_linear:
         model_dim = args.target_dim
-        assert model_dim % args.head_dim == 0, f"target_dim must be divisible by head_dim ({args.head_dim}), got {model_dim}"
+        num_heads = base_num_heads
+        assert model_dim % num_heads == 0, f"target_dim must be divisible by n_head ({num_heads}), got {model_dim}"
     else:
-        base_dim = depth * args.aspect_ratio
-        model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
-    num_heads = model_dim // args.head_dim
+        model_dim = base_model_dim
+        num_heads = base_num_heads
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
@@ -195,6 +201,9 @@ def build_model_meta(depth):
         use_perm=args.use_perm,
         num_experts=args.num_experts,
         moe_num_experts=args.num_experts,
+        total_embed_dim=args.target_dim,
+        moe_router_dim=args.target_dim,
+        moe_embed_dim=args.target_dim,
         router_dim=args.router_dim,
         target_dim=args.target_dim,
         selection_mode=args.selection_mode,
