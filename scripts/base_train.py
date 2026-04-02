@@ -544,7 +544,13 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 
 # Go!
 while True:
-    last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
+    last_step = step == num_iterations # normal end
+
+    # early stop: force this to be the last step if we hit the token limit
+    if args.early_stop_tokens > 0 and step * total_batch_size >= args.early_stop_tokens:
+        print0(f"[early stop] Reached {step * total_batch_size:,} tokens (limit: {args.early_stop_tokens:,}). Initiating final eval/save.")
+        last_step = True
+
     flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
@@ -630,12 +636,7 @@ while True:
         )
 
     # termination conditions
-    # 1. Normal end: completed all num_iterations
     if last_step:
-        break
-    # 2. Early stop: reached --early-stop-tokens without affecting the LR schedule
-    if args.early_stop_tokens > 0 and step * total_batch_size >= args.early_stop_tokens:
-        print0(f"[early stop] Reached {step * total_batch_size:,} tokens (limit: {args.early_stop_tokens:,}). Stopping.")
         break
 
     # -------------------------------------------------------------------------

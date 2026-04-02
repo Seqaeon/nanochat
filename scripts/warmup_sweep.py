@@ -410,16 +410,26 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                     text=True,
                     env=env,
                 )
+                tokens_list: list[int] = []
+                bpbs_list: list[float] = []
+
                 if process.stdout:
                     for line in iter(process.stdout.readline, ""):
                         print(line, end="", flush=True)
+                        if " | Validation bpb: " in line:
+                            try:
+                                parts = line.strip().split(" | Validation bpb: ")
+                                step = int(parts[0].replace("Step ", "").strip())
+                                bpb = float(parts[1])
+                                tokens_list.append(step * total_batch_size)
+                                bpbs_list.append(bpb)
+                            except Exception:
+                                pass
                 process.communicate()
 
                 if process.returncode != 0:
                     print(f"[warmup_sweep] {run_name} failed (exit {process.returncode}), skipping.")
                     continue
-
-                tokens_list, bpbs_list = read_loss_curve(checkpoint_dir)
                 if bpbs_list:
                     metrics = analyse_run(
                         tokens_list, bpbs_list,
