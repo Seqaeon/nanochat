@@ -139,7 +139,7 @@ def run_training_sweep(args):
 
     total_batch_size = 524288
     eval_every = 1000
-    warm_up_ratio = 0.3
+    warm_up_ratio = args.warmup_ratio
     adam_beta2 = 0.99
 #    core_metric_every=-1
     # Research branches require target_dim % head_dim == 0 in base_train.
@@ -163,6 +163,8 @@ def run_training_sweep(args):
 #        "--sample-every", "-1",
         "--warmup-ratio", str(warm_up_ratio),    # Safer for research models
         "--adam-beta2", str(adam_beta2),     # Matches notebook
+        "--research-warmup-ratio", str(args.research_warmup_ratio),
+        "--use-onecycle", str(args.use_onecycle),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -333,6 +335,9 @@ if __name__ == "__main__":
     parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
+    parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio passed to all runs")
+    parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
+    parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=use base schedule")
     args = parser.parse_args()
     
     run_training_sweep(args)
