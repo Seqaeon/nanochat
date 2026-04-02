@@ -727,7 +727,7 @@ while True:
     adamw_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "adamw"]
     muon_lrs = [g["lr"] for g in optimizer.param_groups if g.get("kind") == "muon"]
     lr_msg = f"lr(adamw:{(sum(adamw_lrs)/len(adamw_lrs)) if adamw_lrs else 0:.3e}, muon:{(sum(muon_lrs)/len(muon_lrs)) if muon_lrs else 0:.3e})"
-    if step % args.log_every == 0 or step == num_iterations - 1:
+    if step % args.log_every == 0 or step == num_iterations - 1 or last_step:
         print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | {lr_msg} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
