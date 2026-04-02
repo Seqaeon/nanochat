@@ -44,7 +44,6 @@ if [ $# -eq 0 ]; then
     echo "  --no-compile               Disable torch.compile"
     echo "  --max-shards N             Maximum number of dataset shards (default: 170)"
     echo "  --target-tokens N          Full training budget for warmup step calc (default: 20B)"
-    echo "  --run-tokens N             Per-run early-stop token count (default: 100M)"
     echo "  --warmup-fracs '0.0 0.01'  Space-separated warmup fractions of full budget"
     echo "  --bpb-threshold N          BPB threshold for descent speed metric (default: 1.6)"
     echo "  --models 'moe_perm ...'    Models to sweep"
@@ -53,7 +52,7 @@ if [ $# -eq 0 ]; then
     echo ""
     echo "Examples:"
     echo "  bash scripts/warmup_sweep.sh --fp8 --max-shards 170 8 16"
-    echo "  bash scripts/warmup_sweep.sh --fp8 --target-tokens 20000000000 --run-tokens 100000000 8"
+    echo "  bash scripts/warmup_sweep.sh --fp8 --target-tokens 20000000000 8"
     echo "  bash scripts/warmup_sweep.sh --fp8 --warmup-fracs '0.0 0.01 0.05' 8"
     exit 1
 fi
@@ -83,10 +82,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --target-tokens)
             EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
-            shift 2
-            ;;
-        --run-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --run-tokens $2"
             shift 2
             ;;
         --warmup-fracs)
