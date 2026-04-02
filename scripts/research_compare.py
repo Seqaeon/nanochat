@@ -169,17 +169,27 @@ def run_training_sweep(args):
     if getattr(args, "max_shards", -1) != -1:
         common_args.extend(["--max-shards", str(args.max_shards)])
     
+    # --- Tuning Section ---
+    RESEARCH_BASE_LR = 0.05
+    MOE_SCALES = {
+        "base":           1.0,
+        "moe_no_perm":    2.0,
+        "moe_perm":       2.0,
+        "remixed-linear": 1.0,
+    }
+    # ----------------------
+
     models = {
         "base": [],
+    }
+
+    # Research branch configurations (architecture only)
+    research_configs = {
         "moe_no_perm": [
             "--use-moe",
             "--num-experts", "8",
             "--router-dim", str(target_dim),
             "--target-dim", str(target_dim),
-            "--embedding-lr", "0.05",
-            "--matrix-lr", "0.05",
-            "--unembedding-lr", "0.05",
-            "--scalar-lr", "0.05",
         ],
         "moe_perm": [
             "--use-moe",
@@ -188,10 +198,6 @@ def run_training_sweep(args):
             "--router-dim", str(target_dim),
             "--target-dim", str(target_dim),
             "--selection-mode", "soft",
-            "--embedding-lr", "0.05",
-            "--matrix-lr", "0.05",
-            "--unembedding-lr", "0.05",
-            "--scalar-lr", "0.05",
         ],
         "remixed-linear": [
             "--use-remixed-linear",
@@ -199,12 +205,18 @@ def run_training_sweep(args):
             "--router-dim", str(target_dim),
             "--context-dim", str(target_dim),
             "--linear-basis-size", str(target_dim),
-            "--embedding-lr", "0.05",
-            "--matrix-lr", "0.05",
-            "--unembedding-lr", "0.05",
-            "--scalar-lr", "0.05",
         ]
     }
+
+    for name, flags in research_configs.items():
+        scale = MOE_SCALES.get(name, 1.0)
+        lr_val = f"{RESEARCH_BASE_LR * scale:.6g}"
+        models[name] = flags + [
+            "--embedding-lr",   lr_val,
+            "--matrix-lr",      lr_val,
+            "--unembedding-lr", lr_val,
+            "--scalar-lr",      lr_val,
+        ]
     
     results = {}
     

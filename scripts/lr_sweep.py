@@ -100,12 +100,12 @@ def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_
 # Base LRs for each model type.  These are the ×1 reference values.
 # Changing these here changes what every scale factor multiplies against.
 BASE_LRS: dict[str, dict[str, float]] = {
-    "base": {
-        "embedding_lr":   0.3,
-        "unembedding_lr": 0.004,
-        "matrix_lr":      0.02,
-        "scalar_lr":      0.5,
-    },
+#    "base": {
+#        "embedding_lr":   0.3,
+#        "unembedding_lr": 0.004,
+#        "matrix_lr":      0.02,
+#        "scalar_lr":      0.5,
+#    },
     "moe_perm": {
         # CCL reference: all LR groups set uniformly (matches research_compare.py)
         "embedding_lr":   0.05,
@@ -483,9 +483,9 @@ if __name__ == "__main__":
         help="scale factors applied to each model's base LRs (default: 1 3 5 7 10)",
     )
     parser.add_argument(
-        "--models", type=str, nargs="+", default=["base", "moe_no_perm", "moe_perm", "remixed-linear"],
-        choices=["base", "moe_no_perm", "moe_perm", "remixed-linear"],
-        help="model types to sweep (default: all research branches)",
+        "--models", type=str, nargs="+", default=["base", "moe_perm"],
+        choices=["base", "moe_perm"],
+        help="model types to sweep (default: base moe_perm)",
     )
     parser.add_argument(
         "--eval-every", type=int, default=500,
