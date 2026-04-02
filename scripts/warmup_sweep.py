@@ -114,6 +114,12 @@ def estimate_tokens_from_base(
 
 # Winner LRs from the LR sweep.  Applied uniformly across all LR groups.
 FIXED_LRS: dict[str, dict[str, float]] = {
+    "base": {
+        "embedding_lr":   0.3,
+        "unembedding_lr": 0.004,
+        "matrix_lr":      0.02,
+        "scalar_lr":      0.5,
+    },
     "moe_perm": {
         "embedding_lr":   0.1,
         "unembedding_lr": 0.1,
@@ -137,6 +143,7 @@ FIXED_LRS: dict[str, dict[str, float]] = {
 # Architecture flags — depth-dependent args (target_dim, router_dim, …) are
 # appended dynamically in run_warmup_sweep().
 MODEL_ARCH_FLAGS: dict[str, list[str]] = {
+    "base": [],
     "moe_perm": [
         "--use-moe",
         "--use-perm",
