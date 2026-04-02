@@ -269,7 +269,15 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     max_seq_len = 2048
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    device_batch_size = 16
+    # Device batch size scales down with depth to avoid OOM on deeper models.
+    # Tune these values if you hit VRAM limits or want to squeeze more MFU.
+    DEPTH_TO_DEVICE_BS: dict[int, int] = {
+        8:  32,
+        16: 16,
+        24: 8,
+    }
+    device_batch_size = DEPTH_TO_DEVICE_BS.get(depth, 16)
+
     total_batch_size = 524288
 
     raw_target_dim = max(model_dim // 8, 1)
@@ -444,10 +452,21 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             except Exception as exc:
                 print(f"[warmup_sweep] Exception during {run_name}: {exc}")
 
+        # -------------------------------------------------------------------
+        # Per-model plot + ranking (printed immediately after all fracs done)
+        # -------------------------------------------------------------------
+        if results[model_name]:
+            _plot_and_rank_model(
+                model_name, results[model_name], depth,
+                args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir,
+            )
+        else:
+            print(f"[warmup_sweep] {model_name}: no successful runs — skipping per-model plot.")
+
     # -----------------------------------------------------------------------
-    # Report
+    # Aggregate report: combined plot + TSV across all models
     # -----------------------------------------------------------------------
-    _generate_report(results, depth, args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir)
+    _generate_aggregate_report(results, depth, args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -471,10 +490,91 @@ def _rank_key(data: dict) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Plotting and TSV
+# Per-model plot + ranking (called as soon as a model's fracs are done)
 # ---------------------------------------------------------------------------
 
-def _generate_report(
+def _plot_and_rank_model(
+    model_name: str,
+    model_results: dict[float, dict],
+    depth: int,
+    run_tokens: int,
+    full_budget_tokens: int,
+    bpb_threshold: float,
+    run_dir: Path,
+) -> None:
+    print(f"\n{'='*64}")
+    print(f"Results for {model_name} — Depth {depth}")
+    print(f"{'='*64}")
+
+    sns.set_theme(style="whitegrid")
+    n_fracs = len(model_results)
+    palette = sns.color_palette("husl", max(n_fracs, 1))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    sorted_items = sorted(model_results.items())
+    for i, (warmup_frac, data) in enumerate(sorted_items):
+        x = [t / 1e9 for t in data["tokens"]]
+        y = data["bpbs"]
+        spike_tag = " ⚠" if data["has_spike"] else ""
+        threshold_str = (
+            f"{data['first_below_threshold_tokens']/1e6:.1f}M"
+            if data["first_below_threshold_tokens"] is not None
+            else "never"
+        )
+        label = (
+            f"{warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
+            f"final={data['final_bpb']:.4f}  @{threshold_str}{spike_tag}"
+        )
+        color = palette[i % len(palette)]
+        lw = 1.5 if data["has_spike"] else 2.5
+        ls = "--" if data["has_spike"] else "-"
+        ax.plot(x, y, color=color, label=label, linewidth=lw, linestyle=ls, marker=".", markersize=3)
+
+    ax.axhline(bpb_threshold, color="red", linestyle=":", linewidth=1.2,
+               label=f"BPB threshold ({bpb_threshold})")
+    ax.set_title(
+        f"{model_name} — Depth {depth}  "
+        f"({run_tokens/1e6:.0f}M tok runs, warmup basis: {full_budget_tokens/1e9:.0f}B)",
+        fontsize=13,
+    )
+    ax.set_xlabel("Training Tokens (Billions)", fontsize=12)
+    ax.set_ylabel("Validation BPB ↓", fontsize=12)
+    ax.legend(title="Warmup (% of full budget)", fontsize=8, loc="upper right")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    safe_name = model_name.replace("-", "_")
+    plot_path = run_dir / f"warmup_{safe_name}_depth_{depth}.png"
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+    print(f"Saved model plot: {plot_path}")
+
+    # Console ranking for this model
+    sorted_runs = sorted(model_results.items(), key=lambda kv: _rank_key(kv[1]))
+    print(f"\n  Rankings for {model_name} (stability > threshold-speed > final-bpb):")
+    for rank, (warmup_frac, data) in enumerate(sorted_runs, 1):
+        winner = " ← WINNER" if rank == 1 else ""
+        spike_flag = " ⚠ SPIKE" if data["has_spike"] else ""
+        threshold_str = (
+            f"{data['first_below_threshold_tokens']/1e6:.1f}M tok"
+            if data["first_below_threshold_tokens"] is not None
+            else "never"
+        )
+        print(
+            f"    #{rank}: {warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
+            f"threshold@{threshold_str}  "
+            f"final_bpb={data['final_bpb']:.4f}  "
+            f"min_bpb={data['min_bpb']:.4f}"
+            f"{spike_flag}{winner}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Aggregate plot + TSV across all models (called at the very end)
+# ---------------------------------------------------------------------------
+
+def _generate_aggregate_report(
     results: dict[str, dict[float, dict]],
     depth: int,
     run_tokens: int,
@@ -484,21 +584,21 @@ def _generate_report(
 ) -> None:
     models_with_data = [m for m in results if results[m]]
     if not models_with_data:
-        print("[warmup_sweep] No results to plot.")
+        print("[warmup_sweep] No results to aggregate.")
         return
 
-    print("\n--- Generating Report ---")
+    print("\n--- Generating Aggregate Report ---")
     sns.set_theme(style="whitegrid")
 
     n_models = len(models_with_data)
     fig, axes = plt.subplots(1, n_models, figsize=(9 * n_models, 6), squeeze=False)
-    palette = sns.color_palette("husl", 5)  # max 5 warmup fracs
+    palette = sns.color_palette("husl", 5)
 
     for col, model_name in enumerate(models_with_data):
         ax = axes[0][col]
         model_results = results[model_name]
 
-        sorted_items = sorted(model_results.items())  # sort by warmup_frac
+        sorted_items = sorted(model_results.items())
         for i, (warmup_frac, data) in enumerate(sorted_items):
             x = [t / 1e9 for t in data["tokens"]]
             y = data["bpbs"]
@@ -518,14 +618,12 @@ def _generate_report(
             ax.plot(x, y, color=color, label=label, linewidth=lw, linestyle=ls,
                     marker=".", markersize=3)
 
-        # BPB threshold line
         ax.axhline(bpb_threshold, color="red", linestyle=":", linewidth=1.2,
                    label=f"BPB threshold ({bpb_threshold})")
-
         ax.set_title(f"{model_name} — Depth {depth}", fontsize=14)
         ax.set_xlabel("Training Tokens (Billions)", fontsize=12)
         ax.set_ylabel("Validation BPB ↓", fontsize=12)
-        ax.legend(title="Warmup (% of 20B budget)", fontsize=8, loc="upper right")
+        ax.legend(title="Warmup (% of full budget)", fontsize=8, loc="upper right")
         ax.grid(True, alpha=0.3)
 
     fig.suptitle(
@@ -538,13 +636,13 @@ def _generate_report(
     plot_path = run_dir / f"warmup_sweep_depth_{depth}.png"
     plt.savefig(plot_path, dpi=150)
     plt.close()
-    print(f"Saved plot: {plot_path}")
+    print(f"Saved aggregate plot: {plot_path}")
 
     # TSV summary
     tsv_path = run_dir / f"warmup_sweep_depth_{depth}.tsv"
     with open(tsv_path, "w") as f:
         f.write(
-            "model\twarmup_frac\twarmup_steps\twarmup_ratio_of_test"
+            "model\twarmup_frac\twarmup_steps"
             "\thas_spike\tfirst_below_threshold_tokens\tfinal_bpb\tmin_bpb\n"
         )
         for model_name in models_with_data:
@@ -560,28 +658,7 @@ def _generate_report(
                     f"\t{threshold_val}"
                     f"\t{data['final_bpb']:.6f}\t{data['min_bpb']:.6f}\n"
                 )
-    print(f"Saved TSV:  {tsv_path}")
-
-    # Console rankings
-    print(f"\n--- Rankings (priority: stability > speed-to-{bpb_threshold}-bpb > final-bpb) ---")
-    for model_name in models_with_data:
-        sorted_runs = sorted(results[model_name].items(), key=lambda kv: _rank_key(kv[1]))
-        print(f"\n  {model_name}:")
-        for rank, (warmup_frac, data) in enumerate(sorted_runs, 1):
-            winner = " ← WINNER" if rank == 1 else ""
-            spike_flag = " ⚠ SPIKE" if data["has_spike"] else ""
-            threshold_str = (
-                f"{data['first_below_threshold_tokens']/1e6:.1f}M tok"
-                if data["first_below_threshold_tokens"] is not None
-                else "never"
-            )
-            print(
-                f"    #{rank}: {warmup_frac:.1%}  ({data['warmup_steps']:,} steps)  "
-                f"threshold@{threshold_str}  "
-                f"final_bpb={data['final_bpb']:.4f}  "
-                f"min_bpb={data['min_bpb']:.4f}"
-                f"{spike_flag}{winner}"
-            )
+    print(f"Saved aggregate TSV:  {tsv_path}")
 
 
 # ---------------------------------------------------------------------------

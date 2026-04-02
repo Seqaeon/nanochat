@@ -229,7 +229,15 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
     max_seq_len = 2048
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    device_batch_size = 16
+    # Device batch size scales down with depth to avoid OOM on deeper models.
+    # Tune these values if you hit VRAM limits or want to squeeze more MFU.
+    DEPTH_TO_DEVICE_BS: dict[int, int] = {
+        8:  32,
+        16: 16,
+        24: 8,
+    }
+    device_batch_size = DEPTH_TO_DEVICE_BS.get(depth, 16)
+
     total_batch_size = 524288
 
     # target_dim for research branches: ~1/8th of model_dim, rounded to head_dim
