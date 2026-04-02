@@ -52,9 +52,8 @@ def build_base_train_cmd(args: argparse.Namespace, passthrough: list[str]) -> li
     cmd += ["--warmup-ratio", str(args.warmup_ratio)]
     cmd += ["--warmdown-ratio", str(args.warmdown_ratio)]
     cmd += ["--final-lr-frac", str(args.final_lr_frac)]
-    cmd += ["--research-onecycle", str(int(args.research_onecycle))]
-    if args.research_warmup_ratio >= 0:
-        cmd += ["--research-warmup-ratio", str(args.research_warmup_ratio)]
+    cmd += ["--use-onecycle", str(int(args.use_onecycle))]
+    cmd += ["--research-warmup-ratio", str(args.research_warmup_ratio)]
 
     # Forward any additional base_train flags untouched.
     cmd.extend(passthrough)
@@ -84,14 +83,14 @@ def main() -> None:
     parser.add_argument("--selection-mode", type=str, default="soft", choices=["soft", "hard"])
     parser.add_argument("--context-dim", type=int, default=64)
     parser.add_argument("--linear-basis-size", type=int, default=64)
-    parser.add_argument("--moe-use-abs-pos-embed", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 1])
 
     # Scheduler knobs (research branches use OneCycle in your modified base_train)
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--warmdown-ratio", type=float, default=0.9)
     parser.add_argument("--final-lr-frac", type=float, default=0.1)
-    parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--research-warmup-ratio", type=float, default=-1.0)
+    parser.add_argument("--use-onecycle", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--research-warmup-ratio", type=float, default=0.0)
 
     args, passthrough = parser.parse_known_args()
 
