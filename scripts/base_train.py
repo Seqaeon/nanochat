@@ -188,7 +188,18 @@ def build_model_meta(depth):
     base_num_heads = base_model_dim // args.head_dim
     if args.use_moe or args.use_remixed_linear:
         model_dim = args.target_dim
-        num_heads = base_num_heads
+        # Keep research branches compatible with repo attention constraints while
+        # preferring a head count close to the base model's count.
+        def _choose_research_heads(embed_dim: int, preferred_heads: int) -> int:
+            pow2 = [1 << i for i in range(0, 12)]  # up to 2048 heads, way above practical usage
+            valid_pow2 = [h for h in pow2 if h <= embed_dim and embed_dim % h == 0 and (embed_dim // h) % 8 == 0]
+            if valid_pow2:
+                return min(valid_pow2, key=lambda h: (abs(h - preferred_heads), -h))
+            # Fallback: any divisor that keeps integer head_dim.
+            valid_any = [h for h in range(1, embed_dim + 1) if embed_dim % h == 0]
+            return min(valid_any, key=lambda h: abs(h - preferred_heads)) if valid_any else 1
+
+        num_heads = _choose_research_heads(model_dim, base_num_heads)
         assert model_dim % num_heads == 0, f"target_dim must be divisible by n_head ({num_heads}), got {model_dim}"
     else:
         model_dim = base_model_dim
