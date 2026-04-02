@@ -414,6 +414,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
             ckpts_root = run_dir / f"ckpt_{run_name}"
             checkpoint_dir = ckpts_root / run_name
+            step_loss_file = run_dir / f"{run_name}_step_loss.jsonl"
 
             run_args = (
                 common_args
@@ -422,6 +423,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 + [
                     "--warmup-ratio", f"{warmup_ratio:.6g}",
                     "--early-stop-tokens", str(early_stop_tokens),
+                    "--step-loss-file", str(step_loss_file),
                     "--checkpoints-dir", str(ckpts_root),
                     "--model-tag", run_name,
                 ]
@@ -464,6 +466,22 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                 if process.returncode != 0:
                     print(f"[warmup_sweep] {run_name} failed (exit {process.returncode}), skipping.")
                     continue
+                # Prefer per-step loss file if available (captures every optimizer step).
+                if step_loss_file.exists():
+                    try:
+                        step_tokens: list[int] = []
+                        step_losses: list[float] = []
+                        with open(step_loss_file, "r", encoding="utf-8") as f:
+                            for raw in f:
+                                rec = json.loads(raw)
+                                step_tokens.append(int(rec["tokens"]))
+                                step_losses.append(float(rec["loss"]))
+                        if step_losses:
+                            tokens_list = step_tokens
+                            bpbs_list = step_losses
+                    except Exception as exc:
+                        print(f"[warmup_sweep] {run_name}: failed to read step loss file ({exc}); using stdout parser fallback.")
+
                 if bpbs_list:
                     metrics = analyse_run(
                         tokens_list, bpbs_list,

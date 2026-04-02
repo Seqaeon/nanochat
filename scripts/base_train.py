@@ -113,6 +113,7 @@ parser.add_argument("--max-shards", type=int, default=-1, help="maximum number o
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
+parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
 args = parser.parse_args()
 if args.use_onecycle is not None:
     args.research_onecycle = args.use_onecycle
@@ -252,6 +253,13 @@ else:
 
 checkpoint_dir = os.path.abspath(os.path.join(checkpoints_root, output_dirname))
 print0(f"Checkpoints directory: {checkpoint_dir}")
+if args.step_loss_file and master_process:
+    step_loss_dir = os.path.dirname(os.path.abspath(args.step_loss_file))
+    if step_loss_dir:
+        os.makedirs(step_loss_dir, exist_ok=True)
+    # Fresh file per run.
+    with open(args.step_loss_file, "w", encoding="utf-8"):
+        pass
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
@@ -712,6 +720,13 @@ while True:
     # logging (CPU action only)
     smooth_train_loss = EMA_BETA * smooth_train_loss + (1 - EMA_BETA) * train_loss_f # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - EMA_BETA**(step + 1)) # debias the EMA
+    if args.step_loss_file and master_process:
+        with open(args.step_loss_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step": int(step),
+                "tokens": int(step * total_batch_size),
+                "loss": float(debiased_smooth_loss),
+            }) + "\n")
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(total_batch_size / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
