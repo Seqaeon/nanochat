@@ -301,9 +301,12 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # Steps in the full training budget — used to convert warmup fracs to absolute steps
     full_budget_steps = target_tokens // total_batch_size
 
-    # Global early stop based on longest warmup candidate
-    max_warmup_frac = max(args.warmup_fracs) if args.warmup_fracs else 0.10
-    global_early_stop_tokens = int(max_warmup_frac * target_tokens)
+    # Global early stop based on run-tokens or longest warmup candidate
+    if getattr(args, "run_tokens", 0) > 0:
+        global_early_stop_tokens = args.run_tokens
+    else:
+        max_warmup_frac = max(args.warmup_fracs) if args.warmup_fracs else 0.10
+        global_early_stop_tokens = int(max_warmup_frac * target_tokens)
     global_early_stop_steps = global_early_stop_tokens // total_batch_size
 
     # Filter requested models against what we have config for
@@ -359,10 +362,19 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         lrs = FIXED_LRS[model_name]
         arch_flags = list(MODEL_ARCH_FLAGS[model_name])
 
-        # Append dynamic dimension args
-        arch_flags += ["--target-dim", str(target_dim), "--router-dim", str(target_dim)]
+        # Append dynamic dimension args to ensure research parameters scale perfectly with depth
+        arch_flags += [
+            "--target-dim", str(target_dim),
+            "--router-dim", str(target_dim),
+            "--num-experts", str(8),  # Keeping at 8 for standard comparison, but could be scaled if needed
+        ]
+        
+        # Ensure block-specific dimension args are also set
         if model_name == "remixed-linear":
-            arch_flags += ["--context-dim", str(target_dim), "--linear-basis-size", str(target_dim)]
+            arch_flags += [
+                "--context-dim", str(target_dim),
+                "--linear-basis-size", str(target_dim)
+            ]
 
         lr_args = [
             "--embedding-lr",   f"{lrs['embedding_lr']:.6g}",
@@ -658,6 +670,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--target-tokens", type=int, default=0,
         help="full training budget used to calculate warmup step counts (default: 0 = dynamic calculation from Depth)",
+    )
+    parser.add_argument(
+        "--run-tokens", type=int, default=0,
+        help="per-run early stop length in tokens (default: 0 = dynamic calculation based on max warmup)",
     )
     parser.add_argument(
         "--log-every", type=int, default=1,
