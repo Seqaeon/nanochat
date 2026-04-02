@@ -302,7 +302,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every={eval_every}")
     print("=" * 64)
 
-    # Args shared by every run — base_train stops at run_tokens
+    # Args shared by every run
+    # --target-tokens sets the full LR schedule (20B)
+    # --early-stop-tokens cuts the run short at run_tokens without changing the schedule
     common_args = [
         "--depth", str(depth),
         "--aspect-ratio", str(aspect_ratio),
@@ -310,7 +312,8 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--max-seq-len", str(max_seq_len),
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size),
-        "--target-tokens", str(args.run_tokens),   # <-- early stop at run_tokens
+        "--target-tokens", str(args.target_tokens),        # full LR schedule
+        "--early-stop-tokens", str(args.run_tokens),       # actual stop point
         "--eval-every", str(eval_every),
         "--core-metric-every", "0",
         "--sample-every", "-1",
@@ -360,10 +363,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
         for warmup_frac in args.warmup_fracs:
             # Absolute warmup steps = frac × full_budget_steps
-            # warmup_ratio seen by base_train = warmup_steps / run_steps (clamped to ≤1.0)
+            # warmup_ratio = warmup_steps / full_budget_steps (expressed relative to the 20B schedule)
             warmup_steps = int(warmup_frac * full_budget_steps)
-            warmup_steps_clamped = min(warmup_steps, run_steps)
-            warmup_ratio = warmup_steps_clamped / max(run_steps, 1)
+            warmup_ratio = warmup_frac  # already a fraction of the full schedule
 
             warmup_pct = warmup_frac * 100
             run_name = f"{model_name}_wu{warmup_pct:.1f}pct"
@@ -387,8 +389,8 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             print(f"\n--- {run_name} ---")
             print(
                 f"  warmup_frac={warmup_frac:.1%} of full budget  "
-                f"→ {warmup_steps:,} steps target ({warmup_steps_clamped:,} effective)  "
-                f"→ warmup_ratio={warmup_ratio:.4f} of {run_steps:,}-step test run"
+                f"→ {warmup_steps:,} warmup steps  "
+                f"→ LR at step {run_steps:,} (100M stop) = {warmup_frac/1.0 * 100:.1f}% through schedule"
             )
             print(f"  cmd: {' '.join(cmd)}")
 
@@ -602,8 +604,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--warmup-fracs", type=float, nargs="+",
-        default=[0.0, 0.01, 0.02, 0.05, 0.10],
-        help="warmup fractions of full-token-budget (default: 0 0.01 0.02 0.05 0.10)",
+        default=[0.005, 0.01, 0.02, 0.05, 0.10],
+        help="warmup fractions of target-tokens full budget (default: 0.5%% 1%% 2%% 5%% 10%%)",
     )
     parser.add_argument(
         "--bpb-threshold", type=float, default=1.6,

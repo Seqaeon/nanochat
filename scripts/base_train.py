@@ -110,6 +110,7 @@ parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit to
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -628,8 +629,13 @@ while True:
             rank=ddp_rank,
         )
 
-    # termination conditions (TODO: possibly also add loss explosions etc.)
+    # termination conditions
+    # 1. Normal end: completed all num_iterations
     if last_step:
+        break
+    # 2. Early stop: reached --early-stop-tokens without affecting the LR schedule
+    if args.early_stop_tokens > 0 and step * total_batch_size >= args.early_stop_tokens:
+        print0(f"[early stop] Reached {step * total_batch_size:,} tokens (limit: {args.early_stop_tokens:,}). Stopping.")
         break
 
     # -------------------------------------------------------------------------
