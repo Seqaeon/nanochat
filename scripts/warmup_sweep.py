@@ -292,11 +292,13 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     raw_target_dim = max(model_dim // 8, 1)
     target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
     target_dim = min(target_dim, model_dim)
+    # Determine the full budget
+    target_tokens = getattr(args, "target_tokens", 0)
+    if target_tokens <= 0:
+        target_tokens = estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
 
     # Steps in the full training budget — used to convert warmup fracs to absolute steps
-    full_budget_steps = args.target_tokens // total_batch_size
-    # Steps in the short test run — this is what base_train actually trains for
-    run_steps = args.run_tokens // total_batch_size
+    full_budget_steps = target_tokens // total_batch_size
 
     # Filter requested models against what we have config for
     valid_models = [m for m in args.models if m in FIXED_LRS]
@@ -306,7 +308,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
 
     print("=" * 64)
     print(f"Warmup Sweep | Depth {depth}")
-    print(f"Full budget (warmup basis): {args.target_tokens:,} ({full_budget_steps:,} steps)")
+    print(f"Full budget (warmup basis): {target_tokens:,} ({full_budget_steps:,} steps)")
     print(f"Warmup fracs (early stop points): {args.warmup_fracs}")
     print(f"Models: {valid_models}")
     print(f"model_dim={model_dim}  target_dim={target_dim}  eval_every=0 (disabled)")
@@ -321,7 +323,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--max-seq-len", str(max_seq_len),
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size),
-        "--target-tokens", str(args.target_tokens),        # full LR schedule
+        "--target-tokens", str(target_tokens),        # full LR schedule
         "--eval-every", "0",                               # NO evals (purely train loss)
         "--core-metric-every", "0",
         "--sample-every", "-1",
@@ -458,13 +460,10 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
             except Exception as exc:
                 print(f"[warmup_sweep] Exception during {run_name}: {exc}")
 
-        # -------------------------------------------------------------------
-        # Per-model plot + ranking (printed immediately after all fracs done)
-        # -------------------------------------------------------------------
         if results[model_name]:
             _plot_and_rank_model(
                 model_name, results[model_name], depth,
-                args.run_tokens, args.target_tokens, args.bpb_threshold, run_dir,
+                target_tokens, run_dir,
             )
         else:
             print(f"[warmup_sweep] {model_name}: no successful runs — skipping per-model plot.")
@@ -472,7 +471,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # -----------------------------------------------------------------------
     # Aggregate report: combined plot + TSV across all models
     # -----------------------------------------------------------------------
-    _generate_aggregate_report(results, depth, args.target_tokens, run_dir)
+    _generate_aggregate_report(results, depth, target_tokens, run_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -647,8 +646,8 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, required=True, help="model depth")
     parser.add_argument("--run-dir", type=str, required=True, help="output root directory")
     parser.add_argument(
-        "--target-tokens", type=int, default=20_000_000_000,
-        help="full training budget used to calculate warmup step counts (default: 20B)",
+        "--target-tokens", type=int, default=0,
+        help="full training budget used to calculate warmup step counts (default: 0 = dynamic calculation from Depth)",
     )
     parser.add_argument(
         "--warmup-fracs", type=float, nargs="+",
