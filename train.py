@@ -89,7 +89,7 @@ def main() -> None:
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--warmdown-ratio", type=float, default=0.9)
     parser.add_argument("--final-lr-frac", type=float, default=0.1)
-    parser.add_argument("--use-onecycle", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1])
     parser.add_argument("--research-warmup-ratio", type=float, default=0.0)
 
     args, passthrough = parser.parse_known_args()

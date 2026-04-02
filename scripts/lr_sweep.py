@@ -507,7 +507,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-shards", type=int, default=-1)
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
-    parser.add_argument("--use-onecycle", type=int, default=0, choices=[0, 1], help="research branches: 1=OneCycle, 0=base schedule")
+    parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=base schedule")
     parser.add_argument(
         "--compile", action=argparse.BooleanOptionalAction, default=True,
         help="enable/disable torch.compile (default: enabled)",
