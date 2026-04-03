@@ -605,12 +605,21 @@ class GPT(nn.Module):
         # Resolve notebook aliases to GPT-native knobs
         self.use_moe = config.use_moe
         self.use_perm = config.use_perm
-        self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else config.num_experts
-        self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else config.router_dim
+        # dynamically scale defaults based on target_dim if left at baseline values
+        resolved_num_experts = config.num_experts if config.num_experts != 8 else max(8, config.target_dim // 8)
+        self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else resolved_num_experts
+        
+        resolved_router_dim = config.router_dim if config.router_dim != 64 else config.target_dim
+        self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else resolved_router_dim
+        
         self.moe_embed_dim = config.moe_embed_dim if config.moe_embed_dim != 64 else config.target_dim
         self.use_remix_linear = config.use_remix_linear or config.use_remixed_linear
-        self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else config.context_dim
-        self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else config.linear_basis_size
+        
+        resolved_context_dim = config.context_dim if config.context_dim != 64 else config.target_dim
+        self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else resolved_context_dim
+        
+        resolved_basis_size = config.linear_basis_size if config.linear_basis_size != 64 else config.target_dim
+        self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else resolved_basis_size
         self.use_pos_embed = config.use_pos_embed
         if config.remixed_linear_kwargs is None:
             self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)

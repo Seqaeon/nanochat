@@ -179,18 +179,31 @@ def run_training_sweep(args):
     if getattr(args, "max_shards", -1) != -1:
         common_args.extend(["--max-shards", str(args.max_shards)])
     
-    # --- Tuning Section ---
-    RESEARCH_BASE_LR = 0.05
-    MOE_SCALES = {
-        "base":           1.0,
-        "moe_no_perm":    2.0,
-        "moe_perm":       2.0,
-        "remixed-linear": 1.0,
+    # --- Optimal LR Configurations (from actual_lr_research_sweep) ---
+    BEST_LRS = {
+        "moe_no_perm": {
+            "embedding_lr":   0.1,
+            "unembedding_lr": 0.3,
+            "matrix_lr":      1.0,
+            "scalar_lr":      0.1,
+        },
+        "moe_perm": {
+            "embedding_lr":   0.5,
+            "unembedding_lr": 0.5,
+            "matrix_lr":      0.5,
+            "scalar_lr":      2.5,
+        },
+        "remixed-linear": {
+            "embedding_lr":   0.5,
+            "unembedding_lr": 0.5,
+            "matrix_lr":      0.5,
+            "scalar_lr":      0.5,
+        },
     }
-    # ----------------------
+    # ---------------------------------------------------------------
 
     models = {
-        "base": [],
+        "base": [], # Base model relies on base_train.py defaults
     }
 
     # Research branch configurations (architecture only)
@@ -219,13 +232,12 @@ def run_training_sweep(args):
     }
 
     for name, flags in research_configs.items():
-        scale = MOE_SCALES.get(name, 1.0)
-        lr_val = f"{RESEARCH_BASE_LR * scale:.6g}"
+        lrs = BEST_LRS[name]
         models[name] = flags + [
-            "--embedding-lr",   lr_val,
-            "--matrix-lr",      lr_val,
-            "--unembedding-lr", lr_val,
-            "--scalar-lr",      lr_val,
+            "--embedding-lr",   str(lrs["embedding_lr"]),
+            "--unembedding-lr", str(lrs["unembedding_lr"]),
+            "--matrix-lr",      str(lrs["matrix_lr"]),
+            "--scalar-lr",      str(lrs["scalar_lr"]),
         ]
     
     results = {}
