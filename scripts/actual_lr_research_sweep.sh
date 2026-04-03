@@ -80,6 +80,8 @@ ROOT_OUT_DIR="out/actual_lr_research_sweep_${TIMESTAMP}"
 
 EXTRA_ARGS=""
 MAX_SHARDS=170
+DATA_DIR_FLAG=""
+TOKENIZER_DIR_FLAG=""
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -179,10 +181,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --tokenizer-dir)
+            TOKENIZER_DIR_FLAG="$2"
             EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
             shift 2
             ;;
         --data-dir)
+            DATA_DIR_FLAG="$2"
             EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
             shift 2
             ;;
@@ -228,16 +232,23 @@ mkdir -p "${ROOT_OUT_DIR}"
 # ── One-time data + tokenizer setup ──────────────────────────────────────────
 python -m nanochat.report reset
 
+# Resolve directories for one-time calls
+DATA_OPT=""
+[ -n "$DATA_DIR_FLAG" ] && DATA_OPT="--data-dir $DATA_DIR_FLAG"
+TOK_OPT=""
+[ -n "$TOKENIZER_DIR_FLAG" ] && TOK_OPT="--tokenizer-dir $TOKENIZER_DIR_FLAG"
+
 # Download 8 shards immediately so training can start while the rest come in
-python -m nanochat.dataset -n 8
-python -m nanochat.dataset -n $MAX_SHARDS &
+python -m nanochat.dataset -n 8 $DATA_OPT
+python -m nanochat.dataset -n $MAX_SHARDS $DATA_OPT &
 DATASET_DOWNLOAD_PID=$!
 
-if [ ! -f "$NANOCHAT_BASE_DIR/tokenizer/tokenizer.pkl" ]; then
-    python -m scripts.tok_train
-    python -m scripts.tok_eval
+TOKENIZER_CHECK_DIR="${TOKENIZER_DIR_FLAG:-$NANOCHAT_BASE_DIR/tokenizer}"
+if [ ! -f "$TOKENIZER_CHECK_DIR/tokenizer.pkl" ]; then
+    python -m scripts.tok_train $TOK_OPT $DATA_OPT
+    python -m scripts.tok_eval $TOK_OPT $DATA_OPT
 else
-    echo "Tokenizer already exists in $NANOCHAT_BASE_DIR/tokenizer, skipping training."
+    echo "Tokenizer already exists in $TOKENIZER_CHECK_DIR, skipping training."
 fi
 
 echo "Waiting for dataset download to complete..."
