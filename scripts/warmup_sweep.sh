@@ -63,7 +63,7 @@ fi
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/warmup_sweep_${TIMESTAMP}"
 
-EXTRA_ARGS=""
+EXTRA_ARGS=()
 MAX_SHARDS=170
 TARGET_TOKENS=20000000000
 DATA_DIR_FLAG=""
@@ -73,55 +73,61 @@ TOKENIZER_DIR_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --fp8)
-            EXTRA_ARGS="$EXTRA_ARGS --fp8"
+            EXTRA_ARGS+=("--fp8")
             shift
             ;;
         --no-compile)
-            EXTRA_ARGS="$EXTRA_ARGS --no-compile"
+            EXTRA_ARGS+=("--no-compile")
             shift
             ;;
         --max-shards)
             MAX_SHARDS=$2
-            EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            EXTRA_ARGS+=("--max-shards" "$2")
             shift 2
             ;;
         --target-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
+            EXTRA_ARGS+=("--target-tokens" "$2")
             shift 2
             ;;
         --run-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --run-tokens $2"
+            EXTRA_ARGS+=("--early-stop-tokens" "$2")
             shift 2
             ;;
         --early-stop-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --early-stop-tokens $2"
+            EXTRA_ARGS+=("--early-stop-tokens" "$2")
             shift 2
             ;;
         --use-onecycle)
-            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
+            EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
             ;;
         --warmup-fracs)
             # Accept space-separated list quoted in one arg: --warmup-fracs "0.0 0.01 0.05"
-            EXTRA_ARGS="$EXTRA_ARGS --warmup-fracs $2"
+            # We split the string by spaces to pass as multiple arguments to Python's nargs='+'
+            for frac in $2; do
+                EXTRA_ARGS+=("--warmup-fracs" "$frac")
+            done
             shift 2
             ;;
         --log-every)
-            EXTRA_ARGS="$EXTRA_ARGS --log-every $2"
+            EXTRA_ARGS+=("--log-every" "$2")
             shift 2
             ;;
         --models)
-            EXTRA_ARGS="$EXTRA_ARGS --models $2"
+            # We split by spaces to pass as multiple arguments to Python's nargs='+'
+            for model in $2; do
+                EXTRA_ARGS+=("--models" "$model")
+            done
             shift 2
             ;;
         --tokenizer-dir)
             TOKENIZER_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
+            EXTRA_ARGS+=("--tokenizer-dir" "$2")
             shift 2
             ;;
         --data-dir)
             DATA_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
+            EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
         *)
@@ -220,7 +226,7 @@ for DEPTH in "$@"; do
     python -m scripts.warmup_sweep \
         --depth "${DEPTH}" \
         --run-dir "${RUN_DIR}" \
-        $EXTRA_ARGS
+        "${EXTRA_ARGS[@]}"
 
     if [ $? -ne 0 ]; then
         echo "Error: Warmup sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."

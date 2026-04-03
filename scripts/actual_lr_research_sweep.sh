@@ -78,7 +78,7 @@ fi
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/actual_lr_research_sweep_${TIMESTAMP}"
 
-EXTRA_ARGS=""
+EXTRA_ARGS=()
 MAX_SHARDS=170
 DATA_DIR_FLAG=""
 TOKENIZER_DIR_FLAG=""
@@ -87,107 +87,112 @@ TOKENIZER_DIR_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --fp8)
-            EXTRA_ARGS="$EXTRA_ARGS --fp8"
+            EXTRA_ARGS+=("--fp8")
             shift
             ;;
         --no-compile)
-            EXTRA_ARGS="$EXTRA_ARGS --no-compile"
+            EXTRA_ARGS+=("--no-compile")
             shift
             ;;
         --generate-only)
-            EXTRA_ARGS="$EXTRA_ARGS --generate-only"
+            EXTRA_ARGS+=("--generate-only")
             shift
             ;;
         --max-shards)
             MAX_SHARDS=$2
-            EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            EXTRA_ARGS+=("--max-shards" "$2")
             shift 2
             ;;
         --phase)
-            EXTRA_ARGS="$EXTRA_ARGS --phase $2"
+            EXTRA_ARGS+=("--phase" "$2")
             shift 2
             ;;
         --models)
-            # Accept space-separated list quoted as one arg: --models "base moe_perm"
-            EXTRA_ARGS="$EXTRA_ARGS --models $2"
+            for model in $2; do
+                EXTRA_ARGS+=("--models" "$model")
+            done
             shift 2
             ;;
         --phase1-scales)
-            EXTRA_ARGS="$EXTRA_ARGS --phase1-scales $2"
+            for scale in $2; do
+                EXTRA_ARGS+=("--phase1-scales" "$scale")
+            done
             shift 2
             ;;
         --s-star)
-            EXTRA_ARGS="$EXTRA_ARGS --s-star $2"
+            EXTRA_ARGS+=("--s-star" "$2")
             shift 2
             ;;
         --phase2-multipliers)
-            EXTRA_ARGS="$EXTRA_ARGS --phase2-multipliers $2"
+            for mult in $2; do
+                EXTRA_ARGS+=("--phase2-multipliers" "$mult")
+            done
             shift 2
             ;;
         --phase3-samples)
-            EXTRA_ARGS="$EXTRA_ARGS --phase3-samples $2"
+            EXTRA_ARGS+=("--phase3-samples" "$2")
             shift 2
             ;;
         --phase3-log-radius)
-            EXTRA_ARGS="$EXTRA_ARGS --phase3-log-radius $2"
+            EXTRA_ARGS+=("--phase3-log-radius" "$2")
             shift 2
             ;;
         --seed)
-            EXTRA_ARGS="$EXTRA_ARGS --seed $2"
+            EXTRA_ARGS+=("--seed" "$2")
             shift 2
             ;;
         --target-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
+            EXTRA_ARGS+=("--target-tokens" "$2")
             shift 2
             ;;
         --early-stop-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --early-stop-tokens $2"
+            EXTRA_ARGS+=("--early-stop-tokens" "$2")
             shift 2
             ;;
         --warmup-ratio)
-            EXTRA_ARGS="$EXTRA_ARGS --warmup-ratio $2"
+            EXTRA_ARGS+=("--warmup-ratio" "$2")
             shift 2
             ;;
         --research-warmup-ratio)
-            EXTRA_ARGS="$EXTRA_ARGS --research-warmup-ratio $2"
+            EXTRA_ARGS+=("--research-warmup-ratio" "$2")
             shift 2
             ;;
         --use-onecycle)
-            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
+            EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
             ;;
         --device-batch-size)
-            EXTRA_ARGS="$EXTRA_ARGS --device-batch-size $2"
+            EXTRA_ARGS+=("--device-batch-size" "$2")
             shift 2
             ;;
         --total-batch-size)
-            EXTRA_ARGS="$EXTRA_ARGS --total-batch-size $2"
+            EXTRA_ARGS+=("--total-batch-size" "$2")
             shift 2
             ;;
         --max-seq-len)
-            EXTRA_ARGS="$EXTRA_ARGS --max-seq-len $2"
+            EXTRA_ARGS+=("--max-seq-len" "$2")
             shift 2
             ;;
-        --num-experts)
-            EXTRA_ARGS="$EXTRA_ARGS --num-experts $2"
+        --moe-num-experts)
+            EXTRA_ARGS+=("--moe-num-experts" "$2")
             shift 2
             ;;
         --log-every)
-            EXTRA_ARGS="$EXTRA_ARGS --log-every $2"
+            EXTRA_ARGS+=("--log-every" "$2")
             shift 2
             ;;
         --eval-every)
-            EXTRA_ARGS="$EXTRA_ARGS --eval-every $2"
+            EXTRA_ARGS+=("--eval-every" "$2")
             shift 2
             ;;
         --tokenizer-dir)
             TOKENIZER_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
+            EXTRA_ARGS+=("--tokenizer-dir" "$2")
             shift 2
             ;;
         --data-dir)
             DATA_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
+            EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
         *)
@@ -287,7 +292,7 @@ for DEPTH in "$@"; do
     python -m scripts.actual_lr_research_sweep \
         --depth "${DEPTH}" \
         --run-dir "${RUN_DIR}" \
-        $EXTRA_ARGS
+        "${EXTRA_ARGS[@]}"
 
     if [ $? -ne 0 ]; then
         echo "Error: Actual-LR research sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."

@@ -48,7 +48,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/lr_sweep_${TIMESTAMP}"
 
 # Flags forwarded to lr_sweep.py
-EXTRA_ARGS=""
+EXTRA_ARGS=()
 MAX_SHARDS=170
 TARGET_TOKENS=1000000000
 LR_SCALE_FACTORS=""
@@ -60,51 +60,53 @@ TOKENIZER_DIR_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --fp8)
-            EXTRA_ARGS="$EXTRA_ARGS --fp8"
+            EXTRA_ARGS+=("--fp8")
             shift
             ;;
         --no-compile)
-            EXTRA_ARGS="$EXTRA_ARGS --no-compile"
+            EXTRA_ARGS+=("--no-compile")
             shift
             ;;
         --max-shards)
             MAX_SHARDS=$2
-            EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            EXTRA_ARGS+=("--max-shards" "$2")
             shift 2
             ;;
         --target-tokens)
             TARGET_TOKENS=$2
-            EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
+            EXTRA_ARGS+=("--target-tokens" "$2")
             shift 2
             ;;
         --use-onecycle)
-            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
+            EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
             ;;
         --lr-scale-factors)
             # Accept space-separated list quoted in one arg: --lr-scale-factors "1.0 3.0 5.0"
-            LR_SCALE_FACTORS="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --lr-scale-factors $2"
+            for scale in $2; do
+                EXTRA_ARGS+=("--lr-scale-factors" "$scale")
+            done
             shift 2
             ;;
         --models)
             # --models "base moe_perm"
-            MODELS="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --models $2"
+            for model in $2; do
+                EXTRA_ARGS+=("--models" "$model")
+            done
             shift 2
             ;;
         --eval-every)
-            EXTRA_ARGS="$EXTRA_ARGS --eval-every $2"
+            EXTRA_ARGS+=("--eval-every" "$2")
             shift 2
             ;;
         --tokenizer-dir)
             TOKENIZER_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
+            EXTRA_ARGS+=("--tokenizer-dir" "$2")
             shift 2
             ;;
         --data-dir)
             DATA_DIR_FLAG="$2"
-            EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
+            EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
         *)
@@ -203,7 +205,7 @@ for DEPTH in "$@"; do
     python -m scripts.lr_sweep \
         --depth "${DEPTH}" \
         --run-dir "${RUN_DIR}" \
-        $EXTRA_ARGS
+        "${EXTRA_ARGS[@]}"
 
     if [ $? -ne 0 ]; then
         echo "Error: LR sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."

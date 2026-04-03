@@ -37,38 +37,40 @@ fi
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/research_sweep_${TIMESTAMP}"
 
-EXTRA_ARGS=""
+EXTRA_ARGS=()
 MAX_SHARDS=170
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --fp8)
-            EXTRA_ARGS="$EXTRA_ARGS --fp8"
+            EXTRA_ARGS+=("--fp8")
             shift
             ;;
         --no-compile)
-            EXTRA_ARGS="$EXTRA_ARGS --no-compile"
+            EXTRA_ARGS+=("--no-compile")
             shift
             ;;
         --max-shards)
             MAX_SHARDS=$2
-            EXTRA_ARGS="$EXTRA_ARGS --max-shards $2"
+            EXTRA_ARGS+=("--max-shards" "$2")
             shift 2
             ;;
         --target-tokens)
-            EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
+            EXTRA_ARGS+=("--target-tokens" "$2")
             shift 2
             ;;
         --use-onecycle)
-            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
+            EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
             ;;
         --tokenizer-dir)
-            EXTRA_ARGS="$EXTRA_ARGS --tokenizer-dir $2"
+            TOKENIZER_DIR_FLAG="$2"
+            EXTRA_ARGS+=("--tokenizer-dir" "$2")
             shift 2
             ;;
         --data-dir)
-            EXTRA_ARGS="$EXTRA_ARGS --data-dir $2"
+            DATA_DIR_FLAG="$2"
+            EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
         *)
@@ -149,7 +151,7 @@ for DEPTH in "$@"; do
 
     # research_compare orchestrates multiple training subprocesses itself.
     # Running it under torchrun causes nested distributed launches and rank/env collisions.
-    python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
+    python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" "${EXTRA_ARGS[@]}"
     
     if [ $? -ne 0 ]; then
         echo "Error: Sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."
