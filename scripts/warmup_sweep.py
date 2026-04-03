@@ -190,7 +190,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
-    device_batch_size = {8: 32, 16: 16, 24: 8}.get(depth, 16)
+    device_batch_size = {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
     max_seq_len = 2048
     total_batch_size = 524288
 
