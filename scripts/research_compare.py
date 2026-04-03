@@ -12,98 +12,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
-
-def _resolve_runner() -> list[str]:
-    """Return the torchrun command prefix for launching base_train.py with DDP.
-
-    NANOCHAT_NPROC is the *requested* worker count (set by research_sweep.sh,
-    default 8). It is capped to the number of available CUDA devices so that
-    running on a machine with fewer GPUs than requested Just Works.
-    """
-    nproc_requested = int(os.environ.get("NANOCHAT_NPROC", 8))
-    gpu_count = max(torch.cuda.device_count(), 1)
-    nproc = min(nproc_requested, gpu_count)
-    if nproc < nproc_requested:
-        print(
-            f"[research_compare] Requested {nproc_requested} DDP workers but only "
-            f"{gpu_count} GPU(s) available — using {nproc}."
-        )
-    torchrun = shutil.which("torchrun")
-    if torchrun:
-        return [torchrun, "--standalone", f"--nproc_per_node={nproc}"]
-    return [
-        sys.executable, "-m", "torch.distributed.run",
-        "--standalone", f"--nproc_per_node={nproc}",
-    ]
+from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, model_dims, check_and_prepare_env
 
 
-RUNNER = _resolve_runner()
-
-def estimate_tokens_from_base(depth: int, target_ratio: float = 10.5, tokenizer_dir: str = None) -> int:
-    # Replica of base_train's logic
-    from nanochat.gpt import GPT, GPTConfig
-    
-    vocab_size = 32768 # fallback
-    try:
-        from nanochat.tokenizer import get_tokenizer
-        tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
-        vocab_size = tokenizer.get_vocab_size()
-    except Exception:
-        pass
-        
-    aspect_ratio = 64
-    head_dim = 128
-    
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    num_heads = model_dim // head_dim
-    max_seq_len = 2048
-    config = GPTConfig(
-        sequence_len=max_seq_len, # fixed max_seq_len for sweep
-        vocab_size=vocab_size,
-        n_layer=depth,
-        n_head=num_heads,
-        n_kv_head=num_heads,
-        n_embd=model_dim,
-    )
-    with torch.device("meta"):
-        model = GPT(config)
-    
-    params_counts = model.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
-    
-    return int(scaling_params * target_ratio)
-
-def check_and_prepare_env(args):
-    # 1. Resolve data_dir and tokenizer_dir
-    from nanochat.common import get_base_dir
-    from nanochat.dataset import resolve_data_dir, list_parquet_files
-    
-    data_dir = resolve_data_dir() #args.data_dir if args.data_dir else resolve_data_dir()
-    tokenizer_dir = os.path.join(get_base_dir(), "tokenizer") #args.tokenizer_dir if args.tokenizer_dir else os.path.join(get_base_dir(), "tokenizer")
-    
-    # Ensure directories exist
-    os.makedirs(data_dir, exist_ok=True)
-    os.makedirs(tokenizer_dir, exist_ok=True)
-    
-    # 2. Check for data shards
-    shards = list_parquet_files(data_dir=data_dir)
-    if not shards:
-        print(f"No data shards found in {data_dir}. Downloading...")
-        # If max_shards is set, use it. Otherwise download at least 2 (1 train, 1 val).
-        num_files = args.max_shards if (args.max_shards and args.max_shards > 0) else 2
-        cmd = [sys.executable, "-m", "nanochat.dataset", "-n", str(num_files), "--data-dir", data_dir]
-        print(f"Running: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
-    
-    # 3. Check for tokenizer
-    tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
-    if not os.path.exists(tokenizer_pkl):
-        print(f"Tokenizer not found at {tokenizer_pkl}. Training...")
-        # Train on a small subset for speed.
-        cmd = [sys.executable, "-m", "scripts.tok_train", "--max-chars", "10000000", "--data-dir", data_dir, "--tokenizer-dir", tokenizer_dir]
-        print(f"Running: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
+RUNNER = resolve_runner()
 
 def run_training_sweep(args):
     # Ensure environment is ready
@@ -120,34 +32,13 @@ def run_training_sweep(args):
     print(f"Calculated Target Tokens: {target_tokens:,}")
     print("=" * 64)
     
-    aspect_ratio = 64
-    head_dim = 128
-    # Keep sequence length aligned to powers of two so the default total batch
-    # size can be cleanly factorized into micro-batches across DDP workers.
-    # (2046 caused divisibility assertion failures in base_train.)
+    aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
     max_seq_len = 2048
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    # Device batch size scales down with depth to avoid OOM on deeper models.
-    # Tune these values if you hit VRAM limits or want to squeeze more MFU.
-    DEPTH_TO_DEVICE_BS: dict[int, int] = {
-        8:  32,
-        16: 16,
-        24: 8,
-    }
-    device_batch_size = DEPTH_TO_DEVICE_BS.get(depth, 16)
-
+    device_batch_size = {8: 32, 16: 16, 24: 8}.get(depth, 16)
     total_batch_size = 524288
     eval_every = 1000
     warm_up_ratio = args.warmup_ratio
     adam_beta2 = 0.99
-#    core_metric_every=-1
-    # Research branches require target_dim % head_dim == 0 in base_train.
-    # Start from a reduced dimension (~1/8th of model dim), then round UP to
-    # the nearest valid multiple of head_dim.
-    raw_target_dim = max(model_dim // 8, 1)
-    target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = min(target_dim, model_dim)
     
     # Common kwargs for all models
     common_args = [
@@ -210,24 +101,23 @@ def run_training_sweep(args):
     research_configs = {
         "moe_no_perm": [
             "--use-moe",
-            "--num-experts", "8",
-            "--router-dim", str(target_dim),
-            "--target-dim", str(target_dim),
+            "--moe-num-experts", "8",
+            "--moe-router-dim", str(target_dim),
+            "--moe-embed-dim",  str(target_dim),
         ],
         "moe_perm": [
             "--use-moe",
             "--use-perm",
-            "--num-experts", "8",
-            "--router-dim", str(target_dim),
-            "--target-dim", str(target_dim),
-            "--selection-mode", "soft",
+            "--moe-num-experts", "8",
+            "--moe-router-dim", str(target_dim),
+            "--moe-embed-dim",  str(target_dim),
         ],
         "remixed-linear": [
-            "--use-remixed-linear",
-            "--target-dim", str(target_dim),
-            "--router-dim", str(target_dim),
-            "--context-dim", str(target_dim),
-            "--linear-basis-size", str(target_dim),
+            "--use-remix-linear",
+            "--moe-embed-dim",    str(target_dim),
+            "--moe-router-dim",   str(target_dim),
+            "--remix-context-dim", str(target_dim),
+            "--remix-basis-size",  str(target_dim),
         ]
     }
 
@@ -246,8 +136,8 @@ def run_training_sweep(args):
         print(f"\n--- Training {model_name} ---")
         
         ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
-        
-        args = common_args + extra_args + [
+
+        train_cmd_args = common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),
             "--model-tag", model_name
         ]
@@ -257,7 +147,7 @@ def run_training_sweep(args):
         env = os.environ.copy()
 
         # Each model is trained as a proper DDP job via torchrun.
-        cmd = RUNNER + ["-m", "scripts.base_train"] + args
+        cmd = RUNNER + ["-m", "scripts.base_train"] + train_cmd_args
         print(f"Running: {' '.join(cmd)}")
         
         try:

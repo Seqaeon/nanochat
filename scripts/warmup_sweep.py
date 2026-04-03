@@ -44,70 +44,10 @@ import numpy as np
 import seaborn as sns
 import torch
 
-
-# ---------------------------------------------------------------------------
-# DDP runner (identical to lr_sweep.py)
-# ---------------------------------------------------------------------------
-
-def _resolve_runner() -> list[str]:
-    """Return torchrun command prefix, capped to available GPUs."""
-    nproc_requested = int(os.environ.get("NANOCHAT_NPROC", 8))
-    gpu_count = max(torch.cuda.device_count(), 1)
-    nproc = min(nproc_requested, gpu_count)
-    if nproc < nproc_requested:
-        print(
-            f"[warmup_sweep] Requested {nproc_requested} DDP workers but only "
-            f"{gpu_count} GPU(s) available — using {nproc}."
-        )
-    torchrun = shutil.which("torchrun")
-    if torchrun:
-        return [torchrun, "--standalone", f"--nproc_per_node={nproc}"]
-    return [
-        sys.executable, "-m", "torch.distributed.run",
-        "--standalone", f"--nproc_per_node={nproc}",
-    ]
+from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, model_dims, check_and_prepare_env
 
 
-RUNNER = _resolve_runner()
-
-
-# ---------------------------------------------------------------------------
-# Model sizing helper (same as lr_sweep.py)
-# ---------------------------------------------------------------------------
-
-def estimate_tokens_from_base(
-    depth: int,
-    target_ratio: float = 10.5,
-    tokenizer_dir: str | None = None,
-) -> int:
-    from nanochat.gpt import GPT, GPTConfig
-
-    vocab_size = 32768
-    try:
-        from nanochat.tokenizer import get_tokenizer
-        tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
-        vocab_size = tokenizer.get_vocab_size()
-    except Exception:
-        pass
-
-    aspect_ratio = 64
-    head_dim = 128
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    num_heads = model_dim // head_dim
-    config = GPTConfig(
-        sequence_len=2048,
-        vocab_size=vocab_size,
-        n_layer=depth,
-        n_head=num_heads,
-        n_kv_head=num_heads,
-        n_embd=model_dim,
-    )
-    with torch.device("meta"):
-        model = GPT(config)
-    params_counts = model.num_scaling_params()
-    scaling_params = params_counts["transformer_matrices"] + params_counts["lm_head"]
-    return int(scaling_params * target_ratio)
+RUNNER = resolve_runner()
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +55,7 @@ def estimate_tokens_from_base(
 # ---------------------------------------------------------------------------
 
 # Winner LRs from the LR sweep.  Applied uniformly across all LR groups.
+# Values synced from research_compare.py BEST_LRS (source of truth).
 FIXED_LRS: dict[str, dict[str, float]] = {
     "base": {
         "embedding_lr":   0.3,
@@ -123,75 +64,42 @@ FIXED_LRS: dict[str, dict[str, float]] = {
         "scalar_lr":      0.5,
     },
     "moe_perm": {
-        "embedding_lr":   0.1,
-        "unembedding_lr": 0.1,
-        "matrix_lr":      0.1,
-        "scalar_lr":      0.1,
+        "embedding_lr":   0.5,
+        "unembedding_lr": 0.5,
+        "matrix_lr":      0.5,
+        "scalar_lr":      2.5,
     },
     "moe_no_perm": {
         "embedding_lr":   0.1,
-        "unembedding_lr": 0.1,
-        "matrix_lr":      0.1,
+        "unembedding_lr": 0.3,
+        "matrix_lr":      1.0,
         "scalar_lr":      0.1,
     },
     "remixed-linear": {
-        "embedding_lr":   0.05,
-        "unembedding_lr": 0.05,
-        "matrix_lr":      0.05,
-        "scalar_lr":      0.05,
+        "embedding_lr":   0.5,
+        "unembedding_lr": 0.5,
+        "matrix_lr":      0.5,
+        "scalar_lr":      0.5,
     },
 }
 
-# Architecture flags — depth-dependent args (target_dim, router_dim, …) are
+# Architecture flags — depth-dependent args (moe_embed_dim, moe_router_dim, …) are
 # appended dynamically in run_warmup_sweep().
 MODEL_ARCH_FLAGS: dict[str, list[str]] = {
     "base": [],
     "moe_perm": [
         "--use-moe",
         "--use-perm",
-        "--num-experts", "8",
-        "--selection-mode", "soft",
+        "--moe-num-experts", "8",
     ],
     "moe_no_perm": [
         "--use-moe",
-        "--num-experts", "8",
+        "--moe-num-experts", "8",
     ],
     "remixed-linear": [
-        "--use-remixed-linear",
+        "--use-remix-linear",
     ],
 }
-
-
-# ---------------------------------------------------------------------------
-# Environment helpers
-# ---------------------------------------------------------------------------
-
-def check_and_prepare_env(args: argparse.Namespace) -> None:
-    from nanochat.common import get_base_dir
-    from nanochat.dataset import resolve_data_dir, list_parquet_files
-
-    data_dir = resolve_data_dir()
-    tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
-    os.makedirs(data_dir, exist_ok=True)
-    os.makedirs(tokenizer_dir, exist_ok=True)
-
-    shards = list_parquet_files(data_dir=data_dir)
-    if not shards:
-        num_files = args.max_shards if args.max_shards > 0 else 2
-        cmd = [sys.executable, "-m", "nanochat.dataset", "-n", str(num_files), "--data-dir", data_dir]
-        print(f"[warmup_sweep] Downloading data: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
-
-    tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
-    if not os.path.exists(tokenizer_pkl):
-        cmd = [
-            sys.executable, "-m", "scripts.tok_train",
-            "--max-chars", "10000000",
-            "--data-dir", data_dir,
-            "--tokenizer-dir", tokenizer_dir,
-        ]
-        print(f"[warmup_sweep] Training tokenizer: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
 
 
 # ---------------------------------------------------------------------------
@@ -281,26 +189,10 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Architecture sizing
-    aspect_ratio = 64
-    head_dim = 128
+    aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
+    device_batch_size = {8: 32, 16: 16, 24: 8}.get(depth, 16)
     max_seq_len = 2048
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    # Device batch size scales down with depth to avoid OOM on deeper models.
-    # Tune these values if you hit VRAM limits or want to squeeze more MFU.
-    DEPTH_TO_DEVICE_BS: dict[int, int] = {
-        8:  32,
-        16: 16,
-        24: 8,
-    }
-    device_batch_size = DEPTH_TO_DEVICE_BS.get(depth, 16)
-
     total_batch_size = 524288
-
-    raw_target_dim = max(model_dim // 8, 1)
-    target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = min(target_dim, model_dim)
 
     # Determine the full budget
     target_tokens = getattr(args, "target_tokens", 0)
@@ -374,19 +266,18 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         lrs = FIXED_LRS[model_name]
         arch_flags = list(MODEL_ARCH_FLAGS[model_name])
 
-        # Append dynamic dimension args to ensure research parameters scale perfectly with depth
-        arch_flags += [
-            "--target-dim", str(target_dim),
-            "--router-dim", str(target_dim),
-            "--num-experts", str(8),  # Keeping at 8 for standard comparison, but could be scaled if needed
-        ]
-        
-        # Ensure block-specific dimension args are also set
-        if model_name == "remixed-linear":
+        # Append dynamic dimension args to ensure research parameters scale with depth
+        if model_name != "base":
             arch_flags += [
-                "--context-dim", str(target_dim),
-                "--linear-basis-size", str(target_dim)
+                "--moe-embed-dim",  str(target_dim),
+                "--moe-router-dim", str(target_dim),
+                "--moe-num-experts", str(8),
             ]
+            if model_name == "remixed-linear":
+                arch_flags += [
+                    "--remix-context-dim", str(target_dim),
+                    "--remix-basis-size",  str(target_dim),
+                ]
 
         lr_args = [
             "--embedding-lr",   f"{lrs['embedding_lr']:.6g}",

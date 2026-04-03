@@ -41,42 +41,17 @@ class GPTConfig:
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
 
-    # Research branches (GPT-native names)
+    # Research branches
     use_moe: bool = False
     use_perm: bool = False
     moe_num_experts: int = 8
     moe_router_dim: int = 64
     moe_embed_dim: int = 64
+    dropout: float = 0.0
     use_remix_linear: bool = False
     remix_context_dim: int = 64
     remix_basis_size: int = 64
     remixed_linear_kwargs: dict | None = None
-
-    # Notebook-compat keys (BigramLanguageModel kwargs)
-    num_experts: int = 8
-    total_embed_dim: int = 64
-    router_dim: int = 64
-    capacity_factor: float = 1.0
-    use_sparse_top_k: bool = False
-    top_k: int = 1
-    routing_mode: str = 'token_choice'
-    context_window: int = -1
-    causal: bool = True
-    use_expert_mlp: bool = True
-    use_output_projection: bool = True
-    use_expert_bias: bool = False
-    dropout: float = 0.0
-    use_shared_base: bool = False
-    shared_base_dim: int = 128
-    use_vocab_prior: bool = False
-    expert_residual: bool = False
-    allow_replacement: bool = True
-    use_embed_refine: bool = False
-    target_dim: int = 64
-    selection_mode: str = 'soft'
-    use_remixed_linear: bool = False
-    context_dim: int = 64
-    linear_basis_size: int = 64
     use_pos_embed: bool = False
     moe_use_abs_pos_embed: bool = False
 
@@ -94,14 +69,11 @@ class GPTConfig:
     window_pattern: str = "SSSL"
 
 
+# Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
-    "use_moe", "num_experts", 'total_embed_dim', "router_dim", "capacity_factor",
-    "use_sparse_top_k", "top_k", "routing_mode", "context_window",
-    "causal", "use_expert_mlp", "use_output_projection",
-    "use_expert_bias", "dropout", "use_shared_base", "shared_base_dim",
-    "use_vocab_prior", "expert_residual", 'allow_replacement',
-    'use_embed_refine', 'target_dim', 'selection_mode', "use_perm",
-    "use_remixed_linear", "context_dim", "linear_basis_size", "remixed_linear_kwargs",
+    "use_moe", "use_perm",
+    "moe_num_experts", "moe_router_dim", "moe_embed_dim", "dropout",
+    "use_remix_linear", "remix_context_dim", "remix_basis_size", "remixed_linear_kwargs",
     "use_pos_embed", "moe_use_abs_pos_embed",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
@@ -204,7 +176,7 @@ class ImprovedContextAwareRouter(nn.Module):
         if self.use_vocab_prior and input_ids is not None:
             expert_logits = expert_logits + self.vocab_routing_bias(input_ids)
         adaptive_temp = torch.sigmoid(self.temperature_predictor(x)) * 2.0 + 0.1
-        adaptive_temp = torch.clamp(adaptive_temp, min=1e-6) # Add this line
+        adaptive_temp = torch.clamp(adaptive_temp, min=1e-6)
         return expert_logits, adaptive_temp, self.expert_proj.weight
 
 
@@ -602,43 +574,19 @@ class GPT(nn.Module):
         # Compute per-layer window sizes for sliding window attention
         # window_size is (left, right) tuple: (-1, 0) for full context, (N, 0) for sliding window
         self.window_sizes = self._compute_window_sizes(config)
-        # Resolve notebook aliases to GPT-native knobs
         self.use_moe = config.use_moe
         self.use_perm = config.use_perm
-        # dynamically scale defaults based on target_dim if left at baseline values
-        resolved_num_experts = config.num_experts if config.num_experts != 8 else max(8, config.target_dim // 8)
-        self.moe_num_experts = config.moe_num_experts if config.moe_num_experts != 8 else resolved_num_experts
-        
-        resolved_router_dim = config.router_dim if config.router_dim != 64 else config.target_dim
-        self.moe_router_dim = config.moe_router_dim if config.moe_router_dim != 64 else resolved_router_dim
-        
-        self.moe_embed_dim = config.moe_embed_dim if config.moe_embed_dim != 64 else config.target_dim
-        self.use_remix_linear = config.use_remix_linear or config.use_remixed_linear
-        
-        resolved_context_dim = config.context_dim if config.context_dim != 64 else config.target_dim
-        self.remix_context_dim = config.remix_context_dim if config.remix_context_dim != 64 else resolved_context_dim
-        
-        resolved_basis_size = config.linear_basis_size if config.linear_basis_size != 64 else config.target_dim
-        self.remix_basis_size = config.remix_basis_size if config.remix_basis_size != 64 else resolved_basis_size
+        self.moe_num_experts = config.moe_num_experts
+        self.moe_router_dim = config.moe_router_dim
+        self.moe_embed_dim = config.moe_embed_dim
+        self.use_remix_linear = config.use_remix_linear
+        self.remix_context_dim = config.remix_context_dim
+        self.remix_basis_size = config.remix_basis_size
         self.use_pos_embed = config.use_pos_embed
         if config.remixed_linear_kwargs is None:
             self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         else:
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
-        
-        # Sync all aliases back to the config object for consistent logging/reporting
-        config.num_experts = self.moe_num_experts
-        config.moe_num_experts = self.moe_num_experts
-        config.router_dim = self.moe_router_dim
-        config.moe_router_dim = self.moe_router_dim
-        config.target_dim = self.moe_embed_dim
-        config.moe_embed_dim = self.moe_embed_dim
-        config.use_remix_linear = self.use_remix_linear
-        config.use_remixed_linear = self.use_remix_linear
-        config.context_dim = self.remix_context_dim
-        config.remix_context_dim = self.remix_context_dim
-        config.linear_basis_size = self.remix_basis_size
-        config.remix_basis_size = self.remix_basis_size
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
@@ -661,8 +609,8 @@ class GPT(nn.Module):
                     base_embed_dim=self.moe_embed_dim,
                     num_experts=self.moe_num_experts,
                     router_dim=self.moe_router_dim,
-                    selection_mode=config.selection_mode,
-                    allow_replacement=config.allow_replacement,
+                    selection_mode='soft',
+                    allow_replacement=True,
                     dropout=config.dropout,
                     router_context_window=config.router_context_window,
                     router_causal=config.router_causal,
@@ -684,7 +632,7 @@ class GPT(nn.Module):
                     router_n_layers=config.router_n_layers,
                     router_use_vocab_prior=config.router_use_vocab_prior,
                 )
-            assert self.moe_embed_dim == config.n_embd, "moe_embed_dim/target_dim must match n_embd"
+            assert self.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
         self.context_manager = None
         if self.use_remix_linear:
             self.context_manager = GlobalContextManager(
@@ -823,11 +771,6 @@ class GPT(nn.Module):
             _init_research_module(self.embedding_model)
         if self.context_manager is not None:
             _init_research_module(self.context_manager)
-
-        # Gate weights init to zero so gates start at sigmoid(0) = 0.5, scaled by 2 -> 1.0 (neutral)
-        for block in self.transformer.h:
-            if block.attn.ve_gate is not None:
-                torch.nn.init.zeros_(block.attn.ve_gate.weight)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head

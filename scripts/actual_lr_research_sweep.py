@@ -47,6 +47,8 @@ import numpy as np
 import seaborn as sns
 import torch
 
+from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, model_dims
+
 
 # ---------------------------------------------------------------------------
 # Base LR profiles — the "unit" configuration for each model type
@@ -91,7 +93,7 @@ MODEL_ARCH_FLAGS: dict[str, list[str]] = {
     "base":          [],
     "moe_no_perm":   ["--use-moe"],
     "moe_perm":      ["--use-moe", "--use-perm"],
-    "remixed-linear": ["--use-remixed-linear"],
+    "remixed-linear": ["--use-remix-linear"],
 }
 
 
@@ -100,71 +102,17 @@ MODEL_ARCH_FLAGS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 def _resolve_runner() -> list[str]:
-    """Return torchrun command prefix, capped to available GPUs."""
-    nproc_requested = int(os.environ.get("NPROC_PER_NODE", os.environ.get("NANOCHAT_NPROC", 8)))
-    gpu_count = max(torch.cuda.device_count(), 1)
-    nproc = min(nproc_requested, gpu_count)
-    if nproc < nproc_requested:
-        print(
-            f"[actual_lr_sweep] Requested {nproc_requested} DDP workers but only "
-            f"{gpu_count} GPU(s) available — using {nproc}."
-        )
-    torchrun = shutil.which("torchrun")
-    if torchrun:
-        return [torchrun, "--standalone", f"--nproc_per_node={nproc}"]
-    return [
-        sys.executable, "-m", "torch.distributed.run",
-        "--standalone", f"--nproc_per_node={nproc}",
-    ]
+    return resolve_runner()
 
 
 RUNNER = _resolve_runner()
 
 
 # ---------------------------------------------------------------------------
-# Model sizing — same helpers as in warmup_sweep.py / lr_sweep.py
+# Model sizing
 # ---------------------------------------------------------------------------
 
-def estimate_tokens_from_base(
-    depth: int,
-    target_ratio: float = 10.5,
-    tokenizer_dir: str | None = None,
-) -> int:
-    """Chinchilla-style optimal token count: target_ratio × scaling_params.
-    Mirrors warmup_sweep.py / base_train.py exactly."""
-    from nanochat.gpt import GPT, GPTConfig
-    vocab_size = 32768
-    try:
-        from nanochat.tokenizer import get_tokenizer
-        tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
-        vocab_size = tokenizer.get_vocab_size()
-    except Exception:
-        pass
-    aspect_ratio = 64
-    head_dim = 128
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    num_heads = model_dim // head_dim
-    config = GPTConfig(
-        sequence_len=2048, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
-    )
-    with torch.device("meta"):
-        model = GPT(config)
-    counts = model.num_scaling_params()
-    scaling_params = counts["transformer_matrices"] + counts["lm_head"]
-    return int(scaling_params * target_ratio)
-
-
-def _model_dims(depth: int) -> tuple[int, int, int, int]:
-    aspect_ratio = 64
-    head_dim = 128
-    base_dim = depth * aspect_ratio
-    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
-    raw_target_dim = max(model_dim // 8, 1)
-    target_dim = ((raw_target_dim + head_dim - 1) // head_dim) * head_dim
-    target_dim = min(target_dim, model_dim)
-    return aspect_ratio, head_dim, model_dim, target_dim
+# estimate_tokens_from_base and model_dims imported from _sweep_utils
 
 
 # ---------------------------------------------------------------------------
@@ -292,14 +240,14 @@ def _run_one(
     arch_flags = list(MODEL_ARCH_FLAGS[run.model])
     if run.model != "base":
         arch_flags += [
-            "--target-dim",    str(target_dim),
-            "--router-dim",    str(target_dim),
-            "--num-experts",   str(num_experts),
+            "--moe-embed-dim",  str(target_dim),
+            "--moe-router-dim", str(target_dim),
+            "--moe-num-experts", str(num_experts),
         ]
         if run.model == "remixed-linear":
             arch_flags += [
-                "--context-dim",      str(target_dim),
-                "--linear-basis-size", str(target_dim),
+                "--remix-context-dim", str(target_dim),
+                "--remix-basis-size",  str(target_dim),
             ]
 
     lr_flags = []
@@ -457,7 +405,7 @@ def main() -> None:
     p.add_argument("--device-batch-size", type=int, default=16)
     p.add_argument("--total-batch-size", type=int, default=524_288)
     p.add_argument("--max-seq-len", type=int, default=2048)
-    p.add_argument("--num-experts", type=int, default=8)
+    p.add_argument("--moe-num-experts", type=int, default=8)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--eval-every", type=int, default=0)
     p.add_argument("--core-metric-every", type=int, default=0)
@@ -494,7 +442,7 @@ def main() -> None:
         return
 
     # Architecture sizing
-    aspect_ratio, head_dim, _, target_dim = _model_dims(args.depth)
+    aspect_ratio, head_dim, _, target_dim = model_dims(args.depth)
 
     # Resolve target tokens — auto-compute Chinchilla optimum when not supplied
     target_tokens = args.target_tokens

@@ -61,17 +61,15 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
-# Research branches (notebook-compatible)
+# Research branches
 parser.add_argument("--use-moe", action="store_true", help="enable research MoE embedding branch")
 parser.add_argument("--use-perm", action="store_true", help="use permutation MoE branch (only with --use-moe)")
-parser.add_argument("--num-experts", type=int, default=8, help="number of experts for research MoE branch")
-parser.add_argument("--router-dim", type=int, default=64, help="router dim for research branches")
-parser.add_argument("--target-dim", type=int, default=64, help="target embedding dim for research branches")
-parser.add_argument("--selection-mode", type=str, default="soft", choices=["soft", "hard"], help="selection mode for permutation MoE")
-parser.add_argument("--allow-replacement", action="store_true", help="allow repeated input dimensions in permutation MoE")
-parser.add_argument("--use-remixed-linear", action="store_true", help="enable remixed linear blocks")
-parser.add_argument("--context-dim", type=int, default=64, help="context dim for remixed linear control")
-parser.add_argument("--linear-basis-size", type=int, default=64, help="basis size for remixed linear")
+parser.add_argument("--moe-num-experts", type=int, default=8, help="number of experts for research MoE branch")
+parser.add_argument("--moe-router-dim", type=int, default=64, help="router dim for MoE embedding branch")
+parser.add_argument("--moe-embed-dim", type=int, default=64, help="embedding dim for MoE branch (must match n_embd)")
+parser.add_argument("--use-remix-linear", action="store_true", help="enable remixed linear blocks")
+parser.add_argument("--remix-context-dim", type=int, default=64, help="context dim for remixed linear control")
+parser.add_argument("--remix-basis-size", type=int, default=64, help="basis size for remixed linear")
 parser.add_argument("--use-pos-embed", action="store_true", help="add learned absolute positional embeddings on top of token/research embeddings")
 parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 1], help="use learned absolute positional embeddings inside permutation MoE embeddings (1/0)")
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
@@ -187,8 +185,8 @@ def build_model_meta(depth):
     base_dim = depth * args.aspect_ratio
     base_model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     base_num_heads = base_model_dim // args.head_dim
-    if args.use_moe or args.use_remixed_linear:
-        model_dim = args.target_dim
+    if args.use_moe or args.use_remix_linear:
+        model_dim = args.moe_embed_dim
         # Keep research branches compatible with repo attention constraints while
         # preferring a head count close to the base model's count.
         def _choose_research_heads(embed_dim: int, preferred_heads: int) -> int:
@@ -201,7 +199,7 @@ def build_model_meta(depth):
             return min(valid_any, key=lambda h: abs(h - preferred_heads)) if valid_any else 1
 
         num_heads = _choose_research_heads(model_dim, base_num_heads)
-        assert model_dim % num_heads == 0, f"target_dim must be divisible by n_head ({num_heads}), got {model_dim}"
+        assert model_dim % num_heads == 0, f"moe_embed_dim must be divisible by n_head ({num_heads}), got {model_dim}"
     else:
         model_dim = base_model_dim
         num_heads = base_num_heads
@@ -211,18 +209,12 @@ def build_model_meta(depth):
         window_pattern=args.window_pattern,
         use_moe=args.use_moe,
         use_perm=args.use_perm,
-        num_experts=args.num_experts,
-        moe_num_experts=args.num_experts,
-        total_embed_dim=args.target_dim,
-        moe_router_dim=args.target_dim,
-        moe_embed_dim=args.target_dim,
-        router_dim=args.router_dim,
-        target_dim=args.target_dim,
-        selection_mode=args.selection_mode,
-        allow_replacement=args.allow_replacement,
-        use_remixed_linear=args.use_remixed_linear,
-        context_dim=args.context_dim,
-        linear_basis_size=args.linear_basis_size,
+        moe_num_experts=args.moe_num_experts,
+        moe_router_dim=args.moe_router_dim,
+        moe_embed_dim=args.moe_embed_dim,
+        use_remix_linear=args.use_remix_linear,
+        remix_context_dim=args.remix_context_dim,
+        remix_basis_size=args.remix_basis_size,
         use_pos_embed=args.use_pos_embed,
         moe_use_abs_pos_embed=bool(args.moe_use_abs_pos_embed),
         remixed_linear_kwargs=dict(
@@ -491,7 +483,7 @@ print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Research branches use a OneCycle-style schedule; base keeps the original warmup/flat/warmdown schedule
-use_research_mode = args.use_moe or args.use_perm or args.use_remixed_linear
+use_research_mode = args.use_moe or args.use_perm or args.use_remix_linear
 use_research_scheduler = use_research_mode and bool(args.research_onecycle)
 if use_research_scheduler:
     print0("Using research scheduler: OneCycle-style LR multiplier")

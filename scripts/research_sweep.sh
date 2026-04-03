@@ -3,19 +3,6 @@
 # Automates the research comparison script across multiple depths
 export OMP_NUM_THREADS=8
 
-# ── 0. Clone or update the repo ───────────────────────────────────────────────
-#REPO_URL="https://github.com/Seqaeon/nanochat.git"
-#REPO_DIR="nanochat"
-#
-#if [ ! -d "$REPO_DIR" ]; then
-#    git clone "$REPO_URL"
-#else
-#    echo "Repo already exists, pulling latest..."
-#    git -C "$REPO_DIR" pull origin master
-#fi
-#
-#cd "$REPO_DIR"
-
 export NANOCHAT_BASE_DIR="out"
 mkdir -p $NANOCHAT_BASE_DIR
 set -euo pipefail
@@ -126,7 +113,6 @@ fi
 source .venv/bin/activate
 
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
-NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 if command -v torchrun &> /dev/null; then
     RUNNER="torchrun --standalone --nproc_per_node=${NPROC_PER_NODE}"
 else
@@ -153,15 +139,6 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 
-# Use the current python or fallback to venv if it exists locally
-#if [ -n "$VIRTUAL_ENV" ]; then
-#    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
-#elif [ -d ".venv" ]; then
-#    PYTHON_BIN=".venv/bin/python"
-#else
-#    PYTHON_BIN="python3"
-#fi
-
 for DEPTH in "$@"; do
     echo "================================================================"
     echo "Processing Depth: ${DEPTH}"
@@ -174,18 +151,12 @@ for DEPTH in "$@"; do
     # Running it under torchrun causes nested distributed launches and rank/env collisions.
     python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
     
-#    $PYTHON_BIN -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" $EXTRA_ARGS
-    
     if [ $? -ne 0 ]; then
         echo "Error: Sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."
         exit 1
     fi
 done
-curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
-# run SFT and eval the model
-#torchrun --standalone --nproc_per_node=1 -m scripts.chat_sft -- --device-batch-size=16 #--run=$WANDB_RUN
-#torchrun --standalone --nproc_per_node=1 -m scripts.chat_eval -- -i sft
 python -m nanochat.report generate
 echo "================================================================"
 echo "Sweep Complete! Results saved to ${ROOT_OUT_DIR}"
