@@ -350,6 +350,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--core-metric-every", "0",
         "--sample-every", "-1",
         "--adam-beta2", "0.99",
+        "--use-onecycle", str(args.use_onecycle),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -727,6 +728,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--compile", action=argparse.BooleanOptionalAction, default=True,
         help="enable/disable torch.compile (default: enabled)",
+    )
+    parser.add_argument(
+        "--use-onecycle", type=int, default=1, choices=[0, 1],
+        help="research branches: 1=OneCycle, 0=use base schedule",
     )
 
     args = parser.parse_args()

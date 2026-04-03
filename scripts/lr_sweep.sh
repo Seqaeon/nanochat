@@ -75,6 +75,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
             shift 2
             ;;
+        --use-onecycle)
+            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
+            shift 2
+            ;;
         --lr-scale-factors)
             # Accept space-separated list quoted in one arg: --lr-scale-factors "1.0 3.0 5.0"
             LR_SCALE_FACTORS="$2"

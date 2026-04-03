@@ -42,6 +42,7 @@ if [ $# -eq 0 ]; then
     echo "Flags:"
     echo "  --fp8                      Enable FP8 training"
     echo "  --no-compile               Disable torch.compile"
+    echo "  --use-onecycle 0|1         Enable OneCycleLR scheduler (default: 1)"
     echo "  --max-shards N             Maximum number of dataset shards (default: 170)"
     echo "  --target-tokens N          Full training budget for warmup step calc (default: 20B)"
     echo "  --early-stop-tokens N      Per-run early stop length in tokens (recommended)"
@@ -92,6 +93,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --early-stop-tokens)
             EXTRA_ARGS="$EXTRA_ARGS --early-stop-tokens $2"
+            shift 2
+            ;;
+        --use-onecycle)
+            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
             shift 2
             ;;
         --warmup-fracs)

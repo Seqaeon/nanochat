@@ -39,6 +39,7 @@ if [ $# -eq 0 ]; then
     echo "Flags:"
     echo "  --fp8               Enable FP8 training"
     echo "  --no-compile        Disable torch.compile"
+    echo "  --use-onecycle 0|1  Enable OneCycleLR scheduler (default: 1)"
     echo "  --target-tokens N   Explicit token budget per run (default: auto-estimated)"
     echo "  --max-shards N      Step through up to N data shards"
     echo ""
@@ -69,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --target-tokens)
             EXTRA_ARGS="$EXTRA_ARGS --target-tokens $2"
+            shift 2
+            ;;
+        --use-onecycle)
+            EXTRA_ARGS="$EXTRA_ARGS --use-onecycle $2"
             shift 2
             ;;
         --tokenizer-dir)
