@@ -627,9 +627,17 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
         
         # Sync all aliases back to the config object for consistent logging/reporting
+        config.num_experts = self.moe_num_experts
+        config.moe_num_experts = self.moe_num_experts
+        config.router_dim = self.moe_router_dim
+        config.moe_router_dim = self.moe_router_dim
+        config.target_dim = self.moe_embed_dim
+        config.moe_embed_dim = self.moe_embed_dim
         config.use_remix_linear = self.use_remix_linear
         config.use_remixed_linear = self.use_remix_linear
+        config.context_dim = self.remix_context_dim
         config.remix_context_dim = self.remix_context_dim
+        config.linear_basis_size = self.remix_basis_size
         config.remix_basis_size = self.remix_basis_size
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
