@@ -122,8 +122,39 @@ RUNNER = _resolve_runner()
 
 
 # ---------------------------------------------------------------------------
-# Model sizing — same helper as in warmup_sweep.py / lr_sweep.py
+# Model sizing — same helpers as in warmup_sweep.py / lr_sweep.py
 # ---------------------------------------------------------------------------
+
+def estimate_tokens_from_base(
+    depth: int,
+    target_ratio: float = 10.5,
+    tokenizer_dir: str | None = None,
+) -> int:
+    """Chinchilla-style optimal token count: target_ratio × scaling_params.
+    Mirrors warmup_sweep.py / base_train.py exactly."""
+    from nanochat.gpt import GPT, GPTConfig
+    vocab_size = 32768
+    try:
+        from nanochat.tokenizer import get_tokenizer
+        tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
+        vocab_size = tokenizer.get_vocab_size()
+    except Exception:
+        pass
+    aspect_ratio = 64
+    head_dim = 128
+    base_dim = depth * aspect_ratio
+    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
+    num_heads = model_dim // head_dim
+    config = GPTConfig(
+        sequence_len=2048, vocab_size=vocab_size,
+        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
+    )
+    with torch.device("meta"):
+        model = GPT(config)
+    counts = model.num_scaling_params()
+    scaling_params = counts["transformer_matrices"] + counts["lm_head"]
+    return int(scaling_params * target_ratio)
+
 
 def _model_dims(depth: int) -> tuple[int, int, int, int]:
     aspect_ratio = 64
@@ -417,7 +448,8 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=1337)
 
     # Training flags (mirror warmup_sweep.py)
-    p.add_argument("--target-tokens", type=int, default=20_000_000_000)
+    p.add_argument("--target-tokens", type=int, default=-1,
+                   help="full LR-schedule token budget (-1 = auto from Chinchilla scaling, same as base_train)")
     p.add_argument("--early-stop-tokens", type=int, default=100_000_000)
     p.add_argument("--warmup-ratio", type=float, default=0.0)
     p.add_argument("--research-warmup-ratio", type=float, default=0.0)
@@ -464,6 +496,12 @@ def main() -> None:
     # Architecture sizing
     aspect_ratio, head_dim, _, target_dim = _model_dims(args.depth)
 
+    # Resolve target tokens — auto-compute Chinchilla optimum when not supplied
+    target_tokens = args.target_tokens
+    if target_tokens <= 0:
+        target_tokens = estimate_tokens_from_base(args.depth, tokenizer_dir=args.tokenizer_dir)
+        print(f"[actual_lr_sweep] Auto-computed target tokens (Chinchilla): {target_tokens:,}")
+
     # Args shared by every training run
     common_train_args = [
         "--depth",               str(args.depth),
@@ -472,7 +510,7 @@ def main() -> None:
         "--max-seq-len",         str(args.max_seq_len),
         "--device-batch-size",   str(args.device_batch_size),
         "--total-batch-size",    str(args.total_batch_size),
-        "--target-tokens",       str(args.target_tokens),
+        "--target-tokens",       str(target_tokens),
         "--early-stop-tokens",   str(args.early_stop_tokens),
         "--warmup-ratio",        str(args.warmup_ratio),
         "--research-warmup-ratio", str(args.research_warmup_ratio),
