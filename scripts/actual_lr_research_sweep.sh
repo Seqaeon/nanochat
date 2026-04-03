@@ -233,26 +233,45 @@ mkdir -p "${ROOT_OUT_DIR}"
 python -m nanochat.report reset
 
 # Resolve directories for one-time calls
+# Default data dir: $NANOCHAT_BASE_DIR/base_data_climbmix
+CHECK_DATA_DIR="${DATA_DIR_FLAG:-$NANOCHAT_BASE_DIR/base_data_climbmix}"
 DATA_OPT=""
 [ -n "$DATA_DIR_FLAG" ] && DATA_OPT="--data-dir $DATA_DIR_FLAG"
+
 TOK_OPT=""
 [ -n "$TOKENIZER_DIR_FLAG" ] && TOK_OPT="--tokenizer-dir $TOKENIZER_DIR_FLAG"
-
-# Download 8 shards immediately so training can start while the rest come in
-python -m nanochat.dataset -n 8 $DATA_OPT
-python -m nanochat.dataset -n $MAX_SHARDS $DATA_OPT &
-DATASET_DOWNLOAD_PID=$!
-
 TOKENIZER_CHECK_DIR="${TOKENIZER_DIR_FLAG:-$NANOCHAT_BASE_DIR/tokenizer}"
+
+# 1. Dataset existence check
+LAST_SHARD_IDX=$((MAX_SHARDS - 1))
+LAST_SHARD_FILE=$(printf "shard_%05d.parquet" $LAST_SHARD_IDX)
+VAL_SHARD_FILE="shard_06542.parquet"
+
+if [ -f "$CHECK_DATA_DIR/$LAST_SHARD_FILE" ] && [ -f "$CHECK_DATA_DIR/$VAL_SHARD_FILE" ]; then
+    echo "Dataset (up to $MAX_SHARDS shards) already exists in $CHECK_DATA_DIR, skipping download."
+    DATASET_DOWNLOAD_PID=""
+else
+    echo "Dataset incomplete. Downloading $MAX_SHARDS shards to $CHECK_DATA_DIR..."
+    mkdir -p "$CHECK_DATA_DIR"
+    # Download 8 shards immediately so training can start while the rest come in
+    python -m nanochat.dataset -n 8 $DATA_OPT
+    python -m nanochat.dataset -n $MAX_SHARDS $DATA_OPT &
+    DATASET_DOWNLOAD_PID=$!
+fi
+
+# 2. Tokenizer existence check
 if [ ! -f "$TOKENIZER_CHECK_DIR/tokenizer.pkl" ]; then
+    echo "Tokenizer not found in $TOKENIZER_CHECK_DIR, training..."
     python -m scripts.tok_train $TOK_OPT $DATA_OPT
     python -m scripts.tok_eval $TOK_OPT $DATA_OPT
 else
     echo "Tokenizer already exists in $TOKENIZER_CHECK_DIR, skipping training."
 fi
 
-echo "Waiting for dataset download to complete..."
-wait $DATASET_DOWNLOAD_PID
+if [ -n "$DATASET_DOWNLOAD_PID" ]; then
+    echo "Waiting for background dataset download to complete..."
+    wait $DATASET_DOWNLOAD_PID
+fi
 
 # ── Per-depth sweep ───────────────────────────────────────────────────────────
 for DEPTH in "$@"; do
