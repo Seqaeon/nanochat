@@ -61,23 +61,29 @@ BASE_LRS: dict[str, dict[str, float]] = {
         "matrix_lr":      0.02,
         "scalar_lr":      0.5,
     },
-    "moe_perm": {
-        "embedding_lr":   0.05,
-        "unembedding_lr": 0.05,
-        "matrix_lr":      0.05,
-        "scalar_lr":      0.05,
-    },
+    # Best scale: 2.0 → base = 0.1 (all groups uniform at s*)
+    # Phase 2 findings: unembedding wants 3×, matrix still descending at 10×
     "moe_no_perm": {
-        "embedding_lr":   0.05,
-        "unembedding_lr": 0.05,
-        "matrix_lr":      0.05,
-        "scalar_lr":      0.05,
+        "embedding_lr":   0.1,    # x1 — flat, no gain from higher
+        "unembedding_lr": 0.3,    # x3 — clear winner
+        "matrix_lr":      1.0,    # x10 — still descending, treat as lower bound
+        "scalar_lr":      0.1,    # x1 — completely flat, insensitive
     },
+    # Best scale: 10.0 → base = 0.5 (all groups uniform at s*)
+    # Phase 2 findings: scalar uniquely benefits from 5×, rest flat or hurt by higher
+    "moe_perm": {
+        "embedding_lr":   0.5,    # x1 — flat/noisy, no gain from higher
+        "unembedding_lr": 0.5,    # x1 — higher multipliers actively hurt
+        "matrix_lr":      0.5,    # x1 — higher multipliers actively hurt
+        "scalar_lr":      2.5,    # x5 — only group with meaningful gain
+    },
+    # Best scale: 10.0 → base = 0.5
+    # Phase 2 findings: all groups flat at x1, marginal noise at x3
     "remixed-linear": {
-        "embedding_lr":   0.05,
-        "unembedding_lr": 0.05,
-        "matrix_lr":      0.05,
-        "scalar_lr":      0.05,
+        "embedding_lr":   0.5,    # x1 — marginal x3 gain within noise
+        "unembedding_lr": 0.5,    # x1 — higher multipliers actively hurt
+        "matrix_lr":      0.5,    # x1 — higher multipliers actively hurt
+        "scalar_lr":      0.5,    # x1 — marginal x3 gain, within noise
     },
 }
 
