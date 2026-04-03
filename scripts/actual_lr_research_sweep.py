@@ -515,15 +515,20 @@ def main() -> None:
 
     _write_tsv(results, run_dir)
 
-    # Overall best
+    # Per-model best — keyed by model name so every architecture gets its winner recorded
     successful = [r for r in results
                   if r["returncode"] == 0 and r["mean_last_10pct_loss"] is not None]
     if successful:
-        best = min(successful, key=lambda r: r["mean_last_10pct_loss"])
-        best_slim = {k: v for k, v in best.items() if k not in ("tokens", "losses")}
+        models_seen = sorted({r["model"] for r in successful})
+        per_model_best: dict = {}
+        print()
+        for model in models_seen:
+            model_runs = [r for r in successful if r["model"] == model]
+            best = min(model_runs, key=lambda r: r["mean_last_10pct_loss"])
+            per_model_best[model] = {k: v for k, v in best.items() if k not in ("tokens", "losses")}
+            print(f"[actual_lr_sweep] Best ({model}): {best['run_name']}  loss={best['mean_last_10pct_loss']:.6f}")
         with open(run_dir / "best_config.json", "w", encoding="utf-8") as f:
-            json.dump(best_slim, f, indent=2)
-        print(f"\n[actual_lr_sweep] Best: {best['run_name']}  loss={best['mean_last_10pct_loss']:.6f}")
+            json.dump(per_model_best, f, indent=2)
     else:
         print("\n[actual_lr_sweep] No successful runs.")
 
