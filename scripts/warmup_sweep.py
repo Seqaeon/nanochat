@@ -279,35 +279,18 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                     "--remix-basis-size",  str(target_dim),
                 ]
 
-        lrs = dict(FIXED_LRS[model_name])  # copy so we can safely mutate
-
-        # Safety cap for small dims: gpt.py multiplies AdamW LRs by (model_dim/768)^-0.5.
-        # At depth 4 (dim=128) that scale is 2.449x, which pushes raw LRs like 0.5 to an
-        # effective 1.22 — numerically explosive in FP32. We cap the raw flags so the
-        # effective LR never exceeds FP32_SAFE_EFFECTIVE_LR. This does NOT affect models
-        # at their tuning depth (8+) because their effective LRs are well within the cap.
-        FP32_SAFE_EFFECTIVE_LR = 0.5
-        dmodel_lr_scale = (model_dim / 768) ** -0.5
-        for lr_key in ("embedding_lr", "unembedding_lr", "scalar_lr"):
-            effective = lrs[lr_key] * dmodel_lr_scale
-            if effective > FP32_SAFE_EFFECTIVE_LR:
-                capped_raw = FP32_SAFE_EFFECTIVE_LR / dmodel_lr_scale
-                print(f"  [LR cap] {model_name}.{lr_key}: raw {lrs[lr_key]:.4g} → {capped_raw:.4g} "
-                      f"(effective {effective:.4g} → {FP32_SAFE_EFFECTIVE_LR:.2g}, dim={model_dim})")
-                lrs[lr_key] = capped_raw
-
         lr_args = [
             "--embedding-lr",   f"{lrs['embedding_lr']:.6g}",
             "--unembedding-lr", f"{lrs['unembedding_lr']:.6g}",
-            "--matrix-lr",      f"{lrs['matrix_lr']:.6g}",  # Muon — not scaled by gpt.py
+            "--matrix-lr",      f"{lrs['matrix_lr']:.6g}",
             "--scalar-lr",      f"{lrs['scalar_lr']:.6g}",
         ]
 
         print(f"\n{'='*64}")
         print(f"Model: {model_name}")
         print(
-            f"Fixed LRs: emb={lrs['embedding_lr']:.4g}  unemb={lrs['unembedding_lr']:.4g}  "
-            f"mat={lrs['matrix_lr']:.4g}  scl={lrs['scalar_lr']:.4g}"
+            f"Fixed LRs: emb={lrs['embedding_lr']}  unemb={lrs['unembedding_lr']}  "
+            f"mat={lrs['matrix_lr']}  scl={lrs['scalar_lr']}"
         )
         print(f"{'='*64}")
 

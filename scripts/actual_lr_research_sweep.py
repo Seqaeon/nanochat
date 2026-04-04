@@ -1,29 +1,29 @@
 """
 Phased coordinate-descent LR sweep for nanochat research model variants.
 
-Follows the same patterns as warmup_sweep.py:
-  - Streams base_train stdout live (so you always see the real error)
-  - Passes full os.environ to subprocesses (torchrun inherits LD_LIBRARY_PATH etc.)
-  - Produces per-phase loss-curve PNGs and a TSV summary
+Now operates on **absolute LR values** directly. All research runs are trained
+with --disable-mu-p so gpt.py does NOT apply the (model_dim/768)^-0.5 AdamW
+scaling — the flags you pass are the exact LRs used in the optimizer.
 
 Three phases:
-  Phase 1 — Uniform scale sweep.
-    Train each model with all 4 LR groups scaled together by a shared factor s.
-    Identifies the best overall scale s*.
+  Phase 1 — Grid sweep.
+    Train each model with all 4 LR groups set to the same value, sweeping over
+    a range of absolute LR candidates. Identifies the best overall LR.
 
-  Phase 2 — Coordinate descent around s*.
-    Hold all groups at base_lr * s*, perturb one group at a time.
-    Cheaply answers "does group X benefit from being higher/lower than uniform?"
+  Phase 2 — Coordinate descent around the phase-1 winner.
+    Hold all groups at the phase-1 best LR, perturb one group at a time by
+    multiplying it by a set of per-group multipliers.
+    Answers: "does group X benefit from being higher/lower than the uniform winner?"
 
   Phase 3 — Optional joint refinement.
-    Random log-space search around the phase-2 winner.
-    Only needed if phase 2 shows groups prefer non-unity multipliers.
+    Random log-space search around the phase-2 winner configuration.
 
 Usage:
-    python -m scripts.actual_lr_research_sweep \\
-        --depth 8 --run-dir out/actual_lr_sweep \\
-        --early-stop-tokens 100000000 --target-tokens 20000000000 \\
-        --models moe_perm moe_no_perm remixed-linear --fp8
+    python -m scripts.actual_lr_research_sweep \
+        --depth 8 --run-dir out/actual_lr_sweep \
+        --early-stop-tokens 100000000 --target-tokens 20000000000 \
+        --models moe_perm moe_no_perm remixed-linear \
+        --phase1-lrs 0.003 0.01 0.03 0.1 0.3 1.0 --fp8
     # or via actual_lr_research_sweep.sh which handles env setup.
 """
 from __future__ import annotations
@@ -51,42 +51,18 @@ from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, mode
 
 
 # ---------------------------------------------------------------------------
-# Base LR profiles — the "unit" configuration for each model type
+# LR group names
 # ---------------------------------------------------------------------------
 
 LR_GROUPS = ["embedding_lr", "unembedding_lr", "matrix_lr", "scalar_lr"]
 
-BASE_LRS: dict[str, dict[str, float]] = {
-    "base": {
-        "embedding_lr":   0.3,
-        "unembedding_lr": 0.004,
-        "matrix_lr":      0.02,
-        "scalar_lr":      0.5,
-    },
-    # Best scale: 2.0 → base = 0.1 (all groups uniform at s*)
-    # Phase 2 findings: unembedding wants 3×, matrix still descending at 10×
-    "moe_no_perm": {
-        "embedding_lr":   0.1,    # x1 — flat, no gain from higher
-        "unembedding_lr": 0.3,    # x3 — clear winner
-        "matrix_lr":      1.0,    # x10 — still descending, treat as lower bound
-        "scalar_lr":      0.1,    # x1 — completely flat, insensitive
-    },
-    # Best scale: 10.0 → base = 0.5 (all groups uniform at s*)
-    # Phase 2 findings: scalar uniquely benefits from 5×, rest flat or hurt by higher
-    "moe_perm": {
-        "embedding_lr":   0.5,    # x1 — flat/noisy, no gain from higher
-        "unembedding_lr": 0.5,    # x1 — higher multipliers actively hurt
-        "matrix_lr":      0.5,    # x1 — higher multipliers actively hurt
-        "scalar_lr":      2.5,    # x5 — only group with meaningful gain
-    },
-    # Best scale: 10.0 → base = 0.5
-    # Phase 2 findings: all groups flat at x1, marginal noise at x3
-    "remixed-linear": {
-        "embedding_lr":   0.5,    # x1 — marginal x3 gain within noise
-        "unembedding_lr": 0.5,    # x1 — higher multipliers actively hurt
-        "matrix_lr":      0.5,    # x1 — higher multipliers actively hurt
-        "scalar_lr":      0.5,    # x1 — marginal x3 gain, within noise
-    },
+# Default starting-point LRs (used as the center for phase 2/3 if no --lr-star is given).
+# These are absolute values — μP scaling is disabled for research runs.
+DEFAULT_STARTING_LRS: dict[str, dict[str, float]] = {
+    "base":          {"embedding_lr": 0.003, "unembedding_lr": 0.003, "matrix_lr": 0.02, "scalar_lr": 0.003},
+    "moe_no_perm":   {"embedding_lr": 0.003, "unembedding_lr": 0.003, "matrix_lr": 0.02, "scalar_lr": 0.003},
+    "moe_perm":      {"embedding_lr": 0.003, "unembedding_lr": 0.003, "matrix_lr": 0.02, "scalar_lr": 0.003},
+    "remixed-linear":{"embedding_lr": 0.003, "unembedding_lr": 0.003, "matrix_lr": 0.02, "scalar_lr": 0.003},
 }
 
 MODEL_ARCH_FLAGS: dict[str, list[str]] = {
@@ -98,7 +74,7 @@ MODEL_ARCH_FLAGS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
-# DDP runner — mirrors warmup_sweep.py exactly
+# DDP runner
 # ---------------------------------------------------------------------------
 
 def _resolve_runner() -> list[str]:
@@ -109,14 +85,7 @@ RUNNER = _resolve_runner()
 
 
 # ---------------------------------------------------------------------------
-# Model sizing
-# ---------------------------------------------------------------------------
-
-# estimate_tokens_from_base and model_dims imported from _sweep_utils
-
-
-# ---------------------------------------------------------------------------
-# Phase config generation
+# Phase config generation (absolute LRs, no scale indirection)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -130,48 +99,52 @@ class SweepRun:
 
 def make_phase_runs(
     models: list[str],
-    phase1_scales: list[float],
+    phase1_lrs: list[float],
     phase2_multipliers: list[float],
     phase3_samples: int,
     phase3_log_radius: float,
-    s_star: float,
+    lr_star: dict[str, dict[str, float]],  # model → {group → absolute lr}
     seed: int,
 ) -> list[SweepRun]:
+    """Generate all sweep runs.
+
+    Phase 1: sweep absolute uniform LR values (all groups the same).
+    Phase 2: coordinate descent — all groups at lr_star, perturb one at a time.
+    Phase 3: random log-space refinement around the phase-2 center.
+    """
     rng = random.Random(seed)
     runs: list[SweepRun] = []
 
-    # Phase 1: uniform scale sweep — all LR groups scaled together.
+    # Phase 1: uniform absolute LR sweep — all LR groups set to the same value.
     for model in models:
-        base = BASE_LRS[model]
-        for s in phase1_scales:
-            lrs = {k: v * s for k, v in base.items()}
+        for lr in phase1_lrs:
+            lrs = {k: lr for k in LR_GROUPS}
             runs.append(SweepRun(
                 phase=1,
                 model=model,
-                run_name=f"{model}_p1_s{s:g}",
+                run_name=f"{model}_p1_lr{lr:g}",
                 lrs=lrs,
-                meta={"scale": s},
+                meta={"lr": lr},
             ))
 
-    # Phase 2: coordinate descent — perturb one group at a time around s*.
+    # Phase 2: coordinate descent around lr_star.
     for model in models:
-        base = BASE_LRS[model]
+        center = lr_star.get(model, {k: phase1_lrs[len(phase1_lrs)//2] for k in LR_GROUPS})
         for group in LR_GROUPS:
             for mult in phase2_multipliers:
-                lrs = {g: base[g] * s_star for g in LR_GROUPS}
-                lrs[group] = base[group] * s_star * mult
+                lrs = dict(center)
+                lrs[group] = center[group] * mult
                 runs.append(SweepRun(
                     phase=2,
                     model=model,
                     run_name=f"{model}_p2_{group}_x{mult:g}",
                     lrs=lrs,
-                    meta={"group": group, "mult": mult, "s_star": s_star},
+                    meta={"group": group, "mult": mult, "center": dict(center)},
                 ))
 
-    # Phase 3: random log-space refinement around the phase-2 prior center.
+    # Phase 3: random log-space refinement around the phase-2 center.
     for model in models:
-        base = BASE_LRS[model]
-        center = {g: base[g] * s_star for g in LR_GROUPS}
+        center = lr_star.get(model, {k: phase1_lrs[len(phase1_lrs)//2] for k in LR_GROUPS})
         for i in range(phase3_samples):
             lrs = {g: v * (10 ** rng.uniform(-phase3_log_radius, phase3_log_radius))
                    for g, v in center.items()}
@@ -232,6 +205,7 @@ def _run_one(
     common_train_args: list[str],
     target_dim: int,
     num_experts: int,
+    disable_base_mu_p: bool = False,
 ) -> dict:
     out_dir = run_root / run.run_name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -249,6 +223,10 @@ def _run_one(
                 "--remix-context-dim", str(target_dim),
                 "--remix-basis-size",  str(target_dim),
             ]
+        # Always disable μP for research models so the swept LRs are exact.
+        arch_flags.append("--disable-mu-p")
+    elif disable_base_mu_p:
+        arch_flags.append("--disable-mu-p")
 
     lr_flags = []
     for k in LR_GROUPS:
@@ -377,20 +355,34 @@ def main() -> None:
     p.add_argument("--depth", type=int, required=True)
     p.add_argument("--run-dir", type=str, required=True)
     p.add_argument("--models", type=str, nargs="+",
-                   default=["base", "moe_no_perm", "moe_perm", "remixed-linear"],
-                   choices=list(BASE_LRS.keys()))
+                   default=["moe_no_perm", "moe_perm", "remixed-linear"],
+                   choices=list(MODEL_ARCH_FLAGS.keys()))
     p.add_argument("--phase", type=int, choices=[1, 2, 3, 0], default=0,
                    help="0=all phases (default)")
     p.add_argument("--generate-only", action="store_true",
                    help="only emit JSON run configs — no training")
+    p.add_argument("--disable-base-mu-p", action="store_true",
+                   help="also disable μP scaling for the base model (research models always disable it)")
 
-    # Phase tuning
-    p.add_argument("--phase1-scales", type=float, nargs="+",
-                   default=[0.03, 0.1, 0.3, 1.0, 3.0])
-    p.add_argument("--s-star", type=float, default=0.1,
-                   help="phase-2/3 center scale (best scale from phase 1)")
+    # Phase 1: uniform absolute LR grid
+    p.add_argument("--phase1-lrs", type=float, nargs="+",
+                   default=[0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3],
+                   help="absolute LR grid for phase 1 (all groups same value)")
+
+    # Phase 2: coordinate descent multipliers around the phase-1 winner
     p.add_argument("--phase2-multipliers", type=float, nargs="+",
-                   default=[0.3, 1.0, 3.0])
+                   default=[0.3, 1.0, 3.0],
+                   help="per-group multipliers for phase 2 coord descent")
+
+    # lr_star: absolute LR to use as center for phase 2/3.
+    # Can be a single value (used for all models+groups) or a JSON dict.
+    p.add_argument("--lr-star", type=float, default=None,
+                   help="absolute LR winner from phase 1 — center for phase 2/3 "
+                        "(if not set, mid-point of --phase1-lrs is used)")
+    p.add_argument("--lr-star-json", type=str, default=None,
+                   help="path to JSON file with per-model lr_star, e.g. results from phase 1")
+
+    # Phase 3
     p.add_argument("--phase3-samples", type=int, default=10)
     p.add_argument("--phase3-log-radius", type=float, default=0.3)
     p.add_argument("--seed", type=int, default=1337)
@@ -422,14 +414,26 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     config_dir = run_dir / "configs"
 
+    # Build the lr_star dict — center for phase 2/3.
+    # Priority: --lr-star-json > --lr-star > midpoint of phase1_lrs.
+    if args.lr_star_json:
+        with open(args.lr_star_json, "r", encoding="utf-8") as f:
+            lr_star_raw = json.load(f)  # expected: {model: {group: float}}
+        lr_star: dict[str, dict[str, float]] = lr_star_raw
+    elif args.lr_star is not None:
+        lr_star = {m: {k: args.lr_star for k in LR_GROUPS} for m in args.models}
+    else:
+        mid = args.phase1_lrs[len(args.phase1_lrs) // 2]
+        lr_star = {m: {k: mid for k in LR_GROUPS} for m in args.models}
+
     # Build full run list, then filter by phase if requested
     runs = make_phase_runs(
         models=args.models,
-        phase1_scales=args.phase1_scales,
+        phase1_lrs=args.phase1_lrs,
         phase2_multipliers=args.phase2_multipliers,
         phase3_samples=args.phase3_samples,
         phase3_log_radius=args.phase3_log_radius,
-        s_star=args.s_star,
+        lr_star=lr_star,
         seed=args.seed,
     )
     if args.phase in (1, 2, 3):
@@ -437,6 +441,9 @@ def main() -> None:
 
     dump_run_configs(runs, config_dir)
     print(f"Wrote {len(runs)} configs to {config_dir}")
+    print(f"μP LR scaling: DISABLED for all research models (--disable-mu-p always passed)")
+    if hasattr(args, 'disable_base_mu_p') and args.disable_base_mu_p:
+        print(f"μP LR scaling: also DISABLED for base model (--disable-base-mu-p set)")
 
     if args.generate_only:
         return
@@ -486,7 +493,11 @@ def main() -> None:
 
     for i, run in enumerate(runs):
         print(f"\n[{i+1}/{len(runs)}] phase={run.phase} model={run.model} run={run.run_name}", flush=True)
-        res = _run_one(run, run_dir, common_train_args, target_dim, args.num_experts)
+        res = _run_one(
+            run, run_dir, common_train_args, target_dim,
+            args.moe_num_experts,
+            disable_base_mu_p=getattr(args, 'disable_base_mu_p', False),
+        )
         results.append(res)
         if res["returncode"] != 0:
             print(f"  ✗ failed (exit code {res['returncode']})  — see {res['stdout_log']}")
