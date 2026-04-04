@@ -52,26 +52,55 @@ if [ $# -eq 0 ]; then
     echo "  --phase1-scales '0.03 0.1 ...'  Phase-1 uniform scale sweep values"
     echo "  --s-star F                      Phase-2/3 center scale factor (default: 0.1)"
     echo "  --phase2-multipliers '0.3 1 3'  Phase-2 per-group multipliers"
-    echo "  --phase3-samples N              Phase-3 random samples (default: 10)"
-    echo "  --phase3-log-radius F           Phase-3 log10 radius (default: 0.3)"
-    echo "  --seed N                        RNG seed (default: 1337)"
-    echo "  --target-tokens N               Full training budget in tokens (default: 20B)"
-    echo "  --early-stop-tokens N           Per-run early-stop token count (default: 100M)"
-    echo "  --warmup-ratio F                LR warmup ratio (default: 0.0)"
-    echo "  --research-warmup-ratio F       Research warmup ratio (default: 0.0)"
-    echo "  --use-onecycle 0|1              Enable OneCycleLR scheduler (default: 1)"
-    echo "  --device-batch-size N           Micro-batch size per GPU (default: 16)"
-    echo "  --total-batch-size N            Global batch size in tokens (default: 524288)"
-    echo "  --max-seq-len N                 Sequence length (default: 2048)"
-    echo "  --num-experts N                 MoE expert count (default: 8)"
-    echo "  --log-every N                   Log every N steps (default: 200)"
-    echo "  --eval-every N                  Eval every N steps (default: 0=off)"
-    echo "  --tokenizer-dir PATH            Explicit tokenizer directory"
-    echo "  --data-dir PATH                 Explicit data directory"
+    echo "  --phase 1|2|3               Run only a specific phase (default: all)"
+    echo "  --models 'M1 M2 ...'        Space-quoted list of models to sweep"
+    echo "                              Choices: base moe_no_perm moe_perm remixed-linear"
+    echo "                              Default: moe_no_perm moe_perm remixed-linear"
+    echo "  --generate-only             Print run configs without training"
+    echo "  --disable-base-mu-p         Also disable \u03bcP LR scaling for base model"
+    echo "                              (research models always have \u03bcP disabled)"
+    echo ""
+    echo "Phase 1 — Absolute LR grid sweep (all groups same value):"
+    echo "  --phase1-lrs 'LR1 LR2 ...'  Space-quoted absolute LR values to sweep"
+    echo "                              Default: 0.0003 0.001 0.003 0.01 0.03 0.1 0.3"
+    echo ""
+    echo "Phase 2 — Coordinate descent around the phase-1 winner:"
+    echo "  --lr-star F                 Absolute LR winner from phase 1 (center for p2/p3)"
+    echo "  --lr-star-json PATH         JSON file with per-model lr_star dict"
+    echo "  --phase2-multipliers 'M1 M2 ...'  Per-group multipliers (default: 0.3 1.0 3.0)"
+    echo ""
+    echo "Phase 3 — Optional refinement:"
+    echo "  --phase3-samples N          Number of random samples (default: 10)"
+    echo "  --phase3-log-radius F       Log10 search radius (default: 0.3)"
+    echo "  --seed N                    RNG seed (default: 1337)"
+    echo ""
+    echo "Training flags:"
+    echo "  --target-tokens N           Full training budget in tokens (default: auto)"
+    echo "  --early-stop-tokens N       Per-run early-stop token count (default: 100M)"
+    echo "  --warmup-ratio F            LR warmup ratio (default: 0.0)"
+    echo "  --use-onecycle 0|1          Enable OneCycleLR scheduler (default: 1)"
+    echo "  --device-batch-size N       Micro-batch size per GPU (default: 16)"
+    echo "  --moe-num-experts N         MoE expert count (default: 8)"
+    echo "  --log-every N               Log every N steps (default: 200)"
+    echo "  --tokenizer-dir PATH        Explicit tokenizer directory"
+    echo "  --data-dir PATH             Explicit data directory"
+    echo "  --max-shards N              Max data shards to use (default: 170)"
     echo ""
     echo "Examples:"
-    echo "  bash scripts/actual_lr_research_sweep.sh --fp8 --max-shards 170 --early-stop-tokens 100000000 8"
-    echo "  bash scripts/actual_lr_research_sweep.sh --phase 1 --models 'base moe_perm' 8 16"
+    echo "  # Phase 1: sweep LRs for MoE models at depth 8"
+    echo "  bash scripts/actual_lr_research_sweep.sh \\"
+    echo "      --phase 1 \\"
+    echo "      --models 'moe_perm moe_no_perm remixed-linear' \\"
+    echo "      --phase1-lrs '0.001 0.003 0.01 0.03 0.1' \\"
+    echo "      --early-stop-tokens 100000000 \\"
+    echo "      --fp8 8"
+    echo ""
+    echo "  # Phase 2: coordinate descent around best LR from phase 1"
+    echo "  bash scripts/actual_lr_research_sweep.sh \\"
+    echo "      --phase 2 --lr-star 0.01 \\"
+    echo "      --models 'moe_perm remixed-linear' \\"
+    echo "      --early-stop-tokens 100000000 \\"
+    echo "      --fp8 8"
     exit 1
 fi
 
@@ -114,16 +143,24 @@ while [[ $# -gt 0 ]]; do
             done
             shift 2
             ;;
-        --phase1-scales)
-            EXTRA_ARGS+=("--phase1-scales")
-            for scale in $2; do
-                EXTRA_ARGS+=("$scale")
+        --phase1-lrs)
+            EXTRA_ARGS+=("--phase1-lrs")
+            for lr in $2; do
+                EXTRA_ARGS+=("$lr")
             done
             shift 2
             ;;
-        --s-star)
-            EXTRA_ARGS+=("--s-star" "$2")
+        --lr-star)
+            EXTRA_ARGS+=("--lr-star" "$2")
             shift 2
+            ;;
+        --lr-star-json)
+            EXTRA_ARGS+=("--lr-star-json" "$2")
+            shift 2
+            ;;
+        --disable-base-mu-p)
+            EXTRA_ARGS+=("--disable-base-mu-p")
+            shift
             ;;
         --phase2-multipliers)
             EXTRA_ARGS+=("--phase2-multipliers")
