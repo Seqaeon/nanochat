@@ -34,7 +34,7 @@ def run_training_sweep(args):
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
     max_seq_len = 2048
-    device_batch_size = {8: 32, 16: 16, 24: 8}.get(depth, 16)
+    device_batch_size = {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
     total_batch_size = 524288
     eval_every = 1000
     warm_up_ratio = args.warmup_ratio

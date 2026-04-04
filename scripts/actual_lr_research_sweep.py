@@ -418,8 +418,14 @@ def main() -> None:
     # Priority: --lr-star-json > --lr-star > midpoint of phase1_lrs.
     if args.lr_star_json:
         with open(args.lr_star_json, "r", encoding="utf-8") as f:
-            lr_star_raw = json.load(f)  # expected: {model: {group: float}}
-        lr_star: dict[str, dict[str, float]] = lr_star_raw
+            lr_star_raw = json.load(f)
+        # Handle both raw {model: {group: float}} and best_config.json {model: {lrs: {group: float}}}
+        lr_star = {}
+        for m, val in lr_star_raw.items():
+            if isinstance(val, dict) and "lrs" in val:
+                lr_star[m] = val["lrs"]
+            else:
+                lr_star[m] = val
     elif args.lr_star is not None:
         lr_star = {m: {k: args.lr_star for k in LR_GROUPS} for m in args.models}
     else:
