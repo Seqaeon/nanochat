@@ -279,19 +279,29 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
                     "--remix-basis-size",  str(target_dim),
                 ]
 
+        # The LRs in FIXED_LRS are expressed as effective LRs tuned at the reference
+        # dim (768). gpt.py multiplies AdamW LRs by (model_dim/768)^-0.5, so we
+        # pre-divide here so that the effective rate matches the tuned value regardless
+        # of depth. (Muon / matrix_lr is NOT scaled by gpt.py, so no correction needed.)
+        dmodel_lr_scale = (model_dim / 768) ** -0.5
+        lr_correction = 1.0 / dmodel_lr_scale  # = (model_dim/768)^0.5
+
         lr_args = [
-            "--embedding-lr",   f"{lrs['embedding_lr']:.6g}",
-            "--unembedding-lr", f"{lrs['unembedding_lr']:.6g}",
-            "--matrix-lr",      f"{lrs['matrix_lr']:.6g}",
-            "--scalar-lr",      f"{lrs['scalar_lr']:.6g}",
+            "--embedding-lr",   f"{lrs['embedding_lr']   * lr_correction:.6g}",
+            "--unembedding-lr", f"{lrs['unembedding_lr'] * lr_correction:.6g}",
+            "--matrix-lr",      f"{lrs['matrix_lr']:.6g}",  # Muon, not scaled by gpt.py
+            "--scalar-lr",      f"{lrs['scalar_lr']      * lr_correction:.6g}",
         ]
 
         print(f"\n{'='*64}")
         print(f"Model: {model_name}")
         print(
-            f"Fixed LRs: emb={lrs['embedding_lr']}  unemb={lrs['unembedding_lr']}  "
+            f"Target LRs (effective): emb={lrs['embedding_lr']}  unemb={lrs['unembedding_lr']}  "
             f"mat={lrs['matrix_lr']}  scl={lrs['scalar_lr']}"
         )
+        print(f"dmodel_lr_scale={dmodel_lr_scale:.4f}  raw flags: emb={lrs['embedding_lr']*lr_correction:.4g}  "
+              f"unemb={lrs['unembedding_lr']*lr_correction:.4g}  "
+              f"scl={lrs['scalar_lr']*lr_correction:.4g}")
         print(f"{'='*64}")
 
         for warmup_frac in args.warmup_fracs:

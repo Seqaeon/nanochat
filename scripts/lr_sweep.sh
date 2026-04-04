@@ -83,15 +83,17 @@ while [[ $# -gt 0 ]]; do
             ;;
         --lr-scale-factors)
             # Accept space-separated list quoted in one arg: --lr-scale-factors "1.0 3.0 5.0"
+            EXTRA_ARGS+=("--lr-scale-factors")
             for scale in $2; do
-                EXTRA_ARGS+=("--lr-scale-factors" "$scale")
+                EXTRA_ARGS+=("$scale")
             done
             shift 2
             ;;
         --models)
-            # --models "base moe_perm"
+            # --models "base moe_perm" — nargs="+" needs single flag then all values
+            EXTRA_ARGS+=("--models")
             for model in $2; do
-                EXTRA_ARGS+=("--models" "$model")
+                EXTRA_ARGS+=("$model")
             done
             shift 2
             ;;

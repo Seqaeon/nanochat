@@ -108,14 +108,16 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --models)
+            EXTRA_ARGS+=("--models")
             for model in $2; do
-                EXTRA_ARGS+=("--models" "$model")
+                EXTRA_ARGS+=("$model")
             done
             shift 2
             ;;
         --phase1-scales)
+            EXTRA_ARGS+=("--phase1-scales")
             for scale in $2; do
-                EXTRA_ARGS+=("--phase1-scales" "$scale")
+                EXTRA_ARGS+=("$scale")
             done
             shift 2
             ;;
@@ -124,8 +126,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --phase2-multipliers)
+            EXTRA_ARGS+=("--phase2-multipliers")
             for mult in $2; do
-                EXTRA_ARGS+=("--phase2-multipliers" "$mult")
+                EXTRA_ARGS+=("$mult")
             done
             shift 2
             ;;

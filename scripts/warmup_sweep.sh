@@ -102,10 +102,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --warmup-fracs)
-            # Accept space-separated list quoted in one arg: --warmup-fracs "0.0 0.01 0.05"
-            # We split the string by spaces to pass as multiple arguments to Python's nargs='+'
+            # nargs="+" expects: --warmup-fracs v1 v2 v3 (one flag, multiple values)
+            EXTRA_ARGS+=("--warmup-fracs")
             for frac in $2; do
-                EXTRA_ARGS+=("--warmup-fracs" "$frac")
+                EXTRA_ARGS+=("$frac")
             done
             shift 2
             ;;
@@ -114,9 +114,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --models)
-            # We split by spaces to pass as multiple arguments to Python's nargs='+'
+            # nargs="+" expects: --models base moe_perm ... (one flag, multiple values)
+            EXTRA_ARGS+=("--models")
             for model in $2; do
-                EXTRA_ARGS+=("--models" "$model")
+                EXTRA_ARGS+=("$model")
             done
             shift 2
             ;;
