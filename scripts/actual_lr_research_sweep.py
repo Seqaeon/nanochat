@@ -408,6 +408,12 @@ def main() -> None:
     p.add_argument("--data-dir", type=str, default=None)
     p.add_argument("--max-shards", type=int, default=-1)
 
+    # Resumption and Indexing
+    p.add_argument("--start-index", type=int, default=0, help="start execution from this config index")
+    p.add_argument("--end-index", type=int, default=-1, help="stop execution after this config index (-1=end)")
+    p.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True,
+                   help="if a run's results already exist on disk, skip training and load them")
+
     args = p.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -432,21 +438,39 @@ def main() -> None:
         mid = args.phase1_lrs[len(args.phase1_lrs) // 2]
         lr_star = {m: {k: mid for k in LR_GROUPS} for m in args.models}
 
-    # Build full run list, then filter by phase if requested
-    runs = make_phase_runs(
-        models=args.models,
-        phase1_lrs=args.phase1_lrs,
-        phase2_multipliers=args.phase2_multipliers,
-        phase3_samples=args.phase3_samples,
-        phase3_log_radius=args.phase3_log_radius,
-        lr_star=lr_star,
-        seed=args.seed,
-    )
+    # Load or build full run list
+    if config_dir.exists() and any(config_dir.glob("run_*.json")):
+        print(f"Loading existing configs from {config_dir}...")
+        runs = []
+        config_files = sorted(config_dir.glob("run_*.json"))
+        for cf in config_files:
+            with open(cf, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                runs.append(SweepRun(
+                    phase=data["phase"],
+                    model=data["model"],
+                    run_name=data["run_name"],
+                    lrs=data["lrs"],
+                    meta=data["meta"]
+                ))
+    else:
+        runs = make_phase_runs(
+            models=args.models,
+            phase1_lrs=args.phase1_lrs,
+            phase2_multipliers=args.phase2_multipliers,
+            phase3_samples=args.phase3_samples,
+            phase3_log_radius=args.phase3_log_radius,
+            lr_star=lr_star,
+            seed=args.seed,
+        )
+        dump_run_configs(runs, config_dir)
+        print(f"Wrote {len(runs)} configs to {config_dir}")
+
     if args.phase in (1, 2, 3):
+        # We index the full list before filtering so indices stay stable
         runs = [r for r in runs if r.phase == args.phase]
 
-    dump_run_configs(runs, config_dir)
-    print(f"Wrote {len(runs)} configs to {config_dir}")
+    print(f"Total configs matching phase filter: {len(runs)}")
     print(f"μP LR scaling: DISABLED for all research models (--disable-mu-p always passed)")
     if hasattr(args, 'disable_base_mu_p') and args.disable_base_mu_p:
         print(f"μP LR scaling: also DISABLED for base model (--disable-base-mu-p set)")
@@ -496,50 +520,160 @@ def main() -> None:
         common_train_args += ["--max-shards", str(args.max_shards)]
 
     results: list[dict] = []
+    results_path = run_dir / "results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                results = json.load(f)
+            print(f"Loaded {len(results)} existing results from {results_path}")
+        except Exception as e:
+            print(f"Warning: Could not load existing results.json: {e}")
 
+    # Set of run names already in results to avoid duplicates
+    finished_names = {r["run_name"] for r in results}
+
+    # Handle end-index
+    end_idx = args.end_index if args.end_index != -1 else len(runs) - 1
+    
     for i, run in enumerate(runs):
-        print(f"\n[{i+1}/{len(runs)}] phase={run.phase} model={run.model} run={run.run_name}", flush=True)
-        res = _run_one(
-            run, run_dir, common_train_args, target_dim,
-            args.moe_num_experts,
-            disable_base_mu_p=getattr(args, 'disable_base_mu_p', False),
-        )
-        results.append(res)
-        if res["returncode"] != 0:
-            print(f"  ✗ failed (exit code {res['returncode']})  — see {res['stdout_log']}")
-        else:
-            print(f"  ✓ mean_last_10pct_loss = {res['mean_last_10pct_loss']}")
+        if i < args.start_index or i > end_idx:
+            continue
+            
+        if run.run_name in finished_names:
+            print(f"\n[{i+1}/{len(runs)}] run={run.run_name} already in results.json, skipping.")
+            continue
 
-        # Per-(phase, model) plot — regenerate after each run so progress is visible
+        print(f"\n[{i+1}/{len(runs)}] phase={run.phase} model={run.model} run={run.run_name}", flush=True)
+        
+        # Check for resume
+        out_dir = run_dir / run.run_name
+        step_loss_file = out_dir / "step_loss.jsonl"
+        log_path = out_dir / "stdout.log"
+        
+        if args.resume and step_loss_file.exists() and step_loss_file.stat().st_size > 0:
+            print(f"  ✓ found existing results, skipping training.")
+            tokens_list, losses = _read_step_losses(step_loss_file)
+            score = _mean_last_10pct(losses)
+            res = {
+                "run_name":              run.run_name,
+                "phase":                 run.phase,
+                "model":                 run.model,
+                "returncode":            0,
+                "mean_last_10pct_loss":  score,
+                "tokens":                tokens_list,
+                "losses":                losses,
+                "step_loss_file":        str(step_loss_file),
+                "stdout_log":            str(log_path),
+                "lrs":                   run.lrs,
+                "meta":                  run.meta,
+            }
+        else:
+            res = _run_one(
+                run, run_dir, common_train_args, target_dim,
+                args.moe_num_experts,
+                disable_base_mu_p=getattr(args, 'disable_base_mu_p', False),
+            )
+            if res["returncode"] != 0:
+                print(f"  ✗ failed (exit code {res['returncode']})  — see {res['stdout_log']}")
+            else:
+                print(f"  ✓ mean_last_10pct_loss = {res['mean_last_10pct_loss']}")
+
+        results.append(res)
+
+        # Incremental Save - JSON
+        with open(run_dir / "results.json", "w", encoding="utf-8") as f:
+            slim = [{k: v for k, v in r.items() if k not in ("tokens", "losses")}
+                    for r in results]
+            json.dump(slim, f, indent=2)
+
+        # Incremental Save - TSV
+        _write_tsv(results, run_dir)
+
+        # Update per-(phase, model) plot
         phase_model_results = [r for r in results
                                 if r["phase"] == run.phase and r["model"] == run.model]
         _plot_phase_model(run.phase, run.model, phase_model_results, args.depth, run_dir)
+        
+        # Update per-model bests
+        _update_best_configs(results, run_dir, args.models)
 
-    # Write results JSON
-    with open(run_dir / "results.json", "w", encoding="utf-8") as f:
-        # Don't serialise potentially huge tokens/losses lists into results.json
-        slim = [{k: v for k, v in r.items() if k not in ("tokens", "losses")}
-                for r in results]
-        json.dump(slim, f, indent=2)
+    print(f"\n[actual_lr_sweep] Finished processing range {args.start_index} to {end_idx}.")
 
-    _write_tsv(results, run_dir)
 
-    # Per-model best — keyed by model name so every architecture gets its winner recorded
+def _update_best_configs(results: list[dict], run_dir: Path, models_to_watch: list[str]) -> None:
+    """Updates best_config.json and best_run_config.json incrementally."""
     successful = [r for r in results
                   if r["returncode"] == 0 and r["mean_last_10pct_loss"] is not None]
-    if successful:
-        models_seen = sorted({r["model"] for r in successful})
-        per_model_best: dict = {}
-        print()
-        for model in models_seen:
-            model_runs = [r for r in successful if r["model"] == model]
-            best = min(model_runs, key=lambda r: r["mean_last_10pct_loss"])
-            per_model_best[model] = {k: v for k, v in best.items() if k not in ("tokens", "losses")}
-            print(f"[actual_lr_sweep] Best ({model}): {best['run_name']}  loss={best['mean_last_10pct_loss']:.6f}")
-        with open(run_dir / "best_config.json", "w", encoding="utf-8") as f:
-            json.dump(per_model_best, f, indent=2)
-    else:
-        print("\n[actual_lr_sweep] No successful runs.")
+    
+    if not successful:
+        return
+        
+    models_seen = sorted({r["model"] for r in successful})
+    
+    # 1. Classical "Single Best Run" winner
+    per_model_best_run: dict = {}
+    for model in models_seen:
+        model_runs = [r for r in successful if r["model"] == model]
+        if not model_runs: continue
+        best = min(model_runs, key=lambda r: r["mean_last_10pct_loss"])
+        per_model_best_run[model] = {k: v for k, v in best.items() if k not in ("tokens", "losses")}
+    
+    with open(run_dir / "best_run_config.json", "w", encoding="utf-8") as f:
+        json.dump(per_model_best_run, f, indent=2)
+
+    # 2. Synthesized "Best Per Group" winner
+    per_group_best = _compute_per_group_bests(results, models_seen)
+    with open(run_dir / "best_config.json", "w", encoding="utf-8") as f:
+        json.dump(per_group_best, f, indent=2)
+
+
+def _compute_per_group_bests(results: list[dict], models: list[str]) -> dict:
+    """
+    Analyzes Phase 2 results to find the best LR for each group independently.
+    Returns a dict: { model: { "lrs": {...}, "group_details": {...} } }
+    """
+    summary = {}
+    for model in models:
+        model_results = [r for r in results if r["model"] == model and r["returncode"] == 0]
+        if not model_results:
+            continue
+
+        # 1. Identify the Phase 1 winner (the center for Phase 2)
+        p1_runs = [r for r in model_results if r["phase"] == 1]
+        if not p1_runs:
+            # If no P1 (maybe user ran phase 2 only), just look for any baseline
+            baselines = [r for r in model_results if r["phase"] == 2 and r["meta"].get("mult") == 1.0]
+            if not baselines:
+                continue
+            p1_winner = min(baselines, key=lambda r: r["mean_last_10pct_loss"])
+        else:
+            p1_winner = min(p1_runs, key=lambda r: r["mean_last_10pct_loss"])
+        
+        # 2. For each group, find the best value from Phase 2
+        best_lrs = dict(p1_winner["lrs"])
+        details = {}
+
+        for group in ["embedding_lr", "unembedding_lr", "matrix_lr", "scalar_lr"]:
+            # Gather all runs for this group in Phase 2
+            group_runs = [r for r in model_results if r["phase"] == 2 and r.get("meta", {}).get("group") == group]
+            # Include the baseline (P1 winner)
+            relevant_runs = group_runs + [p1_winner]
+            
+            best_run = min(relevant_runs, key=lambda r: r["mean_last_10pct_loss"])
+            best_lrs[group] = best_run["lrs"][group]
+            
+            details[group] = {
+                "value": best_run["lrs"][group],
+                "loss": best_run["mean_last_10pct_loss"],
+                "run": best_run["run_name"]
+            }
+
+        summary[model] = {
+            "lrs": best_lrs,
+            "p1_center_loss": p1_winner["mean_last_10pct_loss"],
+            "group_details": details
+        }
+    return summary
 
 
 if __name__ == "__main__":
