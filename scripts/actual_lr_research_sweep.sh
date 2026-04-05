@@ -86,6 +86,12 @@ if [ $# -eq 0 ]; then
     echo "  --data-dir PATH             Explicit data directory"
     echo "  --max-shards N              Max data shards to use (default: 170)"
     echo ""
+    echo "Resumption and Indexing:"
+    echo "  --run-dir PATH              Override the root output directory (re-uses existing results)"
+    echo "  --start-index N             Start execution from this configuration index"
+    echo "  --end-index N               Stop execution after this index (-1: end)"
+    echo "  --resume / --no-resume      Skip already-finished training runs (default: --resume)"
+    echo ""
     echo "Examples:"
     echo "  # Phase 1: sweep LRs for MoE models at depth 8"
     echo "  bash scripts/actual_lr_research_sweep.sh \\"
@@ -105,7 +111,7 @@ if [ $# -eq 0 ]; then
 fi
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-ROOT_OUT_DIR="out/actual_lr_research_sweep_${TIMESTAMP}"
+ROOT_OUT_DIR=""  # Set via --run-dir flag below
 
 EXTRA_ARGS=()
 MAX_SHARDS=170
@@ -115,6 +121,12 @@ TOKENIZER_DIR_FLAG=""
 # ── Parse flags ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            # Trigger help by setting argc to 0 and re-running this script 
+            # (or just call the help function if we had one, but it's just top-level script)
+            # Simplest is to just exit and let the top check handle it if we reset args
+            exec bash "$0"
+            ;;
         --fp8)
             EXTRA_ARGS+=("--fp8")
             shift
@@ -131,6 +143,26 @@ while [[ $# -gt 0 ]]; do
             MAX_SHARDS=$2
             EXTRA_ARGS+=("--max-shards" "$2")
             shift 2
+            ;;
+        --run-dir)
+            ROOT_OUT_DIR="$2"
+            shift 2
+            ;;
+        --start-index)
+            EXTRA_ARGS+=("--start-index" "$2")
+            shift 2
+            ;;
+        --end-index)
+            EXTRA_ARGS+=("--end-index" "$2")
+            shift 2
+            ;;
+        --resume)
+            EXTRA_ARGS+=("--resume")
+            shift
+            ;;
+        --no-resume)
+            EXTRA_ARGS+=("--no-resume")
+            shift
             ;;
         --phase)
             EXTRA_ARGS+=("--phase" "$2")
@@ -249,6 +281,10 @@ done
 if [ $# -eq 0 ]; then
     echo "Error: at least one depth argument is required."
     exit 1
+fi
+
+if [ -z "$ROOT_OUT_DIR" ]; then
+    ROOT_OUT_DIR="out/actual_lr_research_sweep_${TIMESTAMP}"
 fi
 
 echo "===== GPU Info ====="
