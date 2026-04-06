@@ -86,6 +86,12 @@ if [ $# -eq 0 ]; then
     echo "  --data-dir PATH             Explicit data directory"
     echo "  --max-shards N              Max data shards to use (default: 170)"
     echo ""
+    echo "Phase 4 — Bayesian Optimisation (Optuna/TPE):"
+    echo "  --phase4-trials N                 Number of Optuna trials (default: 50)"
+    echo "  --phase4-lr-min F                 LR search space lower bound (default: 1e-4)"
+    echo "  --phase4-lr-max F                 LR search space upper bound (default: 0.5)"
+    echo "  --phase4-warm-start/--no-...      Seed Optuna with Phase 1-3 results (default: warm-start)"
+    echo ""
     echo "Resumption and Indexing:"
     echo "  --run-dir PATH              Override the root output directory (re-uses existing results)"
     echo "  --start-index N             Start execution from this configuration index"
@@ -208,6 +214,26 @@ while [[ $# -gt 0 ]]; do
         --phase3-log-radius)
             EXTRA_ARGS+=("--phase3-log-radius" "$2")
             shift 2
+            ;;
+        --phase4-trials)
+            EXTRA_ARGS+=("--phase4-trials" "$2")
+            shift 2
+            ;;
+        --phase4-lr-min)
+            EXTRA_ARGS+=("--phase4-lr-min" "$2")
+            shift 2
+            ;;
+        --phase4-lr-max)
+            EXTRA_ARGS+=("--phase4-lr-max" "$2")
+            shift 2
+            ;;
+        --phase4-warm-start)
+            EXTRA_ARGS+=("--phase4-warm-start")
+            shift
+            ;;
+        --no-phase4-warm-start)
+            EXTRA_ARGS+=("--no-phase4-warm-start")
+            shift
             ;;
         --seed)
             EXTRA_ARGS+=("--seed" "$2")

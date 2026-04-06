@@ -375,7 +375,7 @@ def main() -> None:
     p.add_argument("--models", type=str, nargs="+",
                    default=["moe_no_perm", "moe_perm", "remixed-linear"],
                    choices=list(MODEL_ARCH_FLAGS.keys()))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3, 0], default=0,
+    p.add_argument("--phase", type=int, choices=[0, 1, 2, 3, 4], default=0,
                    help="0=all phases (default)")
     p.add_argument("--generate-only", action="store_true",
                    help="only emit JSON run configs — no training")
@@ -404,6 +404,16 @@ def main() -> None:
     p.add_argument("--phase3-samples", type=int, default=10)
     p.add_argument("--phase3-log-radius", type=float, default=0.3)
     p.add_argument("--seed", type=int, default=1337)
+
+    # Phase 4: Bayesian Optimization via Optuna
+    p.add_argument("--phase4-trials", type=int, default=50,
+                   help="number of Optuna trials to run")
+    p.add_argument("--phase4-lr-min", type=float, default=1e-4,
+                   help="lower bound of the Phase 4 LR search space")
+    p.add_argument("--phase4-lr-max", type=float, default=0.5,
+                   help="upper bound of the Phase 4 LR search space")
+    p.add_argument("--phase4-warm-start", action=argparse.BooleanOptionalAction, default=True,
+                   help="seed Optuna with completed Phase 1-3 results before running new trials")
 
     # Training flags (mirror warmup_sweep.py)
     p.add_argument("--target-tokens", type=int, default=-1,
@@ -487,6 +497,9 @@ def main() -> None:
     if args.phase in (1, 2, 3):
         # We index the full list before filtering so indices stay stable
         runs = [r for r in runs if r.phase == args.phase]
+    elif args.phase == 4:
+        # Phase 4 is handled separately via Optuna — nothing to do in the static config loop
+        runs = []
 
     print(f"Total configs matching phase filter: {len(runs)}")
     print(f"μP LR scaling: DISABLED for all research models (--disable-mu-p always passed)")
@@ -616,6 +629,141 @@ def main() -> None:
         _update_best_configs(results, run_dir, args.models)
 
     print(f"\n[actual_lr_sweep] Finished processing range {args.start_index} to {end_idx}.")
+
+    # Phase 4: Bayesian Optimisation
+    if args.phase in (0, 4):
+        for model in args.models:
+            _run_phase4_optuna(
+                model=model,
+                run_dir=run_dir,
+                common_train_args=common_train_args,
+                target_dim=target_dim,
+                num_experts=args.moe_num_experts,
+                disable_base_mu_p=getattr(args, "disable_base_mu_p", False),
+                n_trials=args.phase4_trials,
+                lr_min=args.phase4_lr_min,
+                lr_max=args.phase4_lr_max,
+                warm_start=args.phase4_warm_start,
+                depth=args.depth,
+                results=results,
+            )
+            _update_best_configs(results, run_dir, args.models)
+
+
+def _run_phase4_optuna(
+    model: str,
+    run_dir: Path,
+    common_train_args: list[str],
+    target_dim: int,
+    num_experts: int,
+    disable_base_mu_p: bool,
+    n_trials: int,
+    lr_min: float,
+    lr_max: float,
+    warm_start: bool,
+    depth: int,
+    results: list[dict],
+) -> None:
+    """Run Bayesian Optimisation (Optuna/TPE) for one model as Phase 4."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        print("[phase4] optuna is not installed. Run: pip install optuna")
+        return
+
+    storage_path = run_dir / f"optuna_{model.replace('-', '_')}.db"
+    study_name = f"lr_sweep_phase4_{model}"
+
+    print(f"\n[phase4] Starting Bayesian Optimisation for {model} ({n_trials} trials)")
+    print(f"[phase4] Optuna storage: {storage_path}")
+
+    storage = f"sqlite:///{storage_path}"
+    study = optuna.create_study(
+        study_name=study_name,
+        direction="minimize",
+        storage=storage,
+        load_if_exists=True,  # resume if interrupted
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+
+    # Warm-start: seed with Phase 1/2/3 results already on disk
+    if warm_start:
+        prior = [
+            r for r in results
+            if r["model"] == model
+            and r["returncode"] == 0
+            and r["mean_last_10pct_loss"] is not None
+        ]
+        already_seeded = len(study.trials)
+        if prior and already_seeded == 0:
+            print(f"[phase4] Warm-starting with {len(prior)} prior results...")
+            for r in prior:
+                lrs = r["lrs"]
+                # Clamp to search bounds — prior results may be outside phase4 range
+                params = {g: max(lr_min, min(lr_max, lrs[g])) for g in LR_GROUPS}
+                dist = {g: optuna.distributions.FloatDistribution(lr_min, lr_max, log=True)
+                        for g in LR_GROUPS}
+                trial = optuna.trial.create_trial(
+                    params=params,
+                    distributions=dist,
+                    value=r["mean_last_10pct_loss"],
+                )
+                study.add_trial(trial)
+            print(f"[phase4] Seeded {len(prior)} prior trials.")
+        elif already_seeded > 0:
+            print(f"[phase4] Resuming study with {already_seeded} existing trials, skipping warm-start.")
+
+    trial_counter = [len(study.trials)]
+
+    def objective(trial: "optuna.Trial") -> float:
+        lrs = {
+            g: trial.suggest_float(g, lr_min, lr_max, log=True)
+            for g in LR_GROUPS
+        }
+        trial_idx = trial_counter[0]
+        trial_counter[0] += 1
+        run_name = f"{model}_p4_trial{trial_idx:03d}"
+
+        sweep_run = SweepRun(
+            phase=4,
+            model=model,
+            run_name=run_name,
+            lrs=lrs,
+            meta={"trial": trial_idx, "optuna_trial": trial.number},
+        )
+        res = _run_one(
+            sweep_run, run_dir, common_train_args, target_dim,
+            num_experts, disable_base_mu_p=disable_base_mu_p,
+        )
+        score = res["mean_last_10pct_loss"]
+        results.append(res)
+
+        # Incremental save after every trial
+        with open(run_dir / "results.json", "w", encoding="utf-8") as f:
+            slim = [{k: v for k, v in r.items() if k not in ("tokens", "losses")}
+                    for r in results]
+            json.dump(slim, f, indent=2)
+        _write_tsv(results, run_dir)
+
+        # Update plot for phase 4 after each trial
+        p4_results = [r for r in results if r["phase"] == 4 and r["model"] == model]
+        _plot_phase_model(4, model, p4_results, depth, run_dir)
+
+        if res["returncode"] != 0:
+            print(f"  [phase4] trial {trial_idx} failed — pruning.")
+            raise optuna.exceptions.TrialPruned()
+
+        print(f"  [phase4] trial {trial_idx} | loss={score:.6f} | lrs={lrs}")
+        return score if score is not None else float("inf")
+
+    study.optimize(objective, n_trials=n_trials)
+
+    print(f"\n[phase4] Best trial for {model}:")
+    best = study.best_trial
+    print(f"  loss: {best.value:.6f}")
+    for g in LR_GROUPS:
+        print(f"  {g}: {best.params[g]:.8g}")
 
 
 def _update_best_configs(results: list[dict], run_dir: Path, models_to_watch: list[str]) -> None:
