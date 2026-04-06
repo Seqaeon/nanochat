@@ -299,19 +299,37 @@ def _plot_phase_model(
     run_dir: Path,
 ) -> None:
     """Loss curves for all runs belonging to (phase, model)."""
-    successful = [r for r in run_results if r["losses"]]
-    if not successful:
+    plot_data = []
+    for r in run_results:
+        losses = r.get("losses")
+        tokens = r.get("tokens")
+        
+        # If missing (due to resumption from slim results.json), try to reload from individual record
+        if (not losses or not tokens) and r.get("step_loss_file"):
+            t_list, l_list = _read_step_losses(Path(r["step_loss_file"]))
+            if l_list:
+                tokens, losses = t_list, l_list
+
+        if losses and tokens:
+            plot_data.append({
+                "tokens": tokens,
+                "losses": losses,
+                "run_name": r["run_name"],
+                "score": r.get("mean_last_10pct_loss")
+            })
+
+    if not plot_data:
         return
 
     sns.set_theme(style="whitegrid")
-    palette = sns.color_palette("husl", max(len(successful), 1))
+    palette = sns.color_palette("husl", max(len(plot_data), 1))
     fig, ax = plt.subplots(figsize=(11, 6))
 
-    for i, res in enumerate(successful):
-        x = [t / 1e9 for t in res["tokens"]]
-        y = res["losses"]
-        score = res["mean_last_10pct_loss"]
-        label = f"{res['run_name']}  loss={score:.4f}" if score is not None else res["run_name"]
+    for i, data in enumerate(plot_data):
+        x = [t / 1e9 for t in data["tokens"]]
+        y = data["losses"]
+        score = data["score"]
+        label = f"{data['run_name']}  loss={score:.4f}" if score is not None else data["run_name"]
         ax.plot(x, y, color=palette[i % len(palette)], label=label, linewidth=2)
 
     phase_labels = {1: "Phase 1 — Uniform Scale", 2: "Phase 2 — Coord Descent", 3: "Phase 3 — Refinement"}
