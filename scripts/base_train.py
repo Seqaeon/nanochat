@@ -77,6 +77,7 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
+parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
 # Fix 1B: basis scaling
 parser.add_argument("--scale-basis-size", type=int, default=1, choices=[0, 1], help="auto-scale RemixedLinear basis_size to max(basis_size, in_features//4) (Fix 1B)")
 # Fix 1D: PermutationMoE expert mode
@@ -244,6 +245,7 @@ def build_model_meta(depth):
         # Fix 1D
         perm_expert_mode=getattr(args, 'perm_expert_mode', 'low_rank'),
         perm_rank=getattr(args, 'perm_rank', 16),
+        router_context_window=getattr(args, 'router_context_window', -1),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
