@@ -130,9 +130,16 @@ def run_training_sweep(args):
             "--scalar-lr",      str(lrs["scalar_lr"]),
         ]
     
+    # Filter models if requested
+    target_models = args.models.split(",") if args.models != "all" else models.keys()
+    filtered_models = {k: v for k, v in models.items() if k in target_models}
+    if not filtered_models:
+        print(f"No matching models found in {list(models.keys())} for selection '{args.models}'")
+        return
+
     results = {}
     
-    for model_name, extra_args in models.items():
+    for model_name, extra_args in filtered_models.items():
         print(f"\n--- Training {model_name} ---")
         
         ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
@@ -238,6 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio passed to all runs")
+    parser.add_argument("--models", type=str, default="all", help="Comma-separated list of models to run (e.g. 'base,remixed-linear'), or 'all'")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=use base schedule")
     args = parser.parse_args()

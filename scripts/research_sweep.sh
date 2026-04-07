@@ -29,8 +29,9 @@ if [ $# -eq 0 ]; then
     echo "  --use-onecycle 0|1  Enable OneCycleLR scheduler (default: 1)"
     echo "  --target-tokens N   Explicit token budget per run (default: auto-estimated)"
     echo "  --max-shards N      Step through up to N data shards"
+    echo "  --models M1,M2,...  Comma-separated list of models to run (e.g. 'base,remixed-linear')"
     echo ""
-    echo "Example: ./scripts/research_sweep.sh --fp8 --target-tokens 100000000 8"
+    echo "Example: ./scripts/research_sweep.sh --models base,remixed-linear 12"
     exit 1
 fi
 
@@ -49,6 +50,10 @@ while [[ $# -gt 0 ]]; do
         --no-compile)
             EXTRA_ARGS+=("--no-compile")
             shift
+            ;;
+        --models)
+            EXTRA_ARGS+=("--models" "$2")
+            shift 2
             ;;
         --max-shards)
             MAX_SHARDS=$2
