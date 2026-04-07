@@ -36,6 +36,7 @@ if [ $# -eq 0 ]; then
     echo "  --eval-every N      Evaluation frequency (-1 = at end)"
     echo "  --save-every N      Checkpoint frequency"
     echo "  --core-metric-every N Core metric frequency"
+    echo "  --skip-core         Completely disable CORE metric evaluation"
     echo ""
     echo "Example: ./scripts/research_sweep.sh --models base,remixed-linear 12"
     exit 1
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-compile)
             EXTRA_ARGS+=("--no-compile")
+            shift
+            ;;
+        --skip-core)
+            EXTRA_ARGS+=("--skip-core")
             shift
             ;;
         --models)

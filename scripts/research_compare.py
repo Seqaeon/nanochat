@@ -55,7 +55,7 @@ def run_training_sweep(args):
         "--target-tokens", str(target_tokens),
         "--eval-every", str(eval_every),        
         "--log-every", str(log_every),
-        "--core-metric-every", str(args.core_metric_every),
+        "--core-metric-every", "0" if args.skip_core else str(args.core_metric_every),
         "--save-every", str(args.save_every),
         "--warmup-ratio", str(warm_up_ratio),    # Safer for research models
         "--adam-beta2", str(adam_beta2),     # Matches notebook
@@ -78,16 +78,16 @@ def run_training_sweep(args):
     # --- Optimal LR Configurations (from actual_lr_research_sweep) ---
     BEST_LRS = {
         "moe_no_perm": {
-            "embedding_lr":   0.1,
-            "unembedding_lr": 0.3,
-            "matrix_lr":      1.0,
-            "scalar_lr":      0.1,
+            "embedding_lr":   0.104074,
+            "unembedding_lr": 0.0245175,
+            "matrix_lr":      0.0329274,
+            "scalar_lr":      0.152507,
         },
         "moe_perm": {
-            "embedding_lr":   0.5,
-            "unembedding_lr": 0.5,
-            "matrix_lr":      0.5,
-            "scalar_lr":      2.5,
+            "embedding_lr":   0.104074,
+            "unembedding_lr": 0.0245175,
+            "matrix_lr":      0.0329274,
+            "scalar_lr":      0.152507,
         },
         "remixed-linear": {
             "embedding_lr":   0.104074,
@@ -261,6 +261,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-every", type=int, default=-1, help="evaluation frequency (-1 = at end)")
     parser.add_argument("--save-every", type=int, default=-1, help="checkpoint frequency")
     parser.add_argument("--core-metric-every", type=int, default=-1, help="core metric frequency")
+    parser.add_argument("--skip-core", action="store_true", help="completely disable CORE metric evaluation")
     
     args = parser.parse_args()
     
