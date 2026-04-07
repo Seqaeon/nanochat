@@ -899,6 +899,15 @@ class GPT(nn.Module):
         # Separate parameters so they can have different optimizer treatment
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
+        # Fix 3 (Bug 3): learnable per-layer blend gate on base_context contribution.
+        # Init to -4 → sigmoid(-4) ≈ 0.018, so context_state ≈ delta at init.
+        # base_context can only grow its influence as training finds it useful.
+        # Only created when use_remix_linear is active (base_context is non-None).
+        # 1D tensor → routes to AdamW automatically (p.ndim < 2 in setup_optimizer).
+        if self.use_remix_linear:
+            self.base_ctx_scales = nn.Parameter(torch.full((config.n_layer,), -4.0))
+        else:
+            self.base_ctx_scales = None
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -937,10 +946,15 @@ class GPT(nn.Module):
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
-                        # basis_modulator: xavier throughout, final bias=2.0 for open gates
+                        # basis_modulator: zero-init ALL linear weights so that at init
+                        # first_linear(ctx) = 0·ctx + 0 = 0 → GELU(0) = 0 → second_linear(0) = 0 + 2.0 = 2.0
+                        # → gate_basis = sigmoid(2.0) ≈ 0.88 for ALL positions, independent of context quality.
+                        # Fix 1 (Bug 1): previously xavier-init on first linear caused wildly varying gates
+                        # at early positions for long sequences where base_context is noisy.
+                        # GELU'(0) = 0.5 ≠ 0, so gradients flow and the first layer learns normally from step 1.
                         linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
                         for m in linears:
-                            torch.nn.init.xavier_uniform_(m.weight)
+                            torch.nn.init.zeros_(m.weight)  # zero BOTH linears (not xavier)
                             if m.bias is not None: torch.nn.init.zeros_(m.bias)
                         if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
                         # Low-rank output gate: xavier for coeffs, zero for basis
@@ -954,10 +968,15 @@ class GPT(nn.Module):
 
                 if isinstance(sub, ImprovedContextAwareRouter):
                     torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
-                    # Research projections use std=0.02 (matches notebook)
+                    # expert_proj: normal init (per-position self-attention logits, well-behaved)
                     torch.nn.init.normal_(sub.expert_proj.weight, mean=0.0, std=0.02)
-                    torch.nn.init.normal_(sub.cross_expert_proj.weight, mean=0.0, std=0.02)
                     if sub.expert_proj.bias is not None: torch.nn.init.zeros_(sub.expert_proj.bias)
+                    # Fix 2 (Bug 2): zero-init cross_expert_proj to disable the non-causal global-mean
+                    # cross-attention path at init. _cross_attention returns the mean over all T tokens
+                    # (leaks future tokens, signal dilutes as mean of 2048 things → near-constant).
+                    # Zero-init lets training decide if this path is ever useful; alpha_gate will
+                    # initially route all weight to the causal self_attn_logits path.
+                    torch.nn.init.zeros_(sub.cross_expert_proj.weight)
                     if sub.cross_expert_proj.bias is not None: torch.nn.init.zeros_(sub.cross_expert_proj.bias)
                     
                     # Projections and gates (Xavier or Normal)
@@ -1201,7 +1220,9 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
+        # Fix 3: base_ctx_scales is 1D → AdamW. Include in scalar_params so parameter count holds.
+        base_ctx_params = [self.base_ctx_scales] if self.base_ctx_scales is not None else []
+        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(base_ctx_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model, μP-style).
         # Can be disabled via disable_mu_p=True so raw flags are used directly (e.g. for research models
@@ -1225,6 +1246,8 @@ class GPT(nn.Module):
             dict(kind='adamw', params=research_adamw_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
+            # Fix 3: base_ctx_scales — 1D scalar per layer, same schedule as other scalars
+            *([dict(kind='adamw', params=base_ctx_params, lr=scalar_lr * 0.1, betas=adam_betas, eps=1e-10, weight_decay=0.0)] if base_ctx_params else []),
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
@@ -1289,7 +1312,16 @@ class GPT(nn.Module):
                     # dilution problem where the self-referential context loop carried no
                     # new information beyond what the GlobalContextManager produced at t=0.
                     delta = self.context_updaters[i](norm(x))
-                    context_state = base_context + delta if base_context is not None else delta
+                    # Fix 3 (Bug 3): blend base_context in with a learned per-layer gate.
+                    # At init: sigmoid(-4) ≈ 0.018, so context_state ≈ delta.
+                    # base_context's influence grows only as training finds it useful,
+                    # preventing the noisy diluted GlobalContextManager signal from
+                    # dominating at early training steps with long sequences.
+                    if base_context is not None:
+                        bc_weight = torch.sigmoid(self.base_ctx_scales[i].to(dtype=delta.dtype))
+                        context_state = bc_weight * base_context + delta
+                    else:
+                        context_state = delta
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
