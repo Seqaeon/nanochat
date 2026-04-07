@@ -51,9 +51,9 @@ class GPTConfig:
     use_remix_linear: bool = False
     remix_context_dim: int = 64
     # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
-    # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
+    # Recommended: 6 or 8 (6 gives 128-dim context for 768-dim model)
     # Set to 0 to use the fixed remix_context_dim value instead.
-    remix_context_dim_ratio: int = 0
+    remix_context_dim_ratio: int = 6
     remix_basis_size: int = 64
     remixed_linear_kwargs: dict | None = None
     use_pos_embed: bool = False
