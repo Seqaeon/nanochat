@@ -565,6 +565,23 @@ class RemixedLinear(nn.Module):
             self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale, starts small
 
+    def gate_parameters(self):
+        """Yield context-gate-specific parameters (basis_modulator, output_gate_*).
+        These are routed to a lower-LR optimizer group to reduce gradient noise at long T."""
+        if self.use_context:
+            yield from self.basis_modulator.parameters()
+            yield self.output_gate_coeffs.weight
+            if self.output_gate_coeffs.bias is not None:
+                yield self.output_gate_coeffs.bias
+            yield self.output_gate_basis
+            yield self.output_gate_scale
+
+    def non_gate_parameters(self):
+        """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
+        yield self.basis.weight
+        yield self.template_mixing
+        yield self.bias
+
     def forward(self, x, context_state):
         dtype = x.dtype
         h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
@@ -577,9 +594,6 @@ class RemixedLinear(nn.Module):
 
             # Output gate: LOW-RANK + CENTERED ACTIVATION
             # gate = 1 + tanh(scale * coeffs @ gate_basis_vectors)
-            # - Starts at 1.0 (identity) instead of sigmoid's 0.5-0.88
-            # - Gradient at init = sech²(0)*scale = scale, controllable
-            # - Constrained to low-dim manifold, much more stable at long T
             if self.use_output_gate:
                 coeffs = self.output_gate_coeffs(ctx)                           # (B, T, r)
                 gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out_features)
@@ -668,16 +682,54 @@ class RemixedMultiAttention(nn.Module):
 
 
 class RemixedBlock(nn.Module):
-    """Base block structure with remixed attention + remixed feedforward."""
+    """Attention-Grounded Context-Conditioned Linear (AG-CCL) block.
+
+    Context lifecycle per block:
+      1. Attention runs gated by prev_ctx (previous block's EMA-accumulated context).
+      2. attn_out → ctx_from_attn → fresh context derived from processed representations,
+         not raw embeddings (fixes the GCM dilution at long T).
+      3. F.rms_norm on fresh ctx for scale stability across training (suggestion 4).
+      4. EMA blend: ctx += sigmoid(ctx_ema_gate) * prev_ctx.detach()
+         — detach breaks the gradient chain through the EMA history (suggestion 3).
+         — ctx_ema_gate init -2 → sigmoid ≈ 0.12: mostly fresh, some history.
+      5. FFN runs gated by ctx.
+      6. ctx returned as next block's prev_ctx (causal running context, suggestion 2).
+    """
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
+        ctx_dim = config.remix_context_dim
+        # AG-CCL context path: n_embd → ctx_dim (from attention output, not raw embeddings)
+        self.ctx_from_attn = nn.Sequential(
+            Linear(config.n_embd, ctx_dim, bias=True),
+            nn.GELU(),
+            Linear(ctx_dim, ctx_dim, bias=True),
+        )
+        # EMA gate: init -2.0 → sigmoid(-2.0) ≈ 0.12 (mostly fresh, slight history)
+        self.ctx_ema_gate = nn.Parameter(torch.tensor(-2.0))
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state)
-        x = x + self.ffwd(norm(x), context_state)
-        return x
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
+        # Step 1: Attention gated by accumulated context from previous block
+        attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, prev_ctx)
+        x = x + attn_out
+
+        # Step 2: Fresh context from attention output (post-attention = richer than raw embeddings)
+        ctx = self.ctx_from_attn(attn_out)          # (B, T, ctx_dim)
+
+        # Step 3: RMS-normalize for consistent scale regardless of attn_out magnitude
+        ctx = F.rms_norm(ctx, [ctx.shape[-1]])
+
+        # Step 4: EMA blend — incorporate history from previous block
+        # Detach prev_ctx so gradients don't flow back through the EMA chain
+        if prev_ctx is not None:
+            alpha = torch.sigmoid(self.ctx_ema_gate.to(dtype=ctx.dtype))
+            ctx = ctx + alpha * prev_ctx.detach()
+
+        # Step 5: FFN gated by fresh + accumulated context
+        x = x + self.ffwd(norm(x), ctx)
+
+        return x, ctx  # ctx becomes next block's prev_ctx
 
 
 def has_ve(layer_idx, n_layer):
@@ -873,47 +925,9 @@ class GPT(nn.Module):
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
         self.context_manager = None
         self.context_updaters = None
-        if self.use_remix_linear:
-            self.context_manager = GlobalContextManager(
-                vocab_size=padded_vocab_size,
-                d_model=config.n_embd,
-                router_dim=self.remix_context_dim,
-                context_window=config.router_context_window,
-                router_causal=config.router_causal,
-                router_num_heads=config.router_num_heads,
-                router_num_queries=config.router_num_queries,
-                router_n_layers=config.router_n_layers,
-                router_use_vocab_prior=config.router_use_vocab_prior,
-            )
-            # Fix 1A: per-layer context updaters — zero-init Linears that add a layer-specific
-            # delta to the base context, allowing each block to condition on its own residual state.
-            if getattr(config, 'use_layer_context', True):
-                # Residual-stream-grounded context updaters.
-                #
-                # Old design: updaters mapped context_dim → context_dim, so the context
-                # signal was purely self-referential. At long sequences (2048+) this meant
-                # the context could never recover from the GlobalContextManager's diluted
-                # initial signal — it just looped on itself getting no new information.
-                #
-                # New design: updaters project from n_embd → context_dim.  At each layer
-                # they read directly from the transformer's residual stream x, grounding
-                # the context signal in actual processed representations regardless of
-                # sequence length.  This completely bypasses the GlobalContextManager's
-                # long-sequence dilution problem.
-                #
-                # Each updater: Linear(n_embd, ctx_hidden) → GELU → Linear(ctx_hidden, ctx_dim)
-                # Second layer is zero-init (in init_weights) so the initial delta is zero
-                # and training starts from the static-context baseline.
-                ctx_dim = self.remix_context_dim
-                ctx_hidden = max(ctx_dim * 2, ctx_dim)
-                self.context_updaters = nn.ModuleList([
-                    nn.Sequential(
-                        Linear(config.n_embd, ctx_hidden, bias=True),
-                        nn.GELU(),
-                        Linear(ctx_hidden, ctx_dim, bias=True),
-                    )
-                    for _ in range(config.n_layer)
-                ])
+        # AG-CCL: context is derived per-block inside RemixedBlock from attn_out.
+        # GlobalContextManager and context_updaters are not used for remix_linear —
+        # ctx_from_attn and ctx_ema_gate live inside each RemixedBlock.
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -954,6 +968,19 @@ class GPT(nn.Module):
         def _init_research_module(mod: nn.Module):
             # We use a non-recursive approach to avoid overwriting specialized inits
             for sub in mod.modules():
+                if isinstance(sub, RemixedBlock):
+                    # AG-CCL context path: xavier for L1, tiny std=0.01 for L2.
+                    # NOT zero-init: the model needs a small non-zero context signal from
+                    # step 1 so the gate pathway activates and learns, rather than staying
+                    # dormant until ctx_from_attn accidentally learns to produce non-zero output.
+                    ca_linears = [m for m in sub.ctx_from_attn.modules() if isinstance(m, (Linear, nn.Linear))]
+                    if ca_linears:
+                        torch.nn.init.xavier_uniform_(ca_linears[0].weight)
+                        if ca_linears[0].bias is not None: torch.nn.init.zeros_(ca_linears[0].bias)
+                        torch.nn.init.normal_(ca_linears[-1].weight, std=0.01)  # small but non-zero
+                        if ca_linears[-1].bias is not None: torch.nn.init.zeros_(ca_linears[-1].bias)
+                    # EMA gate: -2.0 → sigmoid ≈ 0.12 (mostly fresh context, some history)
+                    torch.nn.init.constant_(sub.ctx_ema_gate, -2.0)
                 if isinstance(sub, RemixedLinear):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
@@ -967,7 +994,7 @@ class GPT(nn.Module):
                         # GELU'(0) = 0.5 ≠ 0, so gradients flow and the first layer learns normally from step 1.
                         linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
                         for m in linears:
-                            torch.nn.init.zeros_(m.weight)  # zero BOTH linears (not xavier)
+                            torch.nn.init.xavier_uniform_(m.weight)  # original xavier init
                             if m.bias is not None: torch.nn.init.zeros_(m.bias)
                         if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
                         # Low-rank output gate: xavier for coeffs, zero for basis
@@ -989,7 +1016,7 @@ class GPT(nn.Module):
                     # (leaks future tokens, signal dilutes as mean of 2048 things → near-constant).
                     # Zero-init lets training decide if this path is ever useful; alpha_gate will
                     # initially route all weight to the causal self_attn_logits path.
-                    torch.nn.init.zeros_(sub.cross_expert_proj.weight)
+                    torch.nn.init.normal_(sub.cross_expert_proj.weight, mean=0.0, std=0.02)  # original normal init
                     if sub.cross_expert_proj.bias is not None: torch.nn.init.zeros_(sub.cross_expert_proj.bias)
                     
                     # Projections and gates (Xavier or Normal)
@@ -1189,10 +1216,8 @@ class GPT(nn.Module):
         research = 0
         if self.embedding_model is not None:
             research += sum(p.numel() for p in self.embedding_model.parameters())
-        if self.context_manager is not None:
-            research += sum(p.numel() for p in self.context_manager.parameters())
-        if self.context_updaters is not None:
-            research += sum(p.numel() for p in self.context_updaters.parameters())
+        # AG-CCL: ctx_from_attn and ctx_ema_gate live inside transformer.h (RemixedBlock)
+        # and are already counted in transformer_matrices above.
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
@@ -1212,19 +1237,49 @@ class GPT(nn.Module):
         ddp, rank, local_rank, world_size = get_dist_info()
 
         # Separate out all parameters into groups
-        candidate_matrix_params = list(self.transformer.h.parameters())
-        if self.context_manager is not None:
-            candidate_matrix_params += list(self.context_manager.parameters())
-        if self.embedding_model is not None:
-            candidate_matrix_params += list(self.embedding_model.parameters())
-        # Fix 1A: context_updaters are n_embd×context_dim matrices — route to Muon
-        if self.context_updaters is not None:
-            candidate_matrix_params += list(self.context_updaters.parameters())
+        # For RemixedLinear, split gate params (basis_modulator, output_gate_*) from
+        # structural params (basis, template_mixing) — gate params get a lower LR (suggestion 5).
+        gate_matrix_params   = []  # 2D gate params  → lower-LR Muon
+        gate_adamw_params    = []  # 1D gate params  → lower-LR AdamW
+        struct_matrix_params = []  # 2D struct params → normal Muon
+        struct_adamw_params  = []  # 1D struct params → normal AdamW
 
-        # Muon is only defined for matrix-like tensors (>=2D).
-        # Remixed/research branches introduce 1D params (biases/LN scales), route those to AdamW.
-        matrix_params = [p for p in candidate_matrix_params if p.ndim >= 2]
-        research_adamw_params = [p for p in candidate_matrix_params if p.ndim < 2]
+        if self.use_remix_linear:
+            for block in self.transformer.h:
+                assert isinstance(block, RemixedBlock), "Expected RemixedBlock in remix_linear mode"
+                # ctx_from_attn: generates the context signal (treated as gate-side)
+                for p in block.ctx_from_attn.parameters():
+                    (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                gate_adamw_params.append(block.ctx_ema_gate)  # scalar
+                # RemixedLinear: sort gate vs structural
+                remix_linears = [
+                    block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
+                    block.ffwd.c_fc, block.ffwd.c_proj,
+                ]
+                for rl in remix_linears:
+                    for p in rl.gate_parameters():
+                        (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                    for p in rl.non_gate_parameters():
+                        (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
+                    # ln_basis (LayerNorm)
+                    for p in rl.ln_basis.parameters():
+                        struct_adamw_params.append(p)
+                # ve_gate (if present) is structural
+                if block.attn.ve_gate is not None:
+                    struct_matrix_params.append(block.attn.ve_gate.weight)
+        else:
+            # Regular Block: all transformer.h params go to candidate_matrix_params
+            candidate = list(self.transformer.h.parameters())
+            struct_matrix_params = [p for p in candidate if p.ndim >= 2]
+            struct_adamw_params  = [p for p in candidate if p.ndim < 2]
+
+        # Embedding model (MoE), if present
+        if self.embedding_model is not None:
+            cand = list(self.embedding_model.parameters())
+            struct_matrix_params += [p for p in cand if p.ndim >= 2]
+            struct_adamw_params  += [p for p in cand if p.ndim < 2]
+
+        research_adamw_params = gate_adamw_params + struct_adamw_params
 
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
@@ -1233,7 +1288,12 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
+        all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
+                      embedding_params + lm_head_params + value_embeds_params +
+                      resid_params + x0_params)
+        assert len(list(self.parameters())) == len(all_params), (
+            f"Parameter count mismatch: model has {len(list(self.parameters()))} params, "
+            f"optimizer groups cover {len(all_params)}")
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model, μP-style).
         # Can be disabled via disable_mu_p=True so raw flags are used directly (e.g. for research models
@@ -1258,11 +1318,19 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Muon groups (matrix params, grouped by shape for stacking)
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
+        # Structural matrix params: normal Muon LR
+        for shape in sorted({p.shape for p in struct_matrix_params}):
+            group_params = [p for p in struct_matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+        # Gate matrix params: 0.3× Muon LR (suggestion 5: reduce gradient noise for gate params)
+        gate_lr = matrix_lr * 0.3
+        for shape in sorted({p.shape for p in gate_matrix_params}):
+            group_params = [p for p in gate_matrix_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=gate_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
             ))
 
@@ -1303,32 +1371,15 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        # Fix 1A: compute base context once from initial embedding.
-        # At long sequences the GlobalContextManager's attention over 2048 raw token
-        # embeddings produces a diluted signal.  The per-layer context_updaters now
-        # re-ground the context from the residual stream x at each block, so the
-        # base_context only needs to provide a coarse initialisation.
-        base_context = self.context_manager(x, idx) if self.context_manager is not None else None
-        context_state = base_context
+        # AG-CCL: context is threaded block-to-block, starting as None at block 0.
+        # Each RemixedBlock derives fresh context from its own attn_out and blends
+        # it with the previous block's accumulated context via a learned EMA gate.
+        prev_ctx = None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             if self.use_remix_linear:
-                if self.context_updaters is not None:
-                    # Read from the residual stream x (projected to context_dim), not from
-                    # context_state itself.  This re-grounds the context signal at every
-                    # layer from actual transformer representations, fixing the long-sequence
-                    # dilution problem where the self-referential context loop carried no
-                    # new information beyond what the GlobalContextManager produced at t=0.
-                    delta = self.context_updaters[i](norm(x))
-                    # context_state = GCM base signal + layer-specific residual-stream delta.
-                    # Both are zero-grounded at init (cross_expert_proj zero-init, updater last-linear zero-init),
-                    # so the model starts from a stable baseline and learns when each is useful.
-                    if base_context is not None:
-                        context_state = base_context + delta
-                    else:
-                        context_state = delta
-                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
+                x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
