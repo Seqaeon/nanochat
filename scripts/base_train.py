@@ -88,7 +88,7 @@ parser.add_argument("--max-grad-norm", type=float, default=1.0, help="gradient n
 parser.add_argument("--perm-temp-start", type=float, default=5.0, help="initial PermutationMoE temperature (decays to 1.0 over first 50%% of training, Fix 1H)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
 parser.add_argument("--use-onecycle", type=int, default=None, choices=[0, 1], help="alias for --research-onecycle")
-parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-only warmup ratio/pct_start for OneCycle")
+parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="research-only warmup ratio/pct_start for OneCycle")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for (-1 = disable)")

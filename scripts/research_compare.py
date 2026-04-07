@@ -85,10 +85,10 @@ def run_training_sweep(args):
             "scalar_lr":      2.5,
         },
         "remixed-linear": {
-            "embedding_lr":   0.5,
-            "unembedding_lr": 0.5,
-            "matrix_lr":      0.5,
-            "scalar_lr":      0.5,
+            "embedding_lr":   0.104074,
+            "unembedding_lr": 0.0245175,
+            "matrix_lr":      0.0329274,
+            "scalar_lr":      0.152507,
         },
     }
     # ---------------------------------------------------------------
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio passed to all runs")
-    parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
+    parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=use base schedule")
     args = parser.parse_args()
     
