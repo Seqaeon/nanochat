@@ -75,9 +75,7 @@ parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
-# Fix 1A: per-layer context updaters
-parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
-parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
+parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for MoE router (-1 for full)")
 # Fix 1B: basis scaling
 parser.add_argument("--scale-basis-size", type=int, default=1, choices=[0, 1], help="auto-scale RemixedLinear basis_size to max(basis_size, in_features//4) (Fix 1B)")
 # Fix 1D: PermutationMoE expert mode
@@ -238,8 +236,6 @@ def build_model_meta(depth):
             use_output_gate=bool(args.remix_use_output_gate),
             use_context=bool(args.remix_use_context),
         ),
-        # Fix 1A
-        use_layer_context=bool(getattr(args, 'use_layer_context', 1)),
         # Fix 1B
         scale_basis_size=bool(getattr(args, 'scale_basis_size', 1)),
         # Fix 1D
