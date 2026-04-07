@@ -219,7 +219,7 @@ class ImprovedContextAwareRouter(nn.Module):
             # .contiguous() lets SDPA pick Flash Attention when available.
             q = q_vec.view(1, 1, 1, dim).expand(batch_size, 1, seq_len, dim).contiguous()
             # Non-causal: each routing query attends to all T context tokens.
-            out = F.scaled_dot_product_attention(q, k, k, is_causal=True)  # (B, 1, T, D)
+            out = F.scaled_dot_product_attention(q, k, k, is_causal=False)  # (B, 1, T, D)
             outputs.append(out)
 
         # (B, Q, T, D) → mean across Q routing queries → (B, T, D)
@@ -921,15 +921,6 @@ class GPT(nn.Module):
         # Separate parameters so they can have different optimizer treatment
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
-        # Fix 3 (Bug 3): learnable per-layer blend gate on base_context contribution.
-        # Init to -4 → sigmoid(-4) ≈ 0.018, so context_state ≈ delta at init.
-        # base_context can only grow its influence as training finds it useful.
-        # Only created when use_remix_linear is active (base_context is non-None).
-        # 1D tensor → routes to AdamW automatically (p.ndim < 2 in setup_optimizer).
-        if self.use_remix_linear:
-            self.base_ctx_scales = nn.Parameter(torch.full((config.n_layer,), -4.0))
-        else:
-            self.base_ctx_scales = None
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -1203,8 +1194,6 @@ class GPT(nn.Module):
         if self.context_updaters is not None:
             research += sum(p.numel() for p in self.context_updaters.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        if self.base_ctx_scales is not None:
-            scalars += self.base_ctx_scales.numel()
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
@@ -1244,9 +1233,7 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        # Fix 3: base_ctx_scales is 1D → AdamW. Include in scalar_params so parameter count holds.
-        base_ctx_params = [self.base_ctx_scales] if self.base_ctx_scales is not None else []
-        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(base_ctx_params)
+        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model, μP-style).
         # Can be disabled via disable_mu_p=True so raw flags are used directly (e.g. for research models
@@ -1269,9 +1256,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=research_adamw_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
-            # Fix 3: base_ctx_scales — 1D scalar per layer, same schedule as other scalars
-            *([dict(kind='adamw', params=base_ctx_params, lr=scalar_lr * 0.1, betas=adam_betas, eps=1e-10, weight_decay=0.0)] if base_ctx_params else []),
+            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
@@ -1336,14 +1321,11 @@ class GPT(nn.Module):
                     # dilution problem where the self-referential context loop carried no
                     # new information beyond what the GlobalContextManager produced at t=0.
                     delta = self.context_updaters[i](norm(x))
-                    # Fix 3 (Bug 3): blend base_context in with a learned per-layer gate.
-                    # At init: sigmoid(-4) ≈ 0.018, so context_state ≈ delta.
-                    # base_context's influence grows only as training finds it useful,
-                    # preventing the noisy diluted GlobalContextManager signal from
-                    # dominating at early training steps with long sequences.
+                    # context_state = GCM base signal + layer-specific residual-stream delta.
+                    # Both are zero-grounded at init (cross_expert_proj zero-init, updater last-linear zero-init),
+                    # so the model starts from a stable baseline and learns when each is useful.
                     if base_context is not None:
-                        bc_weight = torch.sigmoid(self.base_ctx_scales[i].to(dtype=delta.dtype))
-                        context_state = bc_weight * base_context + delta
+                        context_state = base_context + delta
                     else:
                         context_state = delta
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
