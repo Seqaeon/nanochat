@@ -184,6 +184,8 @@ class ImprovedContextAwareRouter(nn.Module):
     def _cross_attention(self, queries, context):
         batch_size, seq_len, dim = context.shape
         num_queries = queries.shape[0]
+        # Match dtypes
+        queries = queries.to(dtype=context.dtype)
         queries = queries.unsqueeze(0).expand(batch_size, num_queries, dim)
         attn_scores = torch.matmul(queries, context.transpose(1, 2)) / (dim ** 0.5)
         attn_weights = torch.softmax(attn_scores, dim=-1)

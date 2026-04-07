@@ -13,6 +13,7 @@ import seaborn as sns
 import numpy as np
 
 from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, model_dims, check_and_prepare_env
+from nanochat.checkpoint_manager import find_last_step
 
 
 RUNNER = resolve_runner()
@@ -156,7 +157,14 @@ def run_training_sweep(args):
         # Disable mu-P scaling for research models only, allowing base to retain standard sizing
         if args.disable_mu_p and model_name != "base":
             train_cmd_args.append("--disable-mu-p")
-        
+            
+        # Check for resumption
+        try:
+            last_step = find_last_step(str(ckpt_dir))
+            print(f"  Found existing checkpoints in {ckpt_dir}, resuming from step {last_step}")
+            train_cmd_args.extend(["--resume-from-step", str(last_step)])
+        except FileNotFoundError:
+            pass # Starting fresh
         
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
         env = os.environ.copy()
