@@ -50,6 +50,10 @@ class GPTConfig:
     dropout: float = 0.0
     use_remix_linear: bool = False
     remix_context_dim: int = 64
+    # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
+    # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
+    # Set to 0 to use the fixed remix_context_dim value instead.
+    remix_context_dim_ratio: int = 0
     remix_basis_size: int = 64
     remixed_linear_kwargs: dict | None = None
     use_pos_embed: bool = False
@@ -83,7 +87,7 @@ class GPTConfig:
 RESEARCH_ALLOWED_KEYS = {
     "use_moe", "use_perm",
     "moe_num_experts", "moe_router_dim", "moe_embed_dim", "dropout",
-    "use_remix_linear", "remix_context_dim", "remix_basis_size", "remixed_linear_kwargs",
+    "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio", "remix_basis_size", "remixed_linear_kwargs",
     "use_pos_embed", "moe_use_abs_pos_embed",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
@@ -474,10 +478,12 @@ class RemixedLinear(nn.Module):
         super().__init__()
         if remixed_linear_kwargs is None:
             remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
-        # Fix 1B: prevent rank bottleneck by scaling basis_size with in_features
-        # Ensures basis is never a worse bottleneck than a 4:1 compression ratio
+        # Fix 1B: prevent rank bottleneck — but basis_size should compress relative to
+        # the *smaller* of in/out (template_mixing is out_features x basis_size, so using
+        # in_features // 4 when in_features >> out_features makes the layer *more* expensive
+        # than dense: e.g. c_proj 3072->768 would get basis_size=768 = full-rank output).
         if scale_basis:
-            basis_size = max(basis_size, in_features // 4)
+            basis_size = max(basis_size, min(in_features, out_features) // 4)
         self.basis_size = basis_size
         self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
@@ -485,35 +491,48 @@ class RemixedLinear(nn.Module):
 
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
-        self.context_modulator = nn.Sequential(
-            Linear(context_dim, max(1, basis_size // 2)),
-            nn.GELU(),
-            Linear(max(1, basis_size // 2), basis_size + out_features),
-        )
-        self.bias = nn.Parameter(torch.zeros(out_features))
         self.ln_basis = nn.LayerNorm(basis_size)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+
+        if self.use_context:
+            # --- Improved gate networks (decoupled, properly sized) ---
+            #
+            # Old design: single shared MLP with hidden=basis_size//2 predicting
+            # (basis_size + out_features) values from context_dim. At n_embd=768:
+            # hidden=96 predicting 3264 values from 64-dim context — severely undertrained.
+            #
+            # New design: two independent networks, each right-sized for its task.
+            #   basis_modulator: small MLP (basis_size is already small by design)
+            #   output_modulator: single linear — parameter-efficient, context-dependent,
+            #     avoids the parameter explosion of a deep MLP when out_features is large.
+            basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
+            self.basis_modulator = nn.Sequential(
+                Linear(context_dim, basis_hidden, bias=True),
+                nn.GELU(),
+                Linear(basis_hidden, basis_size, bias=True),
+            )
+            # Single linear: context_dim → out_features. Cheap yet still context-dependent.
+            self.output_modulator = Linear(context_dim, out_features, bias=True)
 
     def forward(self, x, context_state):
-        # Activation dtype (e.g. bf16 or float32)
         dtype = x.dtype
-        # Ensure input to LayerNorm matches its weight dtype (crucial for inference in different precisions)
         h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
+
         if self.use_context and context_state is not None:
-            # Ensure context_state matches the compute dtype to prevent upcasting of gates
-            gates = torch.sigmoid(self.context_modulator(context_state.to(dtype=dtype)))
-            gate_basis = gates[..., :self.basis_size].to(dtype=dtype) if self.use_basis_gate else torch.ones_like(h_basis)
-            gate_out = gates[..., self.basis_size:].to(dtype=dtype)
+            ctx = context_state.to(dtype=dtype)
+            gate_basis = torch.sigmoid(self.basis_modulator(ctx)).to(dtype=dtype) if self.use_basis_gate else torch.ones_like(h_basis)
+            gate_out = torch.sigmoid(self.output_modulator(ctx)).to(dtype=dtype) if self.use_output_gate else None
         else:
             gate_basis = torch.ones_like(h_basis)
-            gate_out = torch.ones(*h_basis.shape[:-1], self.template_mixing.shape[0], device=x.device, dtype=dtype)
-        if not self.use_output_gate:
-            gate_out = torch.ones_like(gate_out)
-        
-        # Multiply in the activation dtype
+            gate_out = None
+
         h_gated = (h_basis * gate_basis).to(dtype=dtype)
-        # Linear layer expects weight matching input, and return value added with bias
         pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
-        return (pre_output * gate_out + self.bias.to(dtype=dtype)).to(dtype=dtype)
+
+        if gate_out is not None:
+            pre_output = pre_output * gate_out
+
+        return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
 
 
 class RemixedFeedForward(nn.Module):
@@ -714,6 +733,10 @@ class GPT(nn.Module):
         self.moe_router_dim = config.moe_router_dim
         self.moe_embed_dim = config.moe_embed_dim
         self.use_remix_linear = config.use_remix_linear
+        # Auto-scale context_dim with model width if ratio is set
+        if config.use_remix_linear and getattr(config, 'remix_context_dim_ratio', 0) > 0:
+            config.remix_context_dim = max(config.remix_context_dim, config.n_embd // config.remix_context_dim_ratio)
+            print0(f"remix_context_dim auto-scaled to {config.remix_context_dim} (n_embd={config.n_embd} // ratio={config.remix_context_dim_ratio})")
         self.remix_context_dim = config.remix_context_dim
         self.remix_basis_size = config.remix_basis_size
         self.use_pos_embed = config.use_pos_embed
@@ -790,8 +813,17 @@ class GPT(nn.Module):
             # Fix 1A: per-layer context updaters — zero-init Linears that add a layer-specific
             # delta to the base context, allowing each block to condition on its own residual state.
             if getattr(config, 'use_layer_context', True):
+                # Improved: 2-layer MLP updaters instead of single linear.
+                # Second layer is zero-init (in init_weights) so initial behaviour
+                # matches the no-updater baseline; capacity allows real evolution.
+                ctx_dim = self.remix_context_dim
+                ctx_hidden = max(ctx_dim, ctx_dim * 2)
                 self.context_updaters = nn.ModuleList([
-                    Linear(config.n_embd, self.remix_context_dim, bias=False)
+                    nn.Sequential(
+                        Linear(config.n_embd, ctx_hidden, bias=True),
+                        nn.GELU(),
+                        Linear(ctx_hidden, ctx_dim, bias=True),
+                    )
                     for _ in range(config.n_layer)
                 ])
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
@@ -838,16 +870,18 @@ class GPT(nn.Module):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
                     torch.nn.init.zeros_(sub.bias)
-                    # Initialize modulator: final layer bias to 2.0 to start with open gates
-                    for m in sub.context_modulator.modules():
-                        if isinstance(m, (Linear, nn.Linear)):
+                    if sub.use_context:
+                        # basis_modulator: MLP — xavier throughout, final bias=2.0 for open gates
+                        linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
+                        for m in linears:
                             torch.nn.init.xavier_uniform_(m.weight)
-                            if m.bias is not None:
-                                torch.nn.init.zeros_(m.bias)
-                    # Force final bias to 2.0
-                    last_linear = [m for m in sub.context_modulator.modules() if isinstance(m, (Linear, nn.Linear))][-1]
-                    torch.nn.init.constant_(last_linear.bias, 2.0)
-                    continue # Skip further processing of this module's sub-components here
+                            if m.bias is not None: torch.nn.init.zeros_(m.bias)
+                        if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
+                        # output_modulator: single linear — xavier, bias=2.0 for open gates
+                        torch.nn.init.xavier_uniform_(sub.output_modulator.weight)
+                        if sub.output_modulator.bias is not None:
+                            torch.nn.init.constant_(sub.output_modulator.bias, 2.0)
+                    continue  # Skip further processing of this module's sub-components here
 
                 if isinstance(sub, ImprovedContextAwareRouter):
                     torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)
@@ -922,10 +956,21 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(self.embedding_model.expert_codes)
         if self.context_manager is not None:
             _init_research_module(self.context_manager)
-        # Fix 1A: zero-init context_updaters so initial behavior is identical to static context
+        # Fix 1A: zero-init the *last* linear in each context_updater MLP so initial
+        # behaviour is identical to static context (delta starts at zero)
         if self.context_updaters is not None:
             for updater in self.context_updaters:
-                torch.nn.init.zeros_(updater.weight)
+                # updater is now a Sequential(Linear, GELU, Linear)
+                linears = [m for m in updater.modules() if isinstance(m, (Linear, nn.Linear))]
+                # Xavier init first layer, zero-init last layer for identity-start
+                if len(linears) >= 1:
+                    torch.nn.init.xavier_uniform_(linears[0].weight)
+                    if linears[0].bias is not None:
+                        torch.nn.init.zeros_(linears[0].bias)
+                if len(linears) >= 2:
+                    torch.nn.init.zeros_(linears[-1].weight)
+                    if linears[-1].bias is not None:
+                        torch.nn.init.zeros_(linears[-1].bias)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
