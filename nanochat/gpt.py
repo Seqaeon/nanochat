@@ -219,7 +219,7 @@ class ImprovedContextAwareRouter(nn.Module):
             # .contiguous() lets SDPA pick Flash Attention when available.
             q = q_vec.view(1, 1, 1, dim).expand(batch_size, 1, seq_len, dim).contiguous()
             # Non-causal: each routing query attends to all T context tokens.
-            out = F.scaled_dot_product_attention(q, k, k, is_causal=False)  # (B, 1, T, D)
+            out = F.scaled_dot_product_attention(q, k, k, is_causal=True)  # (B, 1, T, D)
             outputs.append(out)
 
         # (B, Q, T, D) → mean across Q routing queries → (B, T, D)
