@@ -158,22 +158,49 @@ else
 fi
 
 python -m nanochat.report reset
-python -m nanochat.dataset -n 8 
 
-python -m nanochat.dataset -n $MAX_SHARDS &
-DATASET_DOWNLOAD_PID=$!
-#
-if [ ! -f "$NANOCHAT_BASE_DIR/tokenizer/tokenizer.pkl" ]; then
-    python -m scripts.tok_train
-    # evaluate the tokenizer (report compression ratio etc.)
-    python -m scripts.tok_eval
+# ── 5. One-time data + tokenizer setup ──────────────────────────────────────────
+# Resolve directories for existence checks
+CHECK_DATA_DIR="${DATA_DIR_FLAG:-$NANOCHAT_BASE_DIR/base_data_climbmix}"
+DATA_OPT=""
+[ -n "${DATA_DIR_FLAG:-}" ] && DATA_OPT="--data-dir $DATA_DIR_FLAG"
+
+TOK_OPT=""
+[ -n "${TOKENIZER_DIR_FLAG:-}" ] && TOK_OPT="--tokenizer-dir $TOKENIZER_DIR_FLAG"
+TOKENIZER_CHECK_DIR="${TOKENIZER_DIR_FLAG:-$NANOCHAT_BASE_DIR/tokenizer}"
+
+# 1. Dataset existence check
+# We check for the last requested shard to avoid redundant "skipping" logs
+LAST_SHARD_IDX=$((MAX_SHARDS - 1))
+LAST_SHARD_FILE=$(printf "shard_%05d.parquet" $LAST_SHARD_IDX)
+VAL_SHARD_FILE="shard_06542.parquet"
+
+DATASET_DOWNLOAD_PID=""
+if [ -f "$CHECK_DATA_DIR/$LAST_SHARD_FILE" ] && [ -f "$CHECK_DATA_DIR/$VAL_SHARD_FILE" ]; then
+    echo "Dataset (up to $MAX_SHARDS shards) already exists in $CHECK_DATA_DIR, skipping download."
 else
-    echo "Tokenizer already exists in $NANOCHAT_BASE_DIR/tokenizer, skipping training."
+    echo "Dataset incomplete. Downloading $MAX_SHARDS shards to $CHECK_DATA_DIR..."
+    mkdir -p "$CHECK_DATA_DIR"
+    # Download first 8 shards synchronously so we have something to start with
+    python -m nanochat.dataset -n 8 $DATA_OPT
+    # Download the rest in background, quieted to a log file
+    python -m nanochat.dataset -n $MAX_SHARDS $DATA_OPT > "${ROOT_OUT_DIR}/dataset_download.log" 2>&1 &
+    DATASET_DOWNLOAD_PID=$!
 fi
 
-#
-echo "Waiting for dataset download to complete..."
-wait $DATASET_DOWNLOAD_PID
+# 2. Tokenizer existence check
+if [ ! -f "$TOKENIZER_CHECK_DIR/tokenizer.pkl" ]; then
+    echo "Tokenizer not found in $TOKENIZER_CHECK_DIR, training..."
+    python -m scripts.tok_train $TOK_OPT $DATA_OPT
+    python -m scripts.tok_eval $TOK_OPT $DATA_OPT
+else
+    echo "Tokenizer already exists in $TOKENIZER_CHECK_DIR, skipping training."
+fi
+
+if [ -n "$DATASET_DOWNLOAD_PID" ]; then
+    echo "Waiting for background dataset download to complete..."
+    wait $DATASET_DOWNLOAD_PID
+fi
 
 
 for DEPTH in "$@"; do
