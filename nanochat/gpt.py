@@ -53,11 +53,11 @@ class GPTConfig:
     # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
     # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
     # Set to 0 to use the fixed remix_context_dim value instead.
-    remix_context_dim_ratio: int = 0
+    remix_context_dim_ratio: int = 6
     remix_basis_size: int = 64
     # Rank of the low-rank output gate. Smaller r = more stable at long T.
     # r=8 works well from T=64 to T=2048. Increase to 16 only if needed.
-    remix_output_gate_rank: int = 8
+    remix_output_gate_rank: int = 16
     remixed_linear_kwargs: dict | None = None
     use_pos_embed: bool = False
     moe_use_abs_pos_embed: bool = False
@@ -80,7 +80,7 @@ class GPTConfig:
                                       # now carry the long-range signal instead.
     router_causal: bool = True
     router_num_heads: int = 4
-    router_num_queries: int = 8
+    router_num_queries: int = 16
     router_n_layers: int = 2
     router_use_vocab_prior: bool = False
 
