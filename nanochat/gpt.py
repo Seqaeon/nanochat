@@ -55,6 +55,16 @@ class GPTConfig:
     use_pos_embed: bool = False
     moe_use_abs_pos_embed: bool = False
 
+    # Fix 1A: per-layer context updaters for remix_linear (zero-init deltas applied at each block)
+    use_layer_context: bool = True
+    # Fix 1B: auto-scale basis_size to max(remix_basis_size, in_features // 4) to prevent rank bottleneck
+    scale_basis_size: bool = True
+    # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
+    perm_expert_mode: str = 'low_rank'
+    # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
+    #          or block_size for factored mode (num_blocks = base_embed_dim // perm_rank)
+    perm_rank: int = 16
+
     # Shared context-aware router defaults used by embedding/context branches
     router_context_window: int = -1
     router_causal: bool = True
@@ -77,6 +87,12 @@ RESEARCH_ALLOWED_KEYS = {
     "use_pos_embed", "moe_use_abs_pos_embed",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
+    # Fix 1A
+    "use_layer_context",
+    # Fix 1B
+    "scale_basis_size",
+    # Fix 1D
+    "perm_expert_mode", "perm_rank",
 }
 
 
@@ -143,15 +159,25 @@ class ImprovedContextAwareRouter(nn.Module):
         return torch.abs(pos_diff) > window_half
 
     def _multi_head_attention(self, x):
+        # Fix 1C: SDPA + QK-norm. Mirrors the main model for stability at scale.
         batch_size, seq_len, _ = x.shape
         qkv = self.qkv_proj(x).reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        mask = self._create_mask(seq_len, x.device).unsqueeze(0).unsqueeze(0)
-        attn_scores = attn_scores.masked_fill(mask, float('-inf'))
-        attn_weights = F.softmax(attn_scores, dim=-1)
-        context = torch.matmul(attn_weights, v)
+        # QK-norm stabilises attention logit scale at larger router_dims
+        q = F.rms_norm(q, (q.size(-1),))
+        k = F.rms_norm(k, (k.size(-1),))
+        # Use fused SDPA when causal+full-context (most common case)
+        is_full_causal = self.causal and (self.context_window == -1 or self.context_window >= seq_len)
+        if is_full_causal:
+            context = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            # Windowed or non-causal: fall back to explicit masked attention
+            attn_scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+            mask = self._create_mask(seq_len, x.device).unsqueeze(0).unsqueeze(0)
+            attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+            attn_weights = F.softmax(attn_scores.float(), dim=-1).to(q.dtype)
+            context = torch.matmul(attn_weights, v)
         context = context.transpose(1, 2).reshape(batch_size, seq_len, self.router_dim)
         return self.out_proj(context) + x
 
@@ -181,12 +207,19 @@ class ImprovedContextAwareRouter(nn.Module):
 
 
 class DirectContextualEmbedding(nn.Module):
-    """Direct contextual embedding with a configurable context-aware router."""
+    """Direct contextual embedding with context-aware routing over K learned expert codes.
+
+    Fix 1E: Routes among ``num_experts`` (K, typically 8) learned direction vectors rather
+    than misusing num_experts=dim. Each token's embedding = seed + router-weighted expert code.
+    This is parameter-efficient (K×dim extra params) and conceptually correct per the paper.
+    """
 
     def __init__(
         self,
         vocab_size,
         dim,
+        num_experts,
+        router_dim,
         context_window,
         dropout=0.0,
         router_causal=True,
@@ -197,10 +230,13 @@ class DirectContextualEmbedding(nn.Module):
     ):
         super().__init__()
         self.seed_embeddings = nn.Embedding(vocab_size, dim)
+        # K learned expert code vectors (context-independent, shared across vocab)
+        # Small: K × dim params (e.g. 8 × 256 = 2048)
+        self.expert_codes = nn.Parameter(torch.zeros(num_experts, dim))
         self.router = ImprovedContextAwareRouter(
             vocab_size=vocab_size,
-            num_experts=dim,
-            router_dim=dim,
+            num_experts=num_experts,   # correctly K, not dim
+            router_dim=router_dim,
             full_embed_dim=dim,
             context_window=context_window,
             causal=router_causal,
@@ -213,15 +249,27 @@ class DirectContextualEmbedding(nn.Module):
         self.out_norm = nn.LayerNorm(dim)
 
     def forward(self, input_ids):
-        seeds = self.seed_embeddings(input_ids)
-        remixed_embeds, _, _ = self.router(seeds, input_ids)
-        return self.out_norm(self.dropout(remixed_embeds)), {}
+        seeds = self.seed_embeddings(input_ids)                              # (B, T, dim)
+        expert_logits, adaptive_temp, _ = self.router(seeds, input_ids)     # (B, T, K)
+        expert_weights = F.softmax(expert_logits / adaptive_temp, dim=-1)   # (B, T, K)
+        # Context-modulated perturbation: weighted sum of K expert codes
+        perturbation = torch.einsum('btk,kd->btd', expert_weights, self.expert_codes)  # (B, T, dim)
+        output = seeds + perturbation
+        return self.out_norm(self.dropout(output)), {'expert_weights': expert_weights}
 
 
 class PermutationMoE(nn.Module):
     """Permutation MoE embedding with configurable expert router defaults.
 
     Defaults to learned absolute positional embeddings (``moe_use_abs_pos_embed=True``).
+
+    Fix 1D: Supports three expert modes controlled by ``perm_expert_mode``:
+    - ``'full'``:     Original D×D selection matrix per expert (O(D²) cost).
+    - ``'low_rank'``: D×rank selection weights over learned rank basis vectors (O(D·rank)).
+                     rank = max(8, base_embed_dim // perm_rank) where perm_rank acts as divisor.
+    - ``'factored'``: Block-diagonal — D split into (D//perm_rank) blocks of perm_rank each.
+                     Independent perm_rank×perm_rank permutation per block (O(D·perm_rank)).
+    Fix 1H: adaptive_temp is clamped to [0.5, 2.1] to prevent routing collapse from near-zero temps.
     """
 
     def __init__(
@@ -241,23 +289,71 @@ class PermutationMoE(nn.Module):
         router_n_layers=2,
         router_use_vocab_prior=False,
         moe_use_abs_pos_embed=True,
+        perm_expert_mode='low_rank',
+        perm_rank=16,
     ):
         super().__init__()
         self.base_embed_dim = base_embed_dim
         self.num_experts = num_experts
         self.selection_mode = selection_mode
         self.allow_replacement = allow_replacement
+        self.perm_expert_mode = perm_expert_mode
         self.embeddings = nn.Embedding(vocab_size, base_embed_dim)
         self.position_embeddings = nn.Embedding(block_size, base_embed_dim) if moe_use_abs_pos_embed else None
-        self.dim_selectors = nn.ModuleList([
-            nn.Sequential(
-                Linear(base_embed_dim, router_dim, bias=False),
-                nn.LayerNorm(router_dim),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                Linear(router_dim, base_embed_dim * base_embed_dim, bias=False),
-            ) for _ in range(num_experts)
-        ])
+
+        D = base_embed_dim
+        if perm_expert_mode == 'full':
+            # Original: each expert outputs D×D logits (O(D²) cost)
+            self.perm_rank = D
+            self.dim_selectors = nn.ModuleList([
+                nn.Sequential(
+                    Linear(D, router_dim, bias=False),
+                    nn.LayerNorm(router_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    Linear(router_dim, D * D, bias=False),
+                ) for _ in range(num_experts)
+            ])
+        elif perm_expert_mode == 'low_rank':
+            # Fix 1D low_rank: D×rank selection weights + learned (rank, D) basis per expert
+            # rank = max(8, D // perm_rank)  — perm_rank acts as a divisor, e.g. perm_rank=16 ⇒ rank=D//16
+            r = max(8, D // perm_rank)
+            self.perm_rank = r
+            self.dim_selectors = nn.ModuleList([
+                nn.Sequential(
+                    Linear(D, router_dim, bias=False),
+                    nn.LayerNorm(router_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    Linear(router_dim, D * r, bias=False),  # D*rank outputs
+                ) for _ in range(num_experts)
+            ])
+            # Learned basis: (K, rank, D) — K sets of rank D-dimensional basis vectors
+            self.perm_basis = nn.ParameterList([
+                nn.Parameter(torch.randn(r, D) * (D ** -0.5))
+                for _ in range(num_experts)
+            ])
+        elif perm_expert_mode == 'factored':
+            # Fix 1D factored (block-diagonal): block_size=perm_rank, num_blocks=D//perm_rank
+            # perm_rank must evenly divide D; if not, round to nearest divisor.
+            bs = perm_rank
+            while D % bs != 0 and bs > 1:
+                bs -= 1
+            nb = D // bs
+            self.perm_rank = bs   # block_size stored in perm_rank attr
+            self.perm_num_blocks = nb
+            self.dim_selectors = nn.ModuleList([
+                nn.Sequential(
+                    Linear(D, router_dim, bias=False),
+                    nn.LayerNorm(router_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    Linear(router_dim, nb * bs * bs, bias=False),  # nb independent bs×bs matrices
+                ) for _ in range(num_experts)
+            ])
+        else:
+            raise ValueError(f"Unknown perm_expert_mode: {perm_expert_mode!r}. Use 'full', 'low_rank', or 'factored'.")
+
         self.expert_router = ImprovedContextAwareRouter(
             vocab_size=vocab_size,
             num_experts=num_experts,
@@ -275,28 +371,52 @@ class PermutationMoE(nn.Module):
         self.register_buffer('temperature', torch.tensor(1.0))
 
     def forward(self, input_ids):
-        batch_size, seq_len = input_ids.shape
+        B, T = input_ids.shape
+        D = self.base_embed_dim
         embeds = self.embeddings(input_ids)
         if self.position_embeddings is not None:
-            positions = torch.arange(seq_len, device=input_ids.device)
-            # Cap positions to block_size to avoid CUDA device-side assert if seq_len > block_size
+            positions = torch.arange(T, device=input_ids.device)
             positions = torch.clamp(positions, max=self.position_embeddings.num_embeddings - 1)
             embeds = embeds + self.position_embeddings(positions)
+
         expert_outputs = []
         for expert_idx in range(self.num_experts):
-            selection_logits = self.dim_selectors[expert_idx](embeds).view(batch_size, seq_len, self.base_embed_dim, self.base_embed_dim)
-            selection_logits = selection_logits.clamp(-30, 30)  # ← add before softmax
+            raw = self.dim_selectors[expert_idx](embeds)  # shape depends on mode
 
-            if self.selection_mode == 'hard' and not self.allow_replacement:
-                selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=True, dim=-1)
-            elif self.selection_mode == 'hard':
-                selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=False, dim=-1)
-            else:
-                selection_weights = F.softmax(selection_logits / self.temperature, dim=-1)
-            selected = torch.einsum('bloi,bli->blo', selection_weights, embeds)
+            if self.perm_expert_mode == 'full':
+                selection_logits = raw.view(B, T, D, D).clamp(-30, 30)
+                if self.selection_mode == 'hard' and not self.allow_replacement:
+                    selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=True, dim=-1)
+                elif self.selection_mode == 'hard':
+                    selection_weights = F.gumbel_softmax(selection_logits, tau=self.temperature, hard=False, dim=-1)
+                else:
+                    selection_weights = F.softmax(selection_logits / self.temperature, dim=-1)
+                selected = torch.einsum('bloi,bli->blo', selection_weights, embeds)
+
+            elif self.perm_expert_mode == 'low_rank':
+                r = self.perm_rank
+                # (B, T, D, r) selection weights: for each output dim, weights over r basis vectors
+                sel_w = F.softmax(raw.view(B, T, D, r).clamp(-30, 30) / self.temperature, dim=-1)
+                # Project embeds onto rank-r basis: (B, T, r) scalar projections
+                basis = self.perm_basis[expert_idx]  # (r, D)
+                basis_proj = torch.einsum('bti,ri->btr', embeds, basis)  # (B, T, r)
+                # selected[b,t,d] = sum_r( sel_w[b,t,d,r] * basis_proj[b,t,r] )
+                selected = torch.einsum('btdr,btr->btd', sel_w, basis_proj)  # (B, T, D)
+
+            else:  # factored
+                bs = self.perm_rank
+                nb = self.perm_num_blocks
+                selection_logits = raw.view(B, T, nb, bs, bs).clamp(-30, 30)
+                selection_weights = F.softmax(selection_logits / self.temperature, dim=-1)  # (B, T, nb, bs, bs)
+                embeds_blocked = embeds.view(B, T, nb, bs)
+                selected = torch.einsum('btnoi,btni->btno', selection_weights, embeds_blocked).reshape(B, T, D)
+
             expert_outputs.append(selected)
-        expert_outputs = torch.stack(expert_outputs, dim=2)
+
+        expert_outputs = torch.stack(expert_outputs, dim=2)  # (B, T, K, D)
         expert_logits, adaptive_temp, _ = self.expert_router(embeds, input_ids)
+        # Fix 1H: clamp adaptive_temp from below to prevent near-zero softmax collapse
+        adaptive_temp = adaptive_temp.clamp(min=0.5)
         expert_weights = F.softmax(expert_logits / (self.temperature * adaptive_temp), dim=-1)
         expert_weights = self.dropout(expert_weights)
         output = (expert_weights.unsqueeze(-1) * expert_outputs).sum(dim=2)
@@ -342,10 +462,14 @@ class GlobalContextManager(nn.Module):
 
 
 class RemixedLinear(nn.Module):
-    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None):
+    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True):
         super().__init__()
         if remixed_linear_kwargs is None:
             remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
+        # Fix 1B: prevent rank bottleneck by scaling basis_size with in_features
+        # Ensures basis is never a worse bottleneck than a 4:1 compression ratio
+        if scale_basis:
+            basis_size = max(basis_size, in_features // 4)
         self.basis_size = basis_size
         self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
@@ -389,8 +513,9 @@ class RemixedFeedForward(nn.Module):
     def __init__(self, config):
         super().__init__()
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
-        self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
-        self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        scale = getattr(config, 'scale_basis_size', True)
+        self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
 
     def forward(self, x, context_state):
         x = self.c_fc(x, context_state)
@@ -410,10 +535,11 @@ class RemixedMultiAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         self.ve_gate_channels = min(self.n_embd, 32)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
-        self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
-        self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
-        self.c_v = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
-        self.c_proj = RemixedLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs)
+        scale = getattr(config, 'scale_basis_size', True)
+        self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        self.c_v = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        self.c_proj = RemixedLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
@@ -619,11 +745,17 @@ class GPT(nn.Module):
                     router_n_layers=config.router_n_layers,
                     router_use_vocab_prior=config.router_use_vocab_prior,
                     moe_use_abs_pos_embed=config.moe_use_abs_pos_embed,
+                    # Fix 1D: expert mode selection
+                    perm_expert_mode=getattr(config, 'perm_expert_mode', 'low_rank'),
+                    perm_rank=getattr(config, 'perm_rank', 16),
                 )
             else:
                 self.embedding_model = DirectContextualEmbedding(
                     vocab_size=padded_vocab_size,
                     dim=self.moe_embed_dim,
+                    # Fix 1E: pass correct num_experts (K) and router_dim
+                    num_experts=self.moe_num_experts,
+                    router_dim=self.moe_router_dim,
                     context_window=config.router_context_window,
                     dropout=config.dropout,
                     router_causal=config.router_causal,
@@ -634,6 +766,7 @@ class GPT(nn.Module):
                 )
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
         self.context_manager = None
+        self.context_updaters = None
         if self.use_remix_linear:
             self.context_manager = GlobalContextManager(
                 vocab_size=padded_vocab_size,
@@ -646,6 +779,13 @@ class GPT(nn.Module):
                 router_n_layers=config.router_n_layers,
                 router_use_vocab_prior=config.router_use_vocab_prior,
             )
+            # Fix 1A: per-layer context updaters — zero-init Linears that add a layer-specific
+            # delta to the base context, allowing each block to condition on its own residual state.
+            if getattr(config, 'use_layer_context', True):
+                self.context_updaters = nn.ModuleList([
+                    Linear(config.n_embd, self.remix_context_dim, bias=False)
+                    for _ in range(config.n_layer)
+                ])
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -769,8 +909,15 @@ class GPT(nn.Module):
 
         if self.embedding_model is not None:
             _init_research_module(self.embedding_model)
+            # Fix 1E: zero-init expert_codes so initial behavior = standard seed embedding
+            if hasattr(self.embedding_model, 'expert_codes'):
+                torch.nn.init.zeros_(self.embedding_model.expert_codes)
         if self.context_manager is not None:
             _init_research_module(self.context_manager)
+        # Fix 1A: zero-init context_updaters so initial behavior is identical to static context
+        if self.context_updaters is not None:
+            for updater in self.context_updaters:
+                torch.nn.init.zeros_(updater.weight)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -890,6 +1037,8 @@ class GPT(nn.Module):
             research += sum(p.numel() for p in self.embedding_model.parameters())
         if self.context_manager is not None:
             research += sum(p.numel() for p in self.context_manager.parameters())
+        if self.context_updaters is not None:
+            research += sum(p.numel() for p in self.context_updaters.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
@@ -914,6 +1063,9 @@ class GPT(nn.Module):
             candidate_matrix_params += list(self.context_manager.parameters())
         if self.embedding_model is not None:
             candidate_matrix_params += list(self.embedding_model.parameters())
+        # Fix 1A: context_updaters are n_embd×context_dim matrices — route to Muon
+        if self.context_updaters is not None:
+            candidate_matrix_params += list(self.context_updaters.parameters())
 
         # Muon is only defined for matrix-like tensors (>=2D).
         # Remixed/research branches introduce 1D params (biases/LN scales), route those to AdamW.
@@ -994,11 +1146,19 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        context_state = self.context_manager(x, idx) if self.context_manager is not None else None
+        # Fix 1A: compute base context once from initial embedding; per-layer deltas added below
+        base_context = self.context_manager(x, idx) if self.context_manager is not None else None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             if self.use_remix_linear:
+                if self.context_updaters is not None:
+                    # Per-layer context: base context + layer-specific delta from current residual x
+                    # Each updater is zero-init so initial behavior matches the static-context baseline
+                    delta = self.context_updaters[i](norm(x))
+                    context_state = base_context + delta
+                else:
+                    context_state = base_context
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)

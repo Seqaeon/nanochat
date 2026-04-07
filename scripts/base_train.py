@@ -75,6 +75,17 @@ parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+# Fix 1A: per-layer context updaters
+parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
+# Fix 1B: basis scaling
+parser.add_argument("--scale-basis-size", type=int, default=1, choices=[0, 1], help="auto-scale RemixedLinear basis_size to max(basis_size, in_features//4) (Fix 1B)")
+# Fix 1D: PermutationMoE expert mode
+parser.add_argument("--perm-expert-mode", type=str, default="low_rank", choices=["full", "low_rank", "factored"], help="PermutationMoE expert mode: 'full' (original D×D), 'low_rank', or 'factored' (Fix 1D)")
+parser.add_argument("--perm-rank", type=int, default=16, help="rank divisor for 'low_rank' mode or block size for 'factored' mode (Fix 1D)")
+# Fix 4C: gradient clipping
+parser.add_argument("--max-grad-norm", type=float, default=1.0, help="gradient norm clip threshold (-1 to disable, Fix 4C)")
+# Fix 1H: PermutationMoE temperature scheduling
+parser.add_argument("--perm-temp-start", type=float, default=5.0, help="initial PermutationMoE temperature (decays to 1.0 over first 50%% of training, Fix 1H)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
 parser.add_argument("--use-onecycle", type=int, default=None, choices=[0, 1], help="alias for --research-onecycle")
 parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-only warmup ratio/pct_start for OneCycle")
@@ -225,6 +236,13 @@ def build_model_meta(depth):
             use_output_gate=bool(args.remix_use_output_gate),
             use_context=bool(args.remix_use_context),
         ),
+        # Fix 1A
+        use_layer_context=bool(getattr(args, 'use_layer_context', 1)),
+        # Fix 1B
+        scale_basis_size=bool(getattr(args, 'scale_basis_size', 1)),
+        # Fix 1D
+        perm_expert_mode=getattr(args, 'perm_expert_mode', 'low_rank'),
+        perm_rank=getattr(args, 'perm_rank', 16),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -540,6 +558,15 @@ def get_muon_momentum(it):
 def get_weight_decay(it):
     return weight_decay_scaled * (1 - it / num_iterations)
 
+# Fix 1H: PermutationMoE temperature scheduler
+# Exponentially decays from perm_temp_start -> 1.0 over the first 50% of training
+# Prevents early routing collapse from logit saturation and hard-argmax-like softmax behavior
+def get_perm_temperature(it):
+    t_start = args.perm_temp_start
+    t_end = 1.0
+    frac = min(it / max(num_iterations * 0.5, 1), 1.0)
+    return t_start * (t_end / t_start) ** frac
+
 # -----------------------------------------------------------------------------
 # Training loop
 
@@ -706,7 +733,17 @@ while True:
         scaler.step(optimizer)
         scaler.update()
     else:
+        # Fix 4C: gradient clipping before optimizer step (protects against large gradients
+        # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
+        if args.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(orig_model.parameters(), args.max_grad_norm)
         optimizer.step()
+    # Fix 1H: update PermutationMoE temperature each step
+    if use_research_mode:
+        perm_temp = get_perm_temperature(step)
+        for module in orig_model.modules():
+            if hasattr(module, 'temperature') and isinstance(getattr(module, 'temperature'), torch.Tensor):
+                module.temperature.fill_(perm_temp)
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()
