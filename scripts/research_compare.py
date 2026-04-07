@@ -34,9 +34,13 @@ def run_training_sweep(args):
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
     max_seq_len = 2048
-    device_batch_size = {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
-    total_batch_size = 524288
-    eval_every = 1000
+    
+    # Use overridden parameters if provided, else use defaults
+    device_batch_size = args.device_batch_size if args.device_batch_size > 0 else {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
+    total_batch_size = args.total_batch_size if args.total_batch_size > 0 else 524288
+    eval_every = args.eval_every
+    log_every = args.log_every
+    
     warm_up_ratio = args.warmup_ratio
     adam_beta2 = 0.99
     
@@ -49,9 +53,10 @@ def run_training_sweep(args):
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size), # standard for reference
         "--target-tokens", str(target_tokens),
-        "--eval-every", "-1",        # We only evaluate at end for speed
-        "--core-metric-every", "-1",
-#        "--sample-every", "-1",
+        "--eval-every", str(eval_every),        
+        "--log-every", str(log_every),
+        "--core-metric-every", str(args.core_metric_every),
+        "--save-every", str(args.save_every),
         "--warmup-ratio", str(warm_up_ratio),    # Safer for research models
         "--adam-beta2", str(adam_beta2),     # Matches notebook
         "--research-warmup-ratio", str(args.research_warmup_ratio),
@@ -248,6 +253,15 @@ if __name__ == "__main__":
     parser.add_argument("--models", type=str, default="all", help="Comma-separated list of models to run (e.g. 'base,remixed-linear'), or 'all'")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=use base schedule")
+    
+    # New flags for run configuration
+    parser.add_argument("--device-batch-size", type=int, default=-1, help="override per-device batch size")
+    parser.add_argument("--total-batch-size", type=int, default=-1, help="override total batch size")
+    parser.add_argument("--log-every", type=int, default=1, help="logging frequency")
+    parser.add_argument("--eval-every", type=int, default=-1, help="evaluation frequency (-1 = at end)")
+    parser.add_argument("--save-every", type=int, default=-1, help="checkpoint frequency")
+    parser.add_argument("--core-metric-every", type=int, default=-1, help="core metric frequency")
+    
     args = parser.parse_args()
     
     run_training_sweep(args)

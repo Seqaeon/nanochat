@@ -30,6 +30,12 @@ if [ $# -eq 0 ]; then
     echo "  --target-tokens N   Explicit token budget per run (default: auto-estimated)"
     echo "  --max-shards N      Step through up to N data shards"
     echo "  --models M1,M2,...  Comma-separated list of models to run (e.g. 'base,remixed-linear')"
+    echo "  --device-batch-size N  Override per-device batch size"
+    echo "  --total-batch-size N   Override total batch size"
+    echo "  --log-every N       Logging frequency"
+    echo "  --eval-every N      Evaluation frequency (-1 = at end)"
+    echo "  --save-every N      Checkpoint frequency"
+    echo "  --core-metric-every N Core metric frequency"
     echo ""
     echo "Example: ./scripts/research_sweep.sh --models base,remixed-linear 12"
     exit 1
@@ -53,6 +59,30 @@ while [[ $# -gt 0 ]]; do
             ;;
         --models)
             EXTRA_ARGS+=("--models" "$2")
+            shift 2
+            ;;
+        --device-batch-size)
+            EXTRA_ARGS+=("--device-batch-size" "$2")
+            shift 2
+            ;;
+        --total-batch-size)
+            EXTRA_ARGS+=("--total-batch-size" "$2")
+            shift 2
+            ;;
+        --log-every)
+            EXTRA_ARGS+=("--log-every" "$2")
+            shift 2
+            ;;
+        --eval-every)
+            EXTRA_ARGS+=("--eval-every" "$2")
+            shift 2
+            ;;
+        --save-every)
+            EXTRA_ARGS+=("--save-every" "$2")
+            shift 2
+            ;;
+        --core-metric-every)
+            EXTRA_ARGS+=("--core-metric-every" "$2")
             shift 2
             ;;
         --max-shards)
