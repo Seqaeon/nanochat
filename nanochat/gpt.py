@@ -193,15 +193,45 @@ class ImprovedContextAwareRouter(nn.Module):
         return self.out_proj(context) + x
 
     def _cross_attention(self, queries, context):
+        """Cross-attention from learned routing_queries into the token context.
+
+        Causal fix: position t may only attend to context positions 0..t.
+        We achieve this by computing, for each target position t, the
+        cross-attention of all routing_queries against context[0..t] via a
+        lower-triangular mask.  The num_queries summaries are then mean-pooled
+        to give one context vector per position — but now that vector depends
+        only on past/present tokens, eliminating future-token leakage.
+
+        Shape journey:
+          queries:      (B, Q, D)
+          context:      (B, T, D)
+          attn_scores:  (B, Q, T)  — queries attend over time axis
+          causal_mask:  (T, T)     broadcast across B,Q dims via (1,1,T,T) slice
+          attended:     (B, Q, T, D) — for each target position t, Q summaries
+          out:          (B, T, D)  — mean-pool Q summaries, one vector per position
+        """
         batch_size, seq_len, dim = context.shape
         num_queries = queries.shape[0]
-        # Match dtypes
-        queries = queries.to(dtype=context.dtype)
-        queries = queries.unsqueeze(0).expand(batch_size, num_queries, dim)
-        attn_scores = torch.matmul(queries, context.transpose(1, 2)) / (dim ** 0.5)
-        attn_weights = torch.softmax(attn_scores, dim=-1)
-        attended = torch.matmul(attn_weights, context)
-        return attended.mean(dim=1).unsqueeze(1).expand(-1, seq_len, -1)
+        queries = queries.to(dtype=context.dtype)  # (Q, D)
+
+        # Expand for batch and target-position axes: (B, 1, Q, D)
+        q = queries.unsqueeze(0).unsqueeze(0).expand(batch_size, seq_len, num_queries, dim)
+        # context as keys/values for each target position: (B, T, T, D)
+        # We need attn_scores[b, t, q, k] = q[b,t,q,:] · context[b,k,:] / sqrt(D)
+        # Efficient: (B, T, Q, D) @ (B, 1, D, T) → (B, T, Q, T)
+        k = context.unsqueeze(1)                             # (B, 1, T, D)
+        attn_scores = torch.matmul(q, k.transpose(-1, -2)) / (dim ** 0.5)  # (B, T, Q, T)
+
+        # Causal mask: position t can only attend to positions k <= t
+        # mask[t, k] = True means "block position k from position t's view"
+        causal_mask = torch.ones(seq_len, seq_len, device=context.device, dtype=torch.bool).triu(diagonal=1)
+        # Broadcast over (B, T, Q, T) — mask is applied on the last dim (key positions)
+        attn_scores = attn_scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(2), float('-inf'))
+
+        attn_weights = torch.softmax(attn_scores, dim=-1)  # (B, T, Q, T)
+        attended = torch.matmul(attn_weights, context.unsqueeze(1))  # (B, T, Q, D)
+        # Mean-pool across Q routing queries → one summary vector per position
+        return attended.mean(dim=2)  # (B, T, D)
 
     def forward(self, full_embeds, input_ids=None):
         dtype = full_embeds.dtype
