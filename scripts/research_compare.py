@@ -35,9 +35,8 @@ def run_training_sweep(args):
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
     max_seq_len = 2048
     
-    # Use overridden parameters if provided, else use defaults
     device_batch_size = args.device_batch_size if args.device_batch_size > 0 else {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
-    total_batch_size = args.total_batch_size if args.total_batch_size > 0 else 524288
+    total_batch_size = args.total_batch_size if args.total_batch_size > 0 else 262144
     eval_every = args.eval_every
     log_every = args.log_every
     

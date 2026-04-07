@@ -51,7 +51,7 @@ def model_dims(depth: int) -> tuple[int, int, int, int]:
     research_dim is ~1/8th of model_dim, rounded up to the nearest head_dim
     multiple, capped at model_dim.
     """
-    aspect_ratio = 64
+    aspect_ratio = 57 if depth == 9 else 64
     head_dim = 128
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
