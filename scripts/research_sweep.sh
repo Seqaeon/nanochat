@@ -37,6 +37,7 @@ if [ $# -eq 0 ]; then
     echo "  --save-every N      Checkpoint frequency"
     echo "  --core-metric-every N Core metric frequency"
     echo "  --skip-core         Completely disable CORE metric evaluation"
+    echo "  --no-mu-p           Disable mu-P LR scaling (default: True for research)"
     echo ""
     echo "Example: ./scripts/research_sweep.sh --models base,remixed-linear 12"
     exit 1
@@ -60,6 +61,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-core)
             EXTRA_ARGS+=("--skip-core")
+            shift
+            ;;
+        --no-mu-p)
+            EXTRA_ARGS+=("--no-mu-p")
             shift
             ;;
         --models)

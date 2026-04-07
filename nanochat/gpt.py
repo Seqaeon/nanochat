@@ -191,10 +191,12 @@ class ImprovedContextAwareRouter(nn.Module):
         return attended.mean(dim=1).unsqueeze(1).expand(-1, seq_len, -1)
 
     def forward(self, full_embeds, input_ids=None):
+        dtype = full_embeds.dtype
         x = self.embed_proj(full_embeds)
         for _ in range(self.n_layers):
             x = self._multi_head_attention(x)
-        x = self.ln(x)
+        # Fix: ensure x matches LN's parameter dtype to avoid RuntimeError in generation/inference
+        x = self.ln(x.to(dtype=self.ln.weight.dtype)).to(dtype=dtype)
         self_attn_logits = self.expert_proj(x)
         cross_attn_logits = self.cross_expert_proj(self._cross_attention(self.routing_queries, x))
         alpha = torch.sigmoid(self.alpha_gate(x))
@@ -253,9 +255,11 @@ class DirectContextualEmbedding(nn.Module):
         expert_logits, adaptive_temp, _ = self.router(seeds, input_ids)     # (B, T, K)
         expert_weights = F.softmax(expert_logits / adaptive_temp, dim=-1)   # (B, T, K)
         # Context-modulated perturbation: weighted sum of K expert codes
-        perturbation = torch.einsum('btk,kd->btd', expert_weights, self.expert_codes)  # (B, T, dim)
+        # Ensure codes match weights/seeds dtype for einsum and addition
+        expert_codes = self.expert_codes.to(dtype=seeds.dtype)
+        perturbation = torch.einsum('btk,kd->btd', expert_weights.to(dtype=seeds.dtype), expert_codes)  # (B, T, dim)
         output = seeds + perturbation
-        return self.out_norm(self.dropout(output)), {'expert_weights': expert_weights}
+        return self.out_norm(output), {'expert_weights': expert_weights}
 
 
 class PermutationMoE(nn.Module):
@@ -419,7 +423,9 @@ class PermutationMoE(nn.Module):
         adaptive_temp = adaptive_temp.clamp(min=0.5)
         expert_weights = F.softmax(expert_logits / (self.temperature * adaptive_temp), dim=-1)
         expert_weights = self.dropout(expert_weights)
-        output = (expert_weights.unsqueeze(-1) * expert_outputs).sum(dim=2)
+        # expert_outputs is (B, T, K, D), expert_weights is (B, T, K)
+        # Match dtypes for final summation
+        output = (expert_weights.to(dtype=expert_outputs.dtype).unsqueeze(-1) * expert_outputs).sum(dim=2)
         return self.ln(output), {'expert_weights': expert_weights}
 
 

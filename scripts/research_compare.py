@@ -61,6 +61,7 @@ def run_training_sweep(args):
         "--adam-beta2", str(adam_beta2),     # Matches notebook
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
+        "--disable-mu-p", # Research branches use absolute optimized LRs
     ]
     if args.compile:
         common_args.append("--compile")
@@ -262,6 +263,7 @@ if __name__ == "__main__":
     parser.add_argument("--save-every", type=int, default=-1, help="checkpoint frequency")
     parser.add_argument("--core-metric-every", type=int, default=-1, help="core metric frequency")
     parser.add_argument("--skip-core", action="store_true", help="completely disable CORE metric evaluation")
+    parser.add_argument("--disable-mu-p", action=argparse.BooleanOptionalAction, default=True, help="disable mu-P scaling (default: True for research sweeps)")
     
     args = parser.parse_args()
     
