@@ -34,7 +34,7 @@ def run_training_sweep(args):
     print("=" * 64)
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
-    max_seq_len = 2048
+    max_seq_len = args.sequence_len
     
     device_batch_size = args.device_batch_size if args.device_batch_size > 0 else {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
     total_batch_size = args.total_batch_size if args.total_batch_size > 0 else 262144
@@ -275,6 +275,7 @@ if __name__ == "__main__":
     parser.add_argument("--core-metric-every", type=int, default=-1, help="core metric frequency")
     parser.add_argument("--skip-core", action="store_true", help="completely disable CORE metric evaluation")
     parser.add_argument("--disable-mu-p", action=argparse.BooleanOptionalAction, default=True, help="disable mu-P scaling (default: True for research sweeps)")
+    parser.add_argument("--sequence-len", type=int, default=2048, help="override max sequence length")
     
     args = parser.parse_args()
     

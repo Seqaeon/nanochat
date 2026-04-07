@@ -104,6 +104,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--target-tokens" "$2")
             shift 2
             ;;
+        --sequence-len)
+            EXTRA_ARGS+=("--sequence-len" "$2")
+            shift 2
+            ;;
         --use-onecycle)
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
