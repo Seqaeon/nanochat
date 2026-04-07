@@ -791,7 +791,7 @@ class GPT(nn.Module):
             # delta to the base context, allowing each block to condition on its own residual state.
             if getattr(config, 'use_layer_context', True):
                 self.context_updaters = nn.ModuleList([
-                    Linear(self.remix_context_dim, self.remix_context_dim, bias=False)
+                    Linear(config.n_embd, self.remix_context_dim, bias=False)
                     for _ in range(config.n_layer)
                 ])
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
@@ -1154,18 +1154,19 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        # Fix 1A: compute base context once from initial embedding
+        # Fix 1A: compute base context once from initial embedding; per-layer deltas added below
         base_context = self.context_manager(x, idx) if self.context_manager is not None else None
-        context_state = base_context
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             if self.use_remix_linear:
                 if self.context_updaters is not None:
-                    # Pure context residual stream: update context state from its own historical state
+                    # Per-layer context: base context + layer-specific delta from current residual x
                     # Each updater is zero-init so initial behavior matches the static-context baseline
-                    delta = self.context_updaters[i](norm(context_state))
-                    context_state = context_state + delta
+                    delta = self.context_updaters[i](norm(x))
+                    context_state = base_context + delta
+                else:
+                    context_state = base_context
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
