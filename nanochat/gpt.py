@@ -1211,6 +1211,8 @@ class GPT(nn.Module):
         if self.context_updaters is not None:
             research += sum(p.numel() for p in self.context_updaters.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        if self.base_ctx_scales is not None:
+            scalars += self.base_ctx_scales.numel()
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
