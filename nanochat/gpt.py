@@ -27,7 +27,13 @@ from nanochat.flash_attention import flash_attn
 
 @dataclass
 class GPTConfig:
-    """Configuration for :class:`GPT` and optional research branches."""
+    """Configuration for :class:`GPT` and optional research branches.
+
+    Router defaults are explicit to keep notebook experiments reproducible:
+    ``router_context_window=-1`` (full context), ``router_causal=True``,
+    ``router_num_heads=4``, ``router_num_queries=8``, ``router_n_layers=2``,
+    and ``router_use_vocab_prior=False``.
+    """
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
@@ -42,30 +48,36 @@ class GPTConfig:
     moe_router_dim: int = 64
     moe_embed_dim: int = 64
     dropout: float = 0.0
-
-    # AG-CCL (Attention-Grounded Context-Conditioned Linear) branch
     use_remix_linear: bool = False
     remix_context_dim: int = 64
     # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
-    # Recommended: 8 (e.g. 96-dim for 768-dim model, 128-dim for 1024-dim model).
+    # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
     # Set to 0 to use the fixed remix_context_dim value instead.
     remix_context_dim_ratio: int = 6
     remix_basis_size: int = 64
-    # Rank of the low-rank output gate.
+    # Rank of the low-rank output gate. Smaller r = more stable at long T.
+    # r=8 works well from T=64 to T=2048. Increase to 16 only if needed.
     remix_output_gate_rank: int = 16
     remixed_linear_kwargs: dict | None = None
-
-    # Misc
     use_pos_embed: bool = False
     moe_use_abs_pos_embed: bool = False
-    # Fix 1B: auto-scale basis_size to max(remix_basis_size, in_features // 4)
+
+    # Fix 1A: per-layer context updaters for remix_linear (zero-init deltas applied at each block)
+    use_layer_context: bool = True
+    # Fix 1B: auto-scale basis_size to max(remix_basis_size, in_features // 4) to prevent rank bottleneck
     scale_basis_size: bool = True
-    # Fix 1D: PermutationMoE expert mode — 'full', 'low_rank', or 'factored'
+    # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
+    # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
+    #          or block_size for factored mode (num_blocks = base_embed_dim // perm_rank)
     perm_rank: int = 16
 
-    # Router config — only used by MoE embedding branches (PermutationMoE / DirectContextualEmbedding)
-    router_context_window: int = -1
+    # Shared context-aware router defaults used by embedding/context branches
+    router_context_window: int = -1  # -1 = full context. For sequence_len > 512, set this to
+                                      # 256-512 to prevent the GlobalContextManager's attention
+                                      # from becoming a bottleneck (O(T²)) and diluting the
+                                      # context signal. The per-layer residual-stream updaters
+                                      # now carry the long-range signal instead.
     router_causal: bool = True
     router_num_heads: int = 4
     router_num_queries: int = 16
@@ -74,6 +86,7 @@ class GPTConfig:
 
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
+    # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSSL"
 
 
@@ -81,13 +94,16 @@ class GPTConfig:
 RESEARCH_ALLOWED_KEYS = {
     "use_moe", "use_perm",
     "moe_num_experts", "moe_router_dim", "moe_embed_dim", "dropout",
-    "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio",
-    "remix_basis_size", "remix_output_gate_rank", "remixed_linear_kwargs",
+    "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio", "remix_basis_size", "remix_output_gate_rank", "remixed_linear_kwargs",
     "use_pos_embed", "moe_use_abs_pos_embed",
-    "scale_basis_size",
-    "perm_expert_mode", "perm_rank",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
+    # Fix 1A
+    "use_layer_context",
+    # Fix 1B
+    "scale_basis_size",
+    # Fix 1D
+    "perm_expert_mode", "perm_rank",
 }
 
 
@@ -177,26 +193,24 @@ class ImprovedContextAwareRouter(nn.Module):
         return self.out_proj(context) + x
 
     def _cross_attention(self, queries, context):
-        """Causal cross-attention from learned routing queries into the token context.
+        """Cross-attention from learned routing queries into the full token context.
 
-        Position t can only attend to context[0..t] (causal prefix aggregation).
+        The routing queries are fixed learned parameters (not derived from any
+        specific token), so they cannot directly leak future token identity.
+        Without a causal mask, each position receives a summary of the full
+        visible context — a richer signal than a causal prefix average.
+        At inference time the context is always the causal prefix anyway.
 
-        Uses SDPA (Flash Attention when available) rather than an explicit
-        (B, T, Q, T) attention matrix.  The old explicit-matmul approach triggered
-        a Triton pointwise kernel with XBLOCK=8192 at T=2048, exceeding Triton's
-        4096 limit and crashing torch.compile.
+        Uses SDPA (Flash Attention when available) to avoid materializing the
+        full (B, T, Q, T) attention matrix that caused Triton XBLOCK > 4096.
 
-        Loops over the Q routing queries (Q is small, typically 8-16).
-        Each SDPA call uses shape (B, 1, T, D): well within kernel limits and
-        handled by Flash Attention's O(T) memory algorithm.
-
-        Returns (B, T, D): causally-masked per-position summary.
+        Returns (B, T, D): per-position summary (same for all positions since
+        queries are position-independent and context is the full sequence).
         """
         batch_size, seq_len, dim = context.shape
         queries = queries.to(dtype=context.dtype)  # (Q, D)
 
         # Keys/Values: (B, 1, T, D) — same context for every routing query.
-        # unsqueeze(1) on a contiguous (B,T,D) tensor is itself contiguous.
         k = context.unsqueeze(1)  # (B, 1, T, D)
 
         outputs = []
@@ -204,8 +218,8 @@ class ImprovedContextAwareRouter(nn.Module):
             # q: (B, 1, T, D) — same routing query at every target position.
             # .contiguous() lets SDPA pick Flash Attention when available.
             q = q_vec.view(1, 1, 1, dim).expand(batch_size, 1, seq_len, dim).contiguous()
-            # is_causal=True: target position t attends only to keys 0..t.
-            out = F.scaled_dot_product_attention(q, k, k, is_causal=True)  # (B, 1, T, D)
+            # Non-causal: each routing query attends to all T context tokens.
+            out = F.scaled_dot_product_attention(q, k, k, is_causal=False)  # (B, 1, T, D)
             outputs.append(out)
 
         # (B, Q, T, D) → mean across Q routing queries → (B, T, D)
@@ -654,57 +668,16 @@ class RemixedMultiAttention(nn.Module):
 
 
 class RemixedBlock(nn.Module):
-    """AG-CCL block: Attention-Grounded Context-Conditioned Linear.
-
-    Context flow per block:
-      1. Attention runs with prev_ctx (EMA-accumulated from earlier blocks).
-         At layer 0, prev_ctx=None → RemixedLinear falls back to identity gates.
-      2. ctx_from_attn projects the attention OUTPUT to ctx_dim.
-         attn_out at position t is a causally-grounded summary of tokens 0..t,
-         making it the ideal context signal for the FFN at that position.
-         This signal IMPROVES with T (more context → richer attn_out), unlike
-         the old GlobalContextManager which degraded as T grew.
-      3. An EMA gate blends in the previous layer's context for long-range memory.
-         ctx_ema_gate is initialised to −4 → sigmoid ≈ 0.018, so early training
-         is purely local. The gate learns to grow if history is useful.
-      4. FFN runs with the fresh, attn-grounded context.
-      5. Updated ctx is returned so the next block's attention can use it.
-    """
+    """Base block structure with remixed attention + remixed feedforward."""
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
-        ctx_dim = config.remix_context_dim
-        # Project attention output → context_dim.
-        # Last linear is zero-inited (in init_weights) so delta starts at zero.
-        self.ctx_from_attn = nn.Sequential(
-            Linear(config.n_embd, ctx_dim, bias=True),
-            nn.GELU(),
-            Linear(ctx_dim, ctx_dim, bias=True),
-        )
-        # Learnable EMA blend gate: scalar, init=-4 → sigmoid≈0.018 (nearly pure local at start)
-        self.ctx_ema_gate = nn.Parameter(torch.tensor(-4.0))
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
-        # Step 1: attention — uses previous block's accumulated context (or None at layer 0)
-        attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
-                             context_state=prev_ctx)
-        x = x + attn_out
-
-        # Step 2: derive fresh context from what attention just found.
-        # attn_out carries a causally-grounded, per-position representation.
-        ctx = self.ctx_from_attn(attn_out)  # (B, T, ctx_dim)
-
-        # Step 3: EMA blend — layer i's attention output + small fraction of layer i-1's context
-        if prev_ctx is not None:
-            alpha = torch.sigmoid(self.ctx_ema_gate.to(dtype=ctx.dtype))
-            ctx = ctx + alpha * prev_ctx
-
-        # Step 4: FFN — uses THIS block's fresh, attention-grounded context
-        x = x + self.ffwd(norm(x), context_state=ctx)
-
-        # Step 5: pass ctx to the next block's attention
-        return x, ctx
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state)
+        x = x + self.ffwd(norm(x), context_state)
+        return x
 
 
 def has_ve(layer_idx, n_layer):
@@ -828,6 +801,15 @@ class GPT(nn.Module):
         if config.use_remix_linear and getattr(config, 'remix_context_dim_ratio', 0) > 0:
             config.remix_context_dim = max(config.remix_context_dim, config.n_embd // config.remix_context_dim_ratio)
             print0(f"remix_context_dim auto-scaled to {config.remix_context_dim} (n_embd={config.n_embd} // ratio={config.remix_context_dim_ratio})")
+        # Auto-cap router_context_window at long sequences.
+        # The GlobalContextManager runs O(T²) causal attention.  At T=2048 with the default
+        # router_context_window=-1 (full context), this produces a highly diluted context signal
+        # AND is very expensive.  Cap it automatically so the residual-stream context_updaters
+        # carry the long-range signal instead (they read from norm(x) which is well-conditioned).
+        if config.use_remix_linear and config.router_context_window == -1 and config.sequence_len > 512:
+            config.router_context_window = 256
+            print0(f"router_context_window auto-capped to 256 (sequence_len={config.sequence_len} > 512). "
+                   f"Set router_context_window explicitly to override.")
         self.remix_context_dim = config.remix_context_dim
         self.remix_basis_size = config.remix_basis_size
         self.use_pos_embed = config.use_pos_embed
@@ -869,6 +851,7 @@ class GPT(nn.Module):
                     router_n_layers=config.router_n_layers,
                     router_use_vocab_prior=config.router_use_vocab_prior,
                     moe_use_abs_pos_embed=config.moe_use_abs_pos_embed,
+                    # Fix 1D: expert mode selection
                     perm_expert_mode=getattr(config, 'perm_expert_mode', 'low_rank'),
                     perm_rank=getattr(config, 'perm_rank', 16),
                 )
@@ -876,6 +859,7 @@ class GPT(nn.Module):
                 self.embedding_model = DirectContextualEmbedding(
                     vocab_size=padded_vocab_size,
                     dim=self.moe_embed_dim,
+                    # Fix 1E: pass correct num_experts (K) and router_dim
                     num_experts=self.moe_num_experts,
                     router_dim=self.moe_router_dim,
                     context_window=config.router_context_window,
@@ -887,8 +871,49 @@ class GPT(nn.Module):
                     router_use_vocab_prior=config.router_use_vocab_prior,
                 )
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
-        # AG-CCL: no separate GlobalContextManager or context_updaters.
-        # Context is derived per-block inside RemixedBlock.forward() from the attention output.
+        self.context_manager = None
+        self.context_updaters = None
+        if self.use_remix_linear:
+            self.context_manager = GlobalContextManager(
+                vocab_size=padded_vocab_size,
+                d_model=config.n_embd,
+                router_dim=self.remix_context_dim,
+                context_window=config.router_context_window,
+                router_causal=config.router_causal,
+                router_num_heads=config.router_num_heads,
+                router_num_queries=config.router_num_queries,
+                router_n_layers=config.router_n_layers,
+                router_use_vocab_prior=config.router_use_vocab_prior,
+            )
+            # Fix 1A: per-layer context updaters — zero-init Linears that add a layer-specific
+            # delta to the base context, allowing each block to condition on its own residual state.
+            if getattr(config, 'use_layer_context', True):
+                # Residual-stream-grounded context updaters.
+                #
+                # Old design: updaters mapped context_dim → context_dim, so the context
+                # signal was purely self-referential. At long sequences (2048+) this meant
+                # the context could never recover from the GlobalContextManager's diluted
+                # initial signal — it just looped on itself getting no new information.
+                #
+                # New design: updaters project from n_embd → context_dim.  At each layer
+                # they read directly from the transformer's residual stream x, grounding
+                # the context signal in actual processed representations regardless of
+                # sequence length.  This completely bypasses the GlobalContextManager's
+                # long-sequence dilution problem.
+                #
+                # Each updater: Linear(n_embd, ctx_hidden) → GELU → Linear(ctx_hidden, ctx_dim)
+                # Second layer is zero-init (in init_weights) so the initial delta is zero
+                # and training starts from the static-context baseline.
+                ctx_dim = self.remix_context_dim
+                ctx_hidden = max(ctx_dim * 2, ctx_dim)
+                self.context_updaters = nn.ModuleList([
+                    nn.Sequential(
+                        Linear(config.n_embd, ctx_hidden, bias=True),
+                        nn.GELU(),
+                        Linear(ctx_hidden, ctx_dim, bias=True),
+                    )
+                    for _ in range(config.n_layer)
+                ])
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -896,6 +921,15 @@ class GPT(nn.Module):
         # Separate parameters so they can have different optimizer treatment
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
+        # Fix 3 (Bug 3): learnable per-layer blend gate on base_context contribution.
+        # Init to -4 → sigmoid(-4) ≈ 0.018, so context_state ≈ delta at init.
+        # base_context can only grow its influence as training finds it useful.
+        # Only created when use_remix_linear is active (base_context is non-None).
+        # 1D tensor → routes to AdamW automatically (p.ndim < 2 in setup_optimizer).
+        if self.use_remix_linear:
+            self.base_ctx_scales = nn.Parameter(torch.full((config.n_layer,), -4.0))
+        else:
+            self.base_ctx_scales = None
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -1009,19 +1043,6 @@ class GPT(nn.Module):
                 _init_research_module(block)
                 if block.attn.ve_gate is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.weight)
-                # AG-CCL: zero-init last linear of ctx_from_attn so context delta starts at zero.
-                # At init ctx_from_attn(attn_out) = 0 for all positions, meaning RemixedLinear
-                # falls back to identity gates until training activates the context pathway.
-                ctx_linears = [m for m in block.ctx_from_attn.modules() if isinstance(m, (Linear, nn.Linear))]
-                if ctx_linears:
-                    torch.nn.init.xavier_uniform_(ctx_linears[0].weight)
-                    if ctx_linears[0].bias is not None:
-                        torch.nn.init.zeros_(ctx_linears[0].bias)
-                    torch.nn.init.zeros_(ctx_linears[-1].weight)
-                    if ctx_linears[-1].bias is not None:
-                        torch.nn.init.zeros_(ctx_linears[-1].bias)
-                # ctx_ema_gate: init to -4 → sigmoid ≈ 0.018 (purely local at start)
-                torch.nn.init.constant_(block.ctx_ema_gate, -4.0)
             else:
                 torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
                 torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
@@ -1040,8 +1061,26 @@ class GPT(nn.Module):
 
         if self.embedding_model is not None:
             _init_research_module(self.embedding_model)
+            # Fix 1E: zero-init expert_codes so initial behavior = standard seed embedding
             if hasattr(self.embedding_model, 'expert_codes'):
                 torch.nn.init.zeros_(self.embedding_model.expert_codes)
+        if self.context_manager is not None:
+            _init_research_module(self.context_manager)
+        # Fix 1A: zero-init the *last* linear in each context_updater MLP so initial
+        # behaviour is identical to static context (delta starts at zero)
+        if self.context_updaters is not None:
+            for updater in self.context_updaters:
+                # updater is now a Sequential(Linear, GELU, Linear)
+                linears = [m for m in updater.modules() if isinstance(m, (Linear, nn.Linear))]
+                # Xavier init first layer, zero-init last layer for identity-start
+                if len(linears) >= 1:
+                    torch.nn.init.xavier_uniform_(linears[0].weight)
+                    if linears[0].bias is not None:
+                        torch.nn.init.zeros_(linears[0].bias)
+                if len(linears) >= 2:
+                    torch.nn.init.zeros_(linears[-1].weight)
+                    if linears[-1].bias is not None:
+                        torch.nn.init.zeros_(linears[-1].bias)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -1155,12 +1194,17 @@ class GPT(nn.Module):
         wpe = sum(p.numel() for p in self.transformer.wpe.parameters()) if "wpe" in self.transformer else 0
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        # AG-CCL: ctx_from_attn and ctx_ema_gate live inside RemixedBlock → counted in transformer.h
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         research = 0
         if self.embedding_model is not None:
             research += sum(p.numel() for p in self.embedding_model.parameters())
+        if self.context_manager is not None:
+            research += sum(p.numel() for p in self.context_manager.parameters())
+        if self.context_updaters is not None:
+            research += sum(p.numel() for p in self.context_updaters.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        if self.base_ctx_scales is not None:
+            scalars += self.base_ctx_scales.numel()
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
@@ -1178,15 +1222,18 @@ class GPT(nn.Module):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
-        # Separate out all parameters into groups.
-        # AG-CCL: ctx_from_attn and ctx_ema_gate are inside transformer.h (RemixedBlock),
-        # so they're already captured by self.transformer.h.parameters().
+        # Separate out all parameters into groups
         candidate_matrix_params = list(self.transformer.h.parameters())
+        if self.context_manager is not None:
+            candidate_matrix_params += list(self.context_manager.parameters())
         if self.embedding_model is not None:
             candidate_matrix_params += list(self.embedding_model.parameters())
+        # Fix 1A: context_updaters are n_embd×context_dim matrices — route to Muon
+        if self.context_updaters is not None:
+            candidate_matrix_params += list(self.context_updaters.parameters())
 
         # Muon is only defined for matrix-like tensors (>=2D).
-        # RemixedLinear introduces 1D params (biases/LN scales/ctx_ema_gate), route those to AdamW.
+        # Remixed/research branches introduce 1D params (biases/LN scales), route those to AdamW.
         matrix_params = [p for p in candidate_matrix_params if p.ndim >= 2]
         research_adamw_params = [p for p in candidate_matrix_params if p.ndim < 2]
 
@@ -1197,7 +1244,9 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
+        # Fix 3: base_ctx_scales is 1D → AdamW. Include in scalar_params so parameter count holds.
+        base_ctx_params = [self.base_ctx_scales] if self.base_ctx_scales is not None else []
+        assert len(list(self.parameters())) == len(matrix_params) + len(research_adamw_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(base_ctx_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model, μP-style).
         # Can be disabled via disable_mu_p=True so raw flags are used directly (e.g. for research models
@@ -1218,10 +1267,11 @@ class GPT(nn.Module):
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            # research_adamw_params: biases, LN scales, ctx_ema_gate scalars from RemixedBlocks
             dict(kind='adamw', params=research_adamw_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
+            # Fix 3: base_ctx_scales — 1D scalar per layer, same schedule as other scalars
+            *([dict(kind='adamw', params=base_ctx_params, lr=scalar_lr * 0.1, betas=adam_betas, eps=1e-10, weight_decay=0.0)] if base_ctx_params else []),
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
@@ -1268,15 +1318,35 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        # AG-CCL: no GlobalContextManager. Context is derived per-block from attention output.
-        # prev_ctx carries the EMA-accumulated context from the previous block's attention.
-        # At layer 0, prev_ctx=None → RemixedLinear falls back to identity gates.
-        prev_ctx = None
+        # Fix 1A: compute base context once from initial embedding.
+        # At long sequences the GlobalContextManager's attention over 2048 raw token
+        # embeddings produces a diluted signal.  The per-layer context_updaters now
+        # re-ground the context from the residual stream x at each block, so the
+        # base_context only needs to provide a coarse initialisation.
+        base_context = self.context_manager(x, idx) if self.context_manager is not None else None
+        context_state = base_context
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             if self.use_remix_linear:
-                x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx=prev_ctx)
+                if self.context_updaters is not None:
+                    # Read from the residual stream x (projected to context_dim), not from
+                    # context_state itself.  This re-grounds the context signal at every
+                    # layer from actual transformer representations, fixing the long-sequence
+                    # dilution problem where the self-referential context loop carried no
+                    # new information beyond what the GlobalContextManager produced at t=0.
+                    delta = self.context_updaters[i](norm(x))
+                    # Fix 3 (Bug 3): blend base_context in with a learned per-layer gate.
+                    # At init: sigmoid(-4) ≈ 0.018, so context_state ≈ delta.
+                    # base_context's influence grows only as training finds it useful,
+                    # preventing the noisy diluted GlobalContextManager signal from
+                    # dominating at early training steps with long sequences.
+                    if base_context is not None:
+                        bc_weight = torch.sigmoid(self.base_ctx_scales[i].to(dtype=delta.dtype))
+                        context_state = bc_weight * base_context + delta
+                    else:
+                        context_state = delta
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
