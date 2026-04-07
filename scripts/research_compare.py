@@ -154,9 +154,16 @@ def run_training_sweep(args):
             "--model-tag", model_name
         ]
         
-        # Disable mu-P scaling for research models only, allowing base to retain standard sizing
-        if args.disable_mu_p and model_name != "base":
-            train_cmd_args.append("--disable-mu-p")
+        # Handle mu-P scaling based on the new mode system
+        if args.mu_p_mode == "disable":
+            if model_name != "base":
+                train_cmd_args.append("--disable-mu-p")
+        elif args.mu_p_mode == "base_only":
+            if model_name != "base":
+                # Force research models to use the exact same multiplier base would've used
+                base_multiplier = (model_dim / 768) ** -0.5
+                train_cmd_args.extend(["--mu-p-scale-override", str(base_multiplier)])
+        # if "enable", neither flag is passed; models calculate their own inherently
             
         # Check for resumption
         actual_model_ckpt_dir = ckpt_dir / model_name
@@ -274,7 +281,7 @@ if __name__ == "__main__":
     parser.add_argument("--save-every", type=int, default=-1, help="checkpoint frequency")
     parser.add_argument("--core-metric-every", type=int, default=-1, help="core metric frequency")
     parser.add_argument("--skip-core", action="store_true", help="completely disable CORE metric evaluation")
-    parser.add_argument("--disable-mu-p", action=argparse.BooleanOptionalAction, default=True, help="disable mu-P scaling (default: True for research sweeps)")
+    parser.add_argument("--mu-p-mode", type=str, default="base_only", choices=["disable", "base_only", "enable"], help="mu-P scaling logic")
     parser.add_argument("--sequence-len", type=int, default=2048, help="override max sequence length")
     
     args = parser.parse_args()

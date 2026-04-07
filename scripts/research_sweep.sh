@@ -108,6 +108,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--sequence-len" "$2")
             shift 2
             ;;
+        --mu-p-mode)
+            EXTRA_ARGS+=("--mu-p-mode" "$2")
+            shift 2
+            ;;
         --use-onecycle)
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2

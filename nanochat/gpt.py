@@ -1106,7 +1106,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -1140,6 +1140,9 @@ class GPT(nn.Module):
         if disable_mu_p:
             dmodel_lr_scale = 1.0
             print0(f"μP LR scaling DISABLED — using raw LR flags directly (model_dim={model_dim})")
+        elif mu_p_scale_override > 0:
+            dmodel_lr_scale = mu_p_scale_override
+            print0(f"μP LR scaling OVERRIDDEN — forcing multiplier = {dmodel_lr_scale:.6f}")
         else:
             dmodel_lr_scale = (model_dim / 768) ** -0.5
             print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
