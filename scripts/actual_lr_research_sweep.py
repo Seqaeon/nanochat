@@ -684,7 +684,10 @@ def _run_phase4_optuna(
         direction="minimize",
         storage=storage,
         load_if_exists=True,  # resume if interrupted
-        sampler=optuna.samplers.TPESampler(seed=42),
+        sampler=optuna.samplers.CmaEsSampler(
+            seed=42,
+            n_startup_trials=10,  # random init before CMA-ES kicks in (already past this with warm-start)
+        ),
     )
 
     # Warm-start: seed with Phase 1/2/3 results already on disk
