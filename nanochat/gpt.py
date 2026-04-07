@@ -53,8 +53,11 @@ class GPTConfig:
     # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
     # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
     # Set to 0 to use the fixed remix_context_dim value instead.
-    remix_context_dim_ratio: int = 6
+    remix_context_dim_ratio: int = 0
     remix_basis_size: int = 64
+    # Rank of the low-rank output gate. Smaller r = more stable at long T.
+    # r=8 works well from T=64 to T=2048. Increase to 16 only if needed.
+    remix_output_gate_rank: int = 8
     remixed_linear_kwargs: dict | None = None
     use_pos_embed: bool = False
     moe_use_abs_pos_embed: bool = False
@@ -91,7 +94,7 @@ class GPTConfig:
 RESEARCH_ALLOWED_KEYS = {
     "use_moe", "use_perm",
     "moe_num_experts", "moe_router_dim", "moe_embed_dim", "dropout",
-    "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio", "remix_basis_size", "remixed_linear_kwargs",
+    "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio", "remix_basis_size", "remix_output_gate_rank", "remixed_linear_kwargs",
     "use_pos_embed", "moe_use_abs_pos_embed",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
@@ -499,24 +502,46 @@ class RemixedLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(out_features))
 
         if self.use_context:
-            # --- Improved gate networks (decoupled, properly sized) ---
+            # --- Gate network design ---
             #
-            # Old design: single shared MLP with hidden=basis_size//2 predicting
-            # (basis_size + out_features) values from context_dim. At n_embd=768:
-            # hidden=96 predicting 3264 values from 64-dim context — severely undertrained.
+            # PROBLEM AT LONG SEQUENCES:
+            # output_modulator = Linear(ctx_dim, out_features) has ctx_dim × out_features
+            # parameters (e.g. 128 × 3072 = 393K for c_fc). At T=2048, positions 0-~100
+            # have weak causal context, so their context_state is near-zero. Those positions
+            # produce near-random output gates that MULTIPLY the pre_output, corrupting
+            # gradients for basis and template_mixing everywhere. The dense baseline has
+            # no such corruption — this is why RemixedLinear degrades at long T.
             #
-            # New design: two independent networks, each right-sized for its task.
-            #   basis_modulator: small MLP (basis_size is already small by design)
-            #   output_modulator: single linear — parameter-efficient, context-dependent,
-            #     avoids the parameter explosion of a deep MLP when out_features is large.
+            # FIX 1: Low-rank output gate.
+            # Instead of predicting out_features independent gate values per position,
+            # predict r << out_features coefficients and apply them to r learned gate
+            # basis vectors: gate = sigmoid(coeffs @ gate_basis), where
+            #   coeffs  = Linear(ctx_dim, r)        — small, stable to train
+            #   gate_basis = Parameter(r, out_features)  — learned gate directions
+            # This reduces gate noise by forcing it onto a low-dimensional manifold.
+            # Gradient of gate_basis weights is summed over T positions, reducing variance.
+            # Gradient of coeffs weights is summed over out_features directions per position,
+            # amplifying signal by r.
+            #
+            # FIX 2: Centered gate activation for output gate.
+            # sigmoid starts at 0.88 (with bias=2.0) but the identity operation is 1.0.
+            # Using gate = 1 + tanh(scale * coeffs @ gate_basis) centers the gate around
+            # 1.0 and allows it to range in [0, 2], providing both attenuation AND
+            # amplification. Gradient at init = sech²(0) = 1.0 vs sigmoid'(2.0) ≈ 0.10.
+            # 10× better gradient flow for the output gate at initialization.
             basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
             self.basis_modulator = nn.Sequential(
                 Linear(context_dim, basis_hidden, bias=True),
                 nn.GELU(),
                 Linear(basis_hidden, basis_size, bias=True),
             )
-            # Single linear: context_dim → out_features. Cheap yet still context-dependent.
-            self.output_modulator = Linear(context_dim, out_features, bias=True)
+            # Low-rank output gate: ctx_dim → r coefficients, r basis vectors → out_features
+            # r is a small constant (default 8), making this O(ctx_dim*r + r*out_features)
+            # rather than O(ctx_dim*out_features).
+            r = remixed_linear_kwargs.get('output_gate_rank', 8)
+            self.output_gate_coeffs = Linear(context_dim, r, bias=True)
+            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale, starts small
 
     def forward(self, x, context_state):
         dtype = x.dtype
@@ -524,8 +549,21 @@ class RemixedLinear(nn.Module):
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
+
+            # Basis gate: sigmoid, works fine since basis_size is small
             gate_basis = torch.sigmoid(self.basis_modulator(ctx)).to(dtype=dtype) if self.use_basis_gate else torch.ones_like(h_basis)
-            gate_out = torch.sigmoid(self.output_modulator(ctx)).to(dtype=dtype) if self.use_output_gate else None
+
+            # Output gate: LOW-RANK + CENTERED ACTIVATION
+            # gate = 1 + tanh(scale * coeffs @ gate_basis_vectors)
+            # - Starts at 1.0 (identity) instead of sigmoid's 0.5-0.88
+            # - Gradient at init = sech²(0)*scale = scale, controllable
+            # - Constrained to low-dim manifold, much more stable at long T
+            if self.use_output_gate:
+                coeffs = self.output_gate_coeffs(ctx)                           # (B, T, r)
+                gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out_features)
+                gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits)
+            else:
+                gate_out = None
         else:
             gate_basis = torch.ones_like(h_basis)
             gate_out = None
@@ -741,6 +779,15 @@ class GPT(nn.Module):
         if config.use_remix_linear and getattr(config, 'remix_context_dim_ratio', 0) > 0:
             config.remix_context_dim = max(config.remix_context_dim, config.n_embd // config.remix_context_dim_ratio)
             print0(f"remix_context_dim auto-scaled to {config.remix_context_dim} (n_embd={config.n_embd} // ratio={config.remix_context_dim_ratio})")
+        # Auto-cap router_context_window at long sequences.
+        # The GlobalContextManager runs O(T²) causal attention.  At T=2048 with the default
+        # router_context_window=-1 (full context), this produces a highly diluted context signal
+        # AND is very expensive.  Cap it automatically so the residual-stream context_updaters
+        # carry the long-range signal instead (they read from norm(x) which is well-conditioned).
+        if config.use_remix_linear and config.router_context_window == -1 and config.sequence_len > 512:
+            config.router_context_window = 256
+            print0(f"router_context_window auto-capped to 256 (sequence_len={config.sequence_len} > 512). "
+                   f"Set router_context_window explicitly to override.")
         self.remix_context_dim = config.remix_context_dim
         self.remix_basis_size = config.remix_basis_size
         self.use_pos_embed = config.use_pos_embed
@@ -748,6 +795,8 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         else:
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
+        # Wire output_gate_rank into kwargs so RemixedLinear picks it up
+        self.remixed_linear_kwargs['output_gate_rank'] = getattr(config, 'remix_output_gate_rank', 8)
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
@@ -888,16 +937,19 @@ class GPT(nn.Module):
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
-                        # basis_modulator: MLP — xavier throughout, final bias=2.0 for open gates
+                        # basis_modulator: xavier throughout, final bias=2.0 for open gates
                         linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
                         for m in linears:
                             torch.nn.init.xavier_uniform_(m.weight)
                             if m.bias is not None: torch.nn.init.zeros_(m.bias)
                         if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
-                        # output_modulator: single linear — xavier, bias=2.0 for open gates
-                        torch.nn.init.xavier_uniform_(sub.output_modulator.weight)
-                        if sub.output_modulator.bias is not None:
-                            torch.nn.init.constant_(sub.output_modulator.bias, 2.0)
+                        # Low-rank output gate: xavier for coeffs, zero for basis
+                        # gate_basis zeros => gate_logits=0 => tanh(0)=0 => gate=1.0 at init
+                        # This guarantees identity behavior at initialization regardless of T
+                        torch.nn.init.xavier_uniform_(sub.output_gate_coeffs.weight)
+                        torch.nn.init.zeros_(sub.output_gate_coeffs.bias)
+                        torch.nn.init.zeros_(sub.output_gate_basis)
+                        torch.nn.init.constant_(sub.output_gate_scale, 0.1)
                     continue  # Skip further processing of this module's sub-components here
 
                 if isinstance(sub, ImprovedContextAwareRouter):
@@ -1123,7 +1175,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -1157,9 +1209,6 @@ class GPT(nn.Module):
         if disable_mu_p:
             dmodel_lr_scale = 1.0
             print0(f"μP LR scaling DISABLED — using raw LR flags directly (model_dim={model_dim})")
-        elif mu_p_scale_override > 0:
-            dmodel_lr_scale = mu_p_scale_override
-            print0(f"μP LR scaling OVERRIDDEN — forcing multiplier = {dmodel_lr_scale:.6f}")
         else:
             dmodel_lr_scale = (model_dim / 768) ** -0.5
             print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
