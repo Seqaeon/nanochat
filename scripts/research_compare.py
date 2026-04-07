@@ -159,9 +159,10 @@ def run_training_sweep(args):
             train_cmd_args.append("--disable-mu-p")
             
         # Check for resumption
+        actual_model_ckpt_dir = ckpt_dir / model_name
         try:
-            last_step = find_last_step(str(ckpt_dir))
-            print(f"  Found existing checkpoints in {ckpt_dir}, resuming from step {last_step}")
+            last_step = find_last_step(str(actual_model_ckpt_dir))
+            print(f"  Found existing checkpoints in {actual_model_ckpt_dir}, resuming from step {last_step}")
             train_cmd_args.extend(["--resume-from-step", str(last_step)])
         except FileNotFoundError:
             pass # Starting fresh
