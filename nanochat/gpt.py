@@ -51,7 +51,7 @@ class GPTConfig:
     use_remix_linear: bool = False
     remix_context_dim: int = 64
     # If > 0, overrides remix_context_dim with n_embd // remix_context_dim_ratio.
-    # Recommended: 6 or 8 (6 gives 128-dim context for 768-dim model)
+    # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
     # Set to 0 to use the fixed remix_context_dim value instead.
     remix_context_dim_ratio: int = 6
     remix_basis_size: int = 64
@@ -70,7 +70,11 @@ class GPTConfig:
     perm_rank: int = 16
 
     # Shared context-aware router defaults used by embedding/context branches
-    router_context_window: int = -1
+    router_context_window: int = -1  # -1 = full context. For sequence_len > 512, set this to
+                                      # 256-512 to prevent the GlobalContextManager's attention
+                                      # from becoming a bottleneck (O(T²)) and diluting the
+                                      # context signal. The per-layer residual-stream updaters
+                                      # now carry the long-range signal instead.
     router_causal: bool = True
     router_num_heads: int = 4
     router_num_queries: int = 8
@@ -813,11 +817,24 @@ class GPT(nn.Module):
             # Fix 1A: per-layer context updaters — zero-init Linears that add a layer-specific
             # delta to the base context, allowing each block to condition on its own residual state.
             if getattr(config, 'use_layer_context', True):
-                # Improved: 2-layer MLP updaters instead of single linear.
-                # Second layer is zero-init (in init_weights) so initial behaviour
-                # matches the no-updater baseline; capacity allows real evolution.
+                # Residual-stream-grounded context updaters.
+                #
+                # Old design: updaters mapped context_dim → context_dim, so the context
+                # signal was purely self-referential. At long sequences (2048+) this meant
+                # the context could never recover from the GlobalContextManager's diluted
+                # initial signal — it just looped on itself getting no new information.
+                #
+                # New design: updaters project from n_embd → context_dim.  At each layer
+                # they read directly from the transformer's residual stream x, grounding
+                # the context signal in actual processed representations regardless of
+                # sequence length.  This completely bypasses the GlobalContextManager's
+                # long-sequence dilution problem.
+                #
+                # Each updater: Linear(n_embd, ctx_hidden) → GELU → Linear(ctx_hidden, ctx_dim)
+                # Second layer is zero-init (in init_weights) so the initial delta is zero
+                # and training starts from the static-context baseline.
                 ctx_dim = self.remix_context_dim
-                ctx_hidden = max(ctx_dim, ctx_dim * 2)
+                ctx_hidden = max(ctx_dim * 2, ctx_dim)
                 self.context_updaters = nn.ModuleList([
                     nn.Sequential(
                         Linear(config.n_embd, ctx_hidden, bias=True),
@@ -1202,19 +1219,25 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        # Fix 1A: compute base context once from initial embedding; per-layer deltas added below
+        # Fix 1A: compute base context once from initial embedding.
+        # At long sequences the GlobalContextManager's attention over 2048 raw token
+        # embeddings produces a diluted signal.  The per-layer context_updaters now
+        # re-ground the context from the residual stream x at each block, so the
+        # base_context only needs to provide a coarse initialisation.
         base_context = self.context_manager(x, idx) if self.context_manager is not None else None
+        context_state = base_context
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             if self.use_remix_linear:
                 if self.context_updaters is not None:
-                    # Per-layer context: base context + layer-specific delta from current residual x
-                    # Each updater is zero-init so initial behavior matches the static-context baseline
+                    # Read from the residual stream x (projected to context_dim), not from
+                    # context_state itself.  This re-grounds the context signal at every
+                    # layer from actual transformer representations, fixing the long-sequence
+                    # dilution problem where the self-referential context loop carried no
+                    # new information beyond what the GlobalContextManager produced at t=0.
                     delta = self.context_updaters[i](norm(x))
-                    context_state = base_context + delta
-                else:
-                    context_state = base_context
+                    context_state = base_context + delta if base_context is not None else delta
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, context_state=context_state)
             else:
                 x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)

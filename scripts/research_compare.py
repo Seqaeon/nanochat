@@ -61,6 +61,7 @@ def run_training_sweep(args):
         "--adam-beta2", str(adam_beta2),     # Matches notebook
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
+        "--router-context-window", str(args.router_context_window),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -283,6 +284,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip-core", action="store_true", help="completely disable CORE metric evaluation")
     parser.add_argument("--mu-p-mode", type=str, default="base_only", choices=["disable", "base_only", "enable"], help="mu-P scaling logic")
     parser.add_argument("--sequence-len", type=int, default=2048, help="override max sequence length")
+    parser.add_argument("--router-context-window", type=int, default=-1, help="override sliding window size for contextual router (-1 for full sequence)")
     
     args = parser.parse_args()
     

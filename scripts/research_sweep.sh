@@ -112,6 +112,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--mu-p-mode" "$2")
             shift 2
             ;;
+        --router-context-window)
+            EXTRA_ARGS+=("--router-context-window" "$2")
+            shift 2
+            ;;
         --use-onecycle)
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
