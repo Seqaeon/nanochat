@@ -151,6 +151,22 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
             shift 2
             ;;
+        --cclblock-sparse-gate-k)
+            EXTRA_ARGS+=("--cclblock-sparse-gate-k" "$2")
+            shift 2
+            ;;
+        --cclblock-gate-temperature)
+            EXTRA_ARGS+=("--cclblock-gate-temperature" "$2")
+            shift 2
+            ;;
+        --cclblock-context-bank-size)
+            EXTRA_ARGS+=("--cclblock-context-bank-size" "$2")
+            shift 2
+            ;;
+        --cclblock-per-head-ctx)
+            EXTRA_ARGS+=("--cclblock-per-head-ctx" "$2")
+            shift 2
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 break   # first numeric arg = depth, stop parsing flags

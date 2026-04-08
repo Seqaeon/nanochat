@@ -258,12 +258,16 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         common_args.extend(["--max-shards", str(args.max_shards)])
     if getattr(args, "research_dim", 0) > 0:
         common_args.extend(["--research-dim", str(args.research_dim)])
-    # CCL block flags (forwarded for remixed-linear runs)
     common_args.extend([
         "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
         "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag",  str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
+        # Novel ablation designs
+        "--cclblock-sparse-gate-k",    str(getattr(args, 'cclblock_sparse_gate_k', 0)),
+        "--cclblock-gate-temperature", str(getattr(args, 'cclblock_gate_temperature', 1.0)),
+        "--cclblock-context-bank-size",str(getattr(args, 'cclblock_context_bank_size', 0)),
+        "--cclblock-per-head-ctx",     str(getattr(args, 'cclblock_per_head_ctx', 0)),
     ])
 
     env = os.environ.copy()
@@ -638,12 +642,21 @@ if __name__ == "__main__":
                         choices=["weight", "normalization"],
                         help="CCL block strategy passed to remixed-linear runs")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "ema", "selective", "multiscale"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
-                        help="Exponential moving average factor for the legacy EMAContextStream")
+                        help="EMA factor for the legacy EMAContextStream")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled)")
+    # Novel ablation designs
+    parser.add_argument("--cclblock-sparse-gate-k", type=int, default=0,
+                        help="Design 3: sparse top-k basis gate (0=off, N=top-N)")
+    parser.add_argument("--cclblock-gate-temperature", type=float, default=1.0,
+                        help="Design 6: gate temperature (<1=sharper, >1=softer)")
+    parser.add_argument("--cclblock-context-bank-size", type=int, default=0,
+                        help="Design 4: context prototype bank size (0=off, e.g. 16)")
+    parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
+                        help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 

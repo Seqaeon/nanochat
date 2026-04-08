@@ -69,6 +69,11 @@ def run_training_sweep(args):
         "--cclblock-context-stream", str(args.cclblock_context_stream),
         "--cclblock-ema-factor", str(args.cclblock_ema_factor),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
+        # Novel ablation designs
+        "--cclblock-sparse-gate-k", str(getattr(args, 'cclblock_sparse_gate_k', 0)),
+        "--cclblock-gate-temperature", str(getattr(args, 'cclblock_gate_temperature', 1.0)),
+        "--cclblock-context-bank-size", str(getattr(args, 'cclblock_context_bank_size', 0)),
+        "--cclblock-per-head-ctx", str(getattr(args, 'cclblock_per_head_ctx', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -300,12 +305,21 @@ if __name__ == "__main__":
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "ema", "selective", "multiscale"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
-                        help="Exponential moving average factor for the legacy EMAContextStream")
+                        help="EMA factor for the legacy EMAContextStream")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled, k>=1 = context from k blocks ago)")
+    # Novel ablation designs
+    parser.add_argument("--cclblock-sparse-gate-k", type=int, default=0,
+                        help="Design 3: sparse top-k basis gate (0=off, N=top-N)")
+    parser.add_argument("--cclblock-gate-temperature", type=float, default=1.0,
+                        help="Design 6: gate temperature (<1=sharper, >1=softer)")
+    parser.add_argument("--cclblock-context-bank-size", type=int, default=0,
+                        help="Design 4: context prototype bank size (0=off, e.g. 16)")
+    parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
+                        help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
     
     args = parser.parse_args()
     

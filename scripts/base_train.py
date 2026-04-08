@@ -81,13 +81,21 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                          "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                    choices=["local", "ema", "selective", "multiscale"],
-                    help="Context stream type: 'local' (minimal norm(x) derived), 'ema' (legacy, detach), 'selective' (GRU, no detach), or 'multiscale' (3-channel GRU)")
+                    choices=["local", "shifted", "ema", "selective", "multiscale"],
+                    help="Context stream: 'local' (default), 'shifted' (prev-layer norm(x)), 'ema', 'selective', 'multiscale'")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
-                    help="Exponential moving average factor for the legacy EMAContextStream")
+                    help="EMA factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
-                    help="Design C stale context lag: 0=disabled, k>=1 means block i receives "
-                         "context from block i-k (detached, breaks circular conditioning)")
+                    help="Design C stale context lag (0=disabled)")
+# Novel ablation designs
+parser.add_argument("--cclblock-sparse-gate-k", type=int, default=0,
+                    help="Design 3: sparse top-k basis gate (0=soft sigmoid, N=activate top-N basis functions)")
+parser.add_argument("--cclblock-gate-temperature", type=float, default=1.0,
+                    help="Design 6: basis gate temperature (<1=sharper, >1=softer, 1.0=standard sigmoid)")
+parser.add_argument("--cclblock-context-bank-size", type=int, default=0,
+                    help="Design 4: context prototype bank size (0=disabled, e.g. 16=16 learned prototypes)")
+parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
+                    help="Design 7: separate ctx projections for attn vs ffn (0=off, 1=on)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -250,6 +258,8 @@ def build_model_meta(depth):
             use_basis_gate=bool(args.remix_use_basis_gate),
             use_output_gate=bool(args.remix_use_output_gate),
             use_context=bool(args.remix_use_context),
+            sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
+            gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
         ),
         # Fix 1A
         use_layer_context=bool(getattr(args, 'use_layer_context', 1)),
@@ -264,6 +274,11 @@ def build_model_meta(depth):
         cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'local'),
         cclblock_ema_factor=getattr(args, 'cclblock_ema_factor', 0.99),
         cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
+        # Novel ablation designs
+        cclblock_sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
+        cclblock_gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
+        cclblock_context_bank_size=getattr(args, 'cclblock_context_bank_size', 0),
+        cclblock_per_head_ctx=bool(getattr(args, 'cclblock_per_head_ctx', 0)),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

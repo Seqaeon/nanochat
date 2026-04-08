@@ -107,6 +107,21 @@ class GPTConfig:
     # This breaks the circular dependency because i-k is a genuinely different layer's computation.
     # The stale context is detached — only the within-block gradient path is active.
     cclblock_stale_ctx_lag: int = 0
+    # --- Novel Ablation Designs ---
+    # Design 1: 'shifted' residual uses norm(x_entry) from the START of the block
+    #            (= previous layer output). Decouples basis from gate signal source.
+    #            Use via --cclblock-context-stream "shifted"
+    # Design 3: Sparse top-k basis gate. 0=soft sigmoid, N=activate top-N basis functions.
+    #            Uses straight-through estimator for gradients.
+    cclblock_sparse_gate_k: int = 0
+    # Design 6: Basis gate temperature. <1.0=sharper (more selective), >1.0=softer (more uniform).
+    cclblock_gate_temperature: float = 1.0
+    # Design 4: Context prototype bank. 0=disabled, N=use N learned prototype vectors.
+    #            Forces model to learn a vocab of text-type contexts via soft lookup.
+    cclblock_context_bank_size: int = 0
+    # Design 7: Per-module context. True=separate ctx projections for attn vs ffn.
+    #            Attn gets pre-attn ctx, FFN gets post-attn ctx.
+    cclblock_per_head_ctx: bool = False
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -125,6 +140,8 @@ RESEARCH_ALLOWED_KEYS = {
     "perm_expert_mode", "perm_rank",
     # CCL block redesign
     "cclblock_modulation", "cclblock_context_stream", "cclblock_ema_factor", "cclblock_stale_ctx_lag",
+    # Novel ablation designs
+    "cclblock_sparse_gate_k", "cclblock_gate_temperature", "cclblock_context_bank_size", "cclblock_per_head_ctx",
 }
 
 
@@ -552,6 +569,32 @@ class LocalContextStream(nn.Module):
         return self.proj(pre_mlp_norm_x)
 
 
+class ContextBank(nn.Module):
+    """Design 4: Soft lookup into a learned vocabulary of N context prototypes.
+
+    Projects norm(x) to form a query, retrieves a weighted mixture of learned
+    prototype vectors. Forces the model to learn a discrete vocabulary of text-type
+    contexts (code, prose, math, etc.) as prototypes.
+
+    Zero-init prototypes + small std init ensures identity-like behaviour at t=0.
+    Gradient path: loss → ffwd gate → ctx → weights (softmax) → query_proj → norm(x).
+    No recurrence, no chain across blocks.
+    """
+    def __init__(self, n_embd, ctx_dim, n_prototypes):
+        super().__init__()
+        self.query_proj = Linear(n_embd, ctx_dim, bias=False)
+        nn.init.zeros_(self.query_proj.weight)  # stable identity start
+        self.prototypes = nn.Parameter(torch.zeros(n_prototypes, ctx_dim))
+        nn.init.normal_(self.prototypes, std=0.02)
+        self.scale = ctx_dim ** -0.5
+
+    def forward(self, norm_x, prev_ctx=None):
+        q = self.query_proj(norm_x)                         # (B, T, ctx_dim)
+        scores = q @ self.prototypes.T * self.scale         # (B, T, n_proto)
+        weights = F.softmax(scores, dim=-1)
+        return weights @ self.prototypes.to(q.dtype)        # (B, T, ctx_dim)
+
+
 class SelectiveContextStream(nn.Module):
     """GRU-style selective update for the cross-block context state (Design A).
 
@@ -718,6 +761,10 @@ class RemixedLinear(nn.Module):
         self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
         self.use_context = remixed_linear_kwargs.get('use_context', True)
+        # Design 3: sparse top-k gate. 0=off, N=top-N active basis functions.
+        self.sparse_gate_k = remixed_linear_kwargs.get('sparse_gate_k', 0)
+        # Design 6: gate temperature. divides sigmoid logits. <1=sharper, >1=softer.
+        self.gate_temperature = max(remixed_linear_kwargs.get('gate_temperature', 1.0), 1e-6)
 
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
@@ -793,8 +840,22 @@ class RemixedLinear(nn.Module):
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
 
-            # Basis gate: sigmoid, works fine since basis_size is small
-            gate_basis = torch.sigmoid(self.basis_modulator(ctx)).to(dtype=dtype) if self.use_basis_gate else torch.ones_like(h_basis)
+            # Basis gate: sparse or dense sigmoid with configurable temperature
+            if self.use_basis_gate:
+                gate_logits = self.basis_modulator(ctx)
+                if self.sparse_gate_k > 0:
+                    # Design 3: Straight-through sparse top-k gate.
+                    # Forward: activate top-k basis functions via soft distribution.
+                    # Backward: gradients flow through the continuous sigmoid path.
+                    k = min(self.sparse_gate_k, self.basis_size)
+                    topk_vals, topk_idx = torch.topk(gate_logits, k=k, dim=-1)
+                    sparse = torch.zeros_like(gate_logits).scatter_(-1, topk_idx, F.softmax(topk_vals, dim=-1))
+                    soft = torch.sigmoid(gate_logits / self.gate_temperature)
+                    gate_basis = (sparse + (soft - soft.detach())).to(dtype=dtype)
+                else:
+                    gate_basis = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+            else:
+                gate_basis = torch.ones_like(h_basis)
 
             # Output gate: LOW-RANK + CENTERED ACTIVATION
             # gate = 1 + tanh(scale * coeffs @ gate_basis_vectors)
@@ -888,52 +949,75 @@ class RemixedMultiAttention(nn.Module):
 class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
 
-    Keeps the RemixedLinear weight-modulation gating (basis gate + low-rank output gate)
-    but upgrades the context stream from a fixed-λ EMA (with detach) to a
-    SelectiveContextStream or MultiScaleContext (GRU-style, no detach, full grad flow).
-
-    Context lifecycle per block:
-      1. Attention runs gated by prev_ctx (previous block's accumulated context).
-      2. attn_out → SelectiveContextStream → fresh context via input-dependent gating.
-         No detach: gradients flow freely through context history.
-      3. FFN (RemixedLinear) runs gated by fresh + history-blended context.
-      4. ctx returned as next block's prev_ctx.
+    Supports all novel ablation designs via config toggles:
+      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'
+      - cclblock_context_bank_size: 0=off, N=ContextBank with N prototypes
+      - cclblock_per_head_ctx: separate context projections for attn vs ffn
+      - cclblock_sparse_gate_k: 0=soft sigmoid, N=sparse top-k gate (via remixed_linear_kwargs)
+      - cclblock_gate_temperature: sigmoid temperature for basis gate
     """
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
         ctx_dim = config.remix_context_dim
-        # Context stream replaces old bare linear proj
         stream_type = getattr(config, 'cclblock_context_stream', 'local')
-        if stream_type == 'multiscale':
-            self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
-        elif stream_type == 'selective':
-            self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
-        elif stream_type == 'ema':
-            self.ctx_stream = EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+        bank_size  = getattr(config, 'cclblock_context_bank_size', 0)
+        per_head   = getattr(config, 'cclblock_per_head_ctx', False)
+
+        self.is_shifted  = (stream_type == 'shifted')  # Design 1: use x_entry (prev layer out) for ctx
+        self.per_head_ctx = per_head                    # Design 7: separate attn vs ffn context
+
+        def _make_stream():
+            """Factory: returns the configured context stream module."""
+            if bank_size > 0:
+                return ContextBank(config.n_embd, ctx_dim, bank_size)
+            elif stream_type in ('local', 'shifted'):
+                return LocalContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'selective':
+                return SelectiveContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'ema':
+                return EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+            else:  # multiscale
+                return MultiScaleContext(config.n_embd, ctx_dim)
+
+        if per_head:
+            # Design 7: two independent streams; attn uses pre-attn repr, ffn uses post-attn repr
+            self.ctx_stream_attn = _make_stream()
+            self.ctx_stream_ffn  = _make_stream()
         else:
-            self.ctx_stream = LocalContextStream(config.n_embd, ctx_dim)
+            self.ctx_stream = _make_stream()
+
+    def _is_local(self, stream):
+        """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
+        return isinstance(stream, (LocalContextStream, ContextBank))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
-        is_local = isinstance(self.ctx_stream, LocalContextStream)
-        
-        # 1. Attention: Ignore cross-block context if local
-        attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, None if is_local else prev_ctx)
-        x = x + attn_out
+        x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
-        # 2. Local Context Generation
-        if is_local:
-            # Derived explicitly from THIS block's updated pre-MLP norm(x)
-            ctx = self.ctx_stream(norm(x), prev_ctx)
+        if self.per_head_ctx:
+            # Design 7: separate contexts from pre-attn and post-attn residuals
+            ctx_src_attn = norm(x_entry)                  # before attention
+            ctx_attn = self.ctx_stream_attn(ctx_src_attn) # (B, T, ctx_dim)
+            # Run attention with dedicated attn context
+            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, ctx_attn)
+            x = x + attn_out
+            ctx_src_ffn = norm(x_entry if self.is_shifted else x)  # shifted=prev, else post-attn
+            ctx_ffn = self.ctx_stream_ffn(ctx_src_ffn)   # (B, T, ctx_dim)
+            x = x + self.ffwd(norm(x), ctx_ffn)
+            return x, ctx_ffn.detach()
         else:
-            # Legacy recurrent modes derive from attn_out directly
-            ctx = self.ctx_stream(attn_out, prev_ctx)
-
-        # 3. Apply FFN Gate
-        x = x + self.ffwd(norm(x), ctx)
-
-        return x, ctx.detach() if is_local else ctx
+            stream = self.ctx_stream
+            local = self._is_local(stream)
+            # Attention: for local/bank/shifted streams, don't pass cross-block prev_ctx
+            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+                                 None if (local or self.is_shifted) else prev_ctx)
+            x = x + attn_out
+            # Context source: 'shifted' reads from x_entry (prev layer), others from post-attn norm(x)
+            ctx_src = norm(x_entry if self.is_shifted else x)
+            ctx = stream(ctx_src, None if local else prev_ctx)
+            x = x + self.ffwd(norm(x), ctx)
+            return x, ctx.detach() if (local or self.is_shifted) else ctx
 
 
 def has_ve(layer_idx, n_layer):
