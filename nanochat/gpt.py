@@ -1669,8 +1669,18 @@ class GPT(nn.Module):
                         struct_matrix_params.append(block.attn.ve_gate.weight)
                 else:
                     assert isinstance(block, RemixedBlock), "Expected RemixedBlock or CCLBlock in remix_linear mode"
-                    # 'weight' path: ctx_stream is gate-side.
-                    _sort_ctx_stream_params(block.ctx_stream)
+                    # 'weight' path: ctx streams and projs are gate-side.
+                    if hasattr(block, 'ctx_stream'):
+                        _sort_ctx_stream_params(block.ctx_stream)
+                    if hasattr(block, 'ctx_stream_attn'):
+                        _sort_ctx_stream_params(block.ctx_stream_attn)
+                    if hasattr(block, 'ctx_stream_ffn'):
+                        _sort_ctx_stream_params(block.ctx_stream_ffn)
+                    
+                    if hasattr(block, 'ctx_proj_q'):
+                        for p in block.ctx_proj_q.parameters():
+                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+
                     # RemixedLinear: sort gate vs structural
                     remix_linears = [
                         block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
