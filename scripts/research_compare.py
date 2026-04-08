@@ -65,6 +65,8 @@ def run_training_sweep(args):
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-use-multiscale", str(args.cclblock_use_multiscale),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
+        "--remix-context-dim", str(args.remix_context_dim),
+        "--remix-context-dim-ratio", str(args.remix_context_dim_ratio),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -125,8 +127,9 @@ def run_training_sweep(args):
             "--use-remix-linear",
             "--moe-embed-dim",    str(target_dim),
             "--moe-router-dim",   str(target_dim),
-            "--remix-context-dim", str(target_dim),
+            "--remix-context-dim", str(args.remix_context_dim) if args.remix_context_dim > 0 else str(target_dim),
             "--remix-basis-size",  str(target_dim),
+            "--remix-context-dim-ratio", str(args.remix_context_dim_ratio),
         ]
     }
 
@@ -297,6 +300,8 @@ if __name__ == "__main__":
                         help="use MultiScaleContext (3-channel) instead of SelectiveContextStream (1/0)")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled, k>=1 = context from k blocks ago)")
+    parser.add_argument("--remix-context-dim", type=int, default=-1, help="Override default remix context dimension")
+    parser.add_argument("--remix-context-dim-ratio", type=int, default=6, help="Override default remix context dimension ratio (set to 0 to use fixed dim)")
     
     args = parser.parse_args()
     

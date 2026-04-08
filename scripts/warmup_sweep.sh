@@ -143,6 +143,14 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
             shift 2
             ;;
+        --remix-context-dim)
+            EXTRA_ARGS+=("--remix-context-dim" "$2")
+            shift 2
+            ;;
+        --remix-context-dim-ratio)
+            EXTRA_ARGS+=("--remix-context-dim-ratio" "$2")
+            shift 2
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 break   # first numeric arg = depth, stop parsing flags

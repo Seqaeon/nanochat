@@ -261,6 +261,8 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
         "--cclblock-use-multiscale", str(getattr(args, 'cclblock_use_multiscale', 0)),
         "--cclblock-stale-ctx-lag",  str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
+        "--remix-context-dim",       str(getattr(args, 'remix_context_dim', -1)),
+        "--remix-context-dim-ratio", str(getattr(args, 'remix_context_dim_ratio', 6)),
     ])
 
     env = os.environ.copy()
@@ -638,6 +640,8 @@ if __name__ == "__main__":
                         help="use MultiScaleContext instead of SelectiveContextStream (1/0)")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled)")
+    parser.add_argument("--remix-context-dim", type=int, default=-1, help="Remix context dimension override")
+    parser.add_argument("--remix-context-dim-ratio", type=int, default=6)
 
     args = parser.parse_args()
     run_warmup_sweep(args)

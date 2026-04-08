@@ -300,6 +300,14 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
             shift 2
             ;;
+        --remix-context-dim)
+            EXTRA_ARGS+=("--remix-context-dim" "$2")
+            shift 2
+            ;;
+        --remix-context-dim-ratio)
+            EXTRA_ARGS+=("--remix-context-dim-ratio" "$2")
+            shift 2
+            ;;
         --data-dir)
             DATA_DIR_FLAG="$2"
             EXTRA_ARGS+=("--data-dir" "$2")

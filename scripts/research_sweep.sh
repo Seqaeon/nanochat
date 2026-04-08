@@ -132,6 +132,14 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
             ;;
+        --remix-context-dim)
+            EXTRA_ARGS+=("--remix-context-dim" "$2")
+            shift 2
+            ;;
+        --remix-context-dim-ratio)
+            EXTRA_ARGS+=("--remix-context-dim-ratio" "$2")
+            shift 2
+            ;;
         --tokenizer-dir)
             TOKENIZER_DIR_FLAG="$2"
             EXTRA_ARGS+=("--tokenizer-dir" "$2")
