@@ -65,6 +65,9 @@ def run_training_sweep(args):
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
         "--router-context-window", str(args.router_context_window),
+        "--remix-use-basis-gate", str(getattr(args, 'remix_use_basis_gate', 1)),
+        "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
+        "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
         "--cclblock-ema-factor", str(args.cclblock_ema_factor),
@@ -300,6 +303,10 @@ if __name__ == "__main__":
     parser.add_argument("--router-context-window", type=int, default=-1, help="override sliding window size for contextual router (-1 for full sequence)")
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches (MoE/Remix)")
+    # Remixed-linear components
+    parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
+    parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
+    parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization"],

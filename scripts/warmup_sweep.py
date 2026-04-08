@@ -259,6 +259,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     if getattr(args, "research_dim", 0) > 0:
         common_args.extend(["--research-dim", str(args.research_dim)])
     common_args.extend([
+        "--remix-use-basis-gate",    str(getattr(args, 'remix_use_basis_gate', 1)),
+        "--remix-use-output-gate",   str(getattr(args, 'remix_use_output_gate', 1)),
+        "--remix-use-context",       str(getattr(args, 'remix_use_context', 1)),
         "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
         "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
@@ -638,6 +641,10 @@ if __name__ == "__main__":
         "--use-onecycle", type=int, default=1, choices=[0, 1],
         help="research branches: 1=OneCycle, 0=use base schedule",
     )
+    # Remixed-linear components
+    parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization"],

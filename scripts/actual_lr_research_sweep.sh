@@ -328,6 +328,18 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--research-dim" "$2")
             shift 2
             ;;
+        --remix-use-basis-gate)
+            EXTRA_ARGS+=("--remix-use-basis-gate" "$2")
+            shift 2
+            ;;
+        --remix-use-output-gate)
+            EXTRA_ARGS+=("--remix-use-output-gate" "$2")
+            shift 2
+            ;;
+        --remix-use-context)
+            EXTRA_ARGS+=("--remix-use-context" "$2")
+            shift 2
+            ;;
         --data-dir)
             DATA_DIR_FLAG="$2"
             EXTRA_ARGS+=("--data-dir" "$2")

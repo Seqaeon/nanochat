@@ -430,6 +430,12 @@ def main() -> None:
     p.add_argument("--eval-every", type=int, default=0)
     p.add_argument("--core-metric-every", type=int, default=0)
     p.add_argument("--sample-every", type=int, default=-1)
+    
+    # Remixed-linear components
+    p.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1])
+    p.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1])
+    p.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
+
     # CCL block modulation
     p.add_argument("--cclblock-modulation", type=str, default="weight",
                    choices=["weight", "normalization"],
@@ -450,11 +456,6 @@ def main() -> None:
                    help="Design 4: context prototype bank size (0=off, e.g. 16)")
     p.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                    help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
-    p.add_argument("--cclblock-context-source", type=str, default="norm_x",
-                   choices=["norm_x", "attn_heads"],
-                   help="Design 2: context source ('norm_x'=residual, 'attn_heads'=query vectors)")
-    # Research dimension override
-    p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--fp8", action="store_true")
     p.add_argument("--tokenizer-dir", type=str, default=None)
@@ -560,6 +561,10 @@ def main() -> None:
         "--eval-every",          str(args.eval_every),
         "--core-metric-every",   str(args.core_metric_every),
         "--sample-every",        str(args.sample_every),
+        "--router-context-window", str(getattr(args, 'router_context_window', -1)),
+        "--remix-use-basis-gate",  str(getattr(args, 'remix_use_basis_gate', 1)),
+        "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
+        "--remix-use-context",     str(getattr(args, 'remix_use_context', 1)),
         "--moe-use-abs-pos-embed", "0",
         "--cclblock-modulation", getattr(args, 'cclblock_modulation', 'weight'),
         "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
