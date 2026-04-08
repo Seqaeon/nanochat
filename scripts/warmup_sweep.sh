@@ -131,6 +131,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
+        --research-dim)
+            EXTRA_ARGS+=("--research-dim" "$2")
+            shift 2
+            ;;
         --cclblock-modulation)
             EXTRA_ARGS+=("--cclblock-modulation" "$2")
             shift 2
@@ -141,14 +145,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cclblock-stale-ctx-lag)
             EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
-            shift 2
-            ;;
-        --remix-context-dim)
-            EXTRA_ARGS+=("--remix-context-dim" "$2")
-            shift 2
-            ;;
-        --remix-context-dim-ratio)
-            EXTRA_ARGS+=("--remix-context-dim-ratio" "$2")
             shift 2
             ;;
         *)

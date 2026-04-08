@@ -438,8 +438,8 @@ def main() -> None:
                    help="use MultiScaleContext instead of SelectiveContextStream (1/0)")
     p.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                    help="Design C stale context lag (0=disabled)")
-    p.add_argument("--remix-context-dim", type=int, default=-1, help="Remix context dimension override")
-    p.add_argument("--remix-context-dim-ratio", type=int, default=6)
+    # Research dimension override
+    p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--fp8", action="store_true")
     p.add_argument("--tokenizer-dir", type=str, default=None)
@@ -549,8 +549,7 @@ def main() -> None:
         "--cclblock-modulation", getattr(args, 'cclblock_modulation', 'weight'),
         "--cclblock-use-multiscale", str(getattr(args, 'cclblock_use_multiscale', 0)),
         "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
-        "--remix-context-dim", str(getattr(args, 'remix_context_dim', -1)),
-        "--remix-context-dim-ratio", str(getattr(args, 'remix_context_dim_ratio', 6)),
+        "--research-dim", str(getattr(args, 'research_dim', 0)),
     ]
     if args.compile:
         common_train_args.append("--compile")

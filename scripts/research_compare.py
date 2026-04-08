@@ -34,6 +34,9 @@ def run_training_sweep(args):
     print("=" * 64)
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
+    if getattr(args, "research_dim", None) and args.research_dim > 0:
+        print(f"  Overriding default target_dim ({target_dim}) with --research-dim {args.research_dim}")
+        target_dim = args.research_dim
     max_seq_len = args.sequence_len
     
     device_batch_size = args.device_batch_size if args.device_batch_size > 0 else {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
@@ -65,8 +68,6 @@ def run_training_sweep(args):
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-use-multiscale", str(args.cclblock_use_multiscale),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
-        "--remix-context-dim", str(args.remix_context_dim),
-        "--remix-context-dim-ratio", str(args.remix_context_dim_ratio),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -127,9 +128,8 @@ def run_training_sweep(args):
             "--use-remix-linear",
             "--moe-embed-dim",    str(target_dim),
             "--moe-router-dim",   str(target_dim),
-            "--remix-context-dim", str(args.remix_context_dim) if args.remix_context_dim > 0 else str(target_dim),
+            "--remix-context-dim", str(target_dim),
             "--remix-basis-size",  str(target_dim),
-            "--remix-context-dim-ratio", str(args.remix_context_dim_ratio),
         ]
     }
 
@@ -291,6 +291,8 @@ if __name__ == "__main__":
     parser.add_argument("--mu-p-mode", type=str, default="base_only", choices=["disable", "base_only", "enable"], help="mu-P scaling logic")
     parser.add_argument("--sequence-len", type=int, default=2048, help="override max sequence length")
     parser.add_argument("--router-context-window", type=int, default=-1, help="override sliding window size for contextual router (-1 for full sequence)")
+    # Research dimension override
+    parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches (MoE/Remix)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization"],
@@ -300,8 +302,6 @@ if __name__ == "__main__":
                         help="use MultiScaleContext (3-channel) instead of SelectiveContextStream (1/0)")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled, k>=1 = context from k blocks ago)")
-    parser.add_argument("--remix-context-dim", type=int, default=-1, help="Override default remix context dimension")
-    parser.add_argument("--remix-context-dim-ratio", type=int, default=6, help="Override default remix context dimension ratio (set to 0 to use fixed dim)")
     
     args = parser.parse_args()
     
