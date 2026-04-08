@@ -1000,10 +1000,19 @@ class GPT(nn.Module):
         self.moe_router_dim = config.moe_router_dim
         self.moe_embed_dim = config.moe_embed_dim
         self.use_remix_linear = config.use_remix_linear
-        # Auto-scale context_dim with model width if ratio is set
         if config.use_remix_linear and getattr(config, 'remix_context_dim_ratio', 0) > 0:
             config.remix_context_dim = max(config.remix_context_dim, config.n_embd // config.remix_context_dim_ratio)
             print0(f"remix_context_dim auto-scaled to {config.remix_context_dim} (n_embd={config.n_embd} // ratio={config.remix_context_dim_ratio})")
+        
+        self.cclblock_modulation   = getattr(config, 'cclblock_modulation', 'weight')
+        self.cclblock_stale_ctx_lag = getattr(config, 'cclblock_stale_ctx_lag', 0)
+        
+        # Auto-correct to nearest multiple of 48 (LCM of 3 and 16) if using Multiscale
+        # This ensures 3 equal channels AND fp8 compatibility (divisible by 16)
+        if getattr(config, 'cclblock_use_multiscale', False):
+            orig_dim = config.remix_context_dim
+            config.remix_context_dim = max(48, round(orig_dim / 48) * 48)
+            print0(f"remix_context_dim auto-corrected for MultiScale/FP8 from {orig_dim} to {config.remix_context_dim}")
         # Auto-cap router_context_window at long sequences.
         # The GlobalContextManager runs O(T²) causal attention.  At T=2048 with the default
         # router_context_window=-1 (full context), this produces a highly diluted context signal
@@ -1028,8 +1037,6 @@ class GPT(nn.Module):
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
-        self.cclblock_modulation   = getattr(config, 'cclblock_modulation', 'weight')
-        self.cclblock_stale_ctx_lag = getattr(config, 'cclblock_stale_ctx_lag', 0)
         if self.use_remix_linear:
             if self.cclblock_modulation == 'normalization':
                 block_cls = CCLBlock
