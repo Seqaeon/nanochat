@@ -80,9 +80,9 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization"],
                     help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                          "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
-parser.add_argument("--cclblock-context-stream", type=str, default="ema", 
-                    choices=["ema", "selective", "multiscale"],
-                    help="Context stream type: 'ema' (legacy, detach), 'selective' (GRU, no detach), or 'multiscale' (3-channel GRU)")
+parser.add_argument("--cclblock-context-stream", type=str, default="local", 
+                    choices=["local", "ema", "selective", "multiscale"],
+                    help="Context stream type: 'local' (minimal norm(x) derived), 'ema' (legacy, detach), 'selective' (GRU, no detach), or 'multiscale' (3-channel GRU)")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                     help="Exponential moving average factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
@@ -261,7 +261,7 @@ def build_model_meta(depth):
         router_context_window=getattr(args, 'router_context_window', -1),
         # CCL block redesign
         cclblock_modulation=getattr(args, 'cclblock_modulation', 'weight'),
-        cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'ema'),
+        cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'local'),
         cclblock_ema_factor=getattr(args, 'cclblock_ema_factor', 0.99),
         cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
     )

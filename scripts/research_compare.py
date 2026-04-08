@@ -299,8 +299,8 @@ if __name__ == "__main__":
                         choices=["weight", "normalization"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
-    parser.add_argument("--cclblock-context-stream", type=str, default="ema", 
-                        choices=["ema", "selective", "multiscale"],
+    parser.add_argument("--cclblock-context-stream", type=str, default="local", 
+                        choices=["local", "ema", "selective", "multiscale"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="Exponential moving average factor for the legacy EMAContextStream")

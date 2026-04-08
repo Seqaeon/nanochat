@@ -261,7 +261,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
     # CCL block flags (forwarded for remixed-linear runs)
     common_args.extend([
         "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
-        "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'ema'),
+        "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag",  str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
     ])
@@ -637,8 +637,8 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization"],
                         help="CCL block strategy passed to remixed-linear runs")
-    parser.add_argument("--cclblock-context-stream", type=str, default="ema", 
-                        choices=["ema", "selective", "multiscale"],
+    parser.add_argument("--cclblock-context-stream", type=str, default="local", 
+                        choices=["local", "ema", "selective", "multiscale"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="Exponential moving average factor for the legacy EMAContextStream")

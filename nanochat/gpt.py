@@ -96,10 +96,11 @@ class GPTConfig:
     #                    conditioned via AdaRMSNorm (DiT-style scale/shift from context).
     cclblock_modulation: str = 'weight'
     # The context stream logic:
-    #   'ema'        — (default) fixed ema factor, with .detach() to prevent gradient explosion.
+    #   'local'      — (default) derived directly from norm(x) inside the block. No cross-block threading.
+    #   'ema'        — fixed ema factor, with .detach() to prevent gradient explosion.
     #   'selective'  — GRU-style input-dependent gating, no detach.
     #   'multiscale' — 3 parallel selective temporal channels (Fast, Med, Slow).
-    cclblock_context_stream: str = 'ema'
+    cclblock_context_stream: str = 'local'
     cclblock_ema_factor: float = 0.99
     # Design C: Cross-layer stale context lag (0 = disabled, k>=1 = use context from k blocks ago).
     # When k>0, block i is conditioned on the context emitted by block i-k in the same forward pass.
@@ -540,6 +541,17 @@ class EMAContextStream(nn.Module):
         return new_ctx
 
 
+class LocalContextStream(nn.Module):
+    """Purely local context logic derived from pre-MLP norm(x). Ignores previous block states."""
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.proj.weight) # CRITICAL: zero-init so gates start at identity
+
+    def forward(self, pre_mlp_norm_x, prev_ctx=None):
+        return self.proj(pre_mlp_norm_x)
+
+
 class SelectiveContextStream(nn.Module):
     """GRU-style selective update for the cross-block context state (Design A).
 
@@ -659,31 +671,36 @@ class CCLBlock(nn.Module):
         ctx_dim = config.remix_context_dim
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp  = MLP(config)
-        stream_type = getattr(config, 'cclblock_context_stream', 'ema')
+        stream_type = getattr(config, 'cclblock_context_stream', 'local')
         if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
             ctx_dim = self.ctx_stream.ctx_dim  # possibly auto-corrected
         elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
-        else:
+        elif stream_type == 'ema':
             self.ctx_stream = EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+        else:
+            self.ctx_stream = LocalContextStream(config.n_embd, ctx_dim)
         self.ada_norm_attn = AdaRMSNorm(config.n_embd, ctx_dim)
         self.ada_norm_mlp  = AdaRMSNorm(config.n_embd, ctx_dim)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
+        is_local = isinstance(self.ctx_stream, LocalContextStream)
+        
         # Attention with context-conditioned norm
-        attn_in  = self.ada_norm_attn(x, prev_ctx)
+        attn_in  = self.ada_norm_attn(x, None if is_local else prev_ctx)
         attn_out = self.attn(attn_in, ve, cos_sin, window_size, kv_cache)
         x        = x + attn_out
 
-        # Update context AFTER attention — contains cross-token aggregated signal.
-        # attn_out is NOT already in norm(x), so no circular dependency.
-        ctx = self.ctx_stream(attn_out, prev_ctx)
+        if is_local:
+            ctx = self.ctx_stream(norm(x), prev_ctx)
+        else:
+            ctx = self.ctx_stream(attn_out, prev_ctx)
 
         # MLP with freshly updated context-conditioned norm
         x = x + self.mlp(self.ada_norm_mlp(x, ctx))
-
-        return x, ctx
+        
+        return x, ctx.detach() if is_local else ctx
 
 
 class RemixedLinear(nn.Module):
@@ -741,6 +758,9 @@ class RemixedLinear(nn.Module):
                 nn.GELU(),
                 Linear(basis_hidden, basis_size, bias=True),
             )
+            nn.init.zeros_(self.basis_modulator[-1].weight)
+            if self.basis_modulator[-1].bias is not None:
+                nn.init.zeros_(self.basis_modulator[-1].bias)
             # Low-rank output gate: ctx_dim → r coefficients, r basis vectors → out_features
             # r is a small constant (default 8), making this O(ctx_dim*r + r*out_features)
             # rather than O(ctx_dim*out_features).
@@ -885,28 +905,35 @@ class RemixedBlock(nn.Module):
         self.ffwd = RemixedFeedForward(config)
         ctx_dim = config.remix_context_dim
         # Context stream replaces old bare linear proj
-        stream_type = getattr(config, 'cclblock_context_stream', 'ema')
+        stream_type = getattr(config, 'cclblock_context_stream', 'local')
         if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
         elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
-        else:
+        elif stream_type == 'ema':
             self.ctx_stream = EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+        else:
+            self.ctx_stream = LocalContextStream(config.n_embd, ctx_dim)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
-        # Step 1: Attention gated by accumulated context from previous block
-        attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, prev_ctx)
+        is_local = isinstance(self.ctx_stream, LocalContextStream)
+        
+        # 1. Attention: Ignore cross-block context if local
+        attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, None if is_local else prev_ctx)
         x = x + attn_out
 
-        # Step 2: SelectiveContextStream — input-dependent gating, no detach
-        # alpha = sigmoid(gate(attn_out)) — large for semantically rich tokens
-        # ctx  = (1-alpha)*prev_ctx + alpha*tanh(write(attn_out))
-        ctx = self.ctx_stream(attn_out, prev_ctx)   # (B, T, ctx_dim)
+        # 2. Local Context Generation
+        if is_local:
+            # Derived explicitly from THIS block's updated pre-MLP norm(x)
+            ctx = self.ctx_stream(norm(x), prev_ctx)
+        else:
+            # Legacy recurrent modes derive from attn_out directly
+            ctx = self.ctx_stream(attn_out, prev_ctx)
 
-        # Step 3: FFN (RemixedLinear) gated by fresh + history-blended context
+        # 3. Apply FFN Gate
         x = x + self.ffwd(norm(x), ctx)
 
-        return x, ctx  # ctx becomes next block's prev_ctx
+        return x, ctx.detach() if is_local else ctx
 
 
 def has_ve(layer_idx, n_layer):
