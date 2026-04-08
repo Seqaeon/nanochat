@@ -81,8 +81,8 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                          "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                    choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
-                    help="Context stream: 'local' (default), 'shifted' (prev-layer norm(x)), 'ema', 'selective', 'multiscale', 'boundary', 'chunk'")
+                    choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                    help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'boundary', 'chunk', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                     help="EMA factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
@@ -109,6 +109,10 @@ parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1,
                     help="Design 10: weight of auxiliary context loss (default 0.1)")
 parser.add_argument("--cclblock-boundary-token-id", type=int, default=198,
                     help="Design 10: token ID for boundary detection (default 198=newline in many tokenizers)")
+# Phase 9: RAL & FiLM
+parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1], help="Proposal A: Use ResidualAdaptiveLinear instead of RemixedLinear")
+parser.add_argument("--ral-rank", type=int, default=32, help="Proposal A: Rank for the RAL context delta")
+parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1], help="Proposal C: Use FiLM affine basis gate in RemixedLinear")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")

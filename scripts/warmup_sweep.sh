@@ -199,6 +199,18 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-boundary-token-id" "$2")
             shift 2
             ;;
+        --use-ral)
+            EXTRA_ARGS+=("--use-ral" "$2")
+            shift 2
+            ;;
+        --ral-rank)
+            EXTRA_ARGS+=("--ral-rank" "$2")
+            shift 2
+            ;;
+        --cclblock-film-gate)
+            EXTRA_ARGS+=("--cclblock-film-gate" "$2")
+            shift 2
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 break   # first numeric arg = depth, stop parsing flags

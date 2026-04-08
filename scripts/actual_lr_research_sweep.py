@@ -441,7 +441,7 @@ def main() -> None:
                    choices=["weight", "normalization"],
                    help="CCL block strategy passed to remixed-linear runs")
     p.add_argument("--cclblock-context-stream", type=str, default="local", 
-                   choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
+                   choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                    help="Context stream type")
     p.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                    help="EMA factor for the legacy EMAContextStream")
@@ -463,6 +463,10 @@ def main() -> None:
     p.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
     p.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
     p.add_argument("--cclblock-boundary-token-id", type=int, default=198)
+    # Phase 9
+    p.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
+    p.add_argument("--ral-rank", type=int, default=32)
+    p.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     # Research dimension override
     p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--fp8", action="store_true")

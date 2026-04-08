@@ -655,7 +655,7 @@ if __name__ == "__main__":
                         choices=["weight", "normalization"],
                         help="CCL block strategy passed to remixed-linear runs")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="EMA factor for the legacy EMAContextStream")
@@ -678,6 +678,10 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
     parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
     parser.add_argument("--cclblock-boundary-token-id", type=int, default=198)
+    # Phase 9
+    parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--ral-rank", type=int, default=32)
+    parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 

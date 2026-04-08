@@ -140,6 +140,16 @@ class GPTConfig:
     cclblock_aux_objective: str = 'none'  # 'none' | 'boundary' | 'entropy'
     cclblock_aux_lambda: float = 0.1      # weight of auxiliary loss
     cclblock_boundary_token_id: int = 198 # token ID for boundary detection (default=\n)
+    # Phase 9: Residual Adaptive Linear + New Context Streams + FiLM Gate
+    # Proposal A: ResidualAdaptiveLinear — dense base + context-conditioned low-rank delta.
+    #   y = base(x) + scale * (x @ U * ctx_coeffs(ctx)) @ V
+    #   V=0 at init → zero delta → exact dense baseline at step 0. No regression guarantee.
+    use_ral: bool = False    # use ResidualAdaptiveLinear instead of RemixedLinear
+    ral_rank: int = 32       # rank r for the context-conditioned additive delta
+    # Proposal C: FiLM basis conditioning — affine (scale+shift) instead of sigmoid gate.
+    #   gate = 1 + tanh(scale * 0.1); h_gated = h * gate + shift
+    #   Zero-init → scale=0→gate=1, shift=0 → exact identity at init.
+    cclblock_film_gate: bool = False
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -163,6 +173,8 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_context_source",
     # Phase 8
     "cclblock_chunk_size", "cclblock_aux_objective", "cclblock_aux_lambda", "cclblock_boundary_token_id",
+    # Phase 9
+    "use_ral", "ral_rank", "cclblock_film_gate",
 }
 
 
@@ -684,6 +696,105 @@ class MultiScaleContext(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class DetachedAttnContextStream(nn.Module):
+    """Proposal B: Projects norm(attn_out).detach() to ctx_dim.
+    
+    attn_out is intrinsically orthogonal to x_t (it's the cross-token mixture).
+    """
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, attn_out, prev_ctx=None):
+        return self.proj(norm(attn_out).detach())
+
+
+class CausalPrefixContextStream(nn.Module):
+    """Proposal E: Causal Prefix Context via cumsum (O(T), no recurrence)."""
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, x, prev_ctx=None):
+        cumsum = x.cumsum(dim=1)
+        counts = torch.arange(1, x.size(1) + 1, device=x.device, dtype=x.dtype).view(1, -1, 1)
+        return self.proj(norm(cumsum / counts).detach())
+
+
+class WarmupEMAContextStream(nn.Module):
+    """Proposal D: Position-Aware EMA Warmup."""
+    def __init__(self, n_embd, ctx_dim, ema_factor=0.95):
+        super().__init__()
+        self.ema_factor = ema_factor
+        self.ema_proj = Linear(n_embd, ctx_dim, bias=False)
+        self.local_proj = Linear(n_embd, ctx_dim, bias=True)
+        self.alpha = nn.Parameter(torch.tensor(1.0))
+        self.bias = nn.Parameter(torch.tensor(-2.0))
+
+        nn.init.zeros_(self.ema_proj.weight)
+        nn.init.zeros_(self.local_proj.weight)
+
+    def forward(self, x, prev_ctx=None):
+        B, T, D = x.shape
+        ema_signal = self.ema_proj(x)
+        local_signal = self.local_proj(norm(x).detach())
+        
+        t = torch.arange(T, device=x.device, dtype=x.dtype)
+        blend = torch.sigmoid(self.alpha * torch.log(t + 1.0) + self.bias).view(1, -1, 1)
+        
+        if prev_ctx is None:
+            ema_ctx = ema_signal
+        else:
+            ema_ctx = self.ema_factor * prev_ctx.detach() + (1 - self.ema_factor) * ema_signal
+            
+        return blend * ema_ctx + (1 - blend) * local_signal
+
+
+class DACSEMAContextStream(nn.Module):
+    """Proposal F: Combines DACS (attn_out source) with Selective EMA smoothing."""
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.gate  = Linear(n_embd, ctx_dim, bias=True)
+        self.write = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.write.weight)
+        nn.init.zeros_(self.gate.weight)
+        if self.gate.bias is not None:
+            nn.init.constant_(self.gate.bias, -2.0)  # closed at init
+
+    def forward(self, attn_out, prev_ctx=None):
+        content = torch.tanh(self.write(attn_out.detach()))
+        alpha = torch.sigmoid(self.gate(attn_out.detach()))
+        if prev_ctx is None:
+            return alpha * content
+        return (1 - alpha) * prev_ctx.detach() + alpha * content
+
+
+class DecayPrefixContextStream(nn.Module):
+    """Proposal G: Exponentially-decayed causal prefix mean.
+    Computed via loop over T to approximate vector-scan.
+    """
+    def __init__(self, n_embd, ctx_dim, gamma=0.9):
+        super().__init__()
+        self.proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+        self.gamma = gamma
+
+    def forward(self, x, prev_ctx=None):
+        B, T, D = x.shape
+        states = []
+        curr = torch.zeros(B, D, device=x.device, dtype=x.dtype)
+        for t in range(T):
+            curr = self.gamma * curr + (1 - self.gamma) * x[:, t]
+            states.append(curr)
+        out = torch.stack(states, dim=1)
+        return self.proj(norm(out).detach())
+
+
 class BoundaryGatedContextStream(nn.Module):
     """Design 8: Soft boundary-gated context — update context only at learned segment boundaries.
 
@@ -838,8 +949,9 @@ class CCLBlock(nn.Module):
 
 
 class RemixedLinear(nn.Module):
-    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True):
+    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False):
         super().__init__()
+        self._film_gate_flag = film_gate
         if remixed_linear_kwargs is None:
             remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         # Fix 1B: prevent rank bottleneck — but basis_size should compress relative to
@@ -891,10 +1003,13 @@ class RemixedLinear(nn.Module):
             # amplification. Gradient at init = sech²(0) = 1.0 vs sigmoid'(2.0) ≈ 0.10.
             # 10× better gradient flow for the output gate at initialization.
             basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
+            film_gate = getattr(self, '_film_gate_flag', False)  # set by caller after init if needed
+            # FiLM gate (Proposal C): output 2*basis_size so we can produce (scale, shift)
+            _gate_out_size = 2 * basis_size if self.use_basis_gate and film_gate else basis_size
             self.basis_modulator = nn.Sequential(
                 Linear(context_dim, basis_hidden, bias=True),
                 nn.GELU(),
-                Linear(basis_hidden, basis_size, bias=True),
+                Linear(basis_hidden, _gate_out_size, bias=True),
             )
             nn.init.zeros_(self.basis_modulator[-1].weight)
             if self.basis_modulator[-1].bias is not None:
@@ -934,7 +1049,15 @@ class RemixedLinear(nn.Module):
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
                 gate_logits = self.basis_modulator(ctx)
-                if self.sparse_gate_k > 0:
+                if self._film_gate_flag:
+                    # Proposal C: FiLM affine conditioning — scale + shift
+                    # basis_modulator outputs 2*basis_size; split into (scale, shift)
+                    scale_logits, shift = gate_logits.chunk(2, dim=-1)
+                    # 1 + tanh(0.1 * scale_logits) → range [0,2], starts at 1.0 (identity)
+                    gate_basis = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
+                    h_basis = h_basis * gate_basis + shift.to(dtype=dtype)
+                    gate_basis = None  # already applied
+                elif self.sparse_gate_k > 0:
                     # Design 3: Straight-through sparse top-k gate.
                     # Forward: activate top-k basis functions via soft distribution.
                     # Backward: gradients flow through the continuous sigmoid path.
@@ -969,14 +1092,79 @@ class RemixedLinear(nn.Module):
         return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
 
 
+class ResidualAdaptiveLinear(nn.Module):
+    """Proposal A: Dense base layer + context-conditioned additive low-rank delta.
+
+    y = base(x) + scale * (x @ U * ctx_coeffs(ctx)) @ V
+
+    Key properties:
+    - V=0 at init → delta=0 → EXACT dense baseline at step 0 (no regression risk)
+    - base(x) always has full D_in×D_out rank — no bottleneck from basis compression
+    - Gradient path through base is pure dense-linear (no interference)
+    - Delta grows only as optimizer finds it useful, gated by ctx_coeffs
+    - Same forward(x, ctx) / gate_parameters() / non_gate_parameters() API as RemixedLinear
+
+    Compatible with setup_optimizer: gate_parameters() returns ctx_coeffs params,
+    non_gate_parameters() returns base+U+V+scale. No ln_basis → optimizer loop skips it.
+    """
+    def __init__(self, in_features, out_features, context_dim, rank=32, **_ignored):
+        super().__init__()
+        self.rank = rank
+        self.in_features  = in_features
+        self.out_features = out_features
+        # Full-rank dense base — always active, no rank deficit
+        self.base = Linear(in_features, out_features, bias=True)
+        # Low-rank adaptive delta matrices
+        self.U = nn.Parameter(torch.empty(in_features, rank))
+        self.V = nn.Parameter(torch.zeros(rank, out_features))    # ZERO: delta=0 at init
+        # Context → rank-dimensional coefficient vector
+        self.ctx_coeffs = Linear(context_dim, rank, bias=True)
+        self.scale = nn.Parameter(torch.tensor(0.1))
+        # Dummy attribute so setup_optimizer can safely call .ln_basis.parameters() check
+        self.ln_basis = nn.Identity()  # has no parameters
+
+        nn.init.kaiming_uniform_(self.U, a=0.01)
+        nn.init.zeros_(self.ctx_coeffs.weight)
+        nn.init.zeros_(self.ctx_coeffs.bias)
+
+    def gate_parameters(self):
+        """Context gate params routed to lower-LR optimizer group."""
+        yield from self.ctx_coeffs.parameters()
+        yield self.scale
+
+    def non_gate_parameters(self):
+        """Structural params (base weights, U, V) routed to normal-LR group."""
+        yield self.base.weight
+        yield self.base.bias
+        yield self.U
+        yield self.V
+
+    def forward(self, x, context_state):
+        y = self.base(x)
+        if context_state is not None:
+            ctx = context_state.to(x.dtype)
+            coeffs = self.ctx_coeffs(ctx)                                     # (B, T, rank)
+            h = (x @ self.U.to(x.dtype))                                      # (B, T, rank)
+            delta = (h * coeffs) @ self.V.to(x.dtype)                         # (B, T, out_features)
+            y = y + self.scale.to(x.dtype) * delta
+        return y
+
+
 class RemixedFeedForward(nn.Module):
-    """Feedforward path using RemixedLinear in the base MLP framework."""
+    """Feedforward path using RemixedLinear (or RAL) in the base MLP framework."""
     def __init__(self, config):
         super().__init__()
+        use_ral = getattr(config, 'use_ral', False)
+        ral_rank = getattr(config, 'ral_rank', 32)
+        film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        self.c_fc = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
-        self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        if use_ral:
+            self.c_fc   = ResidualAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
+            self.c_proj = ResidualAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
+        else:
+            self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+            self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
 
     def forward(self, x, context_state):
         x = self.c_fc(x, context_state)
@@ -986,7 +1174,7 @@ class RemixedFeedForward(nn.Module):
 
 
 class RemixedMultiAttention(nn.Module):
-    """Attention path using RemixedLinear for Q/K/V/proj while preserving GPT attention logic."""
+    """Attention path using RemixedLinear (or RAL) for Q/K/V/proj."""
     def __init__(self, config, layer_idx):
         super().__init__()
         self.layer_idx = layer_idx
@@ -995,12 +1183,21 @@ class RemixedMultiAttention(nn.Module):
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
         self.ve_gate_channels = min(self.n_embd, 32)
+        use_ral = getattr(config, 'use_ral', False)
+        ral_rank = getattr(config, 'ral_rank', 32)
+        film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        self.c_q = RemixedLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
-        self.c_k = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
-        self.c_v = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
-        self.c_proj = RemixedLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale)
+        if use_ral:
+            self.c_q    = ResidualAdaptiveLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, rank=ral_rank)
+            self.c_k    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
+            self.c_v    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
+            self.c_proj = ResidualAdaptiveLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, rank=ral_rank)
+        else:
+            self.c_q    = RemixedLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+            self.c_k    = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+            self.c_v    = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+            self.c_proj = RemixedLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
@@ -1127,6 +1324,16 @@ class RemixedBlock(nn.Module):
                 return BoundaryGatedContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'ema':
                 return EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+            elif stream_type == 'dacs':
+                return DetachedAttnContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'prefix':
+                return CausalPrefixContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'warmup_ema':
+                return WarmupEMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
+            elif stream_type == 'dacs_ema':
+                return DACSEMAContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'decay_prefix':
+                return DecayPrefixContextStream(config.n_embd, ctx_dim, gamma=0.9)
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
@@ -1139,7 +1346,7 @@ class RemixedBlock(nn.Module):
 
     def _is_local(self, stream):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
-        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, BoundaryGatedContextStream))
+        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
@@ -1172,15 +1379,25 @@ class RemixedBlock(nn.Module):
         else:
             stream = self.ctx_stream
             local = self._is_local(stream)
-            # Attention: for local/bank/shifted streams, don't pass cross-block prev_ctx
-            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
-                                 None if (local or self.is_shifted) else prev_ctx)
-            x = x + attn_out
-            # Context source: 'shifted' reads from x_entry (prev layer), others from post-attn norm(x)
-            ctx_src = norm(x_entry if self.is_shifted else x)
-            ctx = stream(ctx_src, None if local else prev_ctx)
+            is_dacs = isinstance(stream, (DetachedAttnContextStream, DACSEMAContextStream))
+            
+            if is_dacs:
+                # Attention runs WITHOUT context
+                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state=None)
+                x = x + attn_out
+                # Compute context FROM attn_out
+                ctx = stream(attn_out, None if local else prev_ctx)
+            else:
+                # Attention runs WITH context (unless local/shifted)
+                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+                                     None if (local or self.is_shifted) else prev_ctx)
+                x = x + attn_out
+                # Context source: 'shifted' reads from x_entry (prev layer), others from post-attn norm(x)
+                ctx_src = norm(x_entry if self.is_shifted else x)
+                ctx = stream(ctx_src, None if local else prev_ctx)
+                
             x = x + self.ffwd(norm(x), ctx)
-            out_ctx = ctx.detach() if (local or self.is_shifted) else ctx
+            out_ctx = ctx.detach() if (local or self.is_shifted or is_dacs) else ctx
             self._last_ctx = out_ctx
             return x, out_ctx
 

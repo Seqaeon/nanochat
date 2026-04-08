@@ -318,7 +318,7 @@ if __name__ == "__main__":
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="EMA factor for the legacy EMAContextStream")
@@ -341,7 +341,10 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
     parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
     parser.add_argument("--cclblock-boundary-token-id", type=int, default=198)
-    
+    # Phase 9
+    parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--ral-rank", type=int, default=32)
+    parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     
     run_training_sweep(args)
