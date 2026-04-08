@@ -256,6 +256,12 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         common_args.extend(["--data-dir", args.data_dir])
     if args.max_shards > 0:
         common_args.extend(["--max-shards", str(args.max_shards)])
+    # CCL block flags (forwarded for remixed-linear runs)
+    common_args.extend([
+        "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
+        "--cclblock-use-multiscale", str(getattr(args, 'cclblock_use_multiscale', 0)),
+        "--cclblock-stale-ctx-lag",  str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
+    ])
 
     env = os.environ.copy()
 
@@ -624,6 +630,14 @@ if __name__ == "__main__":
         "--use-onecycle", type=int, default=1, choices=[0, 1],
         help="research branches: 1=OneCycle, 0=use base schedule",
     )
+    # CCL block modulation
+    parser.add_argument("--cclblock-modulation", type=str, default="weight",
+                        choices=["weight", "normalization"],
+                        help="CCL block strategy passed to remixed-linear runs")
+    parser.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
+                        help="use MultiScaleContext instead of SelectiveContextStream (1/0)")
+    parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
+                        help="Design C stale context lag (0=disabled)")
 
     args = parser.parse_args()
     run_warmup_sweep(args)

@@ -89,6 +89,21 @@ class GPTConfig:
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSSL"
 
+    # CCL block modulation strategy (only used when use_remix_linear=True):
+    #   'weight'       — keeps RemixedLinear weight-modulation gating but upgrades context
+    #                    stream from EMA to SelectiveContextStream (GRU-style, no detach).
+    #   'normalization' — replaces RemixedLinear with CCLBlock: standard dense Attn+MLP
+    #                    conditioned via AdaRMSNorm (DiT-style scale/shift from context).
+    cclblock_modulation: str = 'weight'
+    # Use MultiScaleContext (3 parallel temporal channels) instead of single SelectiveContextStream.
+    # When True, ctx_dim is auto-corrected to the nearest multiple of 3.
+    cclblock_use_multiscale: bool = False
+    # Design C: Cross-layer stale context lag (0 = disabled, k>=1 = use context from k blocks ago).
+    # When k>0, block i is conditioned on the context emitted by block i-k in the same forward pass.
+    # This breaks the circular dependency because i-k is a genuinely different layer's computation.
+    # The stale context is detached — only the within-block gradient path is active.
+    cclblock_stale_ctx_lag: int = 0
+
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
@@ -104,6 +119,8 @@ RESEARCH_ALLOWED_KEYS = {
     "scale_basis_size",
     # Fix 1D
     "perm_expert_mode", "perm_rank",
+    # CCL block redesign
+    "cclblock_modulation", "cclblock_use_multiscale", "cclblock_stale_ctx_lag",
 }
 
 
@@ -502,6 +519,149 @@ class GlobalContextManager(nn.Module):
         return F.layer_norm(context_logits, context_logits.shape[-1:])
 
 
+class SelectiveContextStream(nn.Module):
+    """GRU-style selective update for the cross-block context state (Design A).
+
+    Replaces the fixed-λ EMA + detach used in the old RemixedBlock with
+    input-dependent gating:
+      - alpha = sigmoid(gate(attn_out))  — update gate, input-dependent
+      - content = tanh(write(attn_out)) — new content
+      - ctx = (1-alpha)*prev_ctx + alpha*content  — no detach, full grad flow
+
+    Zero-init on write weight/bias ensures no spurious content at step 0.
+    gate bias=0 → sigmoid(0)=0.5 (balanced at init).
+    """
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.gate  = Linear(n_embd, ctx_dim, bias=True)
+        self.write = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.gate.bias)
+        nn.init.zeros_(self.write.weight)
+        nn.init.zeros_(self.write.bias)
+
+    def forward(self, attn_out, prev_ctx):
+        alpha   = torch.sigmoid(self.gate(attn_out))          # (B, T, ctx_dim)
+        content = torch.tanh(self.write(attn_out))            # (B, T, ctx_dim)
+        if prev_ctx is None:
+            return alpha * content
+        # No detach: full gradient flow through context history
+        return (1 - alpha) * prev_ctx + alpha * content
+
+
+class MultiScaleContext(nn.Module):
+    """Three parallel selective state channels with different temporal scales (Design D).
+
+    Fast  (bias=+2.0 → α≈0.88): updates aggressively — captures recent syntax/tokens.
+    Medium(bias= 0.0 → α≈0.50): balanced — captures paragraph-level topic.
+    Slow  (bias=-2.0 → α≈0.12): retains history — captures document-level style.
+
+    ctx_dim is auto-corrected to the nearest multiple of 3 when this class is
+    instantiated, so the caller should read self.ctx_dim after construction.
+    """
+    GATE_BIASES = [2.0, 0.0, -2.0]   # sigmoid → [0.88, 0.50, 0.12]
+
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        # Auto-correct to nearest multiple of 3 (required for 3 equal sub-channels)
+        corrected = max(3, round(ctx_dim / 3) * 3)
+        self.ctx_dim   = corrected
+        self.scale_dim = corrected // 3
+        self.gates  = nn.ModuleList([Linear(n_embd, self.scale_dim, bias=True)  for _ in range(3)])
+        self.writes = nn.ModuleList([Linear(n_embd, self.scale_dim, bias=True)  for _ in range(3)])
+        for gate, bias_val in zip(self.gates, self.GATE_BIASES):
+            nn.init.constant_(gate.bias, bias_val)
+        for write in self.writes:
+            nn.init.zeros_(write.weight)
+            nn.init.zeros_(write.bias)
+
+    def forward(self, attn_out, prev_ctx):
+        chunks = []
+        for i in range(3):
+            alpha   = torch.sigmoid(self.gates[i](attn_out))
+            content = torch.tanh(self.writes[i](attn_out))
+            if prev_ctx is None:
+                chunks.append(alpha * content)
+            else:
+                prev = prev_ctx[..., i*self.scale_dim:(i+1)*self.scale_dim]
+                chunks.append((1 - alpha) * prev + alpha * content)
+        return torch.cat(chunks, dim=-1)
+
+
+class AdaRMSNorm(nn.Module):
+    """Context-conditioned RMSNorm for the 'normalization' CCL path (Design B).
+
+    Instead of modulating weight matrices (RemixedLinear), the context predicts
+    per-position (scale, shift) for the post-norm representation — the DiT insight
+    applied to language model blocks.
+
+    At init: proj.weight=0, proj.bias[:n_embd]=1.0 (scale), proj.bias[n_embd:]=0.0 (shift).
+    This guarantees exact standard RMSNorm at initialization regardless of ctx quality.
+    Clean gradient path: loss → output → (scale*norm_x + shift) → ctx → context stream.
+    """
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.n_embd = n_embd
+        self.proj = Linear(ctx_dim, 2 * n_embd, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+        self.proj.bias.data[:n_embd] = 1.0   # scale starts at 1.0 (identity)
+        # shift stays at 0.0 (no bias at init)
+
+    def forward(self, x, ctx):
+        x_norm = F.rms_norm(x, (x.shape[-1],))
+        if ctx is None:
+            return x_norm
+        params = self.proj(ctx.to(dtype=x.dtype))    # (B, T, 2*n_embd)
+        scale, shift = params.chunk(2, dim=-1)
+        return x_norm * scale + shift
+
+
+class CCLBlock(nn.Module):
+    """Clean Context-Conditioned Language Block — 'normalization' modulation path.
+
+    Standard dense CausalSelfAttention + MLP with AdaRMSNorm conditioning.
+    No RemixedLinear complexity (no basis gates, output gates, template mixing).
+
+    Context lifecycle:
+      1. Attention input is conditioned by prev_ctx via AdaRMSNorm (scale+shift).
+      2. attn_out is fed to SelectiveContextStream/MultiScaleContext → fresh ctx.
+         (AFTER attention, so ctx carries cross-token aggregated signal.)
+      3. MLP input is conditioned by freshly updated ctx via AdaRMSNorm.
+      4. ctx is returned as next block's prev_ctx.
+
+    This breaks the circular conditioning of the old AG-CCL:
+      - ctx is derived from attn_out, NOT from norm(x) the MLP will read.
+      - AdaRMSNorm replaces RemixedLinear as the modulation mechanism.
+    """
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        ctx_dim = config.remix_context_dim
+        self.attn = CausalSelfAttention(config, layer_idx)
+        self.mlp  = MLP(config)
+        if getattr(config, 'cclblock_use_multiscale', False):
+            self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
+            ctx_dim = self.ctx_stream.ctx_dim  # possibly auto-corrected
+        else:
+            self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
+        self.ada_norm_attn = AdaRMSNorm(config.n_embd, ctx_dim)
+        self.ada_norm_mlp  = AdaRMSNorm(config.n_embd, ctx_dim)
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
+        # Attention with context-conditioned norm
+        attn_in  = self.ada_norm_attn(x, prev_ctx)
+        attn_out = self.attn(attn_in, ve, cos_sin, window_size, kv_cache)
+        x        = x + attn_out
+
+        # Update context AFTER attention — contains cross-token aggregated signal.
+        # attn_out is NOT already in norm(x), so no circular dependency.
+        ctx = self.ctx_stream(attn_out, prev_ctx)
+
+        # MLP with freshly updated context-conditioned norm
+        x = x + self.mlp(self.ada_norm_mlp(x, ctx))
+
+        return x, ctx
+
+
 class RemixedLinear(nn.Module):
     def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True):
         super().__init__()
@@ -682,51 +842,42 @@ class RemixedMultiAttention(nn.Module):
 
 
 class RemixedBlock(nn.Module):
-    """Attention-Grounded Context-Conditioned Linear (AG-CCL) block.
+    """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
+
+    Keeps the RemixedLinear weight-modulation gating (basis gate + low-rank output gate)
+    but upgrades the context stream from a fixed-λ EMA (with detach) to a
+    SelectiveContextStream or MultiScaleContext (GRU-style, no detach, full grad flow).
 
     Context lifecycle per block:
-      1. Attention runs gated by prev_ctx (previous block's EMA-accumulated context).
-      2. attn_out → ctx_from_attn → fresh context derived from processed representations,
-         not raw embeddings (fixes the GCM dilution at long T).
-      3. F.rms_norm on fresh ctx for scale stability across training (suggestion 4).
-      4. EMA blend: ctx += sigmoid(ctx_ema_gate) * prev_ctx.detach()
-         — detach breaks the gradient chain through the EMA history (suggestion 3).
-         — ctx_ema_gate init -2 → sigmoid ≈ 0.12: mostly fresh, some history.
-      5. FFN runs gated by ctx.
-      6. ctx returned as next block's prev_ctx (causal running context, suggestion 2).
+      1. Attention runs gated by prev_ctx (previous block's accumulated context).
+      2. attn_out → SelectiveContextStream → fresh context via input-dependent gating.
+         No detach: gradients flow freely through context history.
+      3. FFN (RemixedLinear) runs gated by fresh + history-blended context.
+      4. ctx returned as next block's prev_ctx.
     """
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
         ctx_dim = config.remix_context_dim
-        # AG-CCL context path: n_embd → ctx_dim (from attention output, not raw embeddings)
-        self.ctx_from_attn = nn.Sequential(
-            Linear(config.n_embd, ctx_dim, bias=True),
-            nn.GELU(),
-            Linear(ctx_dim, ctx_dim, bias=True),
-        )
-        # EMA gate: init -2.0 → sigmoid(-2.0) ≈ 0.12 (mostly fresh, slight history)
-        self.ctx_ema_gate = nn.Parameter(torch.tensor(-2.0))
+        # Selective context stream: replaces EMA + ctx_from_attn MLP.
+        # GRU-style gating maps attn_out (n_embd) → ctx_dim, blends with prev_ctx.
+        if getattr(config, 'cclblock_use_multiscale', False):
+            self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
+        else:
+            self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         # Step 1: Attention gated by accumulated context from previous block
         attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, prev_ctx)
         x = x + attn_out
 
-        # Step 2: Fresh context from attention output (post-attention = richer than raw embeddings)
-        ctx = self.ctx_from_attn(attn_out)          # (B, T, ctx_dim)
+        # Step 2: SelectiveContextStream — input-dependent gating, no detach
+        # alpha = sigmoid(gate(attn_out)) — large for semantically rich tokens
+        # ctx  = (1-alpha)*prev_ctx + alpha*tanh(write(attn_out))
+        ctx = self.ctx_stream(attn_out, prev_ctx)   # (B, T, ctx_dim)
 
-        # Step 3: RMS-normalize for consistent scale regardless of attn_out magnitude
-        ctx = F.rms_norm(ctx, [ctx.shape[-1]])
-
-        # Step 4: EMA blend — incorporate history from previous block
-        # Detach prev_ctx so gradients don't flow back through the EMA chain
-        if prev_ctx is not None:
-            alpha = torch.sigmoid(self.ctx_ema_gate.to(dtype=ctx.dtype))
-            ctx = ctx + alpha * prev_ctx#.detach()
-
-        # Step 5: FFN gated by fresh + accumulated context
+        # Step 3: FFN (RemixedLinear) gated by fresh + history-blended context
         x = x + self.ffwd(norm(x), ctx)
 
         return x, ctx  # ctx becomes next block's prev_ctx
@@ -877,7 +1028,15 @@ class GPT(nn.Module):
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
-        block_cls = RemixedBlock if self.use_remix_linear else Block
+        self.cclblock_modulation   = getattr(config, 'cclblock_modulation', 'weight')
+        self.cclblock_stale_ctx_lag = getattr(config, 'cclblock_stale_ctx_lag', 0)
+        if self.use_remix_linear:
+            if self.cclblock_modulation == 'normalization':
+                block_cls = CCLBlock
+            else:
+                block_cls = RemixedBlock  # 'weight' path
+        else:
+            block_cls = Block
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([block_cls(config, layer_idx) for layer_idx in range(config.n_layer)]),
@@ -925,9 +1084,8 @@ class GPT(nn.Module):
             assert self.moe_embed_dim == config.n_embd, "moe_embed_dim must match n_embd"
         self.context_manager = None
         self.context_updaters = None
-        # AG-CCL: context is derived per-block inside RemixedBlock from attn_out.
-        # GlobalContextManager and context_updaters are not used for remix_linear —
-        # ctx_from_attn and ctx_ema_gate live inside each RemixedBlock.
+        # CCL: context is derived per-block inside RemixedBlock/CCLBlock via SelectiveContextStream.
+        # GlobalContextManager and context_updaters are not used for remix_linear.
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -968,19 +1126,30 @@ class GPT(nn.Module):
         def _init_research_module(mod: nn.Module):
             # We use a non-recursive approach to avoid overwriting specialized inits
             for sub in mod.modules():
+                if isinstance(sub, CCLBlock):
+                    # AdaRMSNorm: zero proj weights, scale bias=1.0, shift bias=0.0.
+                    # Guarantees identity RMSNorm at init regardless of ctx quality.
+                    for ada in [sub.ada_norm_attn, sub.ada_norm_mlp]:
+                        torch.nn.init.zeros_(ada.proj.weight)
+                        torch.nn.init.zeros_(ada.proj.bias)
+                        ada.proj.bias.data[:ada.n_embd] = 1.0   # scale
+                    # SelectiveContextStream / MultiScaleContext: handled by their own
+                    # __init__ zero-inits already; but re-apply here for safety.
+                    _init_ctx_stream(sub.ctx_stream)
+                    # Attn and MLP: same as regular Block
+                    torch.nn.init.uniform_(sub.attn.c_q.weight, -s, s)
+                    torch.nn.init.uniform_(sub.attn.c_k.weight, -s, s)
+                    torch.nn.init.uniform_(sub.attn.c_v.weight, -s, s)
+                    torch.nn.init.zeros_(sub.attn.c_proj.weight)
+                    torch.nn.init.uniform_(sub.mlp.c_fc.weight, -s, s)
+                    torch.nn.init.zeros_(sub.mlp.c_proj.weight)
+                    if sub.attn.ve_gate is not None:
+                        torch.nn.init.zeros_(sub.attn.ve_gate.weight)
+                    continue  # Skip further processing of sub-components
+
                 if isinstance(sub, RemixedBlock):
-                    # AG-CCL context path: xavier for L1, tiny std=0.01 for L2.
-                    # NOT zero-init: the model needs a small non-zero context signal from
-                    # step 1 so the gate pathway activates and learns, rather than staying
-                    # dormant until ctx_from_attn accidentally learns to produce non-zero output.
-                    ca_linears = [m for m in sub.ctx_from_attn.modules() if isinstance(m, (Linear, nn.Linear))]
-                    if ca_linears:
-                        torch.nn.init.xavier_uniform_(ca_linears[0].weight)
-                        if ca_linears[0].bias is not None: torch.nn.init.zeros_(ca_linears[0].bias)
-                        torch.nn.init.normal_(ca_linears[-1].weight, std=0.01)  # small but non-zero
-                        if ca_linears[-1].bias is not None: torch.nn.init.zeros_(ca_linears[-1].bias)
-                    # EMA gate: -2.0 → sigmoid ≈ 0.12 (mostly fresh context, some history)
-                    torch.nn.init.constant_(sub.ctx_ema_gate, -2.0)
+                    # SelectiveContextStream / MultiScaleContext replaces ctx_from_attn + ctx_ema_gate.
+                    _init_ctx_stream(sub.ctx_stream)
                 if isinstance(sub, RemixedLinear):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
@@ -1056,10 +1225,29 @@ class GPT(nn.Module):
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
+
+        def _init_ctx_stream(stream):
+            """Common init for SelectiveContextStream and MultiScaleContext."""
+            if isinstance(stream, SelectiveContextStream):
+                # gate bias=0 (sigmoid(0)=0.5 balanced), write zero-init (no spurious content)
+                torch.nn.init.zeros_(stream.gate.bias)
+                torch.nn.init.zeros_(stream.write.weight)
+                torch.nn.init.zeros_(stream.write.bias)
+                # gate weight: xavier for good gradient flow
+                torch.nn.init.xavier_uniform_(stream.gate.weight)
+            elif isinstance(stream, MultiScaleContext):
+                for gate, bias_val in zip(stream.gates, MultiScaleContext.GATE_BIASES):
+                    torch.nn.init.xavier_uniform_(gate.weight)
+                    torch.nn.init.constant_(gate.bias, bias_val)
+                for write in stream.writes:
+                    torch.nn.init.zeros_(write.weight)
+                    torch.nn.init.zeros_(write.bias)
+
         for block in self.transformer.h:
-            if isinstance(block, RemixedBlock):
+            if isinstance(block, (RemixedBlock, CCLBlock)):
                 _init_research_module(block)
-                if block.attn.ve_gate is not None:
+                # RemixedBlock attn ve_gate not handled in _init_research_module — do it here
+                if isinstance(block, RemixedBlock) and block.attn.ve_gate is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.weight)
             else:
                 torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
@@ -1244,29 +1432,47 @@ class GPT(nn.Module):
         struct_matrix_params = []  # 2D struct params → normal Muon
         struct_adamw_params  = []  # 1D struct params → normal AdamW
 
+        def _sort_ctx_stream_params(stream):
+            """Route SelectiveContextStream/MultiScaleContext params to gate groups."""
+            for p in stream.parameters():
+                (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+
         if self.use_remix_linear:
             for block in self.transformer.h:
-                assert isinstance(block, RemixedBlock), "Expected RemixedBlock in remix_linear mode"
-                # ctx_from_attn: generates the context signal (treated as gate-side)
-                for p in block.ctx_from_attn.parameters():
-                    (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
-                gate_adamw_params.append(block.ctx_ema_gate)  # scalar
-                # RemixedLinear: sort gate vs structural
-                remix_linears = [
-                    block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
-                    block.ffwd.c_fc, block.ffwd.c_proj,
-                ]
-                for rl in remix_linears:
-                    for p in rl.gate_parameters():
-                        (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
-                    for p in rl.non_gate_parameters():
-                        (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
-                    # ln_basis (LayerNorm)
-                    for p in rl.ln_basis.parameters():
-                        struct_adamw_params.append(p)
-                # ve_gate (if present) is structural
-                if block.attn.ve_gate is not None:
-                    struct_matrix_params.append(block.attn.ve_gate.weight)
+                if isinstance(block, CCLBlock):
+                    # 'normalization' path: ctx_stream and AdaRMSNorm.proj are gate-side.
+                    # Standard CausalSelfAttention + MLP weights are structural.
+                    _sort_ctx_stream_params(block.ctx_stream)
+                    for ada in [block.ada_norm_attn, block.ada_norm_mlp]:
+                        for p in ada.parameters():
+                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                    # Structural: attn Q/K/V/proj, MLP fc/proj
+                    for p in [block.attn.c_q.weight, block.attn.c_k.weight,
+                               block.attn.c_v.weight, block.attn.c_proj.weight,
+                               block.mlp.c_fc.weight, block.mlp.c_proj.weight]:
+                        struct_matrix_params.append(p)
+                    if block.attn.ve_gate is not None:
+                        struct_matrix_params.append(block.attn.ve_gate.weight)
+                else:
+                    assert isinstance(block, RemixedBlock), "Expected RemixedBlock or CCLBlock in remix_linear mode"
+                    # 'weight' path: ctx_stream is gate-side.
+                    _sort_ctx_stream_params(block.ctx_stream)
+                    # RemixedLinear: sort gate vs structural
+                    remix_linears = [
+                        block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
+                        block.ffwd.c_fc, block.ffwd.c_proj,
+                    ]
+                    for rl in remix_linears:
+                        for p in rl.gate_parameters():
+                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                        for p in rl.non_gate_parameters():
+                            (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
+                        # ln_basis (LayerNorm)
+                        for p in rl.ln_basis.parameters():
+                            struct_adamw_params.append(p)
+                    # ve_gate (if present) is structural
+                    if block.attn.ve_gate is not None:
+                        struct_matrix_params.append(block.attn.ve_gate.weight)
         else:
             # Regular Block: all transformer.h params go to candidate_matrix_params
             candidate = list(self.transformer.h.parameters())
@@ -1371,17 +1577,29 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
-        # AG-CCL: context is threaded block-to-block, starting as None at block 0.
-        # Each RemixedBlock derives fresh context from its own attn_out and blends
-        # it with the previous block's accumulated context via a learned EMA gate.
-        prev_ctx = None
-        for i, block in enumerate(self.transformer.h):
-            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            if self.use_remix_linear:
-                x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
-            else:
-                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+        # CCL context threading: context flows block-to-block, starting as None at block 0.
+        # RemixedBlock and CCLBlock both return (x, ctx) and accept prev_ctx.
+        # Design C (cclblock_stale_ctx_lag > 0): block i receives context from block i-k
+        # (guaranteed to be independent because it's from a different layer's computation).
+        # The stale context is detached — within-block gradient path remains intact.
+        lag = self.cclblock_stale_ctx_lag
+        if self.use_remix_linear and lag > 0:
+            ctx_history = []
+            for i, block in enumerate(self.transformer.h):
+                x  = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+                ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
+                stale_ctx = ctx_history[i - lag].detach() if i >= lag else None
+                x, new_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, stale_ctx)
+                ctx_history.append(new_ctx)
+        else:
+            prev_ctx = None
+            for i, block in enumerate(self.transformer.h):
+                x  = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+                ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
+                if self.use_remix_linear:
+                    x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
+                else:
+                    x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
 
         # Forward the lm_head (compute logits)

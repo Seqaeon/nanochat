@@ -62,6 +62,9 @@ def run_training_sweep(args):
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
         "--router-context-window", str(args.router_context_window),
+        "--cclblock-modulation", str(args.cclblock_modulation),
+        "--cclblock-use-multiscale", str(args.cclblock_use_multiscale),
+        "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -285,6 +288,15 @@ if __name__ == "__main__":
     parser.add_argument("--mu-p-mode", type=str, default="base_only", choices=["disable", "base_only", "enable"], help="mu-P scaling logic")
     parser.add_argument("--sequence-len", type=int, default=2048, help="override max sequence length")
     parser.add_argument("--router-context-window", type=int, default=-1, help="override sliding window size for contextual router (-1 for full sequence)")
+    # CCL block modulation
+    parser.add_argument("--cclblock-modulation", type=str, default="weight",
+                        choices=["weight", "normalization"],
+                        help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
+                             "or 'normalization' (CCLBlock with AdaRMSNorm)")
+    parser.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
+                        help="use MultiScaleContext (3-channel) instead of SelectiveContextStream (1/0)")
+    parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
+                        help="Design C stale context lag (0=disabled, k>=1 = context from k blocks ago)")
     
     args = parser.parse_args()
     

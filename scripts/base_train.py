@@ -75,6 +75,17 @@ parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+# CCL block modulation (only active when --use-remix-linear is set)
+parser.add_argument("--cclblock-modulation", type=str, default="weight",
+                    choices=["weight", "normalization"],
+                    help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
+                         "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
+parser.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
+                    help="use MultiScaleContext (3 temporal channels, auto-corrects ctx_dim to "
+                         "nearest multiple of 3) instead of single SelectiveContextStream (1/0)")
+parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
+                    help="Design C stale context lag: 0=disabled, k>=1 means block i receives "
+                         "context from block i-k (detached, breaks circular conditioning)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -246,6 +257,10 @@ def build_model_meta(depth):
         perm_expert_mode=getattr(args, 'perm_expert_mode', 'low_rank'),
         perm_rank=getattr(args, 'perm_rank', 16),
         router_context_window=getattr(args, 'router_context_window', -1),
+        # CCL block redesign
+        cclblock_modulation=getattr(args, 'cclblock_modulation', 'weight'),
+        cclblock_use_multiscale=bool(getattr(args, 'cclblock_use_multiscale', 0)),
+        cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

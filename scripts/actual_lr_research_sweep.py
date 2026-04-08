@@ -430,6 +430,14 @@ def main() -> None:
     p.add_argument("--eval-every", type=int, default=0)
     p.add_argument("--core-metric-every", type=int, default=0)
     p.add_argument("--sample-every", type=int, default=-1)
+    # CCL block modulation
+    p.add_argument("--cclblock-modulation", type=str, default="weight",
+                   choices=["weight", "normalization"],
+                   help="CCL block strategy passed to remixed-linear runs")
+    p.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
+                   help="use MultiScaleContext instead of SelectiveContextStream (1/0)")
+    p.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
+                   help="Design C stale context lag (0=disabled)")
     p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--fp8", action="store_true")
     p.add_argument("--tokenizer-dir", type=str, default=None)
@@ -536,6 +544,9 @@ def main() -> None:
         "--core-metric-every",   str(args.core_metric_every),
         "--sample-every",        str(args.sample_every),
         "--moe-use-abs-pos-embed", "0",
+        "--cclblock-modulation", getattr(args, 'cclblock_modulation', 'weight'),
+        "--cclblock-use-multiscale", str(getattr(args, 'cclblock_use_multiscale', 0)),
+        "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
     ]
     if args.compile:
         common_train_args.append("--compile")

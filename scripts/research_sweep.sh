@@ -116,6 +116,18 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--router-context-window" "$2")
             shift 2
             ;;
+        --cclblock-modulation)
+            EXTRA_ARGS+=("--cclblock-modulation" "$2")
+            shift 2
+            ;;
+        --cclblock-use-multiscale)
+            EXTRA_ARGS+=("--cclblock-use-multiscale" "$2")
+            shift 2
+            ;;
+        --cclblock-stale-ctx-lag)
+            EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
+            shift 2
+            ;;
         --use-onecycle)
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2
