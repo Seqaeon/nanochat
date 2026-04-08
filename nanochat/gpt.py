@@ -595,10 +595,10 @@ class ContextBank(nn.Module):
         self.scale = ctx_dim ** -0.5
 
     def forward(self, norm_x, prev_ctx=None):
-        q = self.query_proj(norm_x)                         # (B, T, ctx_dim)
-        scores = q @ self.prototypes.T * self.scale         # (B, T, n_proto)
+        q = self.query_proj(norm_x)                                 # (B, T, ctx_dim)
+        scores = q @ self.prototypes.to(q.dtype).T * self.scale     # (B, T, n_proto)
         weights = F.softmax(scores, dim=-1)
-        return weights @ self.prototypes.to(q.dtype)        # (B, T, ctx_dim)
+        return weights @ self.prototypes.to(q.dtype)                # (B, T, ctx_dim)
 
 
 class SelectiveContextStream(nn.Module):
