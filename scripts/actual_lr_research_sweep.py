@@ -456,7 +456,15 @@ def main() -> None:
                    help="Design 4: context prototype bank size (0=off, e.g. 16)")
     p.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                    help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
-    p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--cclblock-context-source", type=str, default="norm_x",
+                   choices=["norm_x", "attn_heads"])
+    # Phase 8
+    p.add_argument("--cclblock-chunk-size", type=int, default=0)
+    p.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
+    p.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
+    p.add_argument("--cclblock-boundary-token-id", type=int, default=198)
+    # Research dimension override
+    p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--fp8", action="store_true")
     p.add_argument("--tokenizer-dir", type=str, default=None)
     p.add_argument("--data-dir", type=str, default=None)
@@ -576,6 +584,11 @@ def main() -> None:
         "--cclblock-context-bank-size",str(getattr(args, 'cclblock_context_bank_size', 0)),
         "--cclblock-per-head-ctx",     str(getattr(args, 'cclblock_per_head_ctx', 0)),
         "--cclblock-context-source",   str(getattr(args, 'cclblock_context_source', 'norm_x')),
+        # Phase 8
+        "--cclblock-chunk-size",        str(getattr(args, 'cclblock_chunk_size', 0)),
+        "--cclblock-aux-objective",     str(getattr(args, 'cclblock_aux_objective', 'none')),
+        "--cclblock-aux-lambda",        str(getattr(args, 'cclblock_aux_lambda', 0.1)),
+        "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
         "--research-dim", str(getattr(args, 'research_dim', 0)),
     ]
     if args.compile:

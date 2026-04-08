@@ -168,6 +168,22 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-context-source" "$2")
             shift 2
             ;;
+        --cclblock-chunk-size)
+            EXTRA_ARGS+=("--cclblock-chunk-size" "$2")
+            shift 2
+            ;;
+        --cclblock-aux-objective)
+            EXTRA_ARGS+=("--cclblock-aux-objective" "$2")
+            shift 2
+            ;;
+        --cclblock-aux-lambda)
+            EXTRA_ARGS+=("--cclblock-aux-lambda" "$2")
+            shift 2
+            ;;
+        --cclblock-boundary-token-id)
+            EXTRA_ARGS+=("--cclblock-boundary-token-id" "$2")
+            shift 2
+            ;;
         --use-onecycle)
             EXTRA_ARGS+=("--use-onecycle" "$2")
             shift 2

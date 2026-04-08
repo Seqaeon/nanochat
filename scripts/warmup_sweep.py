@@ -272,6 +272,11 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--cclblock-context-bank-size",str(getattr(args, 'cclblock_context_bank_size', 0)),
         "--cclblock-per-head-ctx",     str(getattr(args, 'cclblock_per_head_ctx', 0)),
         "--cclblock-context-source",   str(getattr(args, 'cclblock_context_source', 'norm_x')),
+        # Phase 8
+        "--cclblock-chunk-size",        str(getattr(args, 'cclblock_chunk_size', 0)),
+        "--cclblock-aux-objective",     str(getattr(args, 'cclblock_aux_objective', 'none')),
+        "--cclblock-aux-lambda",        str(getattr(args, 'cclblock_aux_lambda', 0.1)),
+        "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
     ])
 
     env = os.environ.copy()
@@ -668,6 +673,11 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-context-source", type=str, default="norm_x",
                         choices=["norm_x", "attn_heads"],
                         help="Design 2: context source ('norm_x'=residual, 'attn_heads'=query vectors)")
+    # Phase 8
+    parser.add_argument("--cclblock-chunk-size", type=int, default=0)
+    parser.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
+    parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
+    parser.add_argument("--cclblock-boundary-token-id", type=int, default=198)
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 

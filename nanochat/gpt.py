@@ -127,6 +127,19 @@ class GPTConfig:
     #            This gives the gate a direct signal about "what each position is searching for"
     #            without any recurrence or cross-block dependency.
     cclblock_context_source: str = 'norm_x'  # 'norm_x' | 'attn_heads'
+    # Phase 8: Boundary-Gated / Chunk Context / Auxiliary Objective
+    # Design 8 (boundary gate): learned soft gate that fires only at segment boundaries.
+    #   Use --cclblock-context-stream "boundary"
+    # Design 9 (hard chunk): context = pooled summary of previous K-token chunk.
+    #   Strictly causal, zero recurrence. Use --cclblock-chunk-size N (e.g. 64)
+    cclblock_chunk_size: int = 0
+    # Design 10 (aux objective): context branch predicts an auxiliary target.
+    #   'boundary': predicts whether current token is a structural boundary.
+    #   'entropy':  predicts per-token cross-entropy (difficulty signal).
+    #   Forces context to encode non-trivial info, prevents identity collapse.
+    cclblock_aux_objective: str = 'none'  # 'none' | 'boundary' | 'entropy'
+    cclblock_aux_lambda: float = 0.1      # weight of auxiliary loss
+    cclblock_boundary_token_id: int = 198 # token ID for boundary detection (default=\n)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -148,6 +161,8 @@ RESEARCH_ALLOWED_KEYS = {
     # Novel ablation designs
     "cclblock_sparse_gate_k", "cclblock_gate_temperature", "cclblock_context_bank_size", "cclblock_per_head_ctx",
     "cclblock_context_source",
+    # Phase 8
+    "cclblock_chunk_size", "cclblock_aux_objective", "cclblock_aux_lambda", "cclblock_boundary_token_id",
 }
 
 
@@ -669,6 +684,76 @@ class MultiScaleContext(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class BoundaryGatedContextStream(nn.Module):
+    """Design 8: Soft boundary-gated context — update context only at learned segment boundaries.
+
+    A lightweight binary gate decides per-position whether to refresh the context vector
+    or hold the previous segment's context state fixed.
+
+    Init strategy:
+      - ctx_proj.weight = 0   → context starts as pure bias (neutral)
+      - boundary_proj.bias = -2 → sigmoid(-2) ≈ 0.12, gate starts nearly closed
+        (context is held fixed 88% of the time at init)
+
+    Gradient flow:
+      - prev_ctx is DETACHED: no BPTT through the full sequence chain (avoids the
+        SelectiveContextStream failure mode).
+      - Only the local ctx_new path and boundary_prob gate carry gradients.
+      - context learns to update at genuine boundaries via the gate gradient signal.
+    """
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.ctx_proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.ctx_proj.weight)
+        self.boundary_proj = Linear(n_embd, 1, bias=True)
+        nn.init.zeros_(self.boundary_proj.weight)
+        nn.init.constant_(self.boundary_proj.bias, -2.0)  # gate≈0.12 at init
+
+    def forward(self, norm_x, prev_ctx=None):
+        ctx_new = self.ctx_proj(norm_x)                                    # (B, T, ctx_dim)
+        boundary_prob = torch.sigmoid(self.boundary_proj(norm_x))          # (B, T, 1)
+        if prev_ctx is None:
+            return ctx_new
+        return boundary_prob * ctx_new + (1 - boundary_prob) * prev_ctx.detach()
+
+
+class HardChunkContextStream(nn.Module):
+    """Design 9: Context = pooled summary of the immediately preceding K-token chunk.
+
+    Strictly causal implementation:
+      - Tokens 0..K-1  receive zero context (no prior chunk exists).
+      - Tokens K..2K-1 receive ctx = ctx_proj(mean(norm_x[0:K])).
+      - Tokens 2K..3K-1 receive ctx = ctx_proj(mean(norm_x[K:2K])), etc.
+
+    Fully vectorized via unfold + shift — no Python loops over T, compile-safe.
+    Zero recurrence: each chunk is fully independent of all others.
+    """
+    def __init__(self, n_embd, ctx_dim, chunk_size):
+        super().__init__()
+        self.chunk_size = chunk_size
+        self.ctx_dim = ctx_dim
+        self.ctx_proj = Linear(n_embd, ctx_dim, bias=True)
+        nn.init.zeros_(self.ctx_proj.weight)
+
+    def forward(self, norm_x, prev_ctx=None):
+        B, T, C = norm_x.shape
+        K = self.chunk_size
+        ctx_dim = self.ctx_dim
+        # Pad to multiple of K
+        pad = (K - T % K) % K
+        x_pad = F.pad(norm_x, (0, 0, 0, pad)) if pad > 0 else norm_x  # (B, T', C)
+        n_chunks = x_pad.shape[1] // K
+        # Compute mean of each K-token chunk → project to ctx_dim
+        x_chunks = x_pad.view(B, n_chunks, K, C).mean(dim=2)        # (B, n_chunks, C)
+        ctx_chunks = self.ctx_proj(x_chunks)                         # (B, n_chunks, ctx_dim)
+        # Causal shift: chunk i receives summary of chunk i-1 (zero for i=0)
+        ctx_chunks_shifted = F.pad(ctx_chunks, (0, 0, 1, 0))[:, :-1, :]  # (B, n_chunks, ctx_dim)
+        # Expand back to token level
+        ctx = ctx_chunks_shifted.unsqueeze(2).expand(-1, -1, K, -1).contiguous()
+        ctx = ctx.view(B, -1, ctx_dim)[:, :T, :]                    # (B, T, ctx_dim)
+        return ctx.to(norm_x.dtype)
+
+
 class AdaRMSNorm(nn.Module):
     """Context-conditioned RMSNorm for the 'normalization' CCL path (Design B).
 
@@ -1014,6 +1099,7 @@ class RemixedBlock(nn.Module):
         bank_size  = getattr(config, 'cclblock_context_bank_size', 0)
         per_head   = getattr(config, 'cclblock_per_head_ctx', False)
         ctx_source = getattr(config, 'cclblock_context_source', 'norm_x')
+        chunk_size = getattr(config, 'cclblock_chunk_size', 0)
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
@@ -1030,10 +1116,14 @@ class RemixedBlock(nn.Module):
             """Factory: returns the configured context stream module."""
             if bank_size > 0:
                 return ContextBank(config.n_embd, ctx_dim, bank_size)
+            elif chunk_size > 0:
+                return HardChunkContextStream(config.n_embd, ctx_dim, chunk_size)
             elif stream_type in ('local', 'shifted'):
                 return LocalContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'selective':
                 return SelectiveContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'boundary':
+                return BoundaryGatedContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'ema':
                 return EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
             else:  # multiscale
@@ -1048,7 +1138,7 @@ class RemixedBlock(nn.Module):
 
     def _is_local(self, stream):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
-        return isinstance(stream, (LocalContextStream, ContextBank))
+        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, BoundaryGatedContextStream))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
@@ -1063,7 +1153,8 @@ class RemixedBlock(nn.Module):
             x = x + attn_out
             ctx = self.ctx_proj_q(q_stats)   # (B, T, ctx_dim)
             x = x + self.ffwd(norm(x), ctx)
-            return x, ctx.detach()
+            self._last_ctx = ctx.detach()
+            return x, self._last_ctx
 
         elif self.per_head_ctx:
             # Design 7: separate contexts from pre-attn and post-attn residuals
@@ -1075,7 +1166,8 @@ class RemixedBlock(nn.Module):
             ctx_src_ffn = norm(x_entry if self.is_shifted else x)  # shifted=prev, else post-attn
             ctx_ffn = self.ctx_stream_ffn(ctx_src_ffn)   # (B, T, ctx_dim)
             x = x + self.ffwd(norm(x), ctx_ffn)
-            return x, ctx_ffn.detach()
+            self._last_ctx = ctx_ffn.detach()
+            return x, self._last_ctx
         else:
             stream = self.ctx_stream
             local = self._is_local(stream)
@@ -1087,7 +1179,9 @@ class RemixedBlock(nn.Module):
             ctx_src = norm(x_entry if self.is_shifted else x)
             ctx = stream(ctx_src, None if local else prev_ctx)
             x = x + self.ffwd(norm(x), ctx)
-            return x, ctx.detach() if (local or self.is_shifted) else ctx
+            out_ctx = ctx.detach() if (local or self.is_shifted) else ctx
+            self._last_ctx = out_ctx
+            return x, out_ctx
 
 
 def has_ve(layer_idx, n_layer):
@@ -1301,6 +1395,14 @@ class GPT(nn.Module):
         # CCL: context is derived per-block inside RemixedBlock/CCLBlock via SelectiveContextStream.
         # GlobalContextManager and context_updaters are not used for remix_linear.
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
+        # Design 10 (auxiliary objective): lightweight head predicts boundary or entropy from
+        # the mean context vector across all RemixedBlocks. Forces context to encode
+        # non-trivial information and prevents gradient-collapse to identity.
+        self.aux_head = None
+        if config.use_remix_linear and getattr(config, 'cclblock_aux_objective', 'none') != 'none':
+            self.aux_head = Linear(config.remix_context_dim, 1, bias=True)
+            nn.init.zeros_(self.aux_head.weight)
+            nn.init.constant_(self.aux_head.bias, 0.0)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
@@ -1709,6 +1811,11 @@ class GPT(nn.Module):
             struct_matrix_params += [p for p in cand if p.ndim >= 2]
             struct_adamw_params  += [p for p in cand if p.ndim < 2]
 
+        # Aux head (Design 10), if present
+        if self.aux_head is not None:
+            for p in self.aux_head.parameters():
+                (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
+
         research_adamw_params = gate_adamw_params + struct_adamw_params
 
         value_embeds_params = list(self.value_embeds.parameters())
@@ -1835,8 +1942,36 @@ class GPT(nn.Module):
 
         if targets is not None:
             # training: given the targets, compute and return the loss
-            # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+
+            # Design 10: Auxiliary context objective
+            # Reads _last_ctx stored on each RemixedBlock during this forward pass.
+            if self.aux_head is not None and loss_reduction == 'mean':
+                aux_obj = getattr(self.config, 'cclblock_aux_objective', 'none')
+                ctx_vecs = []
+                for block in self.transformer.h:
+                    if isinstance(block, RemixedBlock) and hasattr(block, '_last_ctx') and block._last_ctx is not None:
+                        ctx_vecs.append(block._last_ctx)
+                if ctx_vecs:
+                    # Mean context across all layers: (B, T, ctx_dim)
+                    ctx_mean = torch.stack(ctx_vecs, dim=0).mean(dim=0).to(logits.dtype)
+                    aux_logits = self.aux_head(ctx_mean).squeeze(-1)  # (B, T)
+                    if aux_obj == 'boundary':
+                        boundary_id = getattr(self.config, 'cclblock_boundary_token_id', 198)
+                        boundary_target = (targets == boundary_id).float()
+                        aux_loss = F.binary_cross_entropy_with_logits(aux_logits, boundary_target)
+                    elif aux_obj == 'entropy':
+                        # Teach context to predict per-token loss magnitude (detached)
+                        with torch.no_grad():
+                            token_loss = F.cross_entropy(
+                                logits.view(-1, logits.size(-1)), targets.view(-1),
+                                ignore_index=-1, reduction='none').view(B, T)
+                        aux_loss = F.mse_loss(aux_logits, token_loss.detach() / 3.0)
+                    else:
+                        aux_loss = torch.zeros(1, device=loss.device, dtype=loss.dtype)
+                    aux_lambda = getattr(self.config, 'cclblock_aux_lambda', 0.1)
+                    loss = loss + aux_lambda * aux_loss
+
             return loss
         else:
             # inference: just return the logits directly

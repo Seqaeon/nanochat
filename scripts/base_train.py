@@ -99,6 +99,16 @@ parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 
 parser.add_argument("--cclblock-context-source", type=str, default="norm_x",
                     choices=["norm_x", "attn_heads"],
                     help="Design 2: context source for FFN gate ('norm_x'=default residual, 'attn_heads'=query vectors)")
+# Phase 8: Boundary-Gated / Chunk Context / Auxiliary Objective
+parser.add_argument("--cclblock-chunk-size", type=int, default=0,
+                    help="Design 9: hard chunk pooling stride in tokens (0=off, e.g. 64)")
+parser.add_argument("--cclblock-aux-objective", type=str, default="none",
+                    choices=["none", "boundary", "entropy"],
+                    help="Design 10: aux context objective ('none'=off, 'boundary'=boundary BCE, 'entropy'=difficulty MSE)")
+parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1,
+                    help="Design 10: weight of auxiliary context loss (default 0.1)")
+parser.add_argument("--cclblock-boundary-token-id", type=int, default=198,
+                    help="Design 10: token ID for boundary detection (default 198=newline in many tokenizers)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -283,6 +293,11 @@ def build_model_meta(depth):
         cclblock_context_bank_size=getattr(args, 'cclblock_context_bank_size', 0),
         cclblock_per_head_ctx=bool(getattr(args, 'cclblock_per_head_ctx', 0)),
         cclblock_context_source=getattr(args, 'cclblock_context_source', 'norm_x'),
+        # Phase 8
+        cclblock_chunk_size=getattr(args, 'cclblock_chunk_size', 0),
+        cclblock_aux_objective=getattr(args, 'cclblock_aux_objective', 'none'),
+        cclblock_aux_lambda=getattr(args, 'cclblock_aux_lambda', 0.1),
+        cclblock_boundary_token_id=getattr(args, 'cclblock_boundary_token_id', 198),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
