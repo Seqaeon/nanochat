@@ -268,6 +268,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--cclblock-gate-temperature", str(getattr(args, 'cclblock_gate_temperature', 1.0)),
         "--cclblock-context-bank-size",str(getattr(args, 'cclblock_context_bank_size', 0)),
         "--cclblock-per-head-ctx",     str(getattr(args, 'cclblock_per_head_ctx', 0)),
+        "--cclblock-context-source",   str(getattr(args, 'cclblock_context_source', 'norm_x')),
     ])
 
     env = os.environ.copy()
@@ -657,6 +658,9 @@ if __name__ == "__main__":
                         help="Design 4: context prototype bank size (0=off, e.g. 16)")
     parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                         help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
+    parser.add_argument("--cclblock-context-source", type=str, default="norm_x",
+                        choices=["norm_x", "attn_heads"],
+                        help="Design 2: context source ('norm_x'=residual, 'attn_heads'=query vectors)")
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 

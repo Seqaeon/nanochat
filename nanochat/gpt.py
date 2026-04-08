@@ -122,6 +122,11 @@ class GPTConfig:
     # Design 7: Per-module context. True=separate ctx projections for attn vs ffn.
     #            Attn gets pre-attn ctx, FFN gets post-attn ctx.
     cclblock_per_head_ctx: bool = False
+    # Design 2: Context source for the FFN gate. 'norm_x' uses the residual stream (default).
+    #            'attn_heads' uses mean query vectors (q after RoPE+QKnorm, detached).
+    #            This gives the gate a direct signal about "what each position is searching for"
+    #            without any recurrence or cross-block dependency.
+    cclblock_context_source: str = 'norm_x'  # 'norm_x' | 'attn_heads'
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -142,6 +147,7 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_modulation", "cclblock_context_stream", "cclblock_ema_factor", "cclblock_stale_ctx_lag",
     # Novel ablation designs
     "cclblock_sparse_gate_k", "cclblock_gate_temperature", "cclblock_context_bank_size", "cclblock_per_head_ctx",
+    "cclblock_context_source",
 }
 
 
@@ -945,6 +951,49 @@ class RemixedMultiAttention(nn.Module):
         y = y.contiguous().view(B, T, -1)
         return self.c_proj(y, context_state)
 
+    def forward_with_q_stats(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        """Design 2: run forward, also returning mean-query-vector as context signal.
+
+        q after RoPE+QKnorm is the model's per-position 'search intent'. Its mean across
+        attention heads gives a (B, T, head_dim) tensor capturing the query distribution
+        without any temporal recurrence. Detached so it contributes no gradient to Q/K/V.
+        """
+        B, T, C = x.size()
+        q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+        v = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            if self.ve_gate is not None:
+                gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+                v = v + gate.unsqueeze(-1) * ve
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        # Capture query statistics BEFORE flash_attn (q is post-RoPE+QKnorm)
+        # Mean across heads: (B, T, head_dim) — the average 'search direction'
+        q_stats = q.mean(dim=2).detach()  # detach: no gradient through ctx into Q/K weights
+
+        if kv_cache is None:
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
+
+        y = y.contiguous().view(B, T, -1)
+        return self.c_proj(y, context_state), q_stats
+
 
 class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
@@ -964,9 +1013,18 @@ class RemixedBlock(nn.Module):
         stream_type = getattr(config, 'cclblock_context_stream', 'local')
         bank_size  = getattr(config, 'cclblock_context_bank_size', 0)
         per_head   = getattr(config, 'cclblock_per_head_ctx', False)
+        ctx_source = getattr(config, 'cclblock_context_source', 'norm_x')
 
-        self.is_shifted  = (stream_type == 'shifted')  # Design 1: use x_entry (prev layer out) for ctx
-        self.per_head_ctx = per_head                    # Design 7: separate attn vs ffn context
+        self.is_shifted   = (stream_type == 'shifted')
+        self.per_head_ctx = per_head
+        self.ctx_source   = ctx_source  # 'norm_x' | 'attn_heads'
+
+        # Design 2: query-based context projection (head_dim → ctx_dim)
+        # Only created when attn_heads source is active; replaces ctx_stream for FFN gating.
+        if ctx_source == 'attn_heads':
+            head_dim = config.n_embd // config.n_head
+            self.ctx_proj_q = Linear(head_dim, ctx_dim, bias=True)
+            nn.init.zeros_(self.ctx_proj_q.weight)  # start neutral
 
         def _make_stream():
             """Factory: returns the configured context stream module."""
@@ -995,7 +1053,19 @@ class RemixedBlock(nn.Module):
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
-        if self.per_head_ctx:
+        if self.ctx_source == 'attn_heads':
+            # Design 2: context derived from query vectors (post-RoPE+QKnorm, detached)
+            # - Attention runs with NO ctx conditioning (standard mode)
+            # - q_stats captures the 'search intent' of each position (B, T, head_dim)
+            # - FFN basis gate is conditioned on this query-derived signal
+            attn_out, q_stats = self.attn.forward_with_q_stats(
+                norm(x), ve, cos_sin, window_size, kv_cache, None)
+            x = x + attn_out
+            ctx = self.ctx_proj_q(q_stats)   # (B, T, ctx_dim)
+            x = x + self.ffwd(norm(x), ctx)
+            return x, ctx.detach()
+
+        elif self.per_head_ctx:
             # Design 7: separate contexts from pre-attn and post-attn residuals
             ctx_src_attn = norm(x_entry)                  # before attention
             ctx_attn = self.ctx_stream_attn(ctx_src_attn) # (B, T, ctx_dim)

@@ -96,6 +96,9 @@ parser.add_argument("--cclblock-context-bank-size", type=int, default=0,
                     help="Design 4: context prototype bank size (0=disabled, e.g. 16=16 learned prototypes)")
 parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                     help="Design 7: separate ctx projections for attn vs ffn (0=off, 1=on)")
+parser.add_argument("--cclblock-context-source", type=str, default="norm_x",
+                    choices=["norm_x", "attn_heads"],
+                    help="Design 2: context source for FFN gate ('norm_x'=default residual, 'attn_heads'=query vectors)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -279,6 +282,7 @@ def build_model_meta(depth):
         cclblock_gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
         cclblock_context_bank_size=getattr(args, 'cclblock_context_bank_size', 0),
         cclblock_per_head_ctx=bool(getattr(args, 'cclblock_per_head_ctx', 0)),
+        cclblock_context_source=getattr(args, 'cclblock_context_source', 'norm_x'),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

@@ -167,6 +167,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-per-head-ctx" "$2")
             shift 2
             ;;
+        --cclblock-context-source)
+            EXTRA_ARGS+=("--cclblock-context-source" "$2")
+            shift 2
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 break   # first numeric arg = depth, stop parsing flags
