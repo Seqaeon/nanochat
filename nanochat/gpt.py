@@ -724,7 +724,7 @@ class RemixedBlock(nn.Module):
         # Detach prev_ctx so gradients don't flow back through the EMA chain
         if prev_ctx is not None:
             alpha = torch.sigmoid(self.ctx_ema_gate.to(dtype=ctx.dtype))
-            ctx = ctx + alpha * prev_ctx.detach()
+            ctx = ctx + alpha * prev_ctx#.detach()
 
         # Step 5: FFN gated by fresh + accumulated context
         x = x + self.ffwd(norm(x), ctx)
