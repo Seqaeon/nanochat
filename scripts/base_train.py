@@ -81,8 +81,8 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                          "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                    choices=["local", "shifted", "ema", "selective", "multiscale"],
-                    help="Context stream: 'local' (default), 'shifted' (prev-layer norm(x)), 'ema', 'selective', 'multiscale'")
+                    choices=["local", "shifted", "ema", "selective", "multiscale", "boundary"],
+                    help="Context stream: 'local' (default), 'shifted' (prev-layer norm(x)), 'ema', 'selective', 'multiscale', 'boundary'")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                     help="EMA factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
