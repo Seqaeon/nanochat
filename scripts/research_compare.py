@@ -66,7 +66,8 @@ def run_training_sweep(args):
         "--use-onecycle", str(args.use_onecycle),
         "--router-context-window", str(args.router_context_window),
         "--cclblock-modulation", str(args.cclblock_modulation),
-        "--cclblock-use-multiscale", str(args.cclblock_use_multiscale),
+        "--cclblock-context-stream", str(args.cclblock_context_stream),
+        "--cclblock-ema-factor", str(args.cclblock_ema_factor),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
     ]
     if args.compile:
@@ -298,8 +299,11 @@ if __name__ == "__main__":
                         choices=["weight", "normalization"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
-    parser.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
-                        help="use MultiScaleContext (3-channel) instead of SelectiveContextStream (1/0)")
+    parser.add_argument("--cclblock-context-stream", type=str, default="ema", 
+                        choices=["ema", "selective", "multiscale"],
+                        help="Context stream type")
+    parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
+                        help="Exponential moving average factor for the legacy EMAContextStream")
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                         help="Design C stale context lag (0=disabled, k>=1 = context from k blocks ago)")
     

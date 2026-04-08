@@ -434,8 +434,11 @@ def main() -> None:
     p.add_argument("--cclblock-modulation", type=str, default="weight",
                    choices=["weight", "normalization"],
                    help="CCL block strategy passed to remixed-linear runs")
-    p.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
-                   help="use MultiScaleContext instead of SelectiveContextStream (1/0)")
+    p.add_argument("--cclblock-context-stream", type=str, default="ema", 
+                   choices=["ema", "selective", "multiscale"],
+                   help="Context stream type")
+    p.add_argument("--cclblock-ema-factor", type=float, default=0.99,
+                   help="Exponential moving average factor for the legacy EMAContextStream")
     p.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                    help="Design C stale context lag (0=disabled)")
     # Research dimension override
@@ -547,7 +550,8 @@ def main() -> None:
         "--sample-every",        str(args.sample_every),
         "--moe-use-abs-pos-embed", "0",
         "--cclblock-modulation", getattr(args, 'cclblock_modulation', 'weight'),
-        "--cclblock-use-multiscale", str(getattr(args, 'cclblock_use_multiscale', 0)),
+        "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'ema'),
+        "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
         "--research-dim", str(getattr(args, 'research_dim', 0)),
     ]

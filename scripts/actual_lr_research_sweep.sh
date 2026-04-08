@@ -292,8 +292,12 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-modulation" "$2")
             shift 2
             ;;
-        --cclblock-use-multiscale)
-            EXTRA_ARGS+=("--cclblock-use-multiscale" "$2")
+        --cclblock-context-stream)
+            EXTRA_ARGS+=("--cclblock-context-stream" "$2")
+            shift 2
+            ;;
+        --cclblock-ema-factor)
+            EXTRA_ARGS+=("--cclblock-ema-factor" "$2")
             shift 2
             ;;
         --cclblock-stale-ctx-lag)

@@ -95,9 +95,12 @@ class GPTConfig:
     #   'normalization' — replaces RemixedLinear with CCLBlock: standard dense Attn+MLP
     #                    conditioned via AdaRMSNorm (DiT-style scale/shift from context).
     cclblock_modulation: str = 'weight'
-    # Use MultiScaleContext (3 parallel temporal channels) instead of single SelectiveContextStream.
-    # When True, ctx_dim is auto-corrected to the nearest multiple of 3.
-    cclblock_use_multiscale: bool = False
+    # The context stream logic:
+    #   'ema'        — (default) fixed ema factor, with .detach() to prevent gradient explosion.
+    #   'selective'  — GRU-style input-dependent gating, no detach.
+    #   'multiscale' — 3 parallel selective temporal channels (Fast, Med, Slow).
+    cclblock_context_stream: str = 'ema'
+    cclblock_ema_factor: float = 0.99
     # Design C: Cross-layer stale context lag (0 = disabled, k>=1 = use context from k blocks ago).
     # When k>0, block i is conditioned on the context emitted by block i-k in the same forward pass.
     # This breaks the circular dependency because i-k is a genuinely different layer's computation.
@@ -120,7 +123,7 @@ RESEARCH_ALLOWED_KEYS = {
     # Fix 1D
     "perm_expert_mode", "perm_rank",
     # CCL block redesign
-    "cclblock_modulation", "cclblock_use_multiscale", "cclblock_stale_ctx_lag",
+    "cclblock_modulation", "cclblock_context_stream", "cclblock_ema_factor", "cclblock_stale_ctx_lag",
 }
 
 
@@ -519,6 +522,24 @@ class GlobalContextManager(nn.Module):
         return F.layer_norm(context_logits, context_logits.shape[-1:])
 
 
+class EMAContextStream(nn.Module):
+    """Legacy Exponential Moving Average context stream (Design A).
+
+    Uses a fixed EMA factor and detaches history to prevent long-range gradient 
+    explosion, stabilizing the model at the cost of theoretically shorter context gradient flow.
+    """
+    def __init__(self, n_embd, ctx_dim, ema_factor=0.99):
+        super().__init__()
+        self.ema_factor = ema_factor
+        self.proj = Linear(n_embd, ctx_dim, bias=False)
+
+    def forward(self, attn_out, prev_ctx):
+        new_ctx = self.proj(attn_out)
+        if prev_ctx is not None:
+            return self.ema_factor * prev_ctx.detach() + (1 - self.ema_factor) * new_ctx
+        return new_ctx
+
+
 class SelectiveContextStream(nn.Module):
     """GRU-style selective update for the cross-block context state (Design A).
 
@@ -638,11 +659,14 @@ class CCLBlock(nn.Module):
         ctx_dim = config.remix_context_dim
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp  = MLP(config)
-        if getattr(config, 'cclblock_use_multiscale', False):
+        stream_type = getattr(config, 'cclblock_context_stream', 'ema')
+        if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
             ctx_dim = self.ctx_stream.ctx_dim  # possibly auto-corrected
-        else:
+        elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
+        else:
+            self.ctx_stream = EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
         self.ada_norm_attn = AdaRMSNorm(config.n_embd, ctx_dim)
         self.ada_norm_mlp  = AdaRMSNorm(config.n_embd, ctx_dim)
 
@@ -860,12 +884,14 @@ class RemixedBlock(nn.Module):
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
         ctx_dim = config.remix_context_dim
-        # Selective context stream: replaces EMA + ctx_from_attn MLP.
-        # GRU-style gating maps attn_out (n_embd) → ctx_dim, blends with prev_ctx.
-        if getattr(config, 'cclblock_use_multiscale', False):
+        # Context stream replaces old bare linear proj
+        stream_type = getattr(config, 'cclblock_context_stream', 'ema')
+        if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
-        else:
+        elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
+        else:
+            self.ctx_stream = EMAContextStream(config.n_embd, ctx_dim, ema_factor=getattr(config, 'cclblock_ema_factor', 0.99))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         # Step 1: Attention gated by accumulated context from previous block
@@ -1009,7 +1035,7 @@ class GPT(nn.Module):
         
         # Auto-correct to nearest multiple of 48 (LCM of 3 and 16) if using Multiscale
         # This ensures 3 equal channels AND fp8 compatibility (divisible by 16)
-        if getattr(config, 'cclblock_use_multiscale', False):
+        if getattr(config, 'cclblock_context_stream', 'ema') == 'multiscale':
             orig_dim = config.remix_context_dim
             config.remix_context_dim = max(48, round(orig_dim / 48) * 48)
             print0(f"remix_context_dim auto-corrected for MultiScale/FP8 from {orig_dim} to {config.remix_context_dim}")

@@ -80,9 +80,11 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization"],
                     help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                          "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
-parser.add_argument("--cclblock-use-multiscale", type=int, default=0, choices=[0, 1],
-                    help="use MultiScaleContext (3 temporal channels, auto-corrects ctx_dim to "
-                         "nearest multiple of 3) instead of single SelectiveContextStream (1/0)")
+parser.add_argument("--cclblock-context-stream", type=str, default="ema", 
+                    choices=["ema", "selective", "multiscale"],
+                    help="Context stream type: 'ema' (legacy, detach), 'selective' (GRU, no detach), or 'multiscale' (3-channel GRU)")
+parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
+                    help="Exponential moving average factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
                     help="Design C stale context lag: 0=disabled, k>=1 means block i receives "
                          "context from block i-k (detached, breaks circular conditioning)")
@@ -259,7 +261,8 @@ def build_model_meta(depth):
         router_context_window=getattr(args, 'router_context_window', -1),
         # CCL block redesign
         cclblock_modulation=getattr(args, 'cclblock_modulation', 'weight'),
-        cclblock_use_multiscale=bool(getattr(args, 'cclblock_use_multiscale', 0)),
+        cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'ema'),
+        cclblock_ema_factor=getattr(args, 'cclblock_ema_factor', 0.99),
         cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
     )
     with torch.device("meta"):
