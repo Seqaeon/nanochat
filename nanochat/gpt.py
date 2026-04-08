@@ -1720,6 +1720,8 @@ class GPT(nn.Module):
         research = 0
         if self.embedding_model is not None:
             research += sum(p.numel() for p in self.embedding_model.parameters())
+        if self.aux_head is not None:
+            research += sum(p.numel() for p in self.aux_head.parameters())
         # AG-CCL: ctx_from_attn and ctx_ema_gate live inside transformer.h (RemixedBlock)
         # and are already counted in transformer_matrices above.
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
