@@ -441,7 +441,7 @@ def main() -> None:
                    choices=["weight", "normalization"],
                    help="CCL block strategy passed to remixed-linear runs")
     p.add_argument("--cclblock-context-stream", type=str, default="local", 
-                   choices=["local", "shifted", "ema", "selective", "multiscale", "boundary"],
+                   choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
                    help="Context stream type")
     p.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                    help="EMA factor for the legacy EMAContextStream")

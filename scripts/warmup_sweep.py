@@ -655,7 +655,7 @@ if __name__ == "__main__":
                         choices=["weight", "normalization"],
                         help="CCL block strategy passed to remixed-linear runs")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="EMA factor for the legacy EMAContextStream")

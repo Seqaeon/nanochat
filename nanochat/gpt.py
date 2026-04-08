@@ -1116,8 +1116,9 @@ class RemixedBlock(nn.Module):
             """Factory: returns the configured context stream module."""
             if bank_size > 0:
                 return ContextBank(config.n_embd, ctx_dim, bank_size)
-            elif chunk_size > 0:
-                return HardChunkContextStream(config.n_embd, ctx_dim, chunk_size)
+            elif chunk_size > 0 or stream_type == 'chunk':
+                effective_chunk_size = chunk_size if chunk_size > 0 else 64
+                return HardChunkContextStream(config.n_embd, ctx_dim, effective_chunk_size)
             elif stream_type in ('local', 'shifted'):
                 return LocalContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'selective':
