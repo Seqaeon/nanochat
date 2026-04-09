@@ -77,12 +77,11 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization"],
-                    help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
-                         "or 'normalization' (CCLBlock with AdaRMSNorm conditioning)")
+                    choices=["weight", "normalization", "householder", "spectral"],
+                    help="CCL block strategy: 'weight', 'normalization', 'householder', or 'spectral'")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                    choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
-                    help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'boundary', 'chunk', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
+                    choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                    help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'ssm', 'boundary', 'chunk', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                     help="EMA factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
