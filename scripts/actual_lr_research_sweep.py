@@ -438,11 +438,11 @@ def main() -> None:
 
     # CCL block modulation
     p.add_argument("--cclblock-modulation", type=str, default="weight",
-                   choices=["weight", "normalization", "householder", "spectral", "ocd"],
+                   choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu"],
                    help="CCL block strategy passed to remixed-linear runs")
     p.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     p.add_argument("--cclblock-context-stream", type=str, default="local", 
-                   choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                   choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                    help="Context stream type")
     p.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                    help="EMA factor for the legacy EMAContextStream")
@@ -458,7 +458,7 @@ def main() -> None:
     p.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                    help="Design 7: separate attn/ffn context projections (0=off, 1=on)")
     p.add_argument("--cclblock-context-source", type=str, default="norm_x",
-                   choices=["norm_x", "attn_heads"])
+                   choices=["norm_x", "attn_heads", "attn_geometry"])
     # Phase 8
     p.add_argument("--cclblock-chunk-size", type=int, default=0)
     p.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
@@ -469,6 +469,20 @@ def main() -> None:
     p.add_argument("--ral-rank", type=int, default=32)
     p.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     p.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
+    p.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25)
+    p.add_argument("--cclblock-gate-rank", type=int, default=8)
+    p.add_argument("--cclblock-num-regimes", type=int, default=8)
+    p.add_argument("--cclblock-regime-temperature", type=float, default=1.0)
+    p.add_argument("--cclblock-poly-order", type=int, default=2)
+    p.add_argument("--cclblock-lie-generators", type=int, default=4)
+    p.add_argument("--cclblock-grassmann-bank-size", type=int, default=4)
+    p.add_argument("--cclblock-tucker-rank", type=int, default=32)
+    p.add_argument("--cclblock-tucker-modes", type=int, default=8)
+    p.add_argument("--cclblock-svs-rank", type=int, default=64)
+    p.add_argument("--cclblock-svs-eps", type=float, default=0.1)
+    p.add_argument("--cclblock-vq-codes", type=int, default=8)
+    p.add_argument("--cclblock-vq-temperature", type=float, default=1.0)
+    p.add_argument("--cclblock-dcu-warmup-steps", type=int, default=0)
     # Research dimension override
     p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--fp8", action="store_true")
@@ -600,6 +614,20 @@ def main() -> None:
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
         "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
+        "--cclblock-dynamic-ratio", str(getattr(args, 'cclblock_dynamic_ratio', 0.25)),
+        "--cclblock-gate-rank", str(getattr(args, 'cclblock_gate_rank', 8)),
+        "--cclblock-num-regimes", str(getattr(args, 'cclblock_num_regimes', 8)),
+        "--cclblock-regime-temperature", str(getattr(args, 'cclblock_regime_temperature', 1.0)),
+        "--cclblock-poly-order", str(getattr(args, 'cclblock_poly_order', 2)),
+        "--cclblock-lie-generators", str(getattr(args, 'cclblock_lie_generators', 4)),
+        "--cclblock-grassmann-bank-size", str(getattr(args, 'cclblock_grassmann_bank_size', 4)),
+        "--cclblock-tucker-rank", str(getattr(args, 'cclblock_tucker_rank', 32)),
+        "--cclblock-tucker-modes", str(getattr(args, 'cclblock_tucker_modes', 8)),
+        "--cclblock-svs-rank", str(getattr(args, 'cclblock_svs_rank', 64)),
+        "--cclblock-svs-eps", str(getattr(args, 'cclblock_svs_eps', 0.1)),
+        "--cclblock-vq-codes", str(getattr(args, 'cclblock_vq_codes', 8)),
+        "--cclblock-vq-temperature", str(getattr(args, 'cclblock_vq_temperature', 1.0)),
+        "--cclblock-dcu-warmup-steps", str(getattr(args, 'cclblock_dcu_warmup_steps', 0)),
         "--research-dim", str(getattr(args, 'research_dim', 0)),
     ]
     if args.compile:
