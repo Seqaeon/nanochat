@@ -77,13 +77,13 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd"],
-                    help="CCL block strategy: 'weight', 'normalization', 'householder', 'spectral', or 'ocd'")
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "decoupled"],
+                    help="CCL block strategy: 'weight', 'normalization', 'householder', 'spectral', 'ocd', or 'decoupled'")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                    choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
-                    help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'ssm', 'boundary', 'chunk', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
+                    choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                    help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'ssm', 'boundary', 'chunk', 'predictive_chunk', 'evidence_ssm', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
 parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                     help="EMA factor for the legacy EMAContextStream")
 parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0,
@@ -115,6 +115,10 @@ parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1], help="Prop
 parser.add_argument("--ral-rank", type=int, default=32, help="Proposal A: Rank for the RAL context delta")
 parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1], help="Proposal C: Use FiLM affine basis gate in RemixedLinear")
 parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0, help="Dual-V shadow routing width (0=off)")
+parser.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25, help="Paradigm 1 (decoupled): fraction of channels routed to dynamic path")
+parser.add_argument("--cclblock-gate-rank", type=int, default=8, help="Paradigm 1 (decoupled): low-rank context gate rank")
+parser.add_argument("--cclblock-num-regimes", type=int, default=8, help="Paradigm 2 (evidence_ssm): number of latent regimes K")
+parser.add_argument("--cclblock-regime-temperature", type=float, default=1.0, help="Paradigm 2 (evidence_ssm): softmax temperature over regimes")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -309,6 +313,10 @@ def build_model_meta(depth):
         ral_rank=getattr(args, 'ral_rank', 32),
         cclblock_film_gate=bool(getattr(args, 'cclblock_film_gate', 0)),
         cclblock_attn_shadow_dim=getattr(args, 'cclblock_attn_shadow_dim', 0),
+        cclblock_dynamic_ratio=getattr(args, 'cclblock_dynamic_ratio', 0.25),
+        cclblock_gate_rank=getattr(args, 'cclblock_gate_rank', 8),
+        cclblock_num_regimes=getattr(args, 'cclblock_num_regimes', 8),
+        cclblock_regime_temperature=getattr(args, 'cclblock_regime_temperature', 1.0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

@@ -282,6 +282,10 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
         "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
+        "--cclblock-dynamic-ratio", str(getattr(args, 'cclblock_dynamic_ratio', 0.25)),
+        "--cclblock-gate-rank", str(getattr(args, 'cclblock_gate_rank', 8)),
+        "--cclblock-num-regimes", str(getattr(args, 'cclblock_num_regimes', 8)),
+        "--cclblock-regime-temperature", str(getattr(args, 'cclblock_regime_temperature', 1.0)),
     ])
 
     env = os.environ.copy()
@@ -657,11 +661,11 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "decoupled"],
                         help="CCL block strategy passed to remixed-linear runs")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="EMA factor for the legacy EMAContextStream")
@@ -689,6 +693,10 @@ if __name__ == "__main__":
     parser.add_argument("--ral-rank", type=int, default=32)
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
+    parser.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25)
+    parser.add_argument("--cclblock-gate-rank", type=int, default=8)
+    parser.add_argument("--cclblock-num-regimes", type=int, default=8)
+    parser.add_argument("--cclblock-regime-temperature", type=float, default=1.0)
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 
