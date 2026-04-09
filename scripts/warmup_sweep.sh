@@ -235,6 +235,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-regime-temperature" "$2")
             shift 2
             ;;
+        --cclblock-poly-order|--cclblock-lie-generators|--cclblock-grassmann-bank-size|--cclblock-tucker-rank|--cclblock-tucker-modes|--cclblock-svs-rank|--cclblock-svs-eps|--cclblock-vq-codes|--cclblock-vq-temperature|--cclblock-dcu-warmup-steps)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 break   # first numeric arg = depth, stop parsing flags

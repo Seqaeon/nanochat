@@ -202,6 +202,16 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
         "--cclblock-gate-rank", str(getattr(args, 'cclblock_gate_rank', 8)),
         "--cclblock-num-regimes", str(getattr(args, 'cclblock_num_regimes', 8)),
         "--cclblock-regime-temperature", str(getattr(args, 'cclblock_regime_temperature', 1.0)),
+        "--cclblock-poly-order", str(getattr(args, 'cclblock_poly_order', 2)),
+        "--cclblock-lie-generators", str(getattr(args, 'cclblock_lie_generators', 4)),
+        "--cclblock-grassmann-bank-size", str(getattr(args, 'cclblock_grassmann_bank_size', 4)),
+        "--cclblock-tucker-rank", str(getattr(args, 'cclblock_tucker_rank', 32)),
+        "--cclblock-tucker-modes", str(getattr(args, 'cclblock_tucker_modes', 8)),
+        "--cclblock-svs-rank", str(getattr(args, 'cclblock_svs_rank', 64)),
+        "--cclblock-svs-eps", str(getattr(args, 'cclblock_svs_eps', 0.1)),
+        "--cclblock-vq-codes", str(getattr(args, 'cclblock_vq_codes', 8)),
+        "--cclblock-vq-temperature", str(getattr(args, 'cclblock_vq_temperature', 1.0)),
+        "--cclblock-dcu-warmup-steps", str(getattr(args, 'cclblock_dcu_warmup_steps', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -447,7 +457,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1])
     parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1])
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--cclblock-modulation", type=str, default="weight", choices=["weight", "normalization", "householder", "spectral", "ocd", "decoupled"])
+    parser.add_argument("--cclblock-modulation", type=str, default="weight", choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu"])
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     parser.add_argument("--cclblock-context-stream", type=str, default="local", choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"])
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99)
@@ -456,7 +466,7 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-gate-temperature", type=float, default=1.0)
     parser.add_argument("--cclblock-context-bank-size", type=int, default=0)
     parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1])
-    parser.add_argument("--cclblock-context-source", type=str, default="norm_x", choices=["norm_x", "attn_heads"])
+    parser.add_argument("--cclblock-context-source", type=str, default="norm_x", choices=["norm_x", "attn_heads", "attn_geometry"])
     parser.add_argument("--cclblock-chunk-size", type=int, default=0)
     parser.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
     parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
@@ -469,6 +479,16 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-gate-rank", type=int, default=8)
     parser.add_argument("--cclblock-num-regimes", type=int, default=8)
     parser.add_argument("--cclblock-regime-temperature", type=float, default=1.0)
+    parser.add_argument("--cclblock-poly-order", type=int, default=2)
+    parser.add_argument("--cclblock-lie-generators", type=int, default=4)
+    parser.add_argument("--cclblock-grassmann-bank-size", type=int, default=4)
+    parser.add_argument("--cclblock-tucker-rank", type=int, default=32)
+    parser.add_argument("--cclblock-tucker-modes", type=int, default=8)
+    parser.add_argument("--cclblock-svs-rank", type=int, default=64)
+    parser.add_argument("--cclblock-svs-eps", type=float, default=0.1)
+    parser.add_argument("--cclblock-vq-codes", type=int, default=8)
+    parser.add_argument("--cclblock-vq-temperature", type=float, default=1.0)
+    parser.add_argument("--cclblock-dcu-warmup-steps", type=int, default=0)
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=base schedule")

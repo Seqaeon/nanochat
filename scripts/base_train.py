@@ -77,8 +77,8 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "decoupled"],
-                    help="CCL block strategy: 'weight', 'normalization', 'householder', 'spectral', 'ocd', or 'decoupled'")
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu"],
+                    help="CCL block strategy (weight/normalization + operator families + tucker/svs/vq/dcu)")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
@@ -98,8 +98,8 @@ parser.add_argument("--cclblock-context-bank-size", type=int, default=0,
 parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1],
                     help="Design 7: separate ctx projections for attn vs ffn (0=off, 1=on)")
 parser.add_argument("--cclblock-context-source", type=str, default="norm_x",
-                    choices=["norm_x", "attn_heads"],
-                    help="Design 2: context source for FFN gate ('norm_x'=default residual, 'attn_heads'=query vectors)")
+                    choices=["norm_x", "attn_heads", "attn_geometry"],
+                    help="Context source for FFN gate/router ('norm_x', 'attn_heads', 'attn_geometry')")
 # Phase 8: Boundary-Gated / Chunk Context / Auxiliary Objective
 parser.add_argument("--cclblock-chunk-size", type=int, default=0,
                     help="Design 9: hard chunk pooling stride in tokens (0=off, e.g. 64)")
@@ -119,6 +119,16 @@ parser.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25, help="
 parser.add_argument("--cclblock-gate-rank", type=int, default=8, help="Paradigm 1 (decoupled): low-rank context gate rank")
 parser.add_argument("--cclblock-num-regimes", type=int, default=8, help="Paradigm 2 (evidence_ssm): number of latent regimes K")
 parser.add_argument("--cclblock-regime-temperature", type=float, default=1.0, help="Paradigm 2 (evidence_ssm): softmax temperature over regimes")
+parser.add_argument("--cclblock-poly-order", type=int, default=2)
+parser.add_argument("--cclblock-lie-generators", type=int, default=4)
+parser.add_argument("--cclblock-grassmann-bank-size", type=int, default=4)
+parser.add_argument("--cclblock-tucker-rank", type=int, default=32)
+parser.add_argument("--cclblock-tucker-modes", type=int, default=8)
+parser.add_argument("--cclblock-svs-rank", type=int, default=64)
+parser.add_argument("--cclblock-svs-eps", type=float, default=0.1)
+parser.add_argument("--cclblock-vq-codes", type=int, default=8)
+parser.add_argument("--cclblock-vq-temperature", type=float, default=1.0)
+parser.add_argument("--cclblock-dcu-warmup-steps", type=int, default=0)
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -317,6 +327,16 @@ def build_model_meta(depth):
         cclblock_gate_rank=getattr(args, 'cclblock_gate_rank', 8),
         cclblock_num_regimes=getattr(args, 'cclblock_num_regimes', 8),
         cclblock_regime_temperature=getattr(args, 'cclblock_regime_temperature', 1.0),
+        cclblock_poly_order=getattr(args, 'cclblock_poly_order', 2),
+        cclblock_lie_generators=getattr(args, 'cclblock_lie_generators', 4),
+        cclblock_grassmann_bank_size=getattr(args, 'cclblock_grassmann_bank_size', 4),
+        cclblock_tucker_rank=getattr(args, 'cclblock_tucker_rank', 32),
+        cclblock_tucker_modes=getattr(args, 'cclblock_tucker_modes', 8),
+        cclblock_svs_rank=getattr(args, 'cclblock_svs_rank', 64),
+        cclblock_svs_eps=getattr(args, 'cclblock_svs_eps', 0.1),
+        cclblock_vq_codes=getattr(args, 'cclblock_vq_codes', 8),
+        cclblock_vq_temperature=getattr(args, 'cclblock_vq_temperature', 1.0),
+        cclblock_dcu_warmup_steps=getattr(args, 'cclblock_dcu_warmup_steps', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
