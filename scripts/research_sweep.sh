@@ -136,6 +136,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-modulation" "$2")
             shift 2
             ;;
+        --cclblock-orth-lambda)
+            EXTRA_ARGS+=("--cclblock-orth-lambda" "$2")
+            shift 2
+            ;;
         --cclblock-context-stream)
             EXTRA_ARGS+=("--cclblock-context-stream" "$2")
             shift 2
@@ -194,6 +198,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cclblock-film-gate)
             EXTRA_ARGS+=("--cclblock-film-gate" "$2")
+            shift 2
+            ;;
+        --cclblock-attn-shadow-dim)
+            EXTRA_ARGS+=("--cclblock-attn-shadow-dim" "$2")
             shift 2
             ;;
         --use-onecycle)

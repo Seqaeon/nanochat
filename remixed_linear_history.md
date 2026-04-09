@@ -44,9 +44,49 @@ Below is an analysis of all the major design experiments we have attempted to br
 **Why it Failed:** 
 - The exact localized features the FFN needs to process are produced directly by the attention module immediately preceding it. Passing an entirely different layer's context severely mismatched the spatial and semantic feature alignment.
 
+## Phase 7: Operator-Space Modulation (Householder / Spectral)
+**The Idea:** We introduced operator-space perturbations to avoid the identity trap of activation-only gates:
+- `householder`: apply context-predicted reflections in basis space before projection.
+- `spectral`: apply context-predicted near-isometric scaling in basis space.
+
+The goal was to keep full-rank expressivity while moving control from raw activation amplitude to operator geometry.
+
+**Why it Failed (in our sweeps):**
+- The new operator branch still shares optimization bandwidth with a strong static path, so the controller under long context often converged to weak/noisy perturbations.
+- The added controller complexity improved flexibility on paper, but did not close the empirical gap to the static dense baseline at long sequence lengths.
+- Net result: no consistent gain over prior remixed variants; still below the baseline.
+
+## Phase 8: OCD Delta + Orthogonality Penalty (`ocd`, `cclblock_orth_lambda`)
+**The Idea:** We added an orthogonal-complement-style low-rank dynamic delta with an overlap penalty term to discourage dynamic updates from collapsing onto static structure.
+
+**Why it Failed (in our sweeps):**
+- While mathematically cleaner than unconstrained additive deltas, the practical overlap proxy did not reliably produce better long-context generalization.
+- Tuning `cclblock_orth_lambda` mostly shifted optimization trade-offs (underfit when too high, ineffective when too low) instead of producing robust gains.
+- It reduced some path interference symptoms but still did not beat the static dense baseline.
+
+## Phase 9: Linear SSM-Style Context Stream (`ssm`)
+**The Idea:** Replace EMA-like recurrence with a linear state-style context highway (`ParallelLinearContextStream`) to improve long-range conditioning stability.
+
+**Why it Failed (in our sweeps):**
+- The linear-decay state was more stable than fully unrolled recurrent gradients, but still did not provide enough useful long-horizon control signal to outperform baseline dense blocks.
+- Gains were inconsistent and did not survive across depth/sequence sweep settings.
+
+## Phase 10: Dual-V Shadow Routing (`cclblock_attn_shadow_dim`)
+**The Idea:** Split attention output into:
+1. normal content stream for residual path, and  
+2. a shadow stream routed into FFN context conditioning.
+
+This was meant to separate “what attention writes to residual” from “what context controller reads.”
+
+**Why it Failed (in our sweeps):**
+- The shadow path added extra routing degrees of freedom but did not provide a reliably better conditioning signal for next-token loss at long contexts.
+- Additional complexity and parameter coupling increased tuning sensitivity without yielding repeatable improvements.
+- Net result remained below the static baseline.
+
 ---
 
 ### Conclusion & Forward Outlook
 1. **The Core Strength of Remixed:** Perturbing the actual low-rank weight structures of the linear layers works significantly better than activation normalization mechanisms.
 2. **The necessity of `.detach()`:** Continuous, un-detached gradient flow through sequence time is universally destructive for our current setup. Detachment isolates the gradient paths to focus strictly on spatial layer-to-layer learning. 
-3. **The next frontier:** If we want to solve long-sequence contextual degradation, we must solve it within the strict bounds of detached, layer-local signaling. We may need to look at positional-aware rotational gating (e.g., dynamically altering the EMA factor based on RoPE positional drift) rather than forcing RNN-like data flows.
+3. **What also did *not* rescue performance:** Operator-geometry variants (Householder/Spectral), OCD-style overlap-penalized deltas, linear SSM-style context highways, and dual-V shadow routing all failed to produce durable wins over the dense baseline in our long-context sweeps.
+4. **The next frontier:** If we want to solve long-sequence contextual degradation, we likely need a controller that is both identifiable and low-noise at scale (coarse regime selection), rather than additional fine-grained per-token control paths that increase optimization friction.
