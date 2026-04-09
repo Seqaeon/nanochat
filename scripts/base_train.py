@@ -77,8 +77,10 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral"],
-                    help="CCL block strategy: 'weight', 'normalization', 'householder', or 'spectral'")
+                    choices=["weight", "normalization", "householder", "spectral", "ocd"],
+                    help="CCL block strategy: 'weight', 'normalization', 'householder', 'spectral', or 'ocd'")
+parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
+                    help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
                     choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                     help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'ssm', 'boundary', 'chunk', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
@@ -112,6 +114,7 @@ parser.add_argument("--cclblock-boundary-token-id", type=int, default=198,
 parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1], help="Proposal A: Use ResidualAdaptiveLinear instead of RemixedLinear")
 parser.add_argument("--ral-rank", type=int, default=32, help="Proposal A: Rank for the RAL context delta")
 parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1], help="Proposal C: Use FiLM affine basis gate in RemixedLinear")
+parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0, help="Dual-V shadow routing width (0=off)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -287,6 +290,7 @@ def build_model_meta(depth):
         router_context_window=getattr(args, 'router_context_window', -1),
         # CCL block redesign
         cclblock_modulation=getattr(args, 'cclblock_modulation', 'weight'),
+        cclblock_orth_lambda=getattr(args, 'cclblock_orth_lambda', 0.0),
         cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'local'),
         cclblock_ema_factor=getattr(args, 'cclblock_ema_factor', 0.99),
         cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
@@ -301,6 +305,10 @@ def build_model_meta(depth):
         cclblock_aux_objective=getattr(args, 'cclblock_aux_objective', 'none'),
         cclblock_aux_lambda=getattr(args, 'cclblock_aux_lambda', 0.1),
         cclblock_boundary_token_id=getattr(args, 'cclblock_boundary_token_id', 198),
+        use_ral=bool(getattr(args, 'use_ral', 0)),
+        ral_rank=getattr(args, 'ral_rank', 32),
+        cclblock_film_gate=bool(getattr(args, 'cclblock_film_gate', 0)),
+        cclblock_attn_shadow_dim=getattr(args, 'cclblock_attn_shadow_dim', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

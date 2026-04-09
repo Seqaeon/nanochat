@@ -181,6 +181,7 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
         "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
         "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
         "--cclblock-modulation", str(getattr(args, 'cclblock_modulation', 'weight')),
+        "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", str(getattr(args, 'cclblock_context_stream', 'local')),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
@@ -196,6 +197,7 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
+        "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -441,7 +443,8 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1])
     parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1])
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--cclblock-modulation", type=str, default="weight", choices=["weight", "normalization", "householder", "spectral"])
+    parser.add_argument("--cclblock-modulation", type=str, default="weight", choices=["weight", "normalization", "householder", "spectral", "ocd"])
+    parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     parser.add_argument("--cclblock-context-stream", type=str, default="local", choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"])
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99)
     parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0)
@@ -457,6 +460,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=base schedule")

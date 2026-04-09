@@ -69,6 +69,7 @@ def run_training_sweep(args):
         "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
         "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
         "--cclblock-modulation", str(args.cclblock_modulation),
+        "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
         "--cclblock-ema-factor", str(args.cclblock_ema_factor),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
@@ -86,6 +87,7 @@ def run_training_sweep(args):
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
+        "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -317,9 +319,11 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
+    parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
+                        help="OCD overlap penalty weight (0 disables)")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
                         choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
@@ -348,6 +352,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     args = parser.parse_args()
     
     run_training_sweep(args)

@@ -263,6 +263,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--remix-use-output-gate",   str(getattr(args, 'remix_use_output_gate', 1)),
         "--remix-use-context",       str(getattr(args, 'remix_use_context', 1)),
         "--cclblock-modulation",     getattr(args, 'cclblock_modulation', 'weight'),
+        "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag",  str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
@@ -280,6 +281,7 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
+        "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
     ])
 
     env = os.environ.copy()
@@ -655,8 +657,9 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd"],
                         help="CCL block strategy passed to remixed-linear runs")
+    parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
                         choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
@@ -685,6 +688,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
 
