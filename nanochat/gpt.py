@@ -1276,9 +1276,12 @@ class RemixedMultiAttention(nn.Module):
         self.shadow_dim = max(0, int(getattr(config, 'cclblock_attn_shadow_dim', 0)))
         self.shadow_dim_per_head = 0
         if self.shadow_dim > 0:
-            if self.shadow_dim % self.n_kv_head != 0:
-                corrected = ((self.shadow_dim + self.n_kv_head - 1) // self.n_kv_head) * self.n_kv_head
-                print0(f"cclblock_attn_shadow_dim auto-corrected from {self.shadow_dim} to {corrected} (multiple of n_kv_head)")
+            raw_per_head = (self.shadow_dim + self.n_kv_head - 1) // self.n_kv_head
+            if raw_per_head % 8 != 0:
+                raw_per_head = ((raw_per_head + 7) // 8) * 8
+            corrected = raw_per_head * self.n_kv_head
+            if corrected != self.shadow_dim:
+                print0(f"cclblock_attn_shadow_dim auto-corrected from {self.shadow_dim} to {corrected} to ensure FlashAttention V-head multiple of 8")
                 self.shadow_dim = corrected
             self.shadow_dim_per_head = self.shadow_dim // self.n_kv_head
         self.v_head_dim = self.head_dim + self.shadow_dim_per_head
