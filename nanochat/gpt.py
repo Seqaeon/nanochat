@@ -1276,13 +1276,9 @@ class RemixedMultiAttention(nn.Module):
         self.shadow_dim = max(0, int(getattr(config, 'cclblock_attn_shadow_dim', 0)))
         self.shadow_dim_per_head = 0
         if self.shadow_dim > 0:
-            # FlashAttention requires the value head dimension (head_dim + shadow_dim_per_head) to be a multiple of 8.
-            # Since head_dim is a multiple of 8, shadow_dim_per_head must also be a multiple of 8.
-            # Therefore, shadow_dim must be a multiple of (8 * n_kv_head).
-            required_multiple = 8 * self.n_kv_head
-            if self.shadow_dim % required_multiple != 0:
-                corrected = ((self.shadow_dim + required_multiple - 1) // required_multiple) * required_multiple
-                print0(f"cclblock_attn_shadow_dim auto-corrected from {self.shadow_dim} to {corrected} to ensure FlashAttention V-head multiple of 8")
+            if self.shadow_dim % self.n_kv_head != 0:
+                corrected = ((self.shadow_dim + self.n_kv_head - 1) // self.n_kv_head) * self.n_kv_head
+                print0(f"cclblock_attn_shadow_dim auto-corrected from {self.shadow_dim} to {corrected} (multiple of n_kv_head)")
                 self.shadow_dim = corrected
             self.shadow_dim_per_head = self.shadow_dim // self.n_kv_head
         self.v_head_dim = self.head_dim + self.shadow_dim_per_head
