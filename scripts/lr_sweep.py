@@ -145,7 +145,13 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
 
     # Architecture sizing (mirrors research_compare.py exactly)
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
+    if getattr(args, "research_dim", 0) > 0:
+        target_dim = args.research_dim
+    max_seq_len = args.sequence_len
     device_batch_size = {8: 32, 16: 16, 24: 8}.get(depth, 16)
+    if args.device_batch_size > 0:
+        device_batch_size = args.device_batch_size
+    total_batch_size = args.total_batch_size if args.total_batch_size > 0 else 262144
 
     print("=" * 64)
     print(f"LR Sweep | Depth {depth} | Target tokens: {args.target_tokens:,}")
@@ -170,6 +176,28 @@ def run_lr_sweep(args: argparse.Namespace) -> None:
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
         "--adam-beta2", "0.99",
+        "--router-context-window", str(getattr(args, 'router_context_window', -1)),
+        "--remix-use-basis-gate", str(getattr(args, 'remix_use_basis_gate', 1)),
+        "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
+        "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
+        "--cclblock-modulation", str(getattr(args, 'cclblock_modulation', 'weight')),
+        "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
+        "--cclblock-context-stream", str(getattr(args, 'cclblock_context_stream', 'local')),
+        "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
+        "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
+        "--cclblock-sparse-gate-k", str(getattr(args, 'cclblock_sparse_gate_k', 0)),
+        "--cclblock-gate-temperature", str(getattr(args, 'cclblock_gate_temperature', 1.0)),
+        "--cclblock-context-bank-size", str(getattr(args, 'cclblock_context_bank_size', 0)),
+        "--cclblock-per-head-ctx", str(getattr(args, 'cclblock_per_head_ctx', 0)),
+        "--cclblock-context-source", str(getattr(args, 'cclblock_context_source', 'norm_x')),
+        "--cclblock-chunk-size", str(getattr(args, 'cclblock_chunk_size', 0)),
+        "--cclblock-aux-objective", str(getattr(args, 'cclblock_aux_objective', 'none')),
+        "--cclblock-aux-lambda", str(getattr(args, 'cclblock_aux_lambda', 0.1)),
+        "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
+        "--use-ral", str(getattr(args, 'use_ral', 0)),
+        "--ral-rank", str(getattr(args, 'ral_rank', 32)),
+        "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
+        "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -395,8 +423,8 @@ if __name__ == "__main__":
         help="scale factors applied to each model's base LRs (default: 1 3 5 7 10)",
     )
     parser.add_argument(
-        "--models", type=str, nargs="+", default=["base", "moe_perm"],
-        choices=["base", "moe_perm"],
+        "--models", type=str, nargs="+", default=["base", "moe_perm", "moe_no_perm", "remixed-linear"],
+        choices=["base", "moe_perm", "moe_no_perm", "remixed-linear"],
         help="model types to sweep (default: base moe_perm)",
     )
     parser.add_argument(
@@ -407,6 +435,32 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer-dir", type=str, default=None)
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--max-shards", type=int, default=-1)
+    parser.add_argument("--sequence-len", type=int, default=2048)
+    parser.add_argument("--device-batch-size", type=int, default=-1)
+    parser.add_argument("--total-batch-size", type=int, default=-1)
+    parser.add_argument("--research-dim", type=int, default=0)
+    parser.add_argument("--router-context-window", type=int, default=-1)
+    parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--cclblock-modulation", type=str, default="weight", choices=["weight", "normalization", "householder", "spectral", "ocd"])
+    parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
+    parser.add_argument("--cclblock-context-stream", type=str, default="local", choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"])
+    parser.add_argument("--cclblock-ema-factor", type=float, default=0.99)
+    parser.add_argument("--cclblock-stale-ctx-lag", type=int, default=0)
+    parser.add_argument("--cclblock-sparse-gate-k", type=int, default=0)
+    parser.add_argument("--cclblock-gate-temperature", type=float, default=1.0)
+    parser.add_argument("--cclblock-context-bank-size", type=int, default=0)
+    parser.add_argument("--cclblock-per-head-ctx", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-context-source", type=str, default="norm_x", choices=["norm_x", "attn_heads"])
+    parser.add_argument("--cclblock-chunk-size", type=int, default=0)
+    parser.add_argument("--cclblock-aux-objective", type=str, default="none", choices=["none", "boundary", "entropy"])
+    parser.add_argument("--cclblock-aux-lambda", type=float, default=0.1)
+    parser.add_argument("--cclblock-boundary-token-id", type=int, default=198)
+    parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--ral-rank", type=int, default=32)
+    parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     parser.add_argument("--warmup-ratio", type=float, default=0.0, help="base warmup ratio")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.0, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=base schedule")
