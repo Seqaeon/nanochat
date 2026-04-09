@@ -101,6 +101,110 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--eval-every" "$2")
             shift 2
             ;;
+        --sequence-len)
+            EXTRA_ARGS+=("--sequence-len" "$2")
+            shift 2
+            ;;
+        --device-batch-size)
+            EXTRA_ARGS+=("--device-batch-size" "$2")
+            shift 2
+            ;;
+        --total-batch-size)
+            EXTRA_ARGS+=("--total-batch-size" "$2")
+            shift 2
+            ;;
+        --router-context-window)
+            EXTRA_ARGS+=("--router-context-window" "$2")
+            shift 2
+            ;;
+        --research-dim)
+            EXTRA_ARGS+=("--research-dim" "$2")
+            shift 2
+            ;;
+        --remix-use-basis-gate)
+            EXTRA_ARGS+=("--remix-use-basis-gate" "$2")
+            shift 2
+            ;;
+        --remix-use-output-gate)
+            EXTRA_ARGS+=("--remix-use-output-gate" "$2")
+            shift 2
+            ;;
+        --remix-use-context)
+            EXTRA_ARGS+=("--remix-use-context" "$2")
+            shift 2
+            ;;
+        --cclblock-modulation)
+            EXTRA_ARGS+=("--cclblock-modulation" "$2")
+            shift 2
+            ;;
+        --cclblock-orth-lambda)
+            EXTRA_ARGS+=("--cclblock-orth-lambda" "$2")
+            shift 2
+            ;;
+        --cclblock-context-stream)
+            EXTRA_ARGS+=("--cclblock-context-stream" "$2")
+            shift 2
+            ;;
+        --cclblock-ema-factor)
+            EXTRA_ARGS+=("--cclblock-ema-factor" "$2")
+            shift 2
+            ;;
+        --cclblock-stale-ctx-lag)
+            EXTRA_ARGS+=("--cclblock-stale-ctx-lag" "$2")
+            shift 2
+            ;;
+        --cclblock-sparse-gate-k)
+            EXTRA_ARGS+=("--cclblock-sparse-gate-k" "$2")
+            shift 2
+            ;;
+        --cclblock-gate-temperature)
+            EXTRA_ARGS+=("--cclblock-gate-temperature" "$2")
+            shift 2
+            ;;
+        --cclblock-context-bank-size)
+            EXTRA_ARGS+=("--cclblock-context-bank-size" "$2")
+            shift 2
+            ;;
+        --cclblock-per-head-ctx)
+            EXTRA_ARGS+=("--cclblock-per-head-ctx" "$2")
+            shift 2
+            ;;
+        --cclblock-context-source)
+            EXTRA_ARGS+=("--cclblock-context-source" "$2")
+            shift 2
+            ;;
+        --cclblock-chunk-size)
+            EXTRA_ARGS+=("--cclblock-chunk-size" "$2")
+            shift 2
+            ;;
+        --cclblock-aux-objective)
+            EXTRA_ARGS+=("--cclblock-aux-objective" "$2")
+            shift 2
+            ;;
+        --cclblock-aux-lambda)
+            EXTRA_ARGS+=("--cclblock-aux-lambda" "$2")
+            shift 2
+            ;;
+        --cclblock-boundary-token-id)
+            EXTRA_ARGS+=("--cclblock-boundary-token-id" "$2")
+            shift 2
+            ;;
+        --use-ral)
+            EXTRA_ARGS+=("--use-ral" "$2")
+            shift 2
+            ;;
+        --ral-rank)
+            EXTRA_ARGS+=("--ral-rank" "$2")
+            shift 2
+            ;;
+        --cclblock-film-gate)
+            EXTRA_ARGS+=("--cclblock-film-gate" "$2")
+            shift 2
+            ;;
+        --cclblock-attn-shadow-dim)
+            EXTRA_ARGS+=("--cclblock-attn-shadow-dim" "$2")
+            shift 2
+            ;;
         --tokenizer-dir)
             TOKENIZER_DIR_FLAG="$2"
             EXTRA_ARGS+=("--tokenizer-dir" "$2")
