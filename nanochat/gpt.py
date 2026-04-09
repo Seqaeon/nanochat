@@ -90,16 +90,21 @@ class GPTConfig:
     window_pattern: str = "SSSSL"
 
     # CCL block modulation strategy (only used when use_remix_linear=True):
-    #   'weight'       — keeps RemixedLinear weight-modulation gating but upgrades context
-    #                    stream from EMA to SelectiveContextStream (GRU-style, no detach).
-    #   'normalization' — replaces RemixedLinear with CCLBlock: standard dense Attn+MLP
-    #                    conditioned via AdaRMSNorm (DiT-style scale/shift from context).
+    #   'weight'        — RemixedLinear gates in activation space.
+    #   'normalization' — CCLBlock with AdaRMSNorm conditioning.
+    #   'householder'   — operator-space basis transport via context-conditioned
+    #                     Householder reflection(s).
+    #   'spectral'      — operator-space spectral scaffold (near-isometric scaling).
+    #   'ocd'           — orthogonal-complement-style dynamic delta with overlap penalty.
+    #   'decoupled'     — orthogonal static/dynamic input channel routing.
     cclblock_modulation: str = 'weight'
+    cclblock_orth_lambda: float = 0.0
     # The context stream logic:
     #   'local'      — (default) derived directly from norm(x) inside the block. No cross-block threading.
     #   'ema'        — fixed ema factor, with .detach() to prevent gradient explosion.
     #   'selective'  — GRU-style input-dependent gating, no detach.
     #   'multiscale' — 3 parallel selective temporal channels (Fast, Med, Slow).
+    #   'ssm'        — linear state-space style context highway.
     cclblock_context_stream: str = 'local'
     cclblock_ema_factor: float = 0.99
     # Design C: Cross-layer stale context lag (0 = disabled, k>=1 = use context from k blocks ago).
@@ -150,6 +155,15 @@ class GPTConfig:
     #   gate = 1 + tanh(scale * 0.1); h_gated = h * gate + shift
     #   Zero-init → scale=0→gate=1, shift=0 → exact identity at init.
     cclblock_film_gate: bool = False
+    # Dual-V shadow routing: append shadow channels to attention V and route the
+    # shadow output directly into FFN context conditioning.
+    cclblock_attn_shadow_dim: int = 0
+    # Paradigm 1: Decoupled Feature-Space Routing
+    cclblock_dynamic_ratio: float = 0.25
+    cclblock_gate_rank: int = 8
+    # Paradigm 2: Evidence Accumulation SSM context stream
+    cclblock_num_regimes: int = 8
+    cclblock_regime_temperature: float = 1.0
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -167,14 +181,16 @@ RESEARCH_ALLOWED_KEYS = {
     # Fix 1D
     "perm_expert_mode", "perm_rank",
     # CCL block redesign
-    "cclblock_modulation", "cclblock_context_stream", "cclblock_ema_factor", "cclblock_stale_ctx_lag",
+    "cclblock_modulation", "cclblock_orth_lambda", "cclblock_context_stream", "cclblock_ema_factor", "cclblock_stale_ctx_lag",
     # Novel ablation designs
     "cclblock_sparse_gate_k", "cclblock_gate_temperature", "cclblock_context_bank_size", "cclblock_per_head_ctx",
     "cclblock_context_source",
     # Phase 8
     "cclblock_chunk_size", "cclblock_aux_objective", "cclblock_aux_lambda", "cclblock_boundary_token_id",
     # Phase 9
-    "use_ral", "ral_rank", "cclblock_film_gate",
+    "use_ral", "ral_rank", "cclblock_film_gate", "cclblock_attn_shadow_dim",
+    # New paradigms
+    "cclblock_dynamic_ratio", "cclblock_gate_rank", "cclblock_num_regimes", "cclblock_regime_temperature",
 }
 
 
@@ -696,6 +712,32 @@ class MultiScaleContext(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class ParallelLinearContextStream(nn.Module):
+    """Linear state-space style context highway with stable exponential decay."""
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.ctx_dim = ctx_dim
+        self.dt_proj = Linear(n_embd, ctx_dim, bias=True)
+        self.x_proj = Linear(n_embd, ctx_dim, bias=True)
+        self.a_log = nn.Parameter(torch.zeros(ctx_dim))
+        nn.init.zeros_(self.dt_proj.weight)
+        nn.init.zeros_(self.dt_proj.bias)
+        nn.init.zeros_(self.x_proj.weight)
+        nn.init.zeros_(self.x_proj.bias)
+
+    def forward(self, x, prev_ctx=None):
+        bsz, seqlen, _ = x.shape
+        dt = F.softplus(self.dt_proj(x))
+        decay = torch.exp(-dt * torch.exp(self.a_log).view(1, 1, -1))
+        write = self.x_proj(x)
+        state = torch.zeros(bsz, self.ctx_dim, device=x.device, dtype=x.dtype)
+        outputs = []
+        for t in range(seqlen):
+            state = state * decay[:, t, :] + write[:, t, :]
+            outputs.append(state)
+        return torch.stack(outputs, dim=1)
+
+
 class DetachedAttnContextStream(nn.Module):
     """Proposal B: Projects norm(attn_out).detach() to ctx_dim.
     
@@ -865,6 +907,67 @@ class HardChunkContextStream(nn.Module):
         return ctx.to(norm_x.dtype)
 
 
+class PredictiveChunkContextStream(nn.Module):
+    """Paradigm 3: predictive, zero-lag chunk context.
+
+    Predict chunk i+1 context from chunk i summary, then hold it constant within
+    chunk i+1. This avoids stale chunk lag and removes per-token context noise.
+    """
+    def __init__(self, n_embd, ctx_dim, chunk_size=64):
+        super().__init__()
+        self.chunk_size = chunk_size
+        self.ctx_dim = ctx_dim
+        self.future_predictor = nn.Sequential(
+            Linear(n_embd, n_embd, bias=True),
+            nn.GELU(),
+            Linear(n_embd, ctx_dim, bias=True),
+        )
+        nn.init.zeros_(self.future_predictor[-1].weight)
+        nn.init.zeros_(self.future_predictor[-1].bias)
+
+    def forward(self, norm_x, prev_ctx=None):
+        B, T, C = norm_x.shape
+        K = self.chunk_size
+        pad = (K - T % K) % K
+        x_pad = F.pad(norm_x, (0, 0, 0, pad)) if pad > 0 else norm_x
+        n_chunks = x_pad.shape[1] // K
+        x_chunks = x_pad.view(B, n_chunks, K, C).mean(dim=2)
+        predicted_future_ctx = self.future_predictor(x_chunks)
+        ctx_chunks_shifted = F.pad(predicted_future_ctx, (0, 0, 1, 0))[:, :-1, :]
+        ctx = ctx_chunks_shifted.unsqueeze(2).expand(-1, -1, K, -1).contiguous()
+        ctx = ctx.view(B, -1, self.ctx_dim)[:, :T, :]
+        return ctx.to(norm_x.dtype)
+
+
+class EvidenceAccumulationContextStream(nn.Module):
+    """Paradigm 2: linear low-dim evidence SSM for regime selection context."""
+    def __init__(self, n_embd, ctx_dim, num_regimes=8, temperature=1.0):
+        super().__init__()
+        self.num_regimes = num_regimes
+        self.temperature = max(float(temperature), 1e-6)
+        self.evidence_proj = Linear(n_embd, num_regimes, bias=True)
+        self.decay_proj = Linear(n_embd, num_regimes, bias=True)
+        self.ctx_from_regime = Linear(num_regimes, ctx_dim, bias=False)
+        nn.init.zeros_(self.evidence_proj.weight)
+        nn.init.zeros_(self.evidence_proj.bias)
+        nn.init.zeros_(self.decay_proj.weight)
+        nn.init.constant_(self.decay_proj.bias, 4.5)  # sigmoid(4.5)≈0.99
+        nn.init.zeros_(self.ctx_from_regime.weight)
+
+    def forward(self, norm_x, prev_ctx=None):
+        B, T, _ = norm_x.shape
+        evidence = self.evidence_proj(norm_x)
+        decay = torch.sigmoid(self.decay_proj(norm_x))
+        states = []
+        curr_state = torch.zeros(B, self.num_regimes, device=norm_x.device, dtype=norm_x.dtype)
+        for t in range(T):
+            curr_state = decay[:, t, :] * curr_state + evidence[:, t, :]
+            states.append(curr_state)
+        S_t = torch.stack(states, dim=1)
+        R_t = F.softmax(S_t / self.temperature, dim=-1)
+        return self.ctx_from_regime(R_t.to(dtype=norm_x.dtype))
+
+
 class AdaRMSNorm(nn.Module):
     """Context-conditioned RMSNorm for the 'normalization' CCL path (Design B).
 
@@ -920,6 +1023,8 @@ class CCLBlock(nn.Module):
         if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
             ctx_dim = self.ctx_stream.ctx_dim  # possibly auto-corrected
+        elif stream_type == 'ssm':
+            self.ctx_stream = ParallelLinearContextStream(config.n_embd, ctx_dim)
         elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
         elif stream_type == 'ema':
@@ -968,6 +1073,9 @@ class RemixedLinear(nn.Module):
         self.sparse_gate_k = remixed_linear_kwargs.get('sparse_gate_k', 0)
         # Design 6: gate temperature. divides sigmoid logits. <1=sharper, >1=softer.
         self.gate_temperature = max(remixed_linear_kwargs.get('gate_temperature', 1.0), 1e-6)
+        # Operator-space modulation: none|householder|spectral|ocd
+        self.operator_modulation = remixed_linear_kwargs.get('operator_modulation', 'none')
+        self._last_orth_loss = None
 
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
@@ -1021,6 +1129,23 @@ class RemixedLinear(nn.Module):
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
             self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale, starts small
+            if self.operator_modulation == 'householder':
+                self.operator_householder = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.operator_householder.weight)
+                nn.init.zeros_(self.operator_householder.bias)
+            elif self.operator_modulation == 'spectral':
+                self.operator_spectral = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.operator_spectral.weight)
+                nn.init.zeros_(self.operator_spectral.bias)
+            elif self.operator_modulation == 'ocd':
+                # Low-rank dynamic delta: sum_r coeff_r * (out_r ⊗ in_r)
+                ocd_rank = remixed_linear_kwargs.get('ocd_rank', 16)
+                self.ocd_coeffs = Linear(context_dim, ocd_rank, bias=True)
+                self.ocd_in = nn.Parameter(torch.zeros(ocd_rank, basis_size))
+                self.ocd_out = nn.Parameter(torch.zeros(ocd_rank, out_features))
+                self.ocd_scale = nn.Parameter(torch.tensor(0.1))
+                nn.init.zeros_(self.ocd_coeffs.weight)
+                nn.init.zeros_(self.ocd_coeffs.bias)
 
     def gate_parameters(self):
         """Yield context-gate-specific parameters (basis_modulator, output_gate_*).
@@ -1032,12 +1157,23 @@ class RemixedLinear(nn.Module):
                 yield self.output_gate_coeffs.bias
             yield self.output_gate_basis
             yield self.output_gate_scale
+            if hasattr(self, "operator_householder"):
+                yield from self.operator_householder.parameters()
+            if hasattr(self, "operator_spectral"):
+                yield from self.operator_spectral.parameters()
+            if hasattr(self, "ocd_coeffs"):
+                yield from self.ocd_coeffs.parameters()
+                yield self.ocd_scale
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
         yield self.basis.weight
         yield self.template_mixing
         yield self.bias
+        if hasattr(self, "ocd_in"):
+            yield self.ocd_in
+        if hasattr(self, "ocd_out"):
+            yield self.ocd_out
 
     def forward(self, x, context_state):
         dtype = x.dtype
@@ -1045,6 +1181,12 @@ class RemixedLinear(nn.Module):
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
+            if self.operator_modulation == 'householder':
+                v = F.normalize(self.operator_householder(ctx), dim=-1, eps=1e-6)
+                h_basis = h_basis - 2.0 * (h_basis * v).sum(dim=-1, keepdim=True) * v
+            elif self.operator_modulation == 'spectral':
+                scale = 1.0 + torch.tanh(self.operator_spectral(ctx) * 0.1)
+                h_basis = h_basis * scale.to(dtype=dtype)
 
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
@@ -1086,10 +1228,72 @@ class RemixedLinear(nn.Module):
         h_gated = (h_basis * gate_basis).to(dtype=dtype)
         pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
 
+        if self.use_context and context_state is not None and self.operator_modulation == 'ocd':
+            coeffs = self.ocd_coeffs(ctx)                                         # (B, T, r)
+            proj = torch.matmul(h_basis, self.ocd_in.to(dtype=dtype).transpose(0, 1))  # (B, T, r)
+            delta = torch.matmul(proj * coeffs, self.ocd_out.to(dtype=dtype))      # (B, T, out)
+            pre_output = pre_output + self.ocd_scale.to(dtype=dtype) * delta
+            # Soft overlap penalty proxy: ||W_s W_d^T||_F^2 where W_d is mean dynamic map.
+            c_mean = coeffs.mean(dim=(0, 1))                                       # (r,)
+            w_dyn = torch.einsum(
+                'r,ro,ri->oi',
+                c_mean,
+                self.ocd_out.to(dtype=dtype),
+                self.ocd_in.to(dtype=dtype),
+            )                                                                       # (out, basis)
+            overlap = torch.matmul(self.template_mixing.to(dtype=dtype), w_dyn.transpose(0, 1))
+            self._last_orth_loss = overlap.pow(2).mean()
+        else:
+            self._last_orth_loss = None
+
         if gate_out is not None:
             pre_output = pre_output * gate_out
 
         return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
+
+
+class DecoupledAdaptiveLinear(nn.Module):
+    """Paradigm 1: split static/dynamic channels for gradient decoupling."""
+    def __init__(self, in_features, out_features, context_dim, dynamic_ratio=0.25, basis_size=64, gate_rank=8, **_ignored):
+        super().__init__()
+        self.dyn_features = max(1, int(in_features * dynamic_ratio))
+        self.stat_features = in_features - self.dyn_features
+        if self.stat_features <= 0:
+            self.stat_features = in_features - 1
+            self.dyn_features = 1
+
+        self.static_proj = Linear(self.stat_features, out_features, bias=True)
+        self.dyn_basis = Linear(self.dyn_features, basis_size, bias=False)
+        self.dyn_mix = nn.Parameter(torch.randn(out_features, basis_size) / (basis_size ** 0.5))
+        self.gate_coeffs = Linear(context_dim, gate_rank, bias=True)
+        self.gate_basis = nn.Parameter(torch.zeros(gate_rank, out_features))
+        self.gate_scale = nn.Parameter(torch.ones(1) * 0.1)
+        self.ln_basis = nn.Identity()
+        nn.init.zeros_(self.gate_coeffs.weight)
+        nn.init.zeros_(self.gate_coeffs.bias)
+
+    def gate_parameters(self):
+        yield from self.gate_coeffs.parameters()
+        yield self.gate_basis
+        yield self.gate_scale
+
+    def non_gate_parameters(self):
+        yield from self.static_proj.parameters()
+        yield self.dyn_basis.weight
+        yield self.dyn_mix
+
+    def forward(self, x, context_state):
+        x_stat = x[..., :self.stat_features]
+        x_dyn = x[..., self.stat_features:]
+        out_stat = self.static_proj(x_stat)
+        h_basis = self.dyn_basis(x_dyn)
+        out_dyn = F.linear(h_basis, self.dyn_mix.to(dtype=x.dtype))
+        if context_state is not None:
+            coeffs = self.gate_coeffs(context_state.to(dtype=x.dtype))
+            gate_logits = torch.matmul(coeffs, self.gate_basis.to(dtype=x.dtype))
+            gate = 1.0 + torch.tanh(self.gate_scale.to(dtype=x.dtype) * gate_logits)
+            out_dyn = out_dyn * gate
+        return out_stat + out_dyn
 
 
 class ResidualAdaptiveLinear(nn.Module):
@@ -1155,11 +1359,17 @@ class RemixedFeedForward(nn.Module):
     def __init__(self, config):
         super().__init__()
         use_ral = getattr(config, 'use_ral', False)
+        use_decoupled = getattr(config, 'cclblock_modulation', 'weight') == 'decoupled'
         ral_rank = getattr(config, 'ral_rank', 32)
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if use_ral:
+        if use_decoupled:
+            ratio = float(getattr(config, 'cclblock_dynamic_ratio', 0.25))
+            gate_rank = int(getattr(config, 'cclblock_gate_rank', 8))
+            self.c_fc   = DecoupledAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_proj = DecoupledAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+        elif use_ral:
             self.c_fc   = ResidualAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_proj = ResidualAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
         else:
@@ -1183,20 +1393,40 @@ class RemixedMultiAttention(nn.Module):
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
         self.ve_gate_channels = min(self.n_embd, 32)
+        self.shadow_dim = max(0, int(getattr(config, 'cclblock_attn_shadow_dim', 0)))
+        self.shadow_dim_per_head = 0
+        if self.shadow_dim > 0:
+            raw_per_head = (self.shadow_dim + self.n_kv_head - 1) // self.n_kv_head
+            if raw_per_head % 8 != 0:
+                raw_per_head = ((raw_per_head + 7) // 8) * 8
+            corrected = raw_per_head * self.n_kv_head
+            if corrected != self.shadow_dim:
+                print0(f"cclblock_attn_shadow_dim auto-corrected from {self.shadow_dim} to {corrected} to ensure FlashAttention V-head multiple of 8")
+                self.shadow_dim = corrected
+            self.shadow_dim_per_head = self.shadow_dim // self.n_kv_head
+        self.v_head_dim = self.head_dim + self.shadow_dim_per_head
         use_ral = getattr(config, 'use_ral', False)
+        use_decoupled = getattr(config, 'cclblock_modulation', 'weight') == 'decoupled'
         ral_rank = getattr(config, 'ral_rank', 32)
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if use_ral:
+        if use_decoupled:
+            ratio = float(getattr(config, 'cclblock_dynamic_ratio', 0.25))
+            gate_rank = int(getattr(config, 'cclblock_gate_rank', 8))
+            self.c_q    = DecoupledAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_k    = DecoupledAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_v    = DecoupledAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_proj = DecoupledAdaptiveLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+        elif use_ral:
             self.c_q    = ResidualAdaptiveLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_k    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
-            self.c_v    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
+            self.c_v    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_proj = ResidualAdaptiveLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, rank=ral_rank)
         else:
             self.c_q    = RemixedLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
             self.c_k    = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
-            self.c_v    = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+            self.c_v    = RemixedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
             self.c_proj = RemixedLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
@@ -1204,7 +1434,8 @@ class RemixedMultiAttention(nn.Module):
         B, T, C = x.size()
         q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+        v_full = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.v_head_dim)
+        v = v_full[..., :self.head_dim]
 
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
@@ -1232,6 +1463,50 @@ class RemixedMultiAttention(nn.Module):
 
         y = y.contiguous().view(B, T, -1)
         return self.c_proj(y, context_state)
+
+    def forward_with_shadow(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+        """Dual-V routing: return content output plus shadow stream routed by same attention map."""
+        B, T, C = x.size()
+        q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+        v_full = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.v_head_dim)
+        v = v_full[..., :self.head_dim]
+
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            if self.ve_gate is not None:
+                gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+                v = v + gate.unsqueeze(-1) * ve
+        if self.shadow_dim_per_head > 0:
+            v_full = torch.cat([v, v_full[..., self.head_dim:]], dim=-1)
+        else:
+            v_full = v
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        if kv_cache is None:
+            y_full = flash_attn.flash_attn_func(q, k, v_full, causal=True, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y_full = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v_full,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
+
+        y_content = y_full[..., :self.head_dim].contiguous().view(B, T, -1)
+        y_proj = self.c_proj(y_content, context_state)
+        if self.shadow_dim_per_head > 0:
+            y_shadow = y_full[..., self.head_dim:].contiguous().view(B, T, -1)
+        else:
+            y_shadow = torch.zeros(B, T, 0, device=x.device, dtype=x.dtype)
+        return y_proj, y_shadow
 
     def forward_with_q_stats(self, x, ve, cos_sin, window_size, kv_cache, context_state):
         """Design 2: run forward, also returning mean-query-vector as context signal.
@@ -1281,7 +1556,8 @@ class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
 
     Supports all novel ablation designs via config toggles:
-      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'
+      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'|'ssm'|
+                                 'predictive_chunk'|'evidence_ssm'
       - cclblock_context_bank_size: 0=off, N=ContextBank with N prototypes
       - cclblock_per_head_ctx: separate context projections for attn vs ffn
       - cclblock_sparse_gate_k: 0=soft sigmoid, N=sparse top-k gate (via remixed_linear_kwargs)
@@ -1301,6 +1577,11 @@ class RemixedBlock(nn.Module):
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
         self.ctx_source   = ctx_source  # 'norm_x' | 'attn_heads'
+        self.attn_shadow_dim = max(0, int(getattr(config, 'cclblock_attn_shadow_dim', 0)))
+        if self.attn_shadow_dim > 0:
+            self.shadow_ctx_proj = Linear(self.attn.shadow_dim, ctx_dim, bias=True)
+            nn.init.zeros_(self.shadow_ctx_proj.weight)
+            nn.init.zeros_(self.shadow_ctx_proj.bias)
 
         # Design 2: query-based context projection (head_dim → ctx_dim)
         # Only created when attn_heads source is active; replaces ctx_stream for FFN gating.
@@ -1316,6 +1597,9 @@ class RemixedBlock(nn.Module):
             elif chunk_size > 0 or stream_type == 'chunk':
                 effective_chunk_size = chunk_size if chunk_size > 0 else 64
                 return HardChunkContextStream(config.n_embd, ctx_dim, effective_chunk_size)
+            elif stream_type == 'predictive_chunk':
+                effective_chunk_size = chunk_size if chunk_size > 0 else 64
+                return PredictiveChunkContextStream(config.n_embd, ctx_dim, effective_chunk_size)
             elif stream_type in ('local', 'shifted'):
                 return LocalContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'selective':
@@ -1334,6 +1618,15 @@ class RemixedBlock(nn.Module):
                 return DACSEMAContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'decay_prefix':
                 return DecayPrefixContextStream(config.n_embd, ctx_dim, gamma=0.9)
+            elif stream_type == 'ssm':
+                return ParallelLinearContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'evidence_ssm':
+                return EvidenceAccumulationContextStream(
+                    config.n_embd,
+                    ctx_dim,
+                    num_regimes=getattr(config, 'cclblock_num_regimes', 8),
+                    temperature=getattr(config, 'cclblock_regime_temperature', 1.0),
+                )
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
@@ -1346,10 +1639,20 @@ class RemixedBlock(nn.Module):
 
     def _is_local(self, stream):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
-        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
+        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, PredictiveChunkContextStream, EvidenceAccumulationContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
+
+        if self.attn_shadow_dim > 0:
+            attn_out, shadow_ctx = self.attn.forward_with_shadow(
+                norm(x), ve, cos_sin, window_size, kv_cache, None
+            )
+            x = x + attn_out
+            ctx = self.shadow_ctx_proj(shadow_ctx)
+            x = x + self.ffwd(norm(x), ctx)
+            self._last_ctx = ctx.detach()
+            return x, self._last_ctx
 
         if self.ctx_source == 'attn_heads':
             # Design 2: context derived from query vectors (post-RoPE+QKnorm, detached)
@@ -1550,6 +1853,10 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
         # Wire output_gate_rank into kwargs so RemixedLinear picks it up
         self.remixed_linear_kwargs['output_gate_rank'] = getattr(config, 'remix_output_gate_rank', 8)
+        if self.cclblock_modulation in ('householder', 'spectral', 'ocd'):
+            self.remixed_linear_kwargs['operator_modulation'] = self.cclblock_modulation
+        else:
+            self.remixed_linear_kwargs['operator_modulation'] = 'none'
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
@@ -2002,6 +2309,9 @@ class GPT(nn.Module):
                     if hasattr(block, 'ctx_proj_q'):
                         for p in block.ctx_proj_q.parameters():
                             (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                    if hasattr(block, 'shadow_ctx_proj'):
+                        for p in block.shadow_ctx_proj.parameters():
+                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
 
                     # RemixedLinear: sort gate vs structural
                     remix_linears = [
@@ -2191,6 +2501,16 @@ class GPT(nn.Module):
                         aux_loss = torch.zeros(1, device=loss.device, dtype=loss.dtype)
                     aux_lambda = getattr(self.config, 'cclblock_aux_lambda', 0.1)
                     loss = loss + aux_lambda * aux_loss
+
+            # OCD overlap penalty from RemixedLinear layers (if enabled)
+            orth_lambda = float(getattr(self.config, 'cclblock_orth_lambda', 0.0))
+            if orth_lambda > 0.0 and loss_reduction == 'mean':
+                orth_terms = []
+                for mod in self.modules():
+                    if isinstance(mod, RemixedLinear) and mod._last_orth_loss is not None:
+                        orth_terms.append(mod._last_orth_loss.to(dtype=loss.dtype))
+                if orth_terms:
+                    loss = loss + orth_lambda * torch.stack(orth_terms).mean()
 
             return loss
         else:

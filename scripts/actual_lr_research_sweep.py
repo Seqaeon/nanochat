@@ -438,10 +438,11 @@ def main() -> None:
 
     # CCL block modulation
     p.add_argument("--cclblock-modulation", type=str, default="weight",
-                   choices=["weight", "normalization"],
+                   choices=["weight", "normalization", "householder", "spectral", "ocd", "decoupled"],
                    help="CCL block strategy passed to remixed-linear runs")
+    p.add_argument("--cclblock-orth-lambda", type=float, default=0.0)
     p.add_argument("--cclblock-context-stream", type=str, default="local", 
-                   choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                   choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                    help="Context stream type")
     p.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                    help="EMA factor for the legacy EMAContextStream")
@@ -467,6 +468,11 @@ def main() -> None:
     p.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     p.add_argument("--ral-rank", type=int, default=32)
     p.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
+    p.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
+    p.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25)
+    p.add_argument("--cclblock-gate-rank", type=int, default=8)
+    p.add_argument("--cclblock-num-regimes", type=int, default=8)
+    p.add_argument("--cclblock-regime-temperature", type=float, default=1.0)
     # Research dimension override
     p.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches")
     p.add_argument("--fp8", action="store_true")
@@ -579,6 +585,7 @@ def main() -> None:
         "--remix-use-context",     str(getattr(args, 'remix_use_context', 1)),
         "--moe-use-abs-pos-embed", "0",
         "--cclblock-modulation", getattr(args, 'cclblock_modulation', 'weight'),
+        "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", getattr(args, 'cclblock_context_stream', 'local'),
         "--cclblock-ema-factor", str(getattr(args, 'cclblock_ema_factor', 0.99)),
         "--cclblock-stale-ctx-lag", str(getattr(args, 'cclblock_stale_ctx_lag', 0)),
@@ -593,6 +600,14 @@ def main() -> None:
         "--cclblock-aux-objective",     str(getattr(args, 'cclblock_aux_objective', 'none')),
         "--cclblock-aux-lambda",        str(getattr(args, 'cclblock_aux_lambda', 0.1)),
         "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
+        "--use-ral", str(getattr(args, 'use_ral', 0)),
+        "--ral-rank", str(getattr(args, 'ral_rank', 32)),
+        "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
+        "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
+        "--cclblock-dynamic-ratio", str(getattr(args, 'cclblock_dynamic_ratio', 0.25)),
+        "--cclblock-gate-rank", str(getattr(args, 'cclblock_gate_rank', 8)),
+        "--cclblock-num-regimes", str(getattr(args, 'cclblock_num_regimes', 8)),
+        "--cclblock-regime-temperature", str(getattr(args, 'cclblock_regime_temperature', 1.0)),
         "--research-dim", str(getattr(args, 'research_dim', 0)),
     ]
     if args.compile:
