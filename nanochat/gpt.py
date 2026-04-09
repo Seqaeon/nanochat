@@ -2282,7 +2282,7 @@ class GPT(nn.Module):
                         torch.nn.init.zeros_(sub.bias)
 
                 # Buffers also need explicit initialization if to_empty was used
-                if hasattr(sub, 'temperature'):
+                if hasattr(sub, 'temperature') and isinstance(sub.temperature, torch.Tensor):
                     # sub.temperature is a buffer, not a parameter, so we set its value directly
                     sub.temperature.fill_(1.0)
 
@@ -2507,7 +2507,7 @@ class GPT(nn.Module):
         def _sort_ctx_stream_params(stream):
             """Route SelectiveContextStream/MultiScaleContext params to gate groups."""
             for p in stream.parameters():
-                (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
 
         if self.use_remix_linear:
             for block in self.transformer.h:
@@ -2517,7 +2517,7 @@ class GPT(nn.Module):
                     _sort_ctx_stream_params(block.ctx_stream)
                     for ada in [block.ada_norm_attn, block.ada_norm_mlp]:
                         for p in ada.parameters():
-                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                     # Structural: attn Q/K/V/proj, MLP fc/proj
                     for p in [block.attn.c_q.weight, block.attn.c_k.weight,
                                block.attn.c_v.weight, block.attn.c_proj.weight,
@@ -2537,10 +2537,10 @@ class GPT(nn.Module):
                     
                     if hasattr(block, 'ctx_proj_q'):
                         for p in block.ctx_proj_q.parameters():
-                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                     if hasattr(block, 'shadow_ctx_proj'):
                         for p in block.shadow_ctx_proj.parameters():
-                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
 
                     # RemixedLinear: sort gate vs structural
                     remix_linears = [
@@ -2549,9 +2549,9 @@ class GPT(nn.Module):
                     ]
                     for rl in remix_linears:
                         for p in rl.gate_parameters():
-                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                         for p in rl.non_gate_parameters():
-                            (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
+                            (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
                         # ln_basis (LayerNorm)
                         for p in rl.ln_basis.parameters():
                             struct_adamw_params.append(p)
@@ -2561,19 +2561,19 @@ class GPT(nn.Module):
         else:
             # Regular Block: all transformer.h params go to candidate_matrix_params
             candidate = list(self.transformer.h.parameters())
-            struct_matrix_params = [p for p in candidate if p.ndim >= 2]
-            struct_adamw_params  = [p for p in candidate if p.ndim < 2]
+            struct_matrix_params = [p for p in candidate if p.ndim == 2]
+            struct_adamw_params  = [p for p in candidate if p.ndim != 2]
 
         # Embedding model (MoE), if present
         if self.embedding_model is not None:
             cand = list(self.embedding_model.parameters())
-            struct_matrix_params += [p for p in cand if p.ndim >= 2]
-            struct_adamw_params  += [p for p in cand if p.ndim < 2]
+            struct_matrix_params += [p for p in cand if p.ndim == 2]
+            struct_adamw_params  += [p for p in cand if p.ndim != 2]
 
         # Aux head (Design 10), if present
         if self.aux_head is not None:
             for p in self.aux_head.parameters():
-                (struct_matrix_params if p.ndim >= 2 else struct_adamw_params).append(p)
+                (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
 
         research_adamw_params = gate_adamw_params + struct_adamw_params
 
