@@ -90,16 +90,18 @@ class GPTConfig:
     window_pattern: str = "SSSSL"
 
     # CCL block modulation strategy (only used when use_remix_linear=True):
-    #   'weight'       — keeps RemixedLinear weight-modulation gating but upgrades context
-    #                    stream from EMA to SelectiveContextStream (GRU-style, no detach).
-    #   'normalization' — replaces RemixedLinear with CCLBlock: standard dense Attn+MLP
-    #                    conditioned via AdaRMSNorm (DiT-style scale/shift from context).
+    #   'weight'        — RemixedLinear gates in activation space.
+    #   'normalization' — CCLBlock with AdaRMSNorm conditioning.
+    #   'householder'   — operator-space basis transport via context-conditioned
+    #                     Householder reflection(s).
+    #   'spectral'      — operator-space spectral scaffold (near-isometric scaling).
     cclblock_modulation: str = 'weight'
     # The context stream logic:
     #   'local'      — (default) derived directly from norm(x) inside the block. No cross-block threading.
     #   'ema'        — fixed ema factor, with .detach() to prevent gradient explosion.
     #   'selective'  — GRU-style input-dependent gating, no detach.
     #   'multiscale' — 3 parallel selective temporal channels (Fast, Med, Slow).
+    #   'ssm'        — linear state-space style context highway.
     cclblock_context_stream: str = 'local'
     cclblock_ema_factor: float = 0.99
     # Design C: Cross-layer stale context lag (0 = disabled, k>=1 = use context from k blocks ago).
@@ -696,6 +698,32 @@ class MultiScaleContext(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class ParallelLinearContextStream(nn.Module):
+    """Linear state-space style context highway with stable exponential decay."""
+    def __init__(self, n_embd, ctx_dim):
+        super().__init__()
+        self.ctx_dim = ctx_dim
+        self.dt_proj = Linear(n_embd, ctx_dim, bias=True)
+        self.x_proj = Linear(n_embd, ctx_dim, bias=True)
+        self.a_log = nn.Parameter(torch.zeros(ctx_dim))
+        nn.init.zeros_(self.dt_proj.weight)
+        nn.init.zeros_(self.dt_proj.bias)
+        nn.init.zeros_(self.x_proj.weight)
+        nn.init.zeros_(self.x_proj.bias)
+
+    def forward(self, x, prev_ctx=None):
+        bsz, seqlen, _ = x.shape
+        dt = F.softplus(self.dt_proj(x))
+        decay = torch.exp(-dt * torch.exp(self.a_log).view(1, 1, -1))
+        write = self.x_proj(x)
+        state = torch.zeros(bsz, self.ctx_dim, device=x.device, dtype=x.dtype)
+        outputs = []
+        for t in range(seqlen):
+            state = state * decay[:, t, :] + write[:, t, :]
+            outputs.append(state)
+        return torch.stack(outputs, dim=1)
+
+
 class DetachedAttnContextStream(nn.Module):
     """Proposal B: Projects norm(attn_out).detach() to ctx_dim.
     
@@ -920,6 +948,8 @@ class CCLBlock(nn.Module):
         if stream_type == 'multiscale':
             self.ctx_stream = MultiScaleContext(config.n_embd, ctx_dim)
             ctx_dim = self.ctx_stream.ctx_dim  # possibly auto-corrected
+        elif stream_type == 'ssm':
+            self.ctx_stream = ParallelLinearContextStream(config.n_embd, ctx_dim)
         elif stream_type == 'selective':
             self.ctx_stream = SelectiveContextStream(config.n_embd, ctx_dim)
         elif stream_type == 'ema':
@@ -968,6 +998,8 @@ class RemixedLinear(nn.Module):
         self.sparse_gate_k = remixed_linear_kwargs.get('sparse_gate_k', 0)
         # Design 6: gate temperature. divides sigmoid logits. <1=sharper, >1=softer.
         self.gate_temperature = max(remixed_linear_kwargs.get('gate_temperature', 1.0), 1e-6)
+        # Operator-space modulation: none|householder|spectral
+        self.operator_modulation = remixed_linear_kwargs.get('operator_modulation', 'none')
 
         self.basis = Linear(in_features, basis_size, bias=False)
         self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
@@ -1021,6 +1053,14 @@ class RemixedLinear(nn.Module):
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
             self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale, starts small
+            if self.operator_modulation == 'householder':
+                self.operator_householder = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.operator_householder.weight)
+                nn.init.zeros_(self.operator_householder.bias)
+            elif self.operator_modulation == 'spectral':
+                self.operator_spectral = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.operator_spectral.weight)
+                nn.init.zeros_(self.operator_spectral.bias)
 
     def gate_parameters(self):
         """Yield context-gate-specific parameters (basis_modulator, output_gate_*).
@@ -1032,6 +1072,10 @@ class RemixedLinear(nn.Module):
                 yield self.output_gate_coeffs.bias
             yield self.output_gate_basis
             yield self.output_gate_scale
+            if hasattr(self, "operator_householder"):
+                yield from self.operator_householder.parameters()
+            if hasattr(self, "operator_spectral"):
+                yield from self.operator_spectral.parameters()
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
@@ -1045,6 +1089,12 @@ class RemixedLinear(nn.Module):
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
+            if self.operator_modulation == 'householder':
+                v = F.normalize(self.operator_householder(ctx), dim=-1, eps=1e-6)
+                h_basis = h_basis - 2.0 * (h_basis * v).sum(dim=-1, keepdim=True) * v
+            elif self.operator_modulation == 'spectral':
+                scale = 1.0 + torch.tanh(self.operator_spectral(ctx) * 0.1)
+                h_basis = h_basis * scale.to(dtype=dtype)
 
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
@@ -1281,7 +1331,7 @@ class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
 
     Supports all novel ablation designs via config toggles:
-      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'
+      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'|'ssm'
       - cclblock_context_bank_size: 0=off, N=ContextBank with N prototypes
       - cclblock_per_head_ctx: separate context projections for attn vs ffn
       - cclblock_sparse_gate_k: 0=soft sigmoid, N=sparse top-k gate (via remixed_linear_kwargs)
@@ -1334,6 +1384,8 @@ class RemixedBlock(nn.Module):
                 return DACSEMAContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'decay_prefix':
                 return DecayPrefixContextStream(config.n_embd, ctx_dim, gamma=0.9)
+            elif stream_type == 'ssm':
+                return ParallelLinearContextStream(config.n_embd, ctx_dim)
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
@@ -1550,6 +1602,10 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
         # Wire output_gate_rank into kwargs so RemixedLinear picks it up
         self.remixed_linear_kwargs['output_gate_rank'] = getattr(config, 'remix_output_gate_rank', 8)
+        if self.cclblock_modulation in ('householder', 'spectral'):
+            self.remixed_linear_kwargs['operator_modulation'] = self.cclblock_modulation
+        else:
+            self.remixed_linear_kwargs['operator_modulation'] = 'none'
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings

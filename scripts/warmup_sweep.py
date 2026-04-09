@@ -277,6 +277,9 @@ def run_warmup_sweep(args: argparse.Namespace) -> None:
         "--cclblock-aux-objective",     str(getattr(args, 'cclblock_aux_objective', 'none')),
         "--cclblock-aux-lambda",        str(getattr(args, 'cclblock_aux_lambda', 0.1)),
         "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
+        "--use-ral", str(getattr(args, 'use_ral', 0)),
+        "--ral-rank", str(getattr(args, 'ral_rank', 32)),
+        "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
     ])
 
     env = os.environ.copy()
@@ -652,10 +655,10 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1])
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization"],
+                        choices=["weight", "normalization", "householder", "spectral"],
                         help="CCL block strategy passed to remixed-linear runs")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
-                        choices=["local", "shifted", "ema", "selective", "multiscale", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
+                        choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")
     parser.add_argument("--cclblock-ema-factor", type=float, default=0.99,
                         help="EMA factor for the legacy EMAContextStream")
