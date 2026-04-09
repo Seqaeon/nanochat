@@ -1100,6 +1100,10 @@ class RemixedLinear(nn.Module):
         yield self.basis.weight
         yield self.template_mixing
         yield self.bias
+        if hasattr(self, "ocd_in"):
+            yield self.ocd_in
+        if hasattr(self, "ocd_out"):
+            yield self.ocd_out
 
     def forward(self, x, context_state):
         dtype = x.dtype
@@ -2162,6 +2166,9 @@ class GPT(nn.Module):
                     
                     if hasattr(block, 'ctx_proj_q'):
                         for p in block.ctx_proj_q.parameters():
+                            (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
+                    if hasattr(block, 'shadow_ctx_proj'):
+                        for p in block.shadow_ctx_proj.parameters():
                             (gate_matrix_params if p.ndim >= 2 else gate_adamw_params).append(p)
 
                     # RemixedLinear: sort gate vs structural
