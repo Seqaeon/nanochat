@@ -360,6 +360,26 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-attn-shadow-dim" "$2")
             shift 2
             ;;
+        --cclblock-dynamic-ratio)
+            EXTRA_ARGS+=("--cclblock-dynamic-ratio" "$2")
+            shift 2
+            ;;
+        --cclblock-gate-rank)
+            EXTRA_ARGS+=("--cclblock-gate-rank" "$2")
+            shift 2
+            ;;
+        --cclblock-num-regimes)
+            EXTRA_ARGS+=("--cclblock-num-regimes" "$2")
+            shift 2
+            ;;
+        --cclblock-regime-temperature)
+            EXTRA_ARGS+=("--cclblock-regime-temperature" "$2")
+            shift 2
+            ;;
+        --cclblock-poly-order|--cclblock-lie-generators|--cclblock-grassmann-bank-size|--cclblock-tucker-rank|--cclblock-tucker-modes|--cclblock-svs-rank|--cclblock-svs-eps|--cclblock-vq-codes|--cclblock-vq-temperature|--cclblock-dcu-warmup-steps)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         --research-dim)
             EXTRA_ARGS+=("--research-dim" "$2")
             shift 2

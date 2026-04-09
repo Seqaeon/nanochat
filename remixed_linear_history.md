@@ -126,3 +126,29 @@ This was meant to separate “what attention writes to residual” from “what 
 2. **The necessity of `.detach()`:** Continuous, un-detached gradient flow through sequence time is universally destructive for our current setup. Detachment isolates the gradient paths to focus strictly on spatial layer-to-layer learning. 
 3. **What also did *not* rescue performance:** Operator-geometry variants (Householder/Spectral), OCD-style overlap-penalized deltas, linear SSM-style context highways, and dual-V shadow routing all failed to produce durable wins over the dense baseline in our long-context sweeps.
 4. **The next frontier:** If we want to solve long-sequence contextual degradation, we likely need a controller that is both identifiable and low-noise at scale (coarse regime selection), rather than additional fine-grained per-token control paths that increase optimization friction.
+
+## Phase 11: Unified Operator-Family Sweep (Decoupled / Tucker / SVS / VQ / Lie-Poly-Grassmann / Predictive+Evidence Controllers)
+**The Idea:** We consolidated the full redesign set into one ablation surface and ran them through the same remixed training/sweep interfaces, including:
+- **Decoupled Feature-Space Routing (`decoupled`)** with explicit static/dynamic channel split.
+- **Tucker-Decomposed Routing (`tucker`)** with simplex-routed operator core.
+- **Singular Value Steering (`svs`)** and **Deferred Context Unlock (`dcu`)** variants.
+- **Vector-Quantized Regime Routing (`vq`)** with discrete codebook-conditioned deltas.
+- **Operator-family modulation in basis space:** `lie`, `polynomial`, `grassmann`.
+- **Context-controller variants:** `predictive_chunk`, `evidence_ssm`, and `attn_geometry` source.
+
+**What Improved:**
+- The strongest configuration in this phase was **Decoupled routing** with:
+  - `cclblock_modulation=decoupled`
+  - `cclblock_gate_rank=128`
+  - `cclblock_dynamic_ratio=0.5`
+
+This setting produced the best relative improvement among the newly introduced families in our phase-level comparisons.
+
+**What Did Not Beat That Setting:**
+- Tucker/SVS/DCU/VQ provided useful structural ablations and sometimes competitive early curves, but did not exceed the decoupled-128/0.5 setup in our tested budgets.
+- Lie/Polynomial/Grassmann operator-space controls were informative but remained more tuning-sensitive and less consistently strong than the best decoupled run.
+- Predictive/evidence/geometry controller variants improved controllability and interpretability of context pathways, but were not sufficient on their own to overtake the best decoupled configuration.
+
+**Takeaway:**
+- The practical win in this phase came from **structurally separating static and dynamic feature subspaces** and giving the dynamic controller enough rank/capacity to matter (`gate_rank=128`) without forcing full-path competition over the same channels.
+- This phase shifts our working hypothesis from “more expressive controller geometry” to “clean gradient-path separation + sufficient dynamic capacity.”

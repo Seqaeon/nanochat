@@ -96,6 +96,11 @@ class GPTConfig:
     #                     Householder reflection(s).
     #   'spectral'      — operator-space spectral scaffold (near-isometric scaling).
     #   'ocd'           — orthogonal-complement-style dynamic delta with overlap penalty.
+    #   'decoupled'     — orthogonal static/dynamic input channel routing.
+    #   'tucker'        — Tucker-routed operator simplex.
+    #   'svs'           — singular-value steering over fixed factors.
+    #   'vq'            — vector-quantized regime-conditioned operator deltas.
+    #   'dcu'           — deferred-context-unlock style tail-space steering.
     cclblock_modulation: str = 'weight'
     cclblock_orth_lambda: float = 0.0
     # The context stream logic:
@@ -130,7 +135,7 @@ class GPTConfig:
     #            'attn_heads' uses mean query vectors (q after RoPE+QKnorm, detached).
     #            This gives the gate a direct signal about "what each position is searching for"
     #            without any recurrence or cross-block dependency.
-    cclblock_context_source: str = 'norm_x'  # 'norm_x' | 'attn_heads'
+    cclblock_context_source: str = 'norm_x'  # 'norm_x' | 'attn_heads' | 'attn_geometry'
     # Phase 8: Boundary-Gated / Chunk Context / Auxiliary Objective
     # Design 8 (boundary gate): learned soft gate that fires only at segment boundaries.
     #   Use --cclblock-context-stream "boundary"
@@ -157,6 +162,23 @@ class GPTConfig:
     # Dual-V shadow routing: append shadow channels to attention V and route the
     # shadow output directly into FFN context conditioning.
     cclblock_attn_shadow_dim: int = 0
+    # Paradigm 1: Decoupled Feature-Space Routing
+    cclblock_dynamic_ratio: float = 0.25
+    cclblock_gate_rank: int = 8
+    # Paradigm 2: Evidence Accumulation SSM context stream
+    cclblock_num_regimes: int = 8
+    cclblock_regime_temperature: float = 1.0
+    # Additional operator-family ablations
+    cclblock_poly_order: int = 2
+    cclblock_lie_generators: int = 4
+    cclblock_grassmann_bank_size: int = 4
+    cclblock_tucker_rank: int = 32
+    cclblock_tucker_modes: int = 8
+    cclblock_svs_rank: int = 64
+    cclblock_svs_eps: float = 0.1
+    cclblock_vq_codes: int = 8
+    cclblock_vq_temperature: float = 1.0
+    cclblock_dcu_warmup_steps: int = 0
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -182,6 +204,11 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_chunk_size", "cclblock_aux_objective", "cclblock_aux_lambda", "cclblock_boundary_token_id",
     # Phase 9
     "use_ral", "ral_rank", "cclblock_film_gate", "cclblock_attn_shadow_dim",
+    # New paradigms
+    "cclblock_dynamic_ratio", "cclblock_gate_rank", "cclblock_num_regimes", "cclblock_regime_temperature",
+    "cclblock_poly_order", "cclblock_lie_generators", "cclblock_grassmann_bank_size",
+    "cclblock_tucker_rank", "cclblock_tucker_modes", "cclblock_svs_rank", "cclblock_svs_eps",
+    "cclblock_vq_codes", "cclblock_vq_temperature", "cclblock_dcu_warmup_steps",
 }
 
 
@@ -898,6 +925,67 @@ class HardChunkContextStream(nn.Module):
         return ctx.to(norm_x.dtype)
 
 
+class PredictiveChunkContextStream(nn.Module):
+    """Paradigm 3: predictive, zero-lag chunk context.
+
+    Predict chunk i+1 context from chunk i summary, then hold it constant within
+    chunk i+1. This avoids stale chunk lag and removes per-token context noise.
+    """
+    def __init__(self, n_embd, ctx_dim, chunk_size=64):
+        super().__init__()
+        self.chunk_size = chunk_size
+        self.ctx_dim = ctx_dim
+        self.future_predictor = nn.Sequential(
+            Linear(n_embd, n_embd, bias=True),
+            nn.GELU(),
+            Linear(n_embd, ctx_dim, bias=True),
+        )
+        nn.init.zeros_(self.future_predictor[-1].weight)
+        nn.init.zeros_(self.future_predictor[-1].bias)
+
+    def forward(self, norm_x, prev_ctx=None):
+        B, T, C = norm_x.shape
+        K = self.chunk_size
+        pad = (K - T % K) % K
+        x_pad = F.pad(norm_x, (0, 0, 0, pad)) if pad > 0 else norm_x
+        n_chunks = x_pad.shape[1] // K
+        x_chunks = x_pad.view(B, n_chunks, K, C).mean(dim=2)
+        predicted_future_ctx = self.future_predictor(x_chunks)
+        ctx_chunks_shifted = F.pad(predicted_future_ctx, (0, 0, 1, 0))[:, :-1, :]
+        ctx = ctx_chunks_shifted.unsqueeze(2).expand(-1, -1, K, -1).contiguous()
+        ctx = ctx.view(B, -1, self.ctx_dim)[:, :T, :]
+        return ctx.to(norm_x.dtype)
+
+
+class EvidenceAccumulationContextStream(nn.Module):
+    """Paradigm 2: linear low-dim evidence SSM for regime selection context."""
+    def __init__(self, n_embd, ctx_dim, num_regimes=8, temperature=1.0):
+        super().__init__()
+        self.num_regimes = num_regimes
+        self.temperature = max(float(temperature), 1e-6)
+        self.evidence_proj = Linear(n_embd, num_regimes, bias=True)
+        self.decay_proj = Linear(n_embd, num_regimes, bias=True)
+        self.ctx_from_regime = Linear(num_regimes, ctx_dim, bias=False)
+        nn.init.zeros_(self.evidence_proj.weight)
+        nn.init.zeros_(self.evidence_proj.bias)
+        nn.init.zeros_(self.decay_proj.weight)
+        nn.init.constant_(self.decay_proj.bias, 4.5)  # sigmoid(4.5)≈0.99
+        nn.init.zeros_(self.ctx_from_regime.weight)
+
+    def forward(self, norm_x, prev_ctx=None):
+        B, T, _ = norm_x.shape
+        evidence = self.evidence_proj(norm_x)
+        decay = torch.sigmoid(self.decay_proj(norm_x))
+        states = []
+        curr_state = torch.zeros(B, self.num_regimes, device=norm_x.device, dtype=norm_x.dtype)
+        for t in range(T):
+            curr_state = decay[:, t, :] * curr_state + evidence[:, t, :]
+            states.append(curr_state)
+        S_t = torch.stack(states, dim=1)
+        R_t = F.softmax(S_t / self.temperature, dim=-1)
+        return self.ctx_from_regime(R_t.to(dtype=norm_x.dtype))
+
+
 class AdaRMSNorm(nn.Module):
     """Context-conditioned RMSNorm for the 'normalization' CCL path (Design B).
 
@@ -1076,6 +1164,27 @@ class RemixedLinear(nn.Module):
                 self.ocd_scale = nn.Parameter(torch.tensor(0.1))
                 nn.init.zeros_(self.ocd_coeffs.weight)
                 nn.init.zeros_(self.ocd_coeffs.bias)
+            elif self.operator_modulation == 'lie':
+                m = int(remixed_linear_kwargs.get('lie_generators', 4))
+                self.lie_coeffs = Linear(context_dim, m, bias=True)
+                self.lie_generators = nn.Parameter(torch.zeros(m, basis_size, basis_size))
+                nn.init.zeros_(self.lie_coeffs.weight)
+                nn.init.zeros_(self.lie_coeffs.bias)
+            elif self.operator_modulation == 'polynomial':
+                p = int(remixed_linear_kwargs.get('poly_order', 2))
+                self.poly_order = max(1, p)
+                self.poly_coeffs = Linear(context_dim, self.poly_order + 1, bias=True)
+                self.poly_A = nn.Parameter(torch.eye(basis_size))
+                nn.init.zeros_(self.poly_coeffs.weight)
+                nn.init.zeros_(self.poly_coeffs.bias)
+                with torch.no_grad():
+                    self.poly_coeffs.bias[0] = 1.0
+            elif self.operator_modulation == 'grassmann':
+                k = int(remixed_linear_kwargs.get('grassmann_bank_size', 4))
+                self.grassmann_alpha = Linear(context_dim, k, bias=True)
+                self.grassmann_bank = nn.Parameter(torch.ones(k, basis_size))
+                nn.init.zeros_(self.grassmann_alpha.weight)
+                nn.init.zeros_(self.grassmann_alpha.bias)
 
     def gate_parameters(self):
         """Yield context-gate-specific parameters (basis_modulator, output_gate_*).
@@ -1094,6 +1203,12 @@ class RemixedLinear(nn.Module):
             if hasattr(self, "ocd_coeffs"):
                 yield from self.ocd_coeffs.parameters()
                 yield self.ocd_scale
+            if hasattr(self, "lie_coeffs"):
+                yield from self.lie_coeffs.parameters()
+            if hasattr(self, "poly_coeffs"):
+                yield from self.poly_coeffs.parameters()
+            if hasattr(self, "grassmann_alpha"):
+                yield from self.grassmann_alpha.parameters()
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
@@ -1104,6 +1219,12 @@ class RemixedLinear(nn.Module):
             yield self.ocd_in
         if hasattr(self, "ocd_out"):
             yield self.ocd_out
+        if hasattr(self, "lie_generators"):
+            yield self.lie_generators
+        if hasattr(self, "poly_A"):
+            yield self.poly_A
+        if hasattr(self, "grassmann_bank"):
+            yield self.grassmann_bank
 
     def forward(self, x, context_state):
         dtype = x.dtype
@@ -1117,6 +1238,27 @@ class RemixedLinear(nn.Module):
             elif self.operator_modulation == 'spectral':
                 scale = 1.0 + torch.tanh(self.operator_spectral(ctx) * 0.1)
                 h_basis = h_basis * scale.to(dtype=dtype)
+            elif self.operator_modulation == 'lie':
+                coeffs = self.lie_coeffs(ctx)
+                generators = self.lie_generators.to(dtype=dtype)
+                skew = 0.5 * (generators - generators.transpose(-1, -2))
+                transport = torch.einsum('btm,mij->btij', coeffs, skew)
+                eye = torch.eye(self.basis_size, device=x.device, dtype=dtype).view(1, 1, self.basis_size, self.basis_size)
+                h_basis = torch.einsum('bti,btij->btj', h_basis, eye + 0.1 * transport)
+            elif self.operator_modulation == 'polynomial':
+                a = self.poly_coeffs(ctx)
+                A = self.poly_A.to(dtype=dtype)
+                z = torch.zeros_like(h_basis)
+                h_pow = h_basis
+                z = z + a[..., :1] * h_pow
+                for i in range(1, self.poly_order + 1):
+                    h_pow = torch.matmul(h_pow, A)
+                    z = z + a[..., i:i+1] * h_pow
+                h_basis = z
+            elif self.operator_modulation == 'grassmann':
+                alpha = F.softmax(self.grassmann_alpha(ctx), dim=-1)
+                scale = torch.einsum('btk,kd->btd', alpha, self.grassmann_bank.to(dtype=dtype))
+                h_basis = h_basis * scale
 
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
@@ -1182,6 +1324,163 @@ class RemixedLinear(nn.Module):
         return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
 
 
+class DecoupledAdaptiveLinear(nn.Module):
+    """Paradigm 1: split static/dynamic channels for gradient decoupling."""
+    def __init__(self, in_features, out_features, context_dim, dynamic_ratio=0.25, basis_size=64, gate_rank=8, **_ignored):
+        super().__init__()
+        self.dyn_features = max(1, int(in_features * dynamic_ratio))
+        self.stat_features = in_features - self.dyn_features
+        if self.stat_features <= 0:
+            self.stat_features = in_features - 1
+            self.dyn_features = 1
+
+        self.static_proj = Linear(self.stat_features, out_features, bias=True)
+        self.dyn_basis = Linear(self.dyn_features, basis_size, bias=False)
+        self.dyn_mix = nn.Parameter(torch.randn(out_features, basis_size) / (basis_size ** 0.5))
+        self.gate_coeffs = Linear(context_dim, gate_rank, bias=True)
+        self.gate_basis = nn.Parameter(torch.zeros(gate_rank, out_features))
+        self.gate_scale = nn.Parameter(torch.ones(1) * 0.1)
+        self.ln_basis = nn.Identity()
+        nn.init.zeros_(self.gate_coeffs.weight)
+        nn.init.zeros_(self.gate_coeffs.bias)
+
+    def gate_parameters(self):
+        yield from self.gate_coeffs.parameters()
+        yield self.gate_basis
+        yield self.gate_scale
+
+    def non_gate_parameters(self):
+        yield from self.static_proj.parameters()
+        yield self.dyn_basis.weight
+        yield self.dyn_mix
+
+    def forward(self, x, context_state):
+        x_stat = x[..., :self.stat_features]
+        x_dyn = x[..., self.stat_features:]
+        out_stat = self.static_proj(x_stat)
+        h_basis = self.dyn_basis(x_dyn)
+        out_dyn = F.linear(h_basis, self.dyn_mix.to(dtype=x.dtype))
+        if context_state is not None:
+            coeffs = self.gate_coeffs(context_state.to(dtype=x.dtype))
+            gate_logits = torch.matmul(coeffs, self.gate_basis.to(dtype=x.dtype))
+            gate = 1.0 + torch.tanh(self.gate_scale.to(dtype=x.dtype) * gate_logits)
+            out_dyn = out_dyn * gate
+        return out_stat + out_dyn
+
+
+class TuckerAdaptiveLinear(nn.Module):
+    """Tucker-decomposed context routing: W_eff = Σ_k v_k(ctx) A G_k B^T."""
+    def __init__(self, in_features, out_features, context_dim, tucker_rank=32, tucker_modes=8, **_ignored):
+        super().__init__()
+        r = max(1, int(tucker_rank))
+        k = max(1, int(tucker_modes))
+        self.A = nn.Parameter(torch.randn(in_features, r) * (in_features ** -0.5))
+        self.B = nn.Parameter(torch.randn(out_features, r) * (out_features ** -0.5))
+        self.core = nn.Parameter(torch.randn(r, r, k) * (r ** -0.5))
+        self.ctx_router = Linear(context_dim, k, bias=True)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        self.ln_basis = nn.Identity()
+        nn.init.zeros_(self.ctx_router.weight)
+        nn.init.zeros_(self.ctx_router.bias)
+
+    def gate_parameters(self):
+        yield from self.ctx_router.parameters()
+
+    def non_gate_parameters(self):
+        yield self.A
+        yield self.B
+        yield self.core
+        yield self.bias
+
+    def forward(self, x, context_state):
+        h = torch.matmul(x, self.A.to(dtype=x.dtype))  # (B,T,r)
+        if context_state is None:
+            weights = torch.full((*h.shape[:2], self.core.shape[-1]), 1.0 / self.core.shape[-1], device=x.device, dtype=x.dtype)
+        else:
+            weights = F.softmax(self.ctx_router(context_state.to(dtype=x.dtype)), dim=-1)
+        mixed = torch.einsum('btk,ijk->btij', weights, self.core.to(dtype=x.dtype))
+        h2 = torch.einsum('bti,btij->btj', h, mixed)
+        y = torch.matmul(h2, self.B.to(dtype=x.dtype).transpose(0, 1))
+        return y + self.bias.to(dtype=x.dtype)
+
+
+class SingularValueSteeringLinear(nn.Module):
+    """SVS: context steers singular-value-like gains over fixed low-rank factors."""
+    def __init__(self, in_features, out_features, context_dim, svs_rank=64, svs_eps=0.1, dcu_warmup_steps=0, **_ignored):
+        super().__init__()
+        r = max(1, min(int(svs_rank), in_features, out_features))
+        self.V = nn.Parameter(torch.randn(in_features, r) * (in_features ** -0.5))
+        self.U = nn.Parameter(torch.randn(out_features, r) * (out_features ** -0.5))
+        self.sigma = nn.Parameter(torch.ones(r))
+        self.ctx = Linear(context_dim, r, bias=True)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        self.svs_eps = float(svs_eps)
+        self.dcu_warmup_steps = max(0, int(dcu_warmup_steps))
+        self._step = 0
+        self.ln_basis = nn.Identity()
+        nn.init.zeros_(self.ctx.weight)
+        nn.init.zeros_(self.ctx.bias)
+
+    def gate_parameters(self):
+        yield from self.ctx.parameters()
+
+    def non_gate_parameters(self):
+        yield self.V
+        yield self.U
+        yield self.sigma
+        yield self.bias
+
+    def forward(self, x, context_state):
+        h = torch.matmul(x, self.V.to(dtype=x.dtype))
+        if context_state is None:
+            steer = torch.ones_like(h)
+        else:
+            steer = 1.0 + self.svs_eps * torch.tanh(self.ctx(context_state.to(dtype=x.dtype)))
+        if self.dcu_warmup_steps > 0:
+            self._step += 1
+            unlock = min(1.0, float(self._step) / float(self.dcu_warmup_steps))
+            steer = 1.0 + unlock * (steer - 1.0)
+        h = h * (self.sigma.to(dtype=x.dtype) * steer)
+        y = torch.matmul(h, self.U.to(dtype=x.dtype).transpose(0, 1))
+        return y + self.bias.to(dtype=x.dtype)
+
+
+class VQAdaptiveLinear(nn.Module):
+    """VQ regime routing: dense base + regime-selected full-rank delta."""
+    def __init__(self, in_features, out_features, context_dim, vq_codes=8, vq_temperature=1.0, **_ignored):
+        super().__init__()
+        self.base = Linear(in_features, out_features, bias=True)
+        self.K = max(1, int(vq_codes))
+        self.temperature = max(float(vq_temperature), 1e-6)
+        self.codebook = nn.Parameter(torch.randn(self.K, context_dim) * (context_dim ** -0.5))
+        self.delta = nn.Parameter(torch.zeros(self.K, out_features, in_features))
+        self.ln_basis = nn.Identity()
+
+    def gate_parameters(self):
+        yield self.codebook
+
+    def non_gate_parameters(self):
+        yield from self.base.parameters()
+        yield self.delta
+
+    def forward(self, x, context_state):
+        y = self.base(x)
+        if context_state is None:
+            return y
+        ctx = context_state.to(dtype=x.dtype)
+        B, T, C = ctx.shape
+        flat = ctx.reshape(B * T, C)
+        dist = torch.cdist(flat, self.codebook.to(dtype=x.dtype))
+        idx = torch.argmin(dist, dim=-1)
+        hard = F.one_hot(idx, num_classes=self.K).to(dtype=x.dtype)
+        soft = F.softmax(-dist / self.temperature, dim=-1)
+        w = hard + (soft - soft.detach())
+        w = w.view(B, T, self.K)
+        w_delta = torch.einsum('btk,koi->btoi', w, self.delta.to(dtype=x.dtype))
+        y_delta = torch.einsum('btoi,bti->bto', w_delta, x)
+        return y + y_delta
+
+
 class ResidualAdaptiveLinear(nn.Module):
     """Proposal A: Dense base layer + context-conditioned additive low-rank delta.
 
@@ -1245,11 +1544,27 @@ class RemixedFeedForward(nn.Module):
     def __init__(self, config):
         super().__init__()
         use_ral = getattr(config, 'use_ral', False)
+        mode = getattr(config, 'cclblock_modulation', 'weight')
+        use_decoupled = mode == 'decoupled'
         ral_rank = getattr(config, 'ral_rank', 32)
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if use_ral:
+        if mode == 'tucker':
+            self.c_fc = TuckerAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+            self.c_proj = TuckerAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+        elif mode in ('svs', 'dcu'):
+            self.c_fc = SingularValueSteeringLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, svs_rank=getattr(config, 'cclblock_svs_rank', 64), svs_eps=getattr(config, 'cclblock_svs_eps', 0.1), dcu_warmup_steps=getattr(config, 'cclblock_dcu_warmup_steps', 0) if mode == 'dcu' else 0)
+            self.c_proj = SingularValueSteeringLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, svs_rank=getattr(config, 'cclblock_svs_rank', 64), svs_eps=getattr(config, 'cclblock_svs_eps', 0.1), dcu_warmup_steps=getattr(config, 'cclblock_dcu_warmup_steps', 0) if mode == 'dcu' else 0)
+        elif mode == 'vq':
+            self.c_fc = VQAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, vq_codes=getattr(config, 'cclblock_vq_codes', 8), vq_temperature=getattr(config, 'cclblock_vq_temperature', 1.0))
+            self.c_proj = VQAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, vq_codes=getattr(config, 'cclblock_vq_codes', 8), vq_temperature=getattr(config, 'cclblock_vq_temperature', 1.0))
+        elif use_decoupled:
+            ratio = float(getattr(config, 'cclblock_dynamic_ratio', 0.25))
+            gate_rank = int(getattr(config, 'cclblock_gate_rank', 8))
+            self.c_fc   = DecoupledAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_proj = DecoupledAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+        elif use_ral:
             self.c_fc   = ResidualAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_proj = ResidualAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
         else:
@@ -1286,11 +1601,38 @@ class RemixedMultiAttention(nn.Module):
             self.shadow_dim_per_head = self.shadow_dim // self.n_kv_head
         self.v_head_dim = self.head_dim + self.shadow_dim_per_head
         use_ral = getattr(config, 'use_ral', False)
+        mode = getattr(config, 'cclblock_modulation', 'weight')
+        use_decoupled = mode == 'decoupled'
         ral_rank = getattr(config, 'ral_rank', 32)
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if use_ral:
+        if mode == 'tucker':
+            self.c_q = TuckerAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+            self.c_k = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+            self.c_v = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+            self.c_proj = TuckerAdaptiveLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
+        elif mode in ('svs', 'dcu'):
+            dcu_steps = getattr(config, 'cclblock_dcu_warmup_steps', 0) if mode == 'dcu' else 0
+            common = dict(context_dim=config.remix_context_dim, svs_rank=getattr(config, 'cclblock_svs_rank', 64), svs_eps=getattr(config, 'cclblock_svs_eps', 0.1), dcu_warmup_steps=dcu_steps)
+            self.c_q = SingularValueSteeringLinear(self.n_embd, self.n_head * self.head_dim, **common)
+            self.c_k = SingularValueSteeringLinear(self.n_embd, self.n_kv_head * self.head_dim, **common)
+            self.c_v = SingularValueSteeringLinear(self.n_embd, self.n_kv_head * self.v_head_dim, **common)
+            self.c_proj = SingularValueSteeringLinear(self.n_embd, self.n_embd, **common)
+        elif mode == 'vq':
+            common = dict(context_dim=config.remix_context_dim, vq_codes=getattr(config, 'cclblock_vq_codes', 8), vq_temperature=getattr(config, 'cclblock_vq_temperature', 1.0))
+            self.c_q = VQAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, **common)
+            self.c_k = VQAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, **common)
+            self.c_v = VQAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, **common)
+            self.c_proj = VQAdaptiveLinear(self.n_embd, self.n_embd, **common)
+        elif use_decoupled:
+            ratio = float(getattr(config, 'cclblock_dynamic_ratio', 0.25))
+            gate_rank = int(getattr(config, 'cclblock_gate_rank', 8))
+            self.c_q    = DecoupledAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_k    = DecoupledAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_v    = DecoupledAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+            self.c_proj = DecoupledAdaptiveLinear(self.n_embd, self.n_embd, context_dim=config.remix_context_dim, dynamic_ratio=ratio, basis_size=config.remix_basis_size, gate_rank=gate_rank)
+        elif use_ral:
             self.c_q    = ResidualAdaptiveLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_k    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_v    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
@@ -1428,7 +1770,8 @@ class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
 
     Supports all novel ablation designs via config toggles:
-      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'|'ssm'
+      - cclblock_context_stream: 'local'|'shifted'|'ema'|'selective'|'multiscale'|'ssm'|
+                                 'predictive_chunk'|'evidence_ssm'
       - cclblock_context_bank_size: 0=off, N=ContextBank with N prototypes
       - cclblock_per_head_ctx: separate context projections for attn vs ffn
       - cclblock_sparse_gate_k: 0=soft sigmoid, N=sparse top-k gate (via remixed_linear_kwargs)
@@ -1447,7 +1790,7 @@ class RemixedBlock(nn.Module):
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
-        self.ctx_source   = ctx_source  # 'norm_x' | 'attn_heads'
+        self.ctx_source   = ctx_source  # 'norm_x' | 'attn_heads' | 'attn_geometry'
         self.attn_shadow_dim = max(0, int(getattr(config, 'cclblock_attn_shadow_dim', 0)))
         if self.attn_shadow_dim > 0:
             self.shadow_ctx_proj = Linear(self.attn.shadow_dim, ctx_dim, bias=True)
@@ -1460,6 +1803,9 @@ class RemixedBlock(nn.Module):
             head_dim = config.n_embd // config.n_head
             self.ctx_proj_q = Linear(head_dim, ctx_dim, bias=True)
             nn.init.zeros_(self.ctx_proj_q.weight)  # start neutral
+        elif ctx_source == 'attn_geometry':
+            self.ctx_proj_geom = Linear(4, ctx_dim, bias=True)
+            nn.init.zeros_(self.ctx_proj_geom.weight)
 
         def _make_stream():
             """Factory: returns the configured context stream module."""
@@ -1468,6 +1814,9 @@ class RemixedBlock(nn.Module):
             elif chunk_size > 0 or stream_type == 'chunk':
                 effective_chunk_size = chunk_size if chunk_size > 0 else 64
                 return HardChunkContextStream(config.n_embd, ctx_dim, effective_chunk_size)
+            elif stream_type == 'predictive_chunk':
+                effective_chunk_size = chunk_size if chunk_size > 0 else 64
+                return PredictiveChunkContextStream(config.n_embd, ctx_dim, effective_chunk_size)
             elif stream_type in ('local', 'shifted'):
                 return LocalContextStream(config.n_embd, ctx_dim)
             elif stream_type == 'selective':
@@ -1488,6 +1837,13 @@ class RemixedBlock(nn.Module):
                 return DecayPrefixContextStream(config.n_embd, ctx_dim, gamma=0.9)
             elif stream_type == 'ssm':
                 return ParallelLinearContextStream(config.n_embd, ctx_dim)
+            elif stream_type == 'evidence_ssm':
+                return EvidenceAccumulationContextStream(
+                    config.n_embd,
+                    ctx_dim,
+                    num_regimes=getattr(config, 'cclblock_num_regimes', 8),
+                    temperature=getattr(config, 'cclblock_regime_temperature', 1.0),
+                )
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
@@ -1500,7 +1856,7 @@ class RemixedBlock(nn.Module):
 
     def _is_local(self, stream):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
-        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
+        return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, PredictiveChunkContextStream, EvidenceAccumulationContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
@@ -1515,7 +1871,7 @@ class RemixedBlock(nn.Module):
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
 
-        if self.ctx_source == 'attn_heads':
+        if self.ctx_source in ('attn_heads', 'attn_geometry'):
             # Design 2: context derived from query vectors (post-RoPE+QKnorm, detached)
             # - Attention runs with NO ctx conditioning (standard mode)
             # - q_stats captures the 'search intent' of each position (B, T, head_dim)
@@ -1523,7 +1879,16 @@ class RemixedBlock(nn.Module):
             attn_out, q_stats = self.attn.forward_with_q_stats(
                 norm(x), ve, cos_sin, window_size, kv_cache, None)
             x = x + attn_out
-            ctx = self.ctx_proj_q(q_stats)   # (B, T, ctx_dim)
+            if self.ctx_source == 'attn_heads':
+                ctx = self.ctx_proj_q(q_stats)   # (B, T, ctx_dim)
+            else:
+                # Attention-geometry router features from query geometry.
+                q_norm = q_stats.norm(dim=-1, keepdim=True)
+                q_mean = q_stats.mean(dim=-1, keepdim=True)
+                q_std = q_stats.std(dim=-1, keepdim=True)
+                q_peak = q_stats.abs().amax(dim=-1, keepdim=True)
+                geom = torch.cat([q_norm, q_mean, q_std, q_peak], dim=-1)
+                ctx = self.ctx_proj_geom(geom)
             x = x + self.ffwd(norm(x), ctx)
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
@@ -1714,10 +2079,13 @@ class GPT(nn.Module):
             self.remixed_linear_kwargs = config.remixed_linear_kwargs
         # Wire output_gate_rank into kwargs so RemixedLinear picks it up
         self.remixed_linear_kwargs['output_gate_rank'] = getattr(config, 'remix_output_gate_rank', 8)
-        if self.cclblock_modulation in ('householder', 'spectral', 'ocd'):
+        if self.cclblock_modulation in ('householder', 'spectral', 'ocd', 'lie', 'polynomial', 'grassmann'):
             self.remixed_linear_kwargs['operator_modulation'] = self.cclblock_modulation
         else:
             self.remixed_linear_kwargs['operator_modulation'] = 'none'
+        self.remixed_linear_kwargs['lie_generators'] = getattr(config, 'cclblock_lie_generators', 4)
+        self.remixed_linear_kwargs['poly_order'] = getattr(config, 'cclblock_poly_order', 2)
+        self.remixed_linear_kwargs['grassmann_bank_size'] = getattr(config, 'cclblock_grassmann_bank_size', 4)
         config.remixed_linear_kwargs = self.remixed_linear_kwargs
         # Pad vocab for efficiency (DDP, tensor cores). This is just an optimization - outputs are cropped in forward().
         # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
