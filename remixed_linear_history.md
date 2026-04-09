@@ -128,27 +128,54 @@ This was meant to separate “what attention writes to residual” from “what 
 4. **The next frontier:** If we want to solve long-sequence contextual degradation, we likely need a controller that is both identifiable and low-noise at scale (coarse regime selection), rather than additional fine-grained per-token control paths that increase optimization friction.
 
 ## Phase 11: Unified Operator-Family Sweep (Decoupled / Tucker / SVS / VQ / Lie-Poly-Grassmann / Predictive+Evidence Controllers)
-**The Idea:** We consolidated the full redesign set into one ablation surface and ran them through the same remixed training/sweep interfaces, including:
-- **Decoupled Feature-Space Routing (`decoupled`)** with explicit static/dynamic channel split.
-- **Tucker-Decomposed Routing (`tucker`)** with simplex-routed operator core.
-- **Singular Value Steering (`svs`)** and **Deferred Context Unlock (`dcu`)** variants.
-- **Vector-Quantized Regime Routing (`vq`)** with discrete codebook-conditioned deltas.
-- **Operator-family modulation in basis space:** `lie`, `polynomial`, `grassmann`.
-- **Context-controller variants:** `predictive_chunk`, `evidence_ssm`, and `attn_geometry` source.
+**The Idea:** To systematically address the gradient fracturing, identity traps, and context lag issues from prior phases, we instituted three fundamental redesign rules: the controller must read a different signal than the projection it modulates; the operator family must have an exact neutral element at initialization; and the operator update should live on a smooth manifold, not as an unconstrained extra regression problem.
 
-**What Improved:**
-- The strongest configuration in this phase was **Decoupled routing** with:
-  - `cclblock_modulation=decoupled`
-  - `cclblock_gate_rank=128`
-  - `cclblock_dynamic_ratio=0.5`
+Based on these rules, we tested several structural paradigms and operator subspace proposals:
 
-This setting produced the best relative improvement among the newly introduced families in our phase-level comparisons.
+### Structural Paradigms
 
-**What Did Not Beat That Setting:**
-- Tucker/SVS/DCU/VQ provided useful structural ablations and sometimes competitive early curves, but did not exceed the decoupled-128/0.5 setup in our tested budgets.
-- Lie/Polynomial/Grassmann operator-space controls were informative but remained more tuning-sensitive and less consistently strong than the best decoupled run.
-- Predictive/evidence/geometry controller variants improved controllability and interpretability of context pathways, but were not sufficient on their own to overtake the best decoupled configuration.
+#### Paradigm 1: Decoupled Feature-Space Routing (Orthogonal FFN)
+- **The Flaw in RAL & Remix:** Additive deltas ($W_{base} x + \Delta(c) x$) force the static and dynamic weights to compete for the exact same $D$-dimensional input space. The gradients fracture because they are fighting over the same features.
+- **The Solution:** Structurally split the hidden dimension. Force the preceding attention layer to write static syntax features to the first $D_{static}$ channels, and semantic context features to the remaining $D_{dynamic}$ channels.
+- **Math:** $y = W_{static} x_{[:D_{static}]} + \text{Remixed}(x_{[D_{static}:]}, c_t)$
+- **Why it wins:** The gradients for $W_{static}$ are now mathematically independent of the dynamic gate $c_t$. The base network trains at exactly the same speed as a standard Transformer. The dynamic layer only trains on the residual error the static path cannot solve, acting purely as a capability expander rather than a bottleneck.
 
-**Takeaway:**
-- The practical win in this phase came from **structurally separating static and dynamic feature subspaces** and giving the dynamic controller enough rank/capacity to matter (`gate_rank=128`) without forcing full-path competition over the same channels.
-- This phase shifts our working hypothesis from “more expressive controller geometry” to “clean gradient-path separation + sufficient dynamic capacity.”
+#### Paradigm 2: Evidence Accumulation SSM (Latent K-Regimes)
+- **The Flaw in EMA/BPTT:** Unrolled recurrent gating explodes gradients, while detached EMA loses the exact long-range signal you want. Furthermore, continuous high-dimensional gates ($\text{diag}(c)$) create high-frequency noise.
+- **The Solution:** Move the recurrence out of the high-dimensional feature space and into a heavily bottlenecked, ultra-low-dimensional "Evidence Space" (e.g., $K=8$ macro-regimes).
+- **Math:** Instead of predicting gates, the model predicts "Evidence" for $K$ discrete regimes. We use a diagonal Linear State-Space Model (SSM) over these $K$ scalars.
+  - $S_t = \text{decay} \odot S_{t-1} + \text{Evidence}_t$
+  - $R_t = \text{Softmax}(S_t / \tau)$
+  - $W_{eff} = W_{base} + \sum_{k=1}^K R_{t,k} \Delta_k$
+- **Why it wins:** Because it's a linear scan over just 8 dimensions, BPTT is perfectly stable (no nonlinearities to explode). $R_t$ naturally becomes a slow-moving, low-noise macroscopic state, exactly fulfilling the "coarse regime selection" requirement. The weights $\Delta_k$ are static and easy to learn.
+
+#### Paradigm 3: Predictive Segment Control (Zero-Lag Macro States)
+- **The Flaw in Chunking:** As noted in Phase 8/9, chunking caused "signal lag." Token $t$ was gated based on the context of 64 tokens ago, mismatching local syntax requirements.
+- **The Solution:** Future-Shifted Context Conditioning. We use a latent predictor to guess the upcoming chunk's macro-state.
+- **Math:** At the end of block $i$, pool the state and project it through a lightweight predictor to generate $\hat{C}_{i+1}$. Apply $\hat{C}_{i+1}$ as a constant context vector for all tokens in block $i+1$.
+- **Why it wins:** Because $\hat{C}$ is held perfectly constant for 64 tokens, there is zero per-token high-frequency noise injected into the FFN weights. The FFN sees a perfectly stable linear transformation. Because it is a prediction of the current block, there is no signal lag.
+
+### Operator Subspace Designs
+
+To ensure exact identity at init and smooth manifold updates, we explored these operator structures:
+
+1. **Lie-Algebraic Context Transport Layer:** $W_{\text{eff}}(c) = W_0 \exp(\sum s_i(c) A_i)$, with $A_i$ skew-symmetric. Controller rotates the operator instead of scaling channels.
+2. **Regime-Conditioned Operator Polynomial:** $W_{\text{eff}}(c) = \sum a_k(c) A_k W_0$, where $A$ is a fixed structured operator. Controller selects computation type.
+3. **Attention-Geometry Router:** Feeds attention statistics (entropy, peakiness) to choose operator templates instead of raw features.
+4. **Operator Bank on the Grassmann Manifold:** $W_{\text{eff}}(c) = U (\sum \alpha_j(c) D_j) V^\top$. Stores orthonormal operator subspaces and interpolates between them continuously.
+
+### Specific Restructuring Proposals
+
+Instead of asking "how do we gate the forward pass?", these proposals restructure the weight matrix itself:
+
+- **Proposal 1: Tucker-Decomposed Context Routing (T-CCL)**
+  Separates feature basis and routing policy. $W_{\text{eff}}(ctx) = G \times_1 A \times_2 B \times_3 v(ctx)$. $A, B$ receive dense aggregated gradients, while $v(ctx)$ is just K-class simplex routing. Prevents gradient starvation and continuous gating failures.
+- **Proposal 2: Singular Value Steering (SVS)**
+  Basis vectors are static ($U, V$ via SVD). Context only modulates continuous singular values: $y = U \cdot \text{diag}(\sigma \odot s(ctx)) \cdot V^\top \cdot x$. Guarantees identity via $s=1$.
+- **Proposal 3: Coarse Discrete Regime Selection via VQ (VQ-CCL)**
+  Forces coarse stable modes using a discrete codebook. Context vector maps to nearest prototype $k^*$, and $\Delta_{k^*}$ is applied. Resolves identity trap because each regime either fires fully or doesn't at all.
+- **Proposal 4: Deferred Context Unlock with Spectral Curriculum (DCU)**
+  Phase 1 trains a static layer. Phase 2 unlocks tail singular directions and steers those using context: $W_{\text{eff}} = W + U_{tail} \cdot \text{diag}(s(ctx)) \cdot V_{tail}^\top$. Solves the dual-timescale problem.
+
+### Key Takeaway
+The strongest practical mechanism among these was **Paradigm 1 (Decoupled Feature-Space Routing)** (`cclblock_modulation=decoupled`, `gate_rank=128`, `dynamic_ratio=0.5`). Tucker/SVS/DCU/VQ provided useful structural ablations, but did not consistently exceed the decoupled capacity. Structurally separating static and dynamic feature subspaces, and giving the dynamic controller enough capacity to matter cleanly resolves extreme path-friction penalties.
