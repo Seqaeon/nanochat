@@ -77,8 +77,8 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu"],
-                    help="CCL block strategy (weight/normalization + operator families + tucker/svs/vq/dcu)")
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr"],
+                    help="CCL block strategy (weight/normalization + operator families + tucker/svs/vq/dcu + fsi/aesp/ckr)")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
@@ -129,6 +129,13 @@ parser.add_argument("--cclblock-svs-eps", type=float, default=0.1)
 parser.add_argument("--cclblock-vq-codes", type=int, default=8)
 parser.add_argument("--cclblock-vq-temperature", type=float, default=1.0)
 parser.add_argument("--cclblock-dcu-warmup-steps", type=int, default=0)
+# Phase 12: FSI / AESP / CKR
+parser.add_argument("--cclblock-fsi-rotations", type=int, default=8, help="FSI: number of frozen orthogonal rotations")
+parser.add_argument("--cclblock-fsi-selector-dim", type=int, default=64, help="FSI: frozen routing projection dim")
+parser.add_argument("--cclblock-aesp-strata", type=int, default=4, help="AESP: number of entropy strata")
+parser.add_argument("--cclblock-aesp-delta-rank", type=int, default=4, help="AESP: rank of per-stratum low-rank deltas")
+parser.add_argument("--cclblock-ckr-branches", type=int, default=4, help="CKR: number of parallel dense branches")
+parser.add_argument("--cclblock-ckr-kernel-size", type=int, default=64, help="CKR: causal conv1d kernel size")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -337,6 +344,13 @@ def build_model_meta(depth):
         cclblock_vq_codes=getattr(args, 'cclblock_vq_codes', 8),
         cclblock_vq_temperature=getattr(args, 'cclblock_vq_temperature', 1.0),
         cclblock_dcu_warmup_steps=getattr(args, 'cclblock_dcu_warmup_steps', 0),
+        # Phase 12: FSI/AESP/CKR
+        cclblock_fsi_rotations=getattr(args, 'cclblock_fsi_rotations', 8),
+        cclblock_fsi_selector_dim=getattr(args, 'cclblock_fsi_selector_dim', 64),
+        cclblock_aesp_strata=getattr(args, 'cclblock_aesp_strata', 4),
+        cclblock_aesp_delta_rank=getattr(args, 'cclblock_aesp_delta_rank', 4),
+        cclblock_ckr_branches=getattr(args, 'cclblock_ckr_branches', 4),
+        cclblock_ckr_kernel_size=getattr(args, 'cclblock_ckr_kernel_size', 64),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

@@ -101,6 +101,9 @@ class GPTConfig:
     #   'svs'           — singular-value steering over fixed factors.
     #   'vq'            — vector-quantized regime-conditioned operator deltas.
     #   'dcu'           — deferred-context-unlock style tail-space steering.
+    #   'fsi'           — Frozen Subspace Indexing: frozen orthogonal rotations + frozen routing.
+    #   'aesp'          — Attention-Entropy Stratified Projection: entropy-routed per-stratum deltas.
+    #   'ckr'           — Causal Kernel Reparameterization: position-dependent branch mixing.
     cclblock_modulation: str = 'weight'
     cclblock_orth_lambda: float = 0.0
     # The context stream logic:
@@ -179,6 +182,16 @@ class GPTConfig:
     cclblock_vq_codes: int = 8
     cclblock_vq_temperature: float = 1.0
     cclblock_dcu_warmup_steps: int = 0
+    # Phase 12: Novel zero-friction context-conditioned linear layers
+    # FSI: Frozen Subspace Indexing — K frozen orthogonal rotations + frozen routing
+    cclblock_fsi_rotations: int = 8       # number of frozen orthogonal rotation matrices
+    cclblock_fsi_selector_dim: int = 64   # dimension of frozen routing projection
+    # AESP: Attention-Entropy Stratified Projection
+    cclblock_aesp_strata: int = 4         # number of entropy strata (stratum 0 = pure dense)
+    cclblock_aesp_delta_rank: int = 4     # rank of per-stratum low-rank deltas
+    # CKR: Causal Kernel Reparameterization
+    cclblock_ckr_branches: int = 4        # number of parallel dense branches
+    cclblock_ckr_kernel_size: int = 64    # causal conv1d kernel size
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -209,6 +222,10 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_poly_order", "cclblock_lie_generators", "cclblock_grassmann_bank_size",
     "cclblock_tucker_rank", "cclblock_tucker_modes", "cclblock_svs_rank", "cclblock_svs_eps",
     "cclblock_vq_codes", "cclblock_vq_temperature", "cclblock_dcu_warmup_steps",
+    # Phase 12: FSI/AESP/CKR
+    "cclblock_fsi_rotations", "cclblock_fsi_selector_dim",
+    "cclblock_aesp_strata", "cclblock_aesp_delta_rank",
+    "cclblock_ckr_branches", "cclblock_ckr_kernel_size",
 }
 
 
@@ -1481,6 +1498,262 @@ class VQAdaptiveLinear(nn.Module):
         return y + y_delta
 
 
+class FrozenSubspaceIndexedLinear(nn.Module):
+    """Frozen Subspace Indexing (FSI): context-dependent coordinate frame rotation
+    with ZERO trainable routing parameters.
+
+    y = base_dense(P_k · x)
+
+    where P_k is selected from a bank of K frozen orthogonal rotations,
+    and k = argmax(frozen_proj(attn_signal)).
+
+    Key properties:
+    - base_dense is STANDARD nn.Linear — identical gradient dynamics to baseline
+    - P_k rotations are FROZEN (registered buffers) — zero gradient interference
+    - Selection uses a FROZEN random projection — no controller to train
+    - The ONLY learned parameters are base.weight and base.bias
+    - Straight-through estimator allows gradient to flow through P_k selection
+    - Different attention patterns naturally route to different coordinate frames
+
+    Compatible with setup_optimizer: gate_parameters() yields nothing (no gates),
+    non_gate_parameters() yields base weight/bias. ln_basis = Identity for compat.
+    """
+    def __init__(self, in_features, out_features, n_rotations=8, selector_dim=64, signal_dim=None, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.n_rotations = n_rotations
+        # signal_dim: the dimension of the routing signal (attn_out). Defaults to
+        # in_features, but must be overridden when in_features != n_embd (e.g. c_proj).
+        self.signal_dim = signal_dim or in_features
+        self.base = Linear(in_features, out_features, bias=True)
+        self.ln_basis = nn.Identity()  # compat with setup_optimizer
+
+        # FROZEN: K random orthogonal matrices (rotations of input space)
+        # These provide K distinct "views" — never updated by the optimizer
+        rotations = []
+        for _ in range(n_rotations):
+            Q, _ = torch.linalg.qr(torch.randn(in_features, in_features))
+            rotations.append(Q)
+        self.register_buffer('rotations', torch.stack(rotations))  # (K, D_in, D_in)
+
+        # FROZEN: random projection for routing signal extraction
+        # Projects signal (signal_dim) → selector_dim → K-dim logits
+        self.register_buffer('selector_proj',
+            torch.randn(self.signal_dim, selector_dim) / (self.signal_dim ** 0.5))
+        self.register_buffer('selector',
+            torch.randn(selector_dim, n_rotations) / (selector_dim ** 0.5))
+
+    def gate_parameters(self):
+        """No gate parameters — routing is entirely frozen."""
+        return iter([])
+
+    def non_gate_parameters(self):
+        """Only the base dense layer is trained."""
+        yield self.base.weight
+        if self.base.bias is not None:
+            yield self.base.bias
+
+    def forward(self, x, context_state):
+        """
+        x: (B, T, D) — input to projection
+        context_state: (B, T, D) — detached attention output used as routing signal.
+                       If None, uses identity rotation (index 0).
+        """
+        if context_state is None:
+            return self.base(x)
+
+        dtype = x.dtype
+        signal = context_state.to(dtype=dtype).detach()
+
+        # Frozen routing: signal → selector_dim → K logits → hard argmax
+        routing = (signal @ self.selector_proj.to(dtype)) @ self.selector.to(dtype)  # (B, T, K)
+        idx = routing.argmax(dim=-1)  # (B, T)
+
+        # Gather the selected rotation for each position
+        # rotations: (K, D, D), idx: (B, T)
+        B, T = idx.shape
+        P = self.rotations.to(dtype)[idx.reshape(-1)]  # (B*T, D, D)
+        P = P.view(B, T, self.in_features, self.in_features)
+
+        # Apply rotation: x_rotated = P @ x (per-position batched matmul)
+        # Straight-through: gradient flows through x_rotated as if P were identity
+        x_rotated = torch.einsum('btij,btj->bti', P, x)
+
+        return self.base(x_rotated)
+
+
+class AttentionEntropyStratifiedLinear(nn.Module):
+    """Attention-Entropy Stratified Projection (AESP): per-stratum dense
+    projection selected by attention entropy.
+
+    y = base(x) + alpha_k * (x @ U_k) @ V_k    where k = stratum(entropy)
+
+    Uses attention entropy (already computed, zero extra FLOPs for routing)
+    to partition positions into K strata. Each stratum has a tiny low-rank
+    delta (rank 4 by default) with FROZEN scaling alpha_k.
+
+    Key properties:
+    - Stratum 0 (highest entropy = weakest context) has alpha=0 → EXACT dense baseline
+    - Higher strata allow progressively more specialization (alpha grows)
+    - Deltas are tiny rank-4 → minimal parameter overhead
+    - Routing (entropy → stratum) is free (entropy computed in attention already)
+    - Frozen alphas prevent the network from "turning off" specialization
+
+    Compatible with setup_optimizer: gate_parameters() yields nothing (routing is
+    frozen), non_gate_parameters() yields base + U/V + scale.
+    """
+    def __init__(self, in_features, out_features, n_strata=4, delta_rank=4, **_ignored):
+        super().__init__()
+        self.n_strata = n_strata
+        self.delta_rank = delta_rank
+        self.base = Linear(in_features, out_features, bias=True)
+        self.ln_basis = nn.Identity()  # compat
+
+        # Per-stratum low-rank deltas (V=0 at init → zero delta)
+        self.U = nn.ParameterList([
+            nn.Parameter(torch.empty(in_features, delta_rank))
+            for _ in range(n_strata)
+        ])
+        self.V = nn.ParameterList([
+            nn.Parameter(torch.zeros(delta_rank, out_features))
+            for _ in range(n_strata)
+        ])
+        for u in self.U:
+            nn.init.kaiming_uniform_(u, a=0.01)
+
+        # FROZEN scaling: stratum 0 = zero delta (pure baseline)
+        # Higher strata get progressively more specialization budget
+        alphas = torch.linspace(0, 0.2, n_strata)
+        alphas[0] = 0.0  # stratum 0 is always pure dense baseline
+        self.register_buffer('alphas', alphas)
+
+    def gate_parameters(self):
+        """No gate parameters — routing/scaling is frozen."""
+        return iter([])
+
+    def non_gate_parameters(self):
+        """Base projection + per-stratum U/V deltas."""
+        yield self.base.weight
+        if self.base.bias is not None:
+            yield self.base.bias
+        for u in self.U:
+            yield u
+        for v in self.V:
+            yield v
+
+    def forward(self, x, context_state):
+        """
+        x: (B, T, D)
+        context_state: (B, T) — attention entropy per position (scalar).
+                       If None or wrong shape, uses pure base projection.
+        """
+        y = self.base(x)
+
+        if context_state is None:
+            return y
+
+        dtype = x.dtype
+        entropy = context_state.to(dtype=dtype)
+
+        # Handle case where context_state is (B, T, D) — take mean to get scalar
+        if entropy.ndim == 3:
+            entropy = entropy.mean(dim=-1)  # (B, T)
+
+        # Quantize entropy into strata via percentile boundaries
+        with torch.no_grad():
+            q_levels = torch.linspace(0, 1, self.n_strata + 1, device=x.device)[1:-1]
+            boundaries = torch.quantile(entropy.float().flatten(), q_levels)
+            stratum = torch.bucketize(entropy.float(), boundaries)  # (B, T) in [0, K-1]
+
+        # Add stratum-specific deltas (skip stratum 0 which has alpha=0)
+        for k in range(1, self.n_strata):
+            alpha_k = self.alphas[k].to(dtype)
+            if alpha_k == 0:
+                continue
+            mask = (stratum == k).unsqueeze(-1).to(dtype)  # (B, T, 1)
+            delta = (x @ self.U[k].to(dtype)) @ self.V[k].to(dtype)  # (B, T, out)
+            y = y + mask * alpha_k * delta
+
+        return y
+
+
+class CausalKernelLinear(nn.Module):
+    """Causal Kernel Reparameterization (CKR): position-dependent mixing
+    of K parallel dense branches via tiny causal conv1d.
+
+    Training:  y_t = sum_k  w_k(t) · (W_k · x_t)
+    Inference: y_t = W_merged(t) · x_t  (structural reparameterization)
+
+    Key properties:
+    - w_k(t) depends on POSITION, not TOKEN CONTENT → breaks identity trap
+    - No chicken-and-egg: W_k learn features, w_k learn positions, independently
+    - Position weights from causal conv capture local structure (paragraph
+      boundaries, sentence rhythm, code blocks) naturally
+    - At init: equal branch weights → sum = standard dense layer
+    - Reparameterizable at inference for zero overhead
+
+    Compatible with setup_optimizer: gate_parameters() yields position signal +
+    conv weights (small), non_gate_parameters() yields branch projections.
+    """
+    def __init__(self, in_features, out_features, n_branches=4, kernel_size=64,
+                 max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.n_branches = n_branches
+        self.in_features = in_features
+        self.out_features = out_features
+        self.kernel_size = kernel_size
+        self.ln_basis = nn.Identity()  # compat
+
+        # K parallel projection branches
+        self.branches = nn.ModuleList([
+            Linear(in_features, out_features, bias=(i == 0))
+            for i in range(n_branches)
+        ])
+
+        # Tiny causal conv1d over a learned positional signal → branch weights
+        # Input: 1-channel learned 1D signal
+        # Output: K-channel softmax weights per position
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        self.branch_conv = nn.Conv1d(
+            1, n_branches, kernel_size=kernel_size,
+            padding=kernel_size - 1, bias=True  # causal: we trim the right padding
+        )
+        # Init: conv output ≈ 0 → softmax(0) = 1/K → equal branch weighting
+        nn.init.zeros_(self.branch_conv.weight)
+        nn.init.zeros_(self.branch_conv.bias)
+
+    def gate_parameters(self):
+        """Position signal and conv weights — the 'routing' side."""
+        yield self.pos_signal
+        yield from self.branch_conv.parameters()
+
+    def non_gate_parameters(self):
+        """Branch projection weights — the 'feature' side."""
+        for branch in self.branches:
+            yield from branch.parameters()
+
+    def forward(self, x, context_state=None):
+        """
+        x: (B, T, D). context_state is ignored (position-only routing).
+        """
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Position-dependent branch weights (NOT content-dependent)
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1)  # (B, 1, T)
+        raw_weights = self.branch_conv(sig.to(dtype=self.branch_conv.weight.dtype))[:, :, :T]  # (B, K, T) — causal trim
+        w = F.softmax(raw_weights.to(dtype), dim=1)  # (B, K, T)
+
+        # Parallel branch computation
+        y = torch.zeros(B, T, self.out_features, device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            y_k = self.branches[k](x)  # (B, T, out)
+            y = y + w[:, k, :].unsqueeze(-1) * y_k  # position-weighted sum
+
+        return y
+
+
 class ResidualAdaptiveLinear(nn.Module):
     """Proposal A: Dense base layer + context-conditioned additive low-rank delta.
 
@@ -1550,7 +1823,22 @@ class RemixedFeedForward(nn.Module):
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if mode == 'tucker':
+        if mode == 'fsi':
+            n_rot = getattr(config, 'cclblock_fsi_rotations', 8)
+            sel_dim = getattr(config, 'cclblock_fsi_selector_dim', 64)
+            self.c_fc   = FrozenSubspaceIndexedLinear(config.n_embd, 4 * config.n_embd, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=config.n_embd)
+            self.c_proj = FrozenSubspaceIndexedLinear(4 * config.n_embd, config.n_embd, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=config.n_embd)
+        elif mode == 'aesp':
+            n_str = getattr(config, 'cclblock_aesp_strata', 4)
+            d_rank = getattr(config, 'cclblock_aesp_delta_rank', 4)
+            self.c_fc   = AttentionEntropyStratifiedLinear(config.n_embd, 4 * config.n_embd, n_strata=n_str, delta_rank=d_rank)
+            self.c_proj = AttentionEntropyStratifiedLinear(4 * config.n_embd, config.n_embd, n_strata=n_str, delta_rank=d_rank)
+        elif mode == 'ckr':
+            n_br = getattr(config, 'cclblock_ckr_branches', 4)
+            ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
+            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+        elif mode == 'tucker':
             self.c_fc = TuckerAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_proj = TuckerAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
         elif mode in ('svs', 'dcu'):
@@ -1607,7 +1895,28 @@ class RemixedMultiAttention(nn.Module):
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if mode == 'tucker':
+        if mode == 'fsi':
+            n_rot = getattr(config, 'cclblock_fsi_rotations', 8)
+            sel_dim = getattr(config, 'cclblock_fsi_selector_dim', 64)
+            self.c_q    = FrozenSubspaceIndexedLinear(self.n_embd, self.n_head * self.head_dim, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=self.n_embd)
+            self.c_k    = FrozenSubspaceIndexedLinear(self.n_embd, self.n_kv_head * self.head_dim, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=self.n_embd)
+            self.c_v    = FrozenSubspaceIndexedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=self.n_embd)
+            self.c_proj = FrozenSubspaceIndexedLinear(self.n_embd, self.n_embd, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=self.n_embd)
+        elif mode == 'aesp':
+            n_str = getattr(config, 'cclblock_aesp_strata', 4)
+            d_rank = getattr(config, 'cclblock_aesp_delta_rank', 4)
+            self.c_q    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_head * self.head_dim, n_strata=n_str, delta_rank=d_rank)
+            self.c_k    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.head_dim, n_strata=n_str, delta_rank=d_rank)
+            self.c_v    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_strata=n_str, delta_rank=d_rank)
+            self.c_proj = AttentionEntropyStratifiedLinear(self.n_embd, self.n_embd, n_strata=n_str, delta_rank=d_rank)
+        elif mode == 'ckr':
+            n_br = getattr(config, 'cclblock_ckr_branches', 4)
+            ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
+            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+        elif mode == 'tucker':
             self.c_q = TuckerAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_k = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_v = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
@@ -1787,6 +2096,7 @@ class RemixedBlock(nn.Module):
         per_head   = getattr(config, 'cclblock_per_head_ctx', False)
         ctx_source = getattr(config, 'cclblock_context_source', 'norm_x')
         chunk_size = getattr(config, 'cclblock_chunk_size', 0)
+        self._modulation_mode = getattr(config, 'cclblock_modulation', 'weight')
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
@@ -1847,7 +2157,10 @@ class RemixedBlock(nn.Module):
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
-        if per_head:
+        # FSI/AESP/CKR: no context stream needed (bypass in forward)
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr'):
+            self.ctx_stream = None
+        elif per_head:
             # Design 7: two independent streams; attn uses pre-attn repr, ffn uses post-attn repr
             self.ctx_stream_attn = _make_stream()
             self.ctx_stream_ffn  = _make_stream()
@@ -1860,6 +2173,23 @@ class RemixedBlock(nn.Module):
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
+
+        # FSI/AESP/CKR bypass: these modes don't use context streams at all.
+        # They derive their modulation signal directly from the attention output.
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr'):
+            # Run attention with attn_out.detach() as the context signal
+            # For attention projections: no context needed on the first pass (Q/K/V are computed
+            # without context, since the routing signal comes from attention itself)
+            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state=None)
+            x = x + attn_out
+            # For FFN: use detached attn_out as the routing signal
+            # FSI: routes to different coordinate frames based on attn patterns
+            # AESP: uses attn_out norm as entropy proxy (mean over D → scalar per position)
+            # CKR: ignores context_state entirely (position-only routing)
+            ctx_signal = attn_out.detach()
+            x = x + self.ffwd(norm(x), ctx_signal)
+            self._last_ctx = ctx_signal
+            return x, ctx_signal
 
         if self.attn_shadow_dim > 0:
             attn_out, shadow_ctx = self.attn.forward_with_shadow(
@@ -2219,7 +2549,9 @@ class GPT(nn.Module):
 
                 if isinstance(sub, RemixedBlock):
                     # SelectiveContextStream / MultiScaleContext replaces ctx_from_attn + ctx_ema_gate.
-                    _init_ctx_stream(sub.ctx_stream)
+                    # FSI/AESP/CKR modes have ctx_stream=None (no context stream needed).
+                    if sub.ctx_stream is not None:
+                        _init_ctx_stream(sub.ctx_stream)
                 if isinstance(sub, RemixedLinear):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     torch.nn.init.kaiming_normal_(sub.template_mixing)
@@ -2528,7 +2860,7 @@ class GPT(nn.Module):
                 else:
                     assert isinstance(block, RemixedBlock), "Expected RemixedBlock or CCLBlock in remix_linear mode"
                     # 'weight' path: ctx streams and projs are gate-side.
-                    if hasattr(block, 'ctx_stream'):
+                    if hasattr(block, 'ctx_stream') and block.ctx_stream is not None:
                         _sort_ctx_stream_params(block.ctx_stream)
                     if hasattr(block, 'ctx_stream_attn'):
                         _sort_ctx_stream_params(block.ctx_stream_attn)
