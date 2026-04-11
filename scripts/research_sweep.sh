@@ -220,7 +220,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-regime-temperature" "$2")
             shift 2
             ;;
-        --cclblock-poly-order|--cclblock-lie-generators|--cclblock-grassmann-bank-size|--cclblock-tucker-rank|--cclblock-tucker-modes|--cclblock-svs-rank|--cclblock-svs-eps|--cclblock-vq-codes|--cclblock-vq-temperature|--cclblock-dcu-warmup-steps)
+        --cclblock-poly-order|--cclblock-lie-generators|--cclblock-grassmann-bank-size|--cclblock-tucker-rank|--cclblock-tucker-modes|--cclblock-svs-rank|--cclblock-svs-eps|--cclblock-vq-codes|--cclblock-vq-temperature|--cclblock-dcu-warmup-steps|--cclblock-fsi-rotations|--cclblock-fsi-selector-dim|--cclblock-aesp-strata|--cclblock-aesp-delta-rank|--cclblock-ckr-branches|--cclblock-ckr-kernel-size)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
