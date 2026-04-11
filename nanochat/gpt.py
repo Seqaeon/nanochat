@@ -1499,21 +1499,21 @@ class VQAdaptiveLinear(nn.Module):
 
 
 class FrozenSubspaceIndexedLinear(nn.Module):
-    """Frozen Subspace Indexing (FSI): context-dependent coordinate frame rotation
+    """Frozen Subspace Indexing (FSI): context-dependent input transformation
     with ZERO trainable routing parameters.
 
-    y = base_dense(P_k · x)
+    y = base_dense(x - 2 * sum_k w_k * v_k * (v_k^T x))
 
-    where P_k is selected from a bank of K frozen orthogonal rotations,
-    and k = argmax(frozen_proj(attn_signal)).
+    Uses K frozen Householder reflections (unit vectors v_k) with soft routing
+    weights w_k from a frozen random projection of the attention signal.
 
     Key properties:
     - base_dense is STANDARD nn.Linear — identical gradient dynamics to baseline
-    - P_k rotations are FROZEN (registered buffers) — zero gradient interference
-    - Selection uses a FROZEN random projection — no controller to train
-    - The ONLY learned parameters are base.weight and base.bias
-    - Straight-through estimator allows gradient to flow through P_k selection
-    - Different attention patterns naturally route to different coordinate frames
+    - Reflectors are FROZEN (registered buffers) — zero gradient interference
+    - Routing uses FROZEN random projections — no controller to train
+    - Memory: O(K*D) reflector buffer, NOT O(K*D²) rotation matrices
+    - Compute: O(B*T*K*D) — linear in D, not quadratic
+    - torch.compile friendly: no gather, no einsum over D², just matmuls + element-wise
 
     Compatible with setup_optimizer: gate_parameters() yields nothing (no gates),
     non_gate_parameters() yields base weight/bias. ln_basis = Identity for compat.
@@ -1523,22 +1523,19 @@ class FrozenSubspaceIndexedLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.n_rotations = n_rotations
-        # signal_dim: the dimension of the routing signal (attn_out). Defaults to
-        # in_features, but must be overridden when in_features != n_embd (e.g. c_proj).
         self.signal_dim = signal_dim or in_features
         self.base = Linear(in_features, out_features, bias=True)
         self.ln_basis = nn.Identity()  # compat with setup_optimizer
 
-        # FROZEN: K random orthogonal matrices (rotations of input space)
-        # These provide K distinct "views" — never updated by the optimizer
-        rotations = []
-        for _ in range(n_rotations):
-            Q, _ = torch.linalg.qr(torch.randn(in_features, in_features))
-            rotations.append(Q)
-        self.register_buffer('rotations', torch.stack(rotations))  # (K, D_in, D_in)
+        # FROZEN: K random unit vectors defining Householder reflections
+        # P_k = I - 2 * v_k * v_k^T  (orthogonal reflection through hyperplane ⊥ v_k)
+        # Each reflection provides a distinct "view" of the input space
+        vecs = torch.randn(n_rotations, in_features)
+        vecs = F.normalize(vecs, dim=-1)  # unit vectors
+        self.register_buffer('reflectors', vecs)  # (K, D_in)
 
         # FROZEN: random projection for routing signal extraction
-        # Projects signal (signal_dim) → selector_dim → K-dim logits
+        # signal (signal_dim) → selector_dim → K-dim soft weights
         self.register_buffer('selector_proj',
             torch.randn(self.signal_dim, selector_dim) / (self.signal_dim ** 0.5))
         self.register_buffer('selector',
@@ -1556,9 +1553,9 @@ class FrozenSubspaceIndexedLinear(nn.Module):
 
     def forward(self, x, context_state):
         """
-        x: (B, T, D) — input to projection
-        context_state: (B, T, D) — detached attention output used as routing signal.
-                       If None, uses identity rotation (index 0).
+        x: (B, T, D_in)
+        context_state: (B, T, signal_dim) — detached attention output for routing.
+                       If None, uses pure base projection (identity transform).
         """
         if context_state is None:
             return self.base(x)
@@ -1566,21 +1563,23 @@ class FrozenSubspaceIndexedLinear(nn.Module):
         dtype = x.dtype
         signal = context_state.to(dtype=dtype).detach()
 
-        # Frozen routing: signal → selector_dim → K logits → hard argmax
+        # Frozen routing: signal → soft weights over K reflections
         routing = (signal @ self.selector_proj.to(dtype)) @ self.selector.to(dtype)  # (B, T, K)
-        idx = routing.argmax(dim=-1)  # (B, T)
+        weights = torch.softmax(routing, dim=-1)  # (B, T, K)
 
-        # Gather the selected rotation for each position
-        # rotations: (K, D, D), idx: (B, T)
-        B, T = idx.shape
-        P = self.rotations.to(dtype)[idx.reshape(-1)]  # (B*T, D, D)
-        P = P.view(B, T, self.in_features, self.in_features)
+        # Soft-weighted Householder reflections (compile-friendly, O(BTK*D))
+        # dot_k = v_k^T x  →  dots: (B, T, K)
+        dots = torch.einsum('btd,kd->btk', x, self.reflectors.to(dtype))
 
-        # Apply rotation: x_rotated = P @ x (per-position batched matmul)
-        # Straight-through: gradient flows through x_rotated as if P were identity
-        x_rotated = torch.einsum('btij,btj->bti', P, x)
+        # weighted_dots = sum_k w_k * dot_k * v_k  →  delta: (B, T, D_in)
+        # This is the soft mixture of reflections applied to x
+        weighted_dots = weights * dots  # (B, T, K)
+        delta = torch.einsum('btk,kd->btd', weighted_dots, self.reflectors.to(dtype))
 
-        return self.base(x_rotated)
+        # x_transformed = x - 2 * delta  (soft mixture of Householder reflections)
+        x_transformed = x - 2.0 * delta
+
+        return self.base(x_transformed)
 
 
 class AttentionEntropyStratifiedLinear(nn.Module):
