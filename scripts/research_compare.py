@@ -102,6 +102,13 @@ def run_training_sweep(args):
         "--cclblock-vq-codes", str(getattr(args, 'cclblock_vq_codes', 8)),
         "--cclblock-vq-temperature", str(getattr(args, 'cclblock_vq_temperature', 1.0)),
         "--cclblock-dcu-warmup-steps", str(getattr(args, 'cclblock_dcu_warmup_steps', 0)),
+        # Phase 12: FSI/AESP/CKR
+        "--cclblock-fsi-rotations", str(getattr(args, 'cclblock_fsi_rotations', 8)),
+        "--cclblock-fsi-selector-dim", str(getattr(args, 'cclblock_fsi_selector_dim', 64)),
+        "--cclblock-aesp-strata", str(getattr(args, 'cclblock_aesp_strata', 4)),
+        "--cclblock-aesp-delta-rank", str(getattr(args, 'cclblock_aesp_delta_rank', 4)),
+        "--cclblock-ckr-branches", str(getattr(args, 'cclblock_ckr_branches', 4)),
+        "--cclblock-ckr-kernel-size", str(getattr(args, 'cclblock_ckr_kernel_size', 64)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -333,7 +340,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -381,6 +388,13 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-vq-codes", type=int, default=8)
     parser.add_argument("--cclblock-vq-temperature", type=float, default=1.0)
     parser.add_argument("--cclblock-dcu-warmup-steps", type=int, default=0)
+    # Phase 12: FSI/AESP/CKR
+    parser.add_argument("--cclblock-fsi-rotations", type=int, default=8)
+    parser.add_argument("--cclblock-fsi-selector-dim", type=int, default=64)
+    parser.add_argument("--cclblock-aesp-strata", type=int, default=4)
+    parser.add_argument("--cclblock-aesp-delta-rank", type=int, default=4)
+    parser.add_argument("--cclblock-ckr-branches", type=int, default=4)
+    parser.add_argument("--cclblock-ckr-kernel-size", type=int, default=64)
     args = parser.parse_args()
     
     run_training_sweep(args)
