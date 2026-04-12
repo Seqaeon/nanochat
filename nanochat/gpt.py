@@ -1748,6 +1748,8 @@ class CausalKernelLinear(nn.Module):
         self.content_bias_scale = content_bias_scale
         # Temperature as a buffer tensor (NOT Python float) to avoid torch.compile
         # guard breaks when annealing. Buffer tensors are treated as dynamic values.
+        # _init_temperature (Python float) survives to_empty() for re-init.
+        self._init_temperature = temperature
         self.register_buffer('_temperature', torch.tensor([temperature]), persistent=False)
         self.branch_dropout = branch_dropout  # 17E: probability of dropping each branch
         self.ln_basis = nn.Identity()  # compat
@@ -1758,6 +1760,7 @@ class CausalKernelLinear(nn.Module):
             for i in range(n_branches)
         ])
         # 17D: Orthogonal initialization for branch diversity
+        self._ortho_init = ortho_init
         if ortho_init:
             for branch in self.branches:
                 nn.init.orthogonal_(branch.weight)
@@ -3438,10 +3441,38 @@ class GPT(nn.Module):
                     if getattr(sub, 'bias', None) is not None:
                         torch.nn.init.zeros_(sub.bias)
 
-                # Buffers also need explicit initialization if to_empty was used
-                if hasattr(sub, 'temperature') and isinstance(sub.temperature, torch.Tensor):
-                    # sub.temperature is a buffer, not a parameter, so we set its value directly
-                    sub.temperature.fill_(1.0)
+                # Phase 17: Re-initialize buffers and position signals for
+                # position-routed modules. to_empty() replaces tensor storage
+                # with garbage; Python float attrs survive for re-init.
+                if isinstance(sub, CausalKernelLinear):
+                    sub._temperature.fill_(sub._init_temperature)
+                    torch.nn.init.normal_(sub.pos_signal, std=0.01)
+                    torch.nn.init.zeros_(sub.branch_conv.weight)
+                    torch.nn.init.zeros_(sub.branch_conv.bias)
+                    if sub.content_proj is not None:
+                        sig_dim = sub.content_proj.shape[0]
+                        sub.content_proj.copy_(torch.randn_like(sub.content_proj) / (sig_dim ** 0.5))
+                    if getattr(sub, '_ortho_init', False):
+                        for branch in sub.branches:
+                            torch.nn.init.orthogonal_(branch.weight)
+                elif isinstance(sub, LoKRLinear):
+                    torch.nn.init.normal_(sub.pos_signal, std=0.01)
+                    torch.nn.init.zeros_(sub.branch_conv.weight)
+                    torch.nn.init.zeros_(sub.branch_conv.bias)
+                elif isinstance(sub, (PositionGatedResidual, PositionalResidualBias)):
+                    torch.nn.init.normal_(sub.pos_signal, std=0.01)
+                    if isinstance(sub, PositionGatedResidual):
+                        torch.nn.init.zeros_(sub.delta.weight)
+                        torch.nn.init.zeros_(sub.gate_conv.weight)
+                        torch.nn.init.constant_(sub.gate_conv.bias, -3.0)
+                    elif isinstance(sub, PositionalResidualBias):
+                        torch.nn.init.zeros_(sub.bias_conv.weight)
+                        torch.nn.init.zeros_(sub.bias_conv.bias)
+                elif isinstance(sub, CausalInterpolationLinear):
+                    torch.nn.init.normal_(sub.pos_signal, std=0.01)
+                    torch.nn.init.zeros_(sub.alpha_conv.weight)
+                    torch.nn.init.constant_(sub.alpha_conv.bias, -5.0)
+                    torch.nn.init.zeros_(sub.bias)
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)

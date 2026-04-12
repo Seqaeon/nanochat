@@ -419,3 +419,48 @@ Key difference from PGR (17C): this interpolates IN weight space (one multiplica
 **y = Wx + b(pos)** where b(pos) is a position-dependent bias vector from causal conv on learned position signal. No weight modification at all. ~1% overhead.
 **Why it might work:** The simplest possible position conditioning that doesn't touch weights at all. If CKR's benefit comes from position-dependent output (not position-dependent transform), then a bias can capture it. This is a diagnostic experiment: if PRB matches CKR, the benefit was never about weight modulation.
 
+---
+
+### Phase 17 Results (first run — CKR NaN bug)
+
+**CRITICAL BUG:** All CKR-based variants (17A, 17B, 17D, 17E) produced NaN on step 0.
+**Root cause:** `register_buffer('_temperature', tensor)` combined with `model.to_empty(device)`.
+`to_empty()` replaces ALL tensor storage (parameters AND buffers) with uninitialized garbage.
+`init_weights()` re-inits parameters but had NO code to re-init buffers. Division by garbage → NaN.
+**Fix:** Store `_init_temperature` as a Python float (survives `to_empty` since it's not a tensor), and
+re-fill `_temperature.fill_(self._init_temperature)` in the `_init_research_module` path during `init_weights()`.
+Also added comprehensive buffer re-init for ALL position-routed modules (pos_signal, conv weights, conv biases).
+
+| Variant | Loss delta vs CKR base (+0.02) | Status |
+|---|---|---|
+| 17A: CKR-Anneal | NaN | 🔴 BUG (now fixed) |
+| 17B: CKR-FFN-Only | NaN | 🔴 BUG (now fixed) |
+| 17C: PGR | +0.07 degradation | ❌ Failed |
+| 17D: CKR + Ortho Init | NaN | 🔴 BUG (now fixed) |
+| 17E: CKR + Branch Dropout | NaN | 🔴 BUG (now fixed) |
+| 17F: Layer-Selective CKR | Not implemented yet | ⏳ |
+| 17G: Weight-Shared CKR | Not implemented yet | ⏳ |
+| 17H: CKR + Diversity Loss | Not implemented yet | ⏳ |
+| 17I: CIL | +1.3 degradation | ❌ Catastrophic |
+| 17J: PRB | +0.08 degradation | ❌ Failed |
+
+**Key observations from non-NaN results:**
+- **PGR (+0.07):** Two-branch with position-gated delta. The explicit base+delta structure (zero-init W₁) failed. Despite gate starting at sigmoid(-3)≈0.05, the delta pathway still disrupted training. Reinforces Pattern 6: zero-init ≠ zero friction.
+- **CIL (+1.3):** Catastrophic. Weight-space interpolation between two matrices caused severe instability. The issue may be that CIL doesn't have softmax normalization — alpha is unbounded sigmoid, and the interpolation (1-α)·W₀ + α·W₁ causes destructive gradient interference between the two weight matrices.
+- **PRB (+0.08):** Position-dependent bias without weight modulation failed. This is a key diagnostic: it confirms CKR's benefit (if any) DOES come from weight modulation, not just output shifting. But also confirms that lightweight position conditioning can't match CKR.
+
+### Updated Grand Synthesis: What We Know After 17 Phases
+
+#### Pattern 7 (new): to_empty() + register_buffer = silent NaN
+The `to_empty()` pattern (common in distributed training) replaces ALL tensor storage with garbage. `init_weights()` must explicitly re-initialize every buffer, not just parameters. Python float/bool/int attributes survive `to_empty()` and should be used to store "factory defaults" for buffer re-init.
+
+#### Pattern 8 (new): CKR's K=4 convex combination is structurally unique
+PGR (base + delta, K=2) and CIL (interpolation, K=2) both failed despite being conceptually simpler versions of CKR. CKR's benefit isn't just "position-dependent weights" — it's specifically the **K≥4 branch convex combination with softmax routing**. The softmax ensures weights are always non-negative and sum to 1, maintaining a well-conditioned W_eff. PGR/CIL don't have this constraint.
+
+#### Pattern 9 (new): Bias-only position conditioning fails (PRB +0.08)
+PRB (position-dependent bias, no weight change) degraded, confirming CKR's value comes from position-dependent TRANSFORMS (weight matrices), not position-dependent SHIFTS (biases).
+
+#### Remaining experiments (must re-run after NaN fix):
+17A (CKR-Anneal), 17B (CKR-FFN), 17D (CKR-OrthoInit), 17E (CKR-BranchDrop) all need re-running.
+17F (Layer-Selective), 17G (Weight-Shared), 17H (Diversity Loss) are not yet implemented.
+
