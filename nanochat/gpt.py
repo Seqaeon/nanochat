@@ -1836,11 +1836,13 @@ class GradientIsolatedDeltaLinear(nn.Module):
         """
         x: (B, T, D_in). context_state is ignored (delta uses x.detach() directly).
         """
+        dtype = x.dtype
         y = self.base(x)
         # Gradient isolation: delta sees frozen features, can't pollute ∂L/∂x
-        x_frozen = x.detach()
+        # Explicit dtype preservation required for torch.compile + fp8/bf16 autocast
+        x_frozen = x.detach().to(dtype=dtype)
         delta = self.delta_up(F.gelu(self.delta_down(x_frozen)))
-        return y + self.scale * delta
+        return y + self.scale * delta.to(dtype=dtype)
 
 
 class PositionalScalarGatedLinear(nn.Module):

@@ -233,5 +233,41 @@ CKR's -0.02 win is real but small. The principle — position-only routing avoid
 ### The fundamental tension:
 The paper's vision is **context-conditioned** linear layers. But content conditioning creates friction. CKR succeeds by avoiding content entirely — but pure position can't achieve the goal of outperforming bigger models.
 
-**The core question for Phase 14:** Can we introduce content-dependent specialization that produces *zero interference* with the main dense gradient path?
+## Phase 14: Gradient-Isolated Content Conditioning
+
+**Goal:** Test whether gradient isolation (`x.detach()`) can enable friction-free content conditioning, and whether cheaper position-modulation alternatives to CKR exist.
+
+### 14a: GIAD — Gradient-Isolated Additive Delta
+**Mechanism:** `y = base(x) + scale * delta_net(x.detach())`. The delta network receives detached input features, meaning `∂L/∂x` is mathematically identical to the pure dense baseline. Content conditioning with zero backward interference.
+
+**Result: Crashed (dtype error under torch.compile + fp8).** The `x.detach()` operation breaks the autocast context, causing float32 propagation into FlashAttention. Fixed by explicit dtype preservation post-detach. Re-test pending.
+
+### 14b: PSG — Positional Scalar Gating
+**Mechanism:** `y_t = W · (s(t) ⊙ x_t)` — position-dependent per-channel diagonal scaling via causal conv. 140× cheaper than CKR (no duplicate weight matrices).
+
+**Result: Degradation +0.04.** Position-dependent diagonal scaling is too weak a modulation — `W · diag(s)` can only scale column importances, not recombine features like a full-rank branch mixture. The effective weight perturbation is constrained to rank-1 changes per channel, which is insufficient for the model to learn interesting position-dependent specializations.
+
+### 14c: SplitStream — Decoupled Channels + CKR
+**Mechanism:** 75% of channels use standard dense projection; 25% use CKR-style position-dependent multi-branch routing. Combines Decoupled (Phase 11) + CKR (Phase 12).
+
+**Result: Degradation +0.12 (worst of all Phase 14 proposals).** Channel splitting is actively harmful. The static path (75%) gets standard gradients but sees only a slice of the representation. The dynamic path (25%) has too few channels for meaningful position-dependent specialization. The concatenation boundary creates a hard partition that prevents cross-channel feature interaction.
+
+---
+
+## Updated Grand Synthesis: What We Know After 14 Phases
+
+### Pattern 1: Full-rank is mandatory
+Every design that restricts the effective weight to a subspace (low-rank deltas in RAL Phase 9, diagonal scaling in PSG Phase 14b, channel splitting in SplitStream Phase 14c, Decoupled Phase 11) performs worse than the baseline. The model needs **full-rank** access to all dimensions at every position.
+
+### Pattern 2: Multi-branch mixture ≈ the only positive signal
+CKR's 0.02 improvement comes from having K=4 **full-rank** branches mixed position-dependently. This is the ONLY design in 14 phases to beat the dense baseline. But scaling to K=8 showed no further improvement — suggesting 4 branches already capture the useful structure.
+
+### Pattern 3: Position-only routing has a ceiling
+CKR works because position routing is orthogonal to content gradients. But position alone is a very weak conditioning signal — it can capture document-level structure (paragraph boundaries, code blocks) but not semantic content. The 0.02 improvement represents the limit of what pure position can achieve.
+
+### Pattern 4: Content conditioning is still unsolved
+Every attempt to introduce content-dependent signals (Phases 3–11, 13c) has failed. GIAD (Phase 14a) theorized that gradient isolation via `x.detach()` would break the failure mode — but hasn't been successfully tested yet due to the dtype crash.
+
+### The remaining question:
+Can a design achieve CKR-like multi-branch expressivity (Pattern 2: full-rank, Pattern 1: mandatory) without CKR's 4× parameter overhead, while keeping position-only routing (Pattern 3: the only safe routing)?
 
