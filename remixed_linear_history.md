@@ -315,3 +315,107 @@ LoKR at 21% overhead performed worse than dense baseline. CKR at 300% overhead b
 ### The refined question:
 CKR shows position-dependent multi-branch mixing works. But 300% overhead for 0.02 improvement is not practical. Instead of making CKR cheaper (LoKR failed), can we make CKR's branches MORE effective — extracting more signal from the multi-branch structure to justify the overhead? Or is there a fundamentally different approach that achieves context conditioning without any of the failure modes we've catalogued?
 
+## Phase 16: CKR Variants & Causal Output Mixer
+
+**Goal:** Three proposals targeting different hypotheses about CKR's benefit.
+
+### 16A: CKR-Anneal (Temperature Annealing)
+**Mechanism:** Softmax temperature annealed from 2.0→0.3 during training to sharpen position routing.
+**Result: UNTESTABLE (torch.compile recompilation hang).** The initial implementation used a Python float attribute for temperature, which torch.compile guards on — causing full recompilation every step when the float changes. **Fixed** by converting to a buffer tensor (`register_buffer`), which torch.compile treats as dynamic.
+
+### 16B: CKR-FFN-Only
+**Mechanism:** CKR on FFN projections only, plain Linear for attention Q/K/V/proj.
+**Result: UNTESTABLE (Float8Linear crash).** Under fp8 mode, plain Linear → Float8Linear, which lacks `gate_parameters()` / `non_gate_parameters()` / `ln_basis` APIs. The `setup_optimizer` crashed. **Fixed** with `hasattr` guards in the optimizer routing loop.
+
+### 16C: COM — Causal Output Mixer
+**Mechanism:** `y = Linear(x) + gate(pos) ⊙ causal_depthwise_conv(Linear(x))`. Position-gated causal convolution after standard linear projections. ~0.5% overhead.
+**Result: CATASTROPHIC degradation. Loss increased to 2.2** (from ~5.5 baseline). The model diverged completely. Post-processing convolution on linear outputs causes gradient instability — the conv gradients interfere with the base linear gradients despite zero-init gate.
+
+### 16D: GIAD Re-test (gradient-isolated delta, now with fixed dtype)
+**Result: Degradation +0.08.** Content conditioning via additive delta continues to fail, even with proper gradient isolation via zero-init.
+
+### Technical fixes applied:
+- torch.compile guard break: `self.temperature` (Python float) → `self.register_buffer('_temperature', tensor)` (buffer)
+- Float8Linear API: `hasattr(rl, 'gate_parameters')` guard in `setup_optimizer`
+- Diagnostics: Rewrote to compute from parameters directly (not forward cache), saves to `{checkpoint_dir}/modulation_diagnostics.jsonl` + wandb
+
+---
+
+## Updated Grand Synthesis: What We Know After 16 Phases
+
+### Pattern 1 (reinforced): Full-rank branches remain mandatory
+GIAD's failure (+0.08) confirms low-rank additive deltas don't work even with gradient isolation.
+
+### Pattern 2 (unchanged): CKR (+0.02) is still the only positive result
+
+### Pattern 3 (reinforced): torch.compile constraints are pervasive
+Phase 16 revealed TWO new compile traps: (a) Python float attributes that change between steps cause guard-based recompilation, (b) Float8Linear conversion strips custom APIs from plain Linear modules. Solutions: use buffer tensors for dynamic values, `hasattr` guards in optimizer routing.
+
+### Pattern 5 (new): Post-processing mixing is catastrophic
+COM showed that adding convolution AFTER linear projections causes divergence (loss 2.2). The gradient flow from conv→linear creates destructive interference. This is fundamentally different from Mamba/RWKV where the conv is integrated into the architecture from the start, not bolted onto existing linear layers.
+
+### Pattern 6 (new): Zero-init ≠ zero friction
+Both COM and GIAD start as mathematical equivalents of the dense baseline (zero-init delta/gate). But even zero-init doesn't prevent the added pathway from disrupting training once gradients start flowing. The issue isn't the initial state — it's the gradient dynamics during training.
+
+### The refined question (still):
+CKR's 0.02 improvement at 300% overhead is the only positive signal. CKR-Anneal and CKR-FFN are now fixed and can be tested. But we need fundamentally new ideas. What structural properties give CKR its advantage, and can we achieve them more efficiently?
+
+---
+
+## Phase 17 Proposals: Deep Analysis + 10 Ideas
+
+### Critical analysis of WHY CKR works
+
+CKR's core operation: `y = Σ w_k(pos) * W_k * x`. This is equivalent to `y = W_eff(pos) * x` where `W_eff(pos) = Σ w_k(pos) * W_k`.
+
+What CKR achieves: **position-dependent effective weight matrix** where the weights are a CONVEX COMBINATION of K full-rank matrices. This means:
+1. W_eff is always full-rank (convex combo of full-rank = full-rank)
+2. W_eff varies smoothly across positions (causal conv ensures this)
+3. The "space" of possible W_eff is a K-dimensional manifold inside the space of all DxD matrices
+
+The +0.02 comes from positions at different parts of the sequence using slightly different projections. But K=4→K=8 showed no further improvement, meaning the structure is low-dimensional.
+
+Key insight: **CKR's benefit comes from smooth interpolation in weight space along the sequence dimension.** Not from having many branches, but from the ability to MOVE CONTINUOUSLY through weight space as position changes.
+
+### Proposed experiments (10 ideas):
+
+#### 17A: CKR-Anneal (re-test, now fixed)
+Temperature 2.0→0.3. Tests whether sharper routing extracts more signal.
+
+#### 17B: CKR-FFN-Only (re-test, now fixed)
+CKR on FFN only, plain Linear for attention. ~150% overhead. Tests if attention already has enough position awareness via RoPE.
+
+#### 17C: Position-Gated Residual (PGR)
+**y = W₀x + g(pos) · W₁x** where g(pos) is a scalar from causal conv.
+Key difference from CKR: only 2 branches, explicit base + delta structure. W₁ zero-init. g(pos) single scalar per position (not per-branch). This is CKR K=2 with explicit residual structure. ~100% overhead.
+**Why it might work:** CKR K=4 and K=8 show no difference → the useful structure is low-dimensional. Maybe only ONE additional direction in weight space is needed.
+
+#### 17D: Orthogonal Branch Initialization
+Same CKR K=4 architecture, but initialize branch weights using orthogonal matrices (via `nn.init.orthogonal_`). Currently branches start random → their W_k are correlated → W_eff ≈ average ≈ single random matrix.
+**Why it might work:** Orthogonal init ensures branches start in maximally different subspaces, giving CKR's routing something meaningful to interpolate between from step 0.
+
+#### 17E: Branch Dropout
+CKR K=4 with random branch dropout during training (drop 1 of 4 branches per forward pass, renormalize remaining weights). At eval, use all branches.
+**Why it might work:** Forces each branch to be independently useful rather than co-adapted. Similar insight as regular dropout but applied to the weight-space interpolation.
+
+#### 17F: Layer-Selective CKR
+CKR on odd layers only (or last N/2 layers), plain Linear on even layers. Tests whether all layers benefit equally from position conditioning. The hypothesis: early layers learn universal features (position-independent), later layers need position awareness.
+**Why it might work:** Cuts overhead in half while potentially keeping all the benefit if the useful position conditioning is concentrated in certain layers.
+
+#### 17G: Weight-Shared CKR (WS-CKR)
+All layers share the SAME K branch weights but have DIFFERENT routing convolutions (different pos_signal and branch_conv per layer). This dramatically reduces parameter overhead (~50% vs 300%) while maintaining per-layer position-dependent routing.
+**Why it might work:** Branch weights define "modes" of computation; routing determines which mode to use where. Different layers might need the same modes but in different positions.
+
+#### 17H: CKR with Auxiliary Branch Diversity Loss
+Standard CKR K=4 plus an auxiliary loss: `L_div = -Σ_{i≠j} ||W_i - W_j||²`. This encourages branches to learn different projections rather than converging.
+**Why it might work:** Without diversity pressure, gradient flow may cause branches to learn similar weights, making CKR degenerate to a single expensive linear layer. The diversity loss prevents this collapse.
+
+#### 17I: Causal Interpolation Linear (CIL)
+**y = ((1-α(pos)) · W₀ + α(pos) · W₁) · x** where α(pos) ∈ [0,1] from sigmoid of causal conv. Only 2 matrices, linearly interpolated. Zero-init convention: α starts at 0 → pure W₀.
+Key difference from PGR (17C): this interpolates IN weight space (one multiplication), PGR sums TWO separate multiplications. CIL is more parameter-efficient in forward compute (one matmul vs two).
+**Why it might work:** CKR's K=4→K=8 shows no benefit. Maybe K=2 with smooth interpolation captures all useful structure. CIL is the minimal version of this.
+
+#### 17J: Positional Residual Bias (PRB)
+**y = Wx + b(pos)** where b(pos) is a position-dependent bias vector from causal conv on learned position signal. No weight modification at all. ~1% overhead.
+**Why it might work:** The simplest possible position conditioning that doesn't touch weights at all. If CKR's benefit comes from position-dependent output (not position-dependent transform), then a bias can capture it. This is a diagnostic experiment: if PRB matches CKR, the benefit was never about weight modulation.
+

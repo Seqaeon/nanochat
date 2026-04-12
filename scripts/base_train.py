@@ -77,7 +77,7 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr"],
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb"],
                     help="CCL block strategy")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
@@ -153,6 +153,13 @@ parser.add_argument("--cclblock-lokr-rank", type=int, default=16, help="LoKR: ra
 parser.add_argument("--cclblock-ckr-temp-start", type=float, default=2.0, help="CKR-Anneal: initial softmax temperature")
 parser.add_argument("--cclblock-ckr-temp-end", type=float, default=0.3, help="CKR-Anneal: final softmax temperature")
 parser.add_argument("--cclblock-com-kernel-size", type=int, default=32, help="COM: causal output mixer kernel size")
+# Phase 17: CKR enhancements + new architectures
+parser.add_argument("--cclblock-ckr-ortho-init", type=int, default=0, choices=[0, 1], help="17D: orthogonal branch init")
+parser.add_argument("--cclblock-ckr-branch-dropout", type=float, default=0.0, help="17E: branch dropout probability")
+parser.add_argument("--cclblock-ckr-diversity-lambda", type=float, default=0.0, help="17H: branch diversity loss weight")
+parser.add_argument("--cclblock-pgr-kernel-size", type=int, default=64, help="17C: PGR causal conv kernel size")
+parser.add_argument("--cclblock-cil-kernel-size", type=int, default=64, help="17I: CIL causal conv kernel size")
+parser.add_argument("--cclblock-prb-kernel-size", type=int, default=64, help="17J: PRB causal conv kernel size")
 parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1], help="enable modulation layer diagnostics logging")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
@@ -901,7 +908,7 @@ while True:
             from nanochat.gpt import CausalKernelLinear
             for module in orig_model.modules():
                 if isinstance(module, CausalKernelLinear):
-                    module.temperature = current_temp
+                    module._temperature.fill_(current_temp)
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()
@@ -945,6 +952,9 @@ while True:
             diag_metrics = mod_diag.collect()
             if diag_metrics:
                 print0(mod_diag.format(diag_metrics))
+                if master_process:
+                    diag_file = os.path.join(checkpoint_dir, "modulation_diagnostics.jsonl")
+                    mod_diag.save_to_file(diag_metrics, step, diag_file)
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -957,6 +967,9 @@ while True:
             "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        # Add modulation diagnostics to wandb if available
+        if mod_diag is not None and diag_metrics:
+            log_data.update(mod_diag.to_dict(diag_metrics))
         wandb_run.log(log_data)
 
     # state update

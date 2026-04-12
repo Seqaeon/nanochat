@@ -211,6 +211,15 @@ class GPTConfig:
     cclblock_ckr_temp_end: float = 0.3        # 16A: final softmax temperature (sharp routing)
     # Phase 16: Causal Output Mixer
     cclblock_com_kernel_size: int = 32        # 16C: COM causal depthwise conv kernel size
+    # Phase 17: CKR enhancements
+    cclblock_ckr_ortho_init: int = 0          # 17D: orthogonal branch initialization (0/1)
+    cclblock_ckr_branch_dropout: float = 0.0  # 17E: branch dropout probability (0=off)
+    cclblock_ckr_diversity_lambda: float = 0.0 # 17H: auxiliary branch diversity loss weight
+    cclblock_ckr_layer_selective: int = 0     # 17F: 0=all layers CKR, 1=odd layers only
+    # Phase 17: New architectures kernel sizes
+    cclblock_pgr_kernel_size: int = 64        # 17C: PGR causal conv kernel size
+    cclblock_cil_kernel_size: int = 64        # 17I: CIL causal conv kernel size
+    cclblock_prb_kernel_size: int = 64        # 17J: PRB causal conv kernel size
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -1729,14 +1738,18 @@ class CausalKernelLinear(nn.Module):
     """
     def __init__(self, in_features, out_features, n_branches=4, kernel_size=64,
                  max_seq_len=2048, n_pos_channels=1, content_bias_scale=0.0,
-                 signal_dim=None, temperature=1.0, **_ignored):
+                 signal_dim=None, temperature=1.0,
+                 ortho_init=False, branch_dropout=0.0, **_ignored):
         super().__init__()
         self.n_branches = n_branches
         self.in_features = in_features
         self.out_features = out_features
         self.kernel_size = kernel_size
         self.content_bias_scale = content_bias_scale
-        self.temperature = temperature  # Python float, NOT nn.Parameter (compile-safe)
+        # Temperature as a buffer tensor (NOT Python float) to avoid torch.compile
+        # guard breaks when annealing. Buffer tensors are treated as dynamic values.
+        self.register_buffer('_temperature', torch.tensor([temperature]), persistent=False)
+        self.branch_dropout = branch_dropout  # 17E: probability of dropping each branch
         self.ln_basis = nn.Identity()  # compat
 
         # K parallel projection branches
@@ -1744,6 +1757,10 @@ class CausalKernelLinear(nn.Module):
             Linear(in_features, out_features, bias=(i == 0))
             for i in range(n_branches)
         ])
+        # 17D: Orthogonal initialization for branch diversity
+        if ortho_init:
+            for branch in self.branches:
+                nn.init.orthogonal_(branch.weight)
 
         # 13a: Multi-channel position signal (C_pos channels → conv → K branches)
         # C_pos > 1 allows the conv to learn multi-scale temporal patterns
@@ -1795,7 +1812,16 @@ class CausalKernelLinear(nn.Module):
             content_logits = ctx @ self.content_proj.to(dtype)  # (B, T, K)
             logits = logits + self.content_bias_scale * content_logits.permute(0, 2, 1)  # (B, K, T)
 
-        w = F.softmax(logits / self.temperature, dim=1)  # (B, K, T)
+        w = F.softmax(logits / self._temperature.to(dtype), dim=1)  # (B, K, T)
+
+        # 17E: Branch dropout — randomly zero some branches during training
+        if self.training and self.branch_dropout > 0 and self.n_branches > 1:
+            # Create per-branch mask (same for all positions in batch)
+            mask = torch.ones(self.n_branches, device=w.device, dtype=dtype)
+            drop_idx = torch.randint(0, self.n_branches, (1,)).item()
+            mask[drop_idx] = 0.0
+            w = w * mask.view(1, -1, 1)
+            w = w / (w.sum(dim=1, keepdim=True) + 1e-8)  # renormalize
 
         # Parallel branch computation
         y = torch.zeros(B, T, self.out_features, device=x.device, dtype=dtype)
@@ -2181,6 +2207,165 @@ class CausalOutputMixer(nn.Module):
         return y + mixed.transpose(1, 2)  # (B, T, D_out)
 
 
+class PositionGatedResidual(nn.Module):
+    """Phase 17C: Position-Gated Residual (PGR).
+
+    y = W₀x + g(pos) · W₁x
+
+    Two full-rank branches with explicit base+delta structure.
+    g(pos) is a scalar gate per position from causal conv on learned position signal.
+    W₁ zero-init → starts as pure W₀ (dense baseline).
+
+    Compatible with setup_optimizer: gate_parameters() yields pos_signal + gate_conv,
+    non_gate_parameters() yields W₀ and W₁.
+    """
+    def __init__(self, in_features, out_features, kernel_size=64, max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.kernel_size = kernel_size
+        self.ln_basis = nn.Identity()
+
+        # Base projection (standard init)
+        self.base = Linear(in_features, out_features, bias=True)
+        # Delta projection (zero-init for dense-baseline start)
+        self.delta = Linear(in_features, out_features, bias=False)
+        nn.init.zeros_(self.delta.weight)
+
+        # Position gate: learned signal → scalar gate per position
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        nn.init.normal_(self.pos_signal, std=0.01)
+        self.gate_conv = nn.Conv1d(1, 1, kernel_size, padding=kernel_size - 1, bias=True)
+        nn.init.zeros_(self.gate_conv.weight)
+        nn.init.constant_(self.gate_conv.bias, -3.0)  # sigmoid(-3) ≈ 0.05
+
+    def gate_parameters(self):
+        yield self.pos_signal
+        yield from self.gate_conv.parameters()
+
+    def non_gate_parameters(self):
+        yield from self.base.parameters()
+        yield from self.delta.parameters()
+
+    def forward(self, x, context_state=None):
+        B, T, _ = x.shape
+        dtype = x.dtype
+        base_out = self.base(x)  # (B, T, out)
+        delta_out = self.delta(x)  # (B, T, out)
+        # Position gate
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1).to(dtype)
+        gate = torch.sigmoid(
+            F.conv1d(sig, self.gate_conv.weight.to(dtype),
+                     self.gate_conv.bias.to(dtype),
+                     padding=self.kernel_size - 1)[:, :, :T]
+        )  # (B, 1, T)
+        gate = gate.permute(0, 2, 1)  # (B, T, 1)
+        return base_out + gate * delta_out
+
+
+class CausalInterpolationLinear(nn.Module):
+    """Phase 17I: Causal Interpolation Linear (CIL).
+
+    y = ((1-α(pos)) · W₀ + α(pos) · W₁) · x
+
+    Interpolates between two weight matrices in weight space using a position-dependent
+    scalar α from causal conv. α starts at 0 → pure W₀ at init.
+
+    Key: only ONE matmul with the interpolated weight, not two separate matmuls.
+    """
+    def __init__(self, in_features, out_features, kernel_size=64, max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.kernel_size = kernel_size
+        self.ln_basis = nn.Identity()
+
+        # Two full-rank weight matrices
+        self.weight_0 = nn.Parameter(torch.empty(out_features, in_features))
+        self.weight_1 = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        nn.init.kaiming_uniform_(self.weight_0, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.weight_1, a=math.sqrt(5))
+
+        # Position interpolation: learned signal → α(pos) ∈ [0,1]
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        nn.init.normal_(self.pos_signal, std=0.01)
+        self.alpha_conv = nn.Conv1d(1, 1, kernel_size, padding=kernel_size - 1, bias=True)
+        nn.init.zeros_(self.alpha_conv.weight)
+        nn.init.constant_(self.alpha_conv.bias, -5.0)  # sigmoid(-5) ≈ 0.007 → nearly pure W₀
+
+    def gate_parameters(self):
+        yield self.pos_signal
+        yield from self.alpha_conv.parameters()
+
+    def non_gate_parameters(self):
+        yield self.weight_0
+        yield self.weight_1
+        yield self.bias
+
+    def forward(self, x, context_state=None):
+        B, T, _ = x.shape
+        dtype = x.dtype
+        # Position-dependent alpha
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1).to(dtype)
+        alpha = torch.sigmoid(
+            F.conv1d(sig, self.alpha_conv.weight.to(dtype),
+                     self.alpha_conv.bias.to(dtype),
+                     padding=self.kernel_size - 1)[:, :, :T]
+        )  # (B, 1, T)  → scalar per position
+        alpha = alpha.permute(0, 2, 1)  # (B, T, 1)
+
+        # Interpolate weight matrices: W_eff = (1-α)·W₀ + α·W₁
+        # Per-position matmul: x @ W_eff^T = (1-α)·(x@W₀^T) + α·(x@W₁^T)
+        y0 = F.linear(x, self.weight_0.to(dtype), self.bias.to(dtype))  # (B, T, out)
+        y1 = F.linear(x, self.weight_1.to(dtype))  # (B, T, out)
+        return (1 - alpha) * y0 + alpha * y1
+
+
+class PositionalResidualBias(nn.Module):
+    """Phase 17J: Positional Residual Bias (PRB).
+
+    y = Wx + b(pos)
+
+    Position-dependent bias vector (NOT weight modulation). ~1% overhead.
+    Diagnostic experiment: if PRB matches CKR, the benefit was never about
+    weight modulation — just position-dependent output.
+    """
+    def __init__(self, in_features, out_features, kernel_size=64, max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.kernel_size = kernel_size
+        self.ln_basis = nn.Identity()
+
+        self.base = Linear(in_features, out_features, bias=True)
+        # Position-dependent bias from causal conv
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        nn.init.normal_(self.pos_signal, std=0.01)
+        # Conv: 1 channel → out_features channels (generates bias vector per position)
+        self.bias_conv = nn.Conv1d(1, out_features, kernel_size, padding=kernel_size - 1, bias=True)
+        nn.init.zeros_(self.bias_conv.weight)
+        nn.init.zeros_(self.bias_conv.bias)
+
+    def gate_parameters(self):
+        yield self.pos_signal
+        yield from self.bias_conv.parameters()
+
+    def non_gate_parameters(self):
+        yield from self.base.parameters()
+
+    def forward(self, x, context_state=None):
+        B, T, _ = x.shape
+        dtype = x.dtype
+        y = self.base(x)  # (B, T, out)
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1).to(dtype)
+        bias = F.conv1d(
+            sig, self.bias_conv.weight.to(dtype), self.bias_conv.bias.to(dtype),
+            padding=self.kernel_size - 1
+        )[:, :, :T]  # (B, out, T)
+        return y + bias.permute(0, 2, 1)  # (B, T, out)
+
+
 class ModulationDiagnostics:
     """Diagnostic collector for position-routed conditioning layers (CKR, LoKR).
 
@@ -2225,6 +2410,12 @@ class ModulationDiagnostics:
             # Branch weight std across positions (how much routing varies by position)
             weight_std = w.std(dim=2).mean().item()
 
+            # Read temperature from buffer (CKR) or default 1.0 (LoKR)
+            if hasattr(mod, '_temperature'):
+                temp = mod._temperature.item()
+            else:
+                temp = 1.0
+
             all_metrics[name] = {
                 'branch_entropy_ratio': entropy_ratio,
                 'branch_weight_std': weight_std,
@@ -2248,6 +2439,28 @@ class ModulationDiagnostics:
             lines.append(f"    temperature:      {temps[0]:.3f}")
         return "\n".join(lines)
 
+    def to_dict(self, metrics):
+        """Flatten metrics into a single dict for wandb/logging."""
+        if not metrics:
+            return {}
+        entropies = [m['branch_entropy_ratio'] for m in metrics.values()]
+        weight_stds = [m['branch_weight_std'] for m in metrics.values()]
+        temps = [m['temperature'] for m in metrics.values()]
+        return {
+            'diag/branch_entropy': sum(entropies) / len(entropies),
+            'diag/position_std': sum(weight_stds) / len(weight_stds),
+            'diag/temperature': temps[0] if temps else 1.0,
+        }
+
+    def save_to_file(self, metrics, step, filepath):
+        """Append metrics as JSONL to a file."""
+        import json
+        if not metrics:
+            return
+        flat = self.to_dict(metrics)
+        flat['step'] = step
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(flat) + '\n')
 
 
 
@@ -2335,9 +2548,24 @@ class RemixedFeedForward(nn.Module):
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
             n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
             cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
-            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)  # 16A: anneal support
-            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd, temperature=temp)
-            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd, temperature=temp)
+            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)
+            ortho = bool(getattr(config, 'cclblock_ckr_ortho_init', 0))
+            bdrop = float(getattr(config, 'cclblock_ckr_branch_dropout', 0.0))
+            ckr_common = dict(n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd, temperature=temp, ortho_init=ortho, branch_dropout=bdrop)
+            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, **ckr_common)
+            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, **ckr_common)
+        elif mode == 'pgr':
+            pgr_ks = getattr(config, 'cclblock_pgr_kernel_size', 64)
+            self.c_fc   = PositionGatedResidual(config.n_embd, 4 * config.n_embd, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionGatedResidual(4 * config.n_embd, config.n_embd, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+        elif mode == 'cil':
+            cil_ks = getattr(config, 'cclblock_cil_kernel_size', 64)
+            self.c_fc   = CausalInterpolationLinear(config.n_embd, 4 * config.n_embd, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+            self.c_proj = CausalInterpolationLinear(4 * config.n_embd, config.n_embd, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+        elif mode == 'prb':
+            prb_ks = getattr(config, 'cclblock_prb_kernel_size', 64)
+            self.c_fc   = PositionalResidualBias(config.n_embd, 4 * config.n_embd, kernel_size=prb_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionalResidualBias(4 * config.n_embd, config.n_embd, kernel_size=prb_ks, max_seq_len=config.sequence_len)
         elif mode == 'com':
             com_ks = getattr(config, 'cclblock_com_kernel_size', 32)
             self.c_fc   = CausalOutputMixer(config.n_embd, 4 * config.n_embd, kernel_size=com_ks, max_seq_len=config.sequence_len)
@@ -2438,17 +2666,38 @@ class RemixedMultiAttention(nn.Module):
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
             n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
             cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
-            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)  # 16A: anneal support
-            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
-            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
-            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
-            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
+            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)
+            ortho = bool(getattr(config, 'cclblock_ckr_ortho_init', 0))
+            bdrop = float(getattr(config, 'cclblock_ckr_branch_dropout', 0.0))
+            ckr_common = dict(n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp, ortho_init=ortho, branch_dropout=bdrop)
+            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, **ckr_common)
+            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, **ckr_common)
+            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, **ckr_common)
+            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, **ckr_common)
         elif mode == 'ckr_ffn':
             # 16B: Plain Linear for attention (CKR only on FFN)
             self.c_q    = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
             self.c_k    = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
             self.c_v    = Linear(self.n_embd, self.n_kv_head * self.v_head_dim, bias=False)
             self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        elif mode == 'pgr':
+            pgr_ks = getattr(config, 'cclblock_pgr_kernel_size', 64)
+            self.c_q    = PositionGatedResidual(self.n_embd, self.n_head * self.head_dim, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+            self.c_k    = PositionGatedResidual(self.n_embd, self.n_kv_head * self.head_dim, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+            self.c_v    = PositionGatedResidual(self.n_embd, self.n_kv_head * self.v_head_dim, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionGatedResidual(self.n_embd, self.n_embd, kernel_size=pgr_ks, max_seq_len=config.sequence_len)
+        elif mode == 'cil':
+            cil_ks = getattr(config, 'cclblock_cil_kernel_size', 64)
+            self.c_q    = CausalInterpolationLinear(self.n_embd, self.n_head * self.head_dim, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+            self.c_k    = CausalInterpolationLinear(self.n_embd, self.n_kv_head * self.head_dim, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+            self.c_v    = CausalInterpolationLinear(self.n_embd, self.n_kv_head * self.v_head_dim, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+            self.c_proj = CausalInterpolationLinear(self.n_embd, self.n_embd, kernel_size=cil_ks, max_seq_len=config.sequence_len)
+        elif mode == 'prb':
+            prb_ks = getattr(config, 'cclblock_prb_kernel_size', 64)
+            self.c_q    = PositionalResidualBias(self.n_embd, self.n_head * self.head_dim, kernel_size=prb_ks, max_seq_len=config.sequence_len)
+            self.c_k    = PositionalResidualBias(self.n_embd, self.n_kv_head * self.head_dim, kernel_size=prb_ks, max_seq_len=config.sequence_len)
+            self.c_v    = PositionalResidualBias(self.n_embd, self.n_kv_head * self.v_head_dim, kernel_size=prb_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionalResidualBias(self.n_embd, self.n_embd, kernel_size=prb_ks, max_seq_len=config.sequence_len)
         elif mode == 'com':
             com_ks = getattr(config, 'cclblock_com_kernel_size', 32)
             self.c_q    = CausalOutputMixer(self.n_embd, self.n_head * self.head_dim, kernel_size=com_ks, max_seq_len=config.sequence_len)
@@ -2750,9 +2999,9 @@ class RemixedBlock(nn.Module):
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
-        # FSI/AESP/CKR/COM bypass: these modes don't use context streams at all.
+        # FSI/AESP/CKR/PGR/CIL/PRB bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr'):
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb'):
             # Run attention with attn_out.detach() as the context signal
             # For attention projections: no context needed on the first pass (Q/K/V are computed
             # without context, since the routing signal comes from attention itself)
@@ -3460,17 +3709,24 @@ class GPT(nn.Module):
                     ckr_dual = (self.cclblock_modulation == 'ckr' and
                                 getattr(self.config, 'cclblock_ckr_dual_optim', 0))
                     for rl in remix_linears:
-                        for p in rl.gate_parameters():
-                            if ckr_dual:
-                                # 13b: CKR gate params → dedicated AdamW (conservative)
-                                ckr_gate_adamw_params.append(p)
-                            else:
-                                (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
-                        for p in rl.non_gate_parameters():
-                            (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
-                        # ln_basis (LayerNorm)
-                        for p in rl.ln_basis.parameters():
-                            struct_adamw_params.append(p)
+                        if hasattr(rl, 'gate_parameters'):
+                            for p in rl.gate_parameters():
+                                if ckr_dual:
+                                    # 13b: CKR gate params → dedicated AdamW (conservative)
+                                    ckr_gate_adamw_params.append(p)
+                                else:
+                                    (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                        if hasattr(rl, 'non_gate_parameters'):
+                            for p in rl.non_gate_parameters():
+                                (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+                        else:
+                            # Plain Linear/Float8Linear — all params are structural
+                            for p in rl.parameters():
+                                (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+                        # ln_basis (LayerNorm) — only on research modules
+                        if hasattr(rl, 'ln_basis'):
+                            for p in rl.ln_basis.parameters():
+                                struct_adamw_params.append(p)
                     # ve_gate (if present) is structural
                     if block.attn.ve_gate is not None:
                         struct_matrix_params.append(block.attn.ve_gate.weight)

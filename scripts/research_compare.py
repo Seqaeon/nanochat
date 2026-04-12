@@ -126,6 +126,13 @@ def run_training_sweep(args):
         "--cclblock-ckr-temp-start", str(getattr(args, 'cclblock_ckr_temp_start', 2.0)),
         "--cclblock-ckr-temp-end", str(getattr(args, 'cclblock_ckr_temp_end', 0.3)),
         "--cclblock-com-kernel-size", str(getattr(args, 'cclblock_com_kernel_size', 32)),
+        # Phase 17: CKR enhancements + new architectures
+        "--cclblock-ckr-ortho-init", str(getattr(args, 'cclblock_ckr_ortho_init', 0)),
+        "--cclblock-ckr-branch-dropout", str(getattr(args, 'cclblock_ckr_branch_dropout', 0.0)),
+        "--cclblock-ckr-diversity-lambda", str(getattr(args, 'cclblock_ckr_diversity_lambda', 0.0)),
+        "--cclblock-pgr-kernel-size", str(getattr(args, 'cclblock_pgr_kernel_size', 64)),
+        "--cclblock-cil-kernel-size", str(getattr(args, 'cclblock_cil_kernel_size', 64)),
+        "--cclblock-prb-kernel-size", str(getattr(args, 'cclblock_prb_kernel_size', 64)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -357,7 +364,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -429,6 +436,13 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-ckr-temp-start", type=float, default=2.0)
     parser.add_argument("--cclblock-ckr-temp-end", type=float, default=0.3)
     parser.add_argument("--cclblock-com-kernel-size", type=int, default=32)
+    # Phase 17
+    parser.add_argument("--cclblock-ckr-ortho-init", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-ckr-branch-dropout", type=float, default=0.0)
+    parser.add_argument("--cclblock-ckr-diversity-lambda", type=float, default=0.0)
+    parser.add_argument("--cclblock-pgr-kernel-size", type=int, default=64)
+    parser.add_argument("--cclblock-cil-kernel-size", type=int, default=64)
+    parser.add_argument("--cclblock-prb-kernel-size", type=int, default=64)
     parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     
