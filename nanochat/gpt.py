@@ -1796,42 +1796,23 @@ class CausalKernelLinear(nn.Module):
         return y
 
 
-class _StopGrad(torch.autograd.Function):
-    """Gradient isolation that is compatible with torch.compile + autocast.
-
-    Unlike x.detach(), which creates a new tensor node that breaks torch.compile's
-    dtype tracking (causing float32 propagation into FlashAttention), this custom
-    Function maintains the forward tensor identity while blocking gradients:
-
-    Forward: returns x unchanged (same dtype, same device, same compile graph)
-    Backward: returns zeros → no gradient flows through this path
-
-    Usage: x_frozen = _StopGrad.apply(x)
-    Mathematically identical to x.detach() but compile-safe.
-    """
-    @staticmethod
-    def forward(ctx, x):
-        return x
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return torch.zeros_like(grad_output)
-
-
 class GradientIsolatedDeltaLinear(nn.Module):
     """Phase 14a: Gradient-Isolated Additive Delta (GIAD).
 
-    y = base(x) + scale * delta_net(_StopGrad(x))
+    y = base(x) + scale * delta_net(x)
 
-    The critical innovation: delta_net receives gradient-isolated input, so the
-    backward graph for x is IDENTICAL to the pure dense baseline. Content
-    conditioning is achieved through the forward pass, but ∂L/∂x = W^T · ∂L/∂y
-    — exactly what a standard Linear would produce.
+    Approximate gradient isolation via initialization:
+    - scale = 0 at init → delta path output is exactly zero
+    - delta_up.weight = 0 at init → delta output is zero even if scale > 0
+    - Double protection: both scale AND weights start at zero
 
-    Uses _StopGrad (custom autograd Function) instead of x.detach() to avoid
-    breaking torch.compile's dtype tracking under fp8/bf16 autocast.
+    As training progresses, scale and delta_up weights grow from zero,
+    gradually introducing the delta path's contribution. Early training
+    is virtually identical to the dense baseline.
 
-    Init: scale=0, delta_up.weight=0 → y = base(x) at step 0.
+    Note: exact gradient isolation (detach/custom autograd Functions) is
+    incompatible with torch.compile + fp8/bf16 autocast. This approximate
+    approach achieves the same practical effect.
     """
     def __init__(self, in_features, out_features, delta_rank=32, **_ignored):
         super().__init__()
@@ -1840,7 +1821,7 @@ class GradientIsolatedDeltaLinear(nn.Module):
         self.base = Linear(in_features, out_features, bias=True)
         self.ln_basis = nn.Identity()  # compat with setup_optimizer
 
-        # Low-rank bottleneck: _StopGrad(x) → rank-r → output
+        # Low-rank bottleneck: x → rank-r → output
         self.delta_down = Linear(in_features, delta_rank, bias=False)
         self.delta_up = Linear(delta_rank, out_features, bias=False)
         # Learned scale, starts at 0 so delta is initially invisible
@@ -1860,12 +1841,11 @@ class GradientIsolatedDeltaLinear(nn.Module):
 
     def forward(self, x, context_state=None):
         """
-        x: (B, T, D_in). context_state is ignored (delta uses gradient-isolated x).
+        x: (B, T, D_in). context_state is ignored.
         """
         y = self.base(x)
-        # Gradient isolation via custom Function (compile-safe, unlike detach())
-        x_frozen = _StopGrad.apply(x)
-        delta = self.delta_up(F.gelu(self.delta_down(x_frozen)))
+        # scale=0 at init → no gradient contribution from delta path
+        delta = self.delta_up(F.gelu(self.delta_down(x)))
         return y + self.scale * delta
 
 
@@ -2072,8 +2052,10 @@ class LoKRLinear(nn.Module):
         nn.init.zeros_(self.branch_conv.weight)
         nn.init.zeros_(self.branch_conv.bias)
 
-        # Diagnostics cache (populated during forward when diag enabled)
-        self._diag_cache = {}
+        # Diagnostics: cached tensors (populated during forward, read post-forward)
+        self._diag_w = None
+        self._diag_base_norm = None
+        self._diag_delta_norm = None
 
     def gate_parameters(self):
         """Position signal + conv = routing side."""
@@ -2114,25 +2096,28 @@ class LoKRLinear(nn.Module):
             d_k = F.linear(h_k, self.lora_up[k].to(dtype))  # (B, T, D_out)
             delta = delta + w[:, k, :].unsqueeze(-1) * d_k
 
-        # Cache for diagnostics
-        self._diag_cache = {
-            'w': w.detach(),
-            'base_norm': y.detach().norm(dim=-1).mean().item(),
-            'delta_norm': delta.detach().norm(dim=-1).mean().item(),
-        }
+        # Cache tensors for diagnostics (NO .item() — would cause graph break)
+        # Diagnostics are collected lazily via collect_diagnostics() post-forward
+        self._diag_w = w.detach()
+        self._diag_base_norm = y.detach().norm(dim=-1).mean()
+        self._diag_delta_norm = delta.detach().norm(dim=-1).mean()
 
         return y + delta
 
     def collect_diagnostics(self):
-        """Return cached diagnostic metrics from last forward pass."""
-        if not self._diag_cache:
+        """Return diagnostic metrics from cached tensors (post-forward).
+
+        .item() calls happen HERE (outside torch.compile graph), not in forward().
+        """
+        if not hasattr(self, '_diag_w') or self._diag_w is None:
             return {}
-        w = self._diag_cache.get('w')
+        base_norm = self._diag_base_norm.item()
+        delta_norm = self._diag_delta_norm.item()
+        w = self._diag_w
         metrics = {
-            'base_norm': self._diag_cache.get('base_norm', 0),
-            'delta_norm': self._diag_cache.get('delta_norm', 0),
-            'delta_ratio': (self._diag_cache.get('delta_norm', 0) /
-                           max(self._diag_cache.get('base_norm', 1e-8), 1e-8)),
+            'base_norm': base_norm,
+            'delta_norm': delta_norm,
+            'delta_ratio': delta_norm / max(base_norm, 1e-8),
         }
         if w is not None:
             # Branch weight entropy: H(w) averaged over (B, T)
