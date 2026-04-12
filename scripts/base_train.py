@@ -77,7 +77,7 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream"],
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream", "lokr"],
                     help="CCL block strategy")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
@@ -146,6 +146,10 @@ parser.add_argument("--cclblock-psg-kernel-size", type=int, default=64, help="PS
 parser.add_argument("--cclblock-ss-dynamic-ratio", type=float, default=0.25, help="SplitStream: dynamic channel fraction")
 parser.add_argument("--cclblock-ss-branches", type=int, default=2, help="SplitStream: CKR branches on dynamic path")
 parser.add_argument("--cclblock-ss-kernel-size", type=int, default=64, help="SplitStream: causal conv kernel size")
+# Phase 15: LoKR + diagnostics
+parser.add_argument("--cclblock-lokr-branches", type=int, default=8, help="LoKR: number of low-rank perturbation branches")
+parser.add_argument("--cclblock-lokr-rank", type=int, default=16, help="LoKR: rank of each perturbation")
+parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1], help="enable modulation layer diagnostics logging")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -371,6 +375,9 @@ def build_model_meta(depth):
         cclblock_ss_dynamic_ratio=getattr(args, 'cclblock_ss_dynamic_ratio', 0.25),
         cclblock_ss_branches=getattr(args, 'cclblock_ss_branches', 2),
         cclblock_ss_kernel_size=getattr(args, 'cclblock_ss_kernel_size', 64),
+        # Phase 15: LoKR
+        cclblock_lokr_branches=getattr(args, 'cclblock_lokr_branches', 8),
+        cclblock_lokr_rank=getattr(args, 'cclblock_lokr_rank', 16),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -383,6 +390,13 @@ model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
 model.init_weights() # 3) All tensors get initialized
+
+# Phase 15: Initialize modulation diagnostics if enabled
+mod_diag = None
+if getattr(args, 'modulation_diagnostics', 0):
+    from nanochat.gpt import ModulationDiagnostics
+    mod_diag = ModulationDiagnostics(model)
+    print0(f"Modulation diagnostics enabled: tracking {len(mod_diag._layers)} conditioning layers")
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
@@ -911,6 +925,11 @@ while True:
     lr_msg = f"lr(adamw:{(sum(adamw_lrs)/len(adamw_lrs)) if adamw_lrs else 0:.3e}, muon:{(sum(muon_lrs)/len(muon_lrs)) if muon_lrs else 0:.3e})"
     if step % args.log_every == 0 or step == num_iterations - 1 or last_step:
         print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | {lr_msg} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+        # Phase 15: Modulation diagnostics at log intervals
+        if mod_diag is not None:
+            diag_metrics = mod_diag.collect()
+            if diag_metrics:
+                print0(mod_diag.format(diag_metrics))
     if step % 100 == 0:
         log_data = {
             "step": step,

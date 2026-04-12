@@ -119,6 +119,9 @@ def run_training_sweep(args):
         "--cclblock-ss-dynamic-ratio", str(getattr(args, 'cclblock_ss_dynamic_ratio', 0.25)),
         "--cclblock-ss-branches", str(getattr(args, 'cclblock_ss_branches', 2)),
         "--cclblock-ss-kernel-size", str(getattr(args, 'cclblock_ss_kernel_size', 64)),
+        # Phase 15: LoKR
+        "--cclblock-lokr-branches", str(getattr(args, 'cclblock_lokr_branches', 8)),
+        "--cclblock-lokr-rank", str(getattr(args, 'cclblock_lokr_rank', 16)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -350,7 +353,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream", "lokr"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -415,6 +418,10 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-ss-dynamic-ratio", type=float, default=0.25)
     parser.add_argument("--cclblock-ss-branches", type=int, default=2)
     parser.add_argument("--cclblock-ss-kernel-size", type=int, default=64)
+    # Phase 15: LoKR
+    parser.add_argument("--cclblock-lokr-branches", type=int, default=8)
+    parser.add_argument("--cclblock-lokr-rank", type=int, default=16)
+    parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     
     run_training_sweep(args)
