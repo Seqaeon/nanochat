@@ -77,8 +77,8 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr"],
-                    help="CCL block strategy (weight/normalization + operator families + tucker/svs/vq/dcu + fsi/aesp/ckr)")
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream"],
+                    help="CCL block strategy")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
@@ -140,6 +140,12 @@ parser.add_argument("--cclblock-ckr-kernel-size", type=int, default=64, help="CK
 parser.add_argument("--cclblock-ckr-pos-channels", type=int, default=1, help="CKR: multi-channel position signal (1=original, 3=multi-scale)")
 parser.add_argument("--cclblock-ckr-dual-optim", type=int, default=0, choices=[0, 1], help="CKR: route gate params to dedicated conservative AdamW")
 parser.add_argument("--cclblock-ckr-content-bias", type=float, default=0.0, help="CKR: frozen content hash bias scale (0=pure position)")
+# Phase 14: Gradient-isolated content conditioning
+parser.add_argument("--cclblock-giad-rank", type=int, default=32, help="GIAD: low-rank bottleneck dimension")
+parser.add_argument("--cclblock-psg-kernel-size", type=int, default=64, help="PSG: causal conv kernel size")
+parser.add_argument("--cclblock-ss-dynamic-ratio", type=float, default=0.25, help="SplitStream: dynamic channel fraction")
+parser.add_argument("--cclblock-ss-branches", type=int, default=2, help="SplitStream: CKR branches on dynamic path")
+parser.add_argument("--cclblock-ss-kernel-size", type=int, default=64, help="SplitStream: causal conv kernel size")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -359,6 +365,12 @@ def build_model_meta(depth):
         cclblock_ckr_pos_channels=getattr(args, 'cclblock_ckr_pos_channels', 1),
         cclblock_ckr_dual_optim=getattr(args, 'cclblock_ckr_dual_optim', 0),
         cclblock_ckr_content_bias=getattr(args, 'cclblock_ckr_content_bias', 0.0),
+        # Phase 14: Gradient-isolated content conditioning
+        cclblock_giad_rank=getattr(args, 'cclblock_giad_rank', 32),
+        cclblock_psg_kernel_size=getattr(args, 'cclblock_psg_kernel_size', 64),
+        cclblock_ss_dynamic_ratio=getattr(args, 'cclblock_ss_dynamic_ratio', 0.25),
+        cclblock_ss_branches=getattr(args, 'cclblock_ss_branches', 2),
+        cclblock_ss_kernel_size=getattr(args, 'cclblock_ss_kernel_size', 64),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

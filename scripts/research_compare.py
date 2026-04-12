@@ -113,6 +113,12 @@ def run_training_sweep(args):
         "--cclblock-ckr-pos-channels", str(getattr(args, 'cclblock_ckr_pos_channels', 1)),
         "--cclblock-ckr-dual-optim", str(getattr(args, 'cclblock_ckr_dual_optim', 0)),
         "--cclblock-ckr-content-bias", str(getattr(args, 'cclblock_ckr_content_bias', 0.0)),
+        # Phase 14: GIAD/PSG/SplitStream
+        "--cclblock-giad-rank", str(getattr(args, 'cclblock_giad_rank', 32)),
+        "--cclblock-psg-kernel-size", str(getattr(args, 'cclblock_psg_kernel_size', 64)),
+        "--cclblock-ss-dynamic-ratio", str(getattr(args, 'cclblock_ss_dynamic_ratio', 0.25)),
+        "--cclblock-ss-branches", str(getattr(args, 'cclblock_ss_branches', 2)),
+        "--cclblock-ss-kernel-size", str(getattr(args, 'cclblock_ss_kernel_size', 64)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -344,7 +350,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "giad", "psg", "splitstream"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -403,6 +409,12 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-ckr-pos-channels", type=int, default=1)
     parser.add_argument("--cclblock-ckr-dual-optim", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cclblock-ckr-content-bias", type=float, default=0.0)
+    # Phase 14: GIAD/PSG/SplitStream
+    parser.add_argument("--cclblock-giad-rank", type=int, default=32)
+    parser.add_argument("--cclblock-psg-kernel-size", type=int, default=64)
+    parser.add_argument("--cclblock-ss-dynamic-ratio", type=float, default=0.25)
+    parser.add_argument("--cclblock-ss-branches", type=int, default=2)
+    parser.add_argument("--cclblock-ss-kernel-size", type=int, default=64)
     args = parser.parse_args()
     
     run_training_sweep(args)

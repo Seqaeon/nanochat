@@ -192,13 +192,46 @@ This setting produced the best relative improvement among the newly introduced f
 
 ---
 
-### Conclusion & Forward Outlook
+### Phase 12 Takeaway
 
-The Phase 12 results crystallize the central finding across all 12 phases:
+CKR's -0.02 win is real but small. The principle — position-only routing avoids content-gradient interference — is validated.
 
-1. **Content-dependent routing is the enemy.** Every design that conditions weight selection on token content (FSI, AESP, all prior RemixedLinear/RAL/Tucker/SVS/VQ designs) introduces a multiplicative gradient coupling that degrades optimization. This is the "friction tax."
-2. **Position-dependent routing works.** CKR is the first design to beat the dense baseline because position signals are orthogonal to content gradients — they don't compete.
-3. **The next frontier:** CKR's 0.02 improvement is promising but modest. Scaling opportunities include:
-   - More expressive position signals (multi-scale, learned frequencies)
-   - Dual optimizer strategies (slow AdamW for position routing, fast Muon for branches)
-   - Hybrid CKR+attention designs where position conv learns coarse regime structure and attention entropy modulates within-regime specialization
+## Phase 13: Scaling CKR + Dual Optimizer
+
+**Goal:** Amplify CKR's 0.02 improvement via richer position encoding, optimizer decoupling, and cautious content re-introduction.
+
+### 13a: Enhanced CKR (Multi-Scale Position + More Branches)
+**Mechanism:** 3 position channels, 8 branches, kernel size 128.
+
+**Result: Negligible improvement with significant cost increase.** The extra channels and branches added substantial params and FLOPs but most branches learn near-identical features. Position alone doesn't carry enough information to justify 8 independent dense pathways.
+
+### 13b: Dual-Optimizer CKR
+**Mechanism:** Routed CKR's routing params (~1K/layer) to dedicated conservative AdamW (β₂=0.999, 0.5× LR). Branches remained on Muon.
+
+**Result: No improvement in any configuration.** The routing parameters are too tiny for the optimizer choice to matter. The gradient signal is clean and low-dimensional already.
+
+### 13c: CKR-Hybrid (Frozen Content Bias)
+**Mechanism:** Frozen random projection of `attn_out.detach()` as 0.1× additive bias to position logits.
+
+**Result: No measurable improvement.** Frozen random projections are too noisy to meaningfully disambiguate document types.
+
+---
+
+## Grand Synthesis: What We Know After 13 Phases
+
+### What definitively fails:
+1. **Content-dependent routing/gating** (Phases 3–11, 12a, 12b): Multiplicative coupling between content gates and dense gradients always degrades optimization.
+2. **Frozen random input transformations** (FSI): Scrambling the input has non-zero cost even when gradient-free.
+3. **Scaling position routing** (13a): More branches/channels can't extract signal that isn't there.
+4. **Optimizer tricks** (13b): When gradient paths are already decoupled, optimizer choice is secondary.
+
+### What has shown positive signal:
+1. **Position-only routing** (CKR, -0.02): Position signals are orthogonal to content gradients.
+2. **Static/dynamic channel separation** (Decoupled, Phase 11): Reducing the gradient competition surface.
+3. **Identity-safe initialization**: Starting as the exact dense baseline is necessary but not sufficient.
+
+### The fundamental tension:
+The paper's vision is **context-conditioned** linear layers. But content conditioning creates friction. CKR succeeds by avoiding content entirely — but pure position can't achieve the goal of outperforming bigger models.
+
+**The core question for Phase 14:** Can we introduce content-dependent specialization that produces *zero interference* with the main dense gradient path?
+

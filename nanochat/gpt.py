@@ -196,6 +196,12 @@ class GPTConfig:
     cclblock_ckr_pos_channels: int = 1    # 13a: multi-channel position signal (1=original, 3=fast/med/slow)
     cclblock_ckr_dual_optim: int = 0      # 13b: route CKR gate params to dedicated AdamW group
     cclblock_ckr_content_bias: float = 0.0  # 13c: frozen content hash bias scale (0=pure position)
+    # Phase 14: Gradient-isolated content conditioning
+    cclblock_giad_rank: int = 32              # 14a: GIAD low-rank bottleneck dimension
+    cclblock_psg_kernel_size: int = 64        # 14b: PSG causal conv kernel size
+    cclblock_ss_dynamic_ratio: float = 0.25   # 14c: SplitStream dynamic channel fraction
+    cclblock_ss_branches: int = 2             # 14c: SplitStream CKR branches on dynamic path
+    cclblock_ss_kernel_size: int = 64         # 14c: SplitStream causal conv kernel size
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -232,6 +238,9 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_ckr_branches", "cclblock_ckr_kernel_size",
     # Phase 13
     "cclblock_ckr_pos_channels", "cclblock_ckr_dual_optim", "cclblock_ckr_content_bias",
+    # Phase 14
+    "cclblock_giad_rank", "cclblock_psg_kernel_size",
+    "cclblock_ss_dynamic_ratio", "cclblock_ss_branches", "cclblock_ss_kernel_size",
 }
 
 
@@ -1782,6 +1791,208 @@ class CausalKernelLinear(nn.Module):
         return y
 
 
+class GradientIsolatedDeltaLinear(nn.Module):
+    """Phase 14a: Gradient-Isolated Additive Delta (GIAD).
+
+    y = base(x) + scale * delta_net(x.detach())
+
+    The critical innovation: delta_net receives x.detach(), so the backward graph
+    for x is IDENTICAL to the pure dense baseline. Content conditioning is achieved
+    through the forward pass, but ∂L/∂x = W^T · ∂L/∂y — exactly what a standard
+    Linear would produce.
+
+    Why this differs from RAL (Phase 9): RAL computed delta(x, ctx) with live x,
+    so ∂L/∂x included delta's contribution, creating the friction tax. Here,
+    delta's contribution to the backward graph is completely severed from x.
+
+    Init: scale=0, delta_up.weight=0 → y = base(x) at step 0.
+    """
+    def __init__(self, in_features, out_features, delta_rank=32, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.base = Linear(in_features, out_features, bias=True)
+        self.ln_basis = nn.Identity()  # compat with setup_optimizer
+
+        # Low-rank bottleneck: x.detach() → rank-r → output
+        self.delta_down = Linear(in_features, delta_rank, bias=False)
+        self.delta_up = Linear(delta_rank, out_features, bias=False)
+        # Learned scale, starts at 0 so delta is initially invisible
+        self.scale = nn.Parameter(torch.zeros(1))
+
+    def gate_parameters(self):
+        """Delta path params are the 'gate' side (lower LR)."""
+        yield self.delta_down.weight
+        yield self.delta_up.weight
+        yield self.scale
+
+    def non_gate_parameters(self):
+        """Base projection weights — standard dense, unaffected by delta."""
+        yield self.base.weight
+        if self.base.bias is not None:
+            yield self.base.bias
+
+    def forward(self, x, context_state=None):
+        """
+        x: (B, T, D_in). context_state is ignored (delta uses x.detach() directly).
+        """
+        y = self.base(x)
+        # Gradient isolation: delta sees frozen features, can't pollute ∂L/∂x
+        x_frozen = x.detach()
+        delta = self.delta_up(F.gelu(self.delta_down(x_frozen)))
+        return y + self.scale * delta
+
+
+class PositionalScalarGatedLinear(nn.Module):
+    """Phase 14b: Positional Scalar Gating (PSG).
+
+    y_t = W · (s(t) ⊙ x_t)
+
+    where s(t) is a D_in-dimensional position-dependent scaling vector from a
+    tiny causal conv1d over a learned positional signal.
+
+    Effective weight at position t: W_eff(t) = W · diag(s(t))
+    This is a rank-D perturbation — can modulate every element of W_eff —
+    yet costs only O(conv_params) extra, NOT O(K × D × D) like CKR.
+
+    Init: s(t) = 1.0 for all t → y = W · x (identity with dense baseline).
+    Position-only routing: no content-dependent gates → no friction tax.
+    """
+    def __init__(self, in_features, out_features, kernel_size=64,
+                 max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.base = Linear(in_features, out_features, bias=True)
+        self.ln_basis = nn.Identity()  # compat
+
+        # Learned 1D positional signal → causal conv → D_in-dim scaling per position
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        self.scale_conv = nn.Conv1d(
+            1, in_features, kernel_size=kernel_size,
+            padding=kernel_size - 1, bias=True
+        )
+        # Init: conv output ≈ 0 → s(t) = 1.0 (identity scaling)
+        nn.init.zeros_(self.scale_conv.weight)
+        nn.init.zeros_(self.scale_conv.bias)
+        # Controls the maximum deviation from identity
+        self.scale_magnitude = nn.Parameter(torch.tensor(0.01))
+
+    def gate_parameters(self):
+        """Position signal + conv = routing side."""
+        yield self.pos_signal
+        yield from self.scale_conv.parameters()
+        yield self.scale_magnitude
+
+    def non_gate_parameters(self):
+        """Base projection weights — standard dense."""
+        yield self.base.weight
+        if self.base.bias is not None:
+            yield self.base.bias
+
+    def forward(self, x, context_state=None):
+        """
+        x: (B, T, D_in). context_state is ignored (position-only scaling).
+        """
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Position-dependent per-channel scaling
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1)  # (B, 1, T)
+        raw = self.scale_conv(sig.to(dtype=self.scale_conv.weight.dtype))[:, :, :T]  # (B, D_in, T)
+        # s(t) = 1 + magnitude * tanh(raw) → starts at 1.0, bounded perturbation
+        s = 1.0 + self.scale_magnitude * torch.tanh(raw.to(dtype))  # (B, D_in, T)
+        x_scaled = x * s.permute(0, 2, 1)  # (B, T, D_in)
+        return self.base(x_scaled)
+
+
+class SplitStreamLinear(nn.Module):
+    """Phase 14c: SplitStream — Decoupled channel split + CKR dynamic path.
+
+    y = concat(
+        W_static · x[:, :, :D_s],       # static channels: pure dense
+        CKR_branches(x[:, :, D_s:])      # dynamic channels: position-dependent
+    )
+
+    Combines the two winning principles:
+    - Decoupled (Phase 11): Reduce gradient competition via channel partitioning
+    - CKR (Phase 12): Position-only routing avoids content-gradient interference
+
+    Static path (majority ~75%): exact dense baseline gradient dynamics.
+    Dynamic path (minority ~25%): CKR-style position routing on fewer channels.
+    Zero parameter sharing between paths.
+    """
+    def __init__(self, in_features, out_features, dynamic_ratio=0.25,
+                 n_branches=2, kernel_size=64, max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.ln_basis = nn.Identity()  # compat
+
+        # Channel split dimensions
+        self.d_dynamic = max(1, int(in_features * dynamic_ratio))
+        self.d_static = in_features - self.d_dynamic
+        d_out_dynamic = max(1, int(out_features * dynamic_ratio))
+        d_out_static = out_features - d_out_dynamic
+
+        # Static path: plain dense projection
+        self.static_proj = Linear(self.d_static, d_out_static, bias=True)
+
+        # Dynamic path: CKR-style multi-branch with position routing
+        self.n_branches = n_branches
+        self.dynamic_branches = nn.ModuleList([
+            Linear(self.d_dynamic, d_out_dynamic, bias=(i == 0))
+            for i in range(n_branches)
+        ])
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        self.branch_conv = nn.Conv1d(
+            1, n_branches, kernel_size=kernel_size,
+            padding=kernel_size - 1, bias=True
+        )
+        nn.init.zeros_(self.branch_conv.weight)
+        nn.init.zeros_(self.branch_conv.bias)
+
+    def gate_parameters(self):
+        """Position signal + conv + dynamic branch weights = routing side."""
+        yield self.pos_signal
+        yield from self.branch_conv.parameters()
+        for branch in self.dynamic_branches:
+            yield from branch.parameters()
+
+    def non_gate_parameters(self):
+        """Static projection weights — pure dense, zero interference."""
+        yield self.static_proj.weight
+        if self.static_proj.bias is not None:
+            yield self.static_proj.bias
+
+    def forward(self, x, context_state=None):
+        """
+        x: (B, T, D_in). context_state is ignored (position-only dynamic path).
+        """
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Channel split
+        x_static = x[:, :, :self.d_static]
+        x_dynamic = x[:, :, self.d_static:]
+
+        # Static path: standard dense projection
+        y_static = self.static_proj(x_static)
+
+        # Dynamic path: CKR-style position-dependent branch mixing
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1)
+        raw_w = self.branch_conv(sig.to(dtype=self.branch_conv.weight.dtype))[:, :, :T]
+        w = F.softmax(raw_w.to(dtype), dim=1)  # (B, K, T)
+
+        y_dynamic = torch.zeros(B, T, self.dynamic_branches[0].weight.shape[0],
+                                device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            y_k = self.dynamic_branches[k](x_dynamic)
+            y_dynamic = y_dynamic + w[:, k, :].unsqueeze(-1) * y_k
+
+        return torch.cat([y_static, y_dynamic], dim=-1)
+
+
 class ResidualAdaptiveLinear(nn.Module):
     """Proposal A: Dense base layer + context-conditioned additive low-rank delta.
 
@@ -1868,6 +2079,20 @@ class RemixedFeedForward(nn.Module):
             cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
             self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
             self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
+        elif mode == 'giad':
+            giad_rank = getattr(config, 'cclblock_giad_rank', 32)
+            self.c_fc   = GradientIsolatedDeltaLinear(config.n_embd, 4 * config.n_embd, delta_rank=giad_rank)
+            self.c_proj = GradientIsolatedDeltaLinear(4 * config.n_embd, config.n_embd, delta_rank=giad_rank)
+        elif mode == 'psg':
+            psg_ks = getattr(config, 'cclblock_psg_kernel_size', 64)
+            self.c_fc   = PositionalScalarGatedLinear(config.n_embd, 4 * config.n_embd, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionalScalarGatedLinear(4 * config.n_embd, config.n_embd, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+        elif mode == 'splitstream':
+            ss_ratio = float(getattr(config, 'cclblock_ss_dynamic_ratio', 0.25))
+            ss_br = getattr(config, 'cclblock_ss_branches', 2)
+            ss_ks = getattr(config, 'cclblock_ss_kernel_size', 64)
+            self.c_fc   = SplitStreamLinear(config.n_embd, 4 * config.n_embd, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
+            self.c_proj = SplitStreamLinear(4 * config.n_embd, config.n_embd, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
         elif mode == 'tucker':
             self.c_fc = TuckerAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_proj = TuckerAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
@@ -1948,6 +2173,26 @@ class RemixedMultiAttention(nn.Module):
             self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
             self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
             self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
+        elif mode == 'giad':
+            giad_rank = getattr(config, 'cclblock_giad_rank', 32)
+            self.c_q    = GradientIsolatedDeltaLinear(self.n_embd, self.n_head * self.head_dim, delta_rank=giad_rank)
+            self.c_k    = GradientIsolatedDeltaLinear(self.n_embd, self.n_kv_head * self.head_dim, delta_rank=giad_rank)
+            self.c_v    = GradientIsolatedDeltaLinear(self.n_embd, self.n_kv_head * self.v_head_dim, delta_rank=giad_rank)
+            self.c_proj = GradientIsolatedDeltaLinear(self.n_embd, self.n_embd, delta_rank=giad_rank)
+        elif mode == 'psg':
+            psg_ks = getattr(config, 'cclblock_psg_kernel_size', 64)
+            self.c_q    = PositionalScalarGatedLinear(self.n_embd, self.n_head * self.head_dim, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+            self.c_k    = PositionalScalarGatedLinear(self.n_embd, self.n_kv_head * self.head_dim, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+            self.c_v    = PositionalScalarGatedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+            self.c_proj = PositionalScalarGatedLinear(self.n_embd, self.n_embd, kernel_size=psg_ks, max_seq_len=config.sequence_len)
+        elif mode == 'splitstream':
+            ss_ratio = float(getattr(config, 'cclblock_ss_dynamic_ratio', 0.25))
+            ss_br = getattr(config, 'cclblock_ss_branches', 2)
+            ss_ks = getattr(config, 'cclblock_ss_kernel_size', 64)
+            self.c_q    = SplitStreamLinear(self.n_embd, self.n_head * self.head_dim, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
+            self.c_k    = SplitStreamLinear(self.n_embd, self.n_kv_head * self.head_dim, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
+            self.c_v    = SplitStreamLinear(self.n_embd, self.n_kv_head * self.v_head_dim, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
+            self.c_proj = SplitStreamLinear(self.n_embd, self.n_embd, dynamic_ratio=ss_ratio, n_branches=ss_br, kernel_size=ss_ks, max_seq_len=config.sequence_len)
         elif mode == 'tucker':
             self.c_q = TuckerAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_k = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
@@ -2190,7 +2435,7 @@ class RemixedBlock(nn.Module):
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
         # FSI/AESP/CKR: no context stream needed (bypass in forward)
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr'):
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream'):
             self.ctx_stream = None
         elif per_head:
             # Design 7: two independent streams; attn uses pre-attn repr, ffn uses post-attn repr
@@ -2208,7 +2453,7 @@ class RemixedBlock(nn.Module):
 
         # FSI/AESP/CKR bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr'):
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream'):
             # Run attention with attn_out.detach() as the context signal
             # For attention projections: no context needed on the first pass (Q/K/V are computed
             # without context, since the routing signal comes from attention itself)
