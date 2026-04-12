@@ -271,3 +271,47 @@ Every attempt to introduce content-dependent signals (Phases 3–11, 13c) has fa
 ### The remaining question:
 Can a design achieve CKR-like multi-branch expressivity (Pattern 2: full-rank, Pattern 1: mandatory) without CKR's 4× parameter overhead, while keeping position-only routing (Pattern 3: the only safe routing)?
 
+## Phase 15: Parameter-Efficient Position Routing & Diagnostics
+
+**Goal:** Achieve CKR's multi-branch expressiveness at lower parameter cost (LoKR), test content conditioning with proper gradient isolation (GIAD), and add diagnostic instrumentation.
+
+### 15a: LoKR — Low-rank Kernel Reparameterization (K=8,r=16 and K=4,r=32)
+**Mechanism:** Shared full-rank base W + K low-rank perturbations: `W_eff(t) = W + Σ w_k(t)·U_k@V_k^T`. Same position-only routing as CKR via causal conv on learned position signals, but with 21% parameter overhead (vs CKR's 300%).
+
+**Result: Degradation +0.08 (both K=8/r=16 and K=4/r=32).** Low-rank perturbations cannot achieve the expressivity of full-rank branches. This confirms Pattern 1 from a different angle: even ADDITIVE low-rank perturbations to a full-rank base are insufficient. CKR's advantage specifically comes from K **independent** full-rank transforms, not from the routing mechanism.
+
+**Technical issue (resolved):** The initial implementation had `.item()` calls inside `forward()` for diagnostics caching, which caused graph breaks under `torch.compile`, fragmenting the compiled graph and causing 16 GiB OOM during backward. Fixed by caching tensors in forward and calling `.item()` only in the post-forward diagnostics collector.
+
+### 15b: GIAD — Gradient-Isolated Additive Delta (re-test)
+**Mechanism:** `y = base(x) + delta_net(x)` with zero-init delta_up weights so the delta starts invisible.
+
+**Result: Crashed (FlashAttention dtype error) across three fix attempts.**
+- Attempt 1: `x.detach()` → breaks torch.compile's autocast context → float32
+- Attempt 2: Custom `autograd.Function` (_StopGrad) → also breaks compiled graph dtype tracking
+- Attempt 3: Remove detach entirely, use `scale * delta` → `nn.Parameter(torch.zeros(1))` is float32, causes float32 × bf16 = float32 promotion in compiled graph → FlashAttention crash
+- **Final fix:** Remove scalar `scale` parameter entirely, rely on zero-init `delta_up.weight`
+
+**Root cause lesson:** Under `torch.compile + fp8/bf16 autocast`, standalone float32 nn.Parameter scalars cause dtype promotion that propagates through the entire compiled graph. All scalar parameters must be in the compute dtype, or avoided entirely.
+
+### 15c: Modulation Diagnostics
+Added `ModulationDiagnostics` class tracking delta/base ratio and branch weight entropy. Not observable during Phase 15 runs because both LoKR (OOM) and GIAD (dtype crash) failed before reaching the first log step.
+
+---
+
+## Updated Grand Synthesis: What We Know After 15 Phases
+
+### Pattern 1 (reinforced): Full-rank branches are mandatory, not just full-rank access
+LoKR's failure confirms that even additive low-rank perturbations to a full-rank base are insufficient. CKR's advantage comes from having K **completely independent** full-rank transforms. The model needs the ability to learn genuinely different projections per position, not small tweaks to a shared projection.
+
+### Pattern 2 (unchanged): CKR is the only positive signal (+0.02)
+After 15 phases of experimentation, CKR (K=4 full-rank branches, position-only routing) remains the ONLY design that beats the dense baseline.
+
+### Pattern 3 (new): torch.compile imposes strict constraints
+Any operation that breaks the compiled graph (detach, custom autograd Functions, .item() calls, float32 scalar parameters) causes either dtype errors or OOM. Architectures must be "compile-clean": all operations should be standard PyTorch modules with no graph-breaking ops and no dtype mismatches.
+
+### Pattern 4 (new): Parameter overhead ≠ expressivity
+LoKR at 21% overhead performed worse than dense baseline. CKR at 300% overhead barely beat it (+0.02). The relationship between added parameters and benefit is highly non-linear — cheap approximations to CKR don't capture its value. This suggests the improvements, if any, come from structural properties (independent branch transforms) rather than raw parameter count.
+
+### The refined question:
+CKR shows position-dependent multi-branch mixing works. But 300% overhead for 0.02 improvement is not practical. Instead of making CKR cheaper (LoKR failed), can we make CKR's branches MORE effective — extracting more signal from the multi-branch structure to justify the overhead? Or is there a fundamentally different approach that achieves context conditioning without any of the failure modes we've catalogued?
+
