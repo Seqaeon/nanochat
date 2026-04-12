@@ -14,6 +14,7 @@ Notable features:
 
 from functools import partial
 from dataclasses import dataclass
+import math
 
 import torch
 import torch.nn as nn
@@ -205,6 +206,11 @@ class GPTConfig:
     # Phase 15: LoKR — Low-rank Kernel Reparameterization
     cclblock_lokr_branches: int = 8           # 15: LoKR number of low-rank perturbation branches
     cclblock_lokr_rank: int = 16              # 15: LoKR rank of each perturbation
+    # Phase 16: CKR-Anneal temperature annealing
+    cclblock_ckr_temp_start: float = 2.0      # 16A: initial softmax temperature (soft routing)
+    cclblock_ckr_temp_end: float = 0.3        # 16A: final softmax temperature (sharp routing)
+    # Phase 16: Causal Output Mixer
+    cclblock_com_kernel_size: int = 32        # 16C: COM causal depthwise conv kernel size
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -246,6 +252,9 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_ss_dynamic_ratio", "cclblock_ss_branches", "cclblock_ss_kernel_size",
     # Phase 15
     "cclblock_lokr_branches", "cclblock_lokr_rank",
+    # Phase 16
+    "cclblock_ckr_temp_start", "cclblock_ckr_temp_end",
+    "cclblock_com_kernel_size",
 }
 
 
@@ -1720,13 +1729,14 @@ class CausalKernelLinear(nn.Module):
     """
     def __init__(self, in_features, out_features, n_branches=4, kernel_size=64,
                  max_seq_len=2048, n_pos_channels=1, content_bias_scale=0.0,
-                 signal_dim=None, **_ignored):
+                 signal_dim=None, temperature=1.0, **_ignored):
         super().__init__()
         self.n_branches = n_branches
         self.in_features = in_features
         self.out_features = out_features
         self.kernel_size = kernel_size
         self.content_bias_scale = content_bias_scale
+        self.temperature = temperature  # Python float, NOT nn.Parameter (compile-safe)
         self.ln_basis = nn.Identity()  # compat
 
         # K parallel projection branches
@@ -1785,7 +1795,7 @@ class CausalKernelLinear(nn.Module):
             content_logits = ctx @ self.content_proj.to(dtype)  # (B, T, K)
             logits = logits + self.content_bias_scale * content_logits.permute(0, 2, 1)  # (B, K, T)
 
-        w = F.softmax(logits, dim=1)  # (B, K, T)
+        w = F.softmax(logits / self.temperature, dim=1)  # (B, K, T)
 
         # Parallel branch computation
         y = torch.zeros(B, T, self.out_features, device=x.device, dtype=dtype)
@@ -2046,11 +2056,6 @@ class LoKRLinear(nn.Module):
         nn.init.zeros_(self.branch_conv.weight)
         nn.init.zeros_(self.branch_conv.bias)
 
-        # Diagnostics: cached tensors (populated during forward, read post-forward)
-        self._diag_w = None
-        self._diag_base_norm = None
-        self._diag_delta_norm = None
-
     def gate_parameters(self):
         """Position signal + conv = routing side."""
         yield self.pos_signal
@@ -2090,55 +2095,106 @@ class LoKRLinear(nn.Module):
             d_k = F.linear(h_k, self.lora_up[k].to(dtype))  # (B, T, D_out)
             delta = delta + w[:, k, :].unsqueeze(-1) * d_k
 
-        # Cache tensors for diagnostics (NO .item() — would cause graph break)
-        # Diagnostics are collected lazily via collect_diagnostics() post-forward
-        self._diag_w = w.detach()
-        self._diag_base_norm = y.detach().norm(dim=-1).mean()
-        self._diag_delta_norm = delta.detach().norm(dim=-1).mean()
-
         return y + delta
 
-    def collect_diagnostics(self):
-        """Return diagnostic metrics from cached tensors (post-forward).
 
-        .item() calls happen HERE (outside torch.compile graph), not in forward().
+class CausalOutputMixer(nn.Module):
+    """Phase 16C: Causal Output Mixer (COM).
+
+    y = Linear(x) + gate(pos) ⊙ causal_depthwise_conv(Linear(x))
+
+    Fundamentally different from all previous approaches:
+    - The Linear layer is COMPLETELY UNMODIFIED (true zero friction)
+    - Position-dependent causal convolution adds sequence-level mixing
+    - Each position can selectively mix with previous positions
+    - Gate starts at 0 (zero-init bias) → pure dense baseline at init
+
+    Similar to what works in Mamba/RWKV: conv + gating on features.
+    ~0.5% parameter overhead vs CKR's 300%.
+    """
+    def __init__(self, in_features, out_features, kernel_size=32,
+                 max_seq_len=2048, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.kernel_size = kernel_size
+        self.ln_basis = nn.Identity()  # compat with setup_optimizer
+
+        # Standard dense projection (unmodified)
+        self.base = Linear(in_features, out_features, bias=True)
+
+        # Causal depthwise convolution on output features
+        # Groups = out_features → each channel convolved independently
+        self.causal_conv = nn.Conv1d(
+            out_features, out_features, kernel_size=kernel_size,
+            padding=kernel_size - 1,  # causal: trim right side
+            groups=out_features, bias=False
+        )
+        nn.init.zeros_(self.causal_conv.weight)
+
+        # Position-dependent gate: learned pos signal → per-channel gate
+        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        self.gate_conv = nn.Conv1d(
+            1, out_features, kernel_size=kernel_size,
+            padding=kernel_size - 1, bias=True
+        )
+        nn.init.zeros_(self.gate_conv.weight)
+        nn.init.constant_(self.gate_conv.bias, -3.0)  # sigmoid(-3) ≈ 0.05 → nearly off at init
+
+    def gate_parameters(self):
+        """Routing side: position signal + gate conv + causal conv."""
+        yield self.pos_signal
+        yield from self.gate_conv.parameters()
+        yield from self.causal_conv.parameters()
+
+    def non_gate_parameters(self):
+        """Feature side: base projection weights."""
+        yield from self.base.parameters()
+
+    def forward(self, x, context_state=None):
         """
-        if not hasattr(self, '_diag_w') or self._diag_w is None:
-            return {}
-        base_norm = self._diag_base_norm.item()
-        delta_norm = self._diag_delta_norm.item()
-        w = self._diag_w
-        metrics = {
-            'base_norm': base_norm,
-            'delta_norm': delta_norm,
-            'delta_ratio': delta_norm / max(base_norm, 1e-8),
-        }
-        if w is not None:
-            # Branch weight entropy: H(w) averaged over (B, T)
-            # w shape: (B, K, T) → per-position entropy H = -Σ w_k log(w_k)
-            log_w = torch.log(w.clamp(min=1e-8))
-            entropy = -(w * log_w).sum(dim=1).mean().item()  # avg over B, T
-            max_entropy = torch.log(torch.tensor(float(self.n_branches))).item()
-            metrics['branch_entropy'] = entropy
-            metrics['branch_entropy_ratio'] = entropy / max_entropy  # 1.0 = uniform
-            metrics['branch_weight_std'] = w.std(dim=2).mean().item()  # std across T
-        return metrics
+        x: (B, T, D_in). context_state ignored.
+        """
+        B, T, _ = x.shape
+        dtype = x.dtype
+
+        # Standard dense projection
+        y = self.base(x)  # (B, T, D_out)
+
+        # Causal depthwise conv on output (channels-first), cast weights to match input dtype
+        y_t = y.transpose(1, 2)  # (B, D_out, T)
+        conv_out = F.conv1d(
+            y_t, self.causal_conv.weight.to(dtype), bias=None,
+            padding=self.kernel_size - 1, groups=y_t.shape[1]
+        )[:, :, :T]  # causal trim → (B, D_out, T)
+
+        # Position-dependent gate (cast gate_conv weights to match)
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1).to(dtype)  # (B, 1, T)
+        gate = torch.sigmoid(
+            F.conv1d(sig, self.gate_conv.weight.to(dtype),
+                     self.gate_conv.bias.to(dtype),
+                     padding=self.kernel_size - 1)[:, :, :T]
+        )  # (B, D_out, T)
+
+        # Gate ⊙ conv_out → residual
+        mixed = gate * conv_out  # (B, D_out, T)
+        return y + mixed.transpose(1, 2)  # (B, T, D_out)
 
 
 class ModulationDiagnostics:
-    """Lightweight diagnostic collector for conditioning layers.
+    """Diagnostic collector for position-routed conditioning layers (CKR, LoKR).
+
+    Computes routing statistics DIRECTLY from model parameters using
+    torch.no_grad(). This is compile-safe because it runs OUTSIDE the
+    compiled forward graph — no attribute caching needed.
 
     Usage:
         diag = ModulationDiagnostics(model)
-        # During training, after forward pass:
         if step % log_every == 0:
             metrics = diag.collect()
             print(diag.format(metrics))
-        # During eval:
-        ablation = diag.eval_ablation(model, eval_batch)
     """
-    # Module types that support diagnostics
-    DIAG_TYPES = (LoKRLinear,)
+    DIAG_TYPES = (CausalKernelLinear, LoKRLinear)
 
     def __init__(self, model):
         self.model = model
@@ -2147,14 +2203,33 @@ class ModulationDiagnostics:
             if isinstance(mod, self.DIAG_TYPES):
                 self._layers.append((name, mod))
 
+    @torch.no_grad()
     def collect(self):
-        """Collect diagnostics from all conditioning layers."""
+        """Compute routing stats directly from pos_signal + branch_conv params."""
+        if not self._layers:
+            return {}
         all_metrics = {}
         for name, mod in self._layers:
-            if hasattr(mod, 'collect_diagnostics'):
-                metrics = mod.collect_diagnostics()
-                if metrics:
-                    all_metrics[name] = metrics
+            # Both CKR and LoKR have pos_signal and branch_conv
+            sig = mod.pos_signal  # (1, C_pos, T_max)
+            raw_w = mod.branch_conv(sig.to(dtype=mod.branch_conv.weight.dtype))  # (1, K, T_max)
+            temp = getattr(mod, 'temperature', 1.0)
+            w = F.softmax(raw_w.float() / temp, dim=1)  # (1, K, T)
+
+            # Branch weight entropy
+            log_w = torch.log(w.clamp(min=1e-8))
+            entropy = -(w * log_w).sum(dim=1).mean().item()
+            max_entropy = math.log(mod.n_branches)
+            entropy_ratio = entropy / max(max_entropy, 1e-8)
+
+            # Branch weight std across positions (how much routing varies by position)
+            weight_std = w.std(dim=2).mean().item()
+
+            all_metrics[name] = {
+                'branch_entropy_ratio': entropy_ratio,
+                'branch_weight_std': weight_std,
+                'temperature': temp,
+            }
         return all_metrics
 
     def format(self, metrics):
@@ -2162,45 +2237,18 @@ class ModulationDiagnostics:
         if not metrics:
             return "  [diag] no data"
         lines = ["  [modulation diagnostics]"]
-        # Aggregate across layers
-        delta_ratios = [m.get('delta_ratio', 0) for m in metrics.values()]
-        entropies = [m.get('branch_entropy_ratio', 0) for m in metrics.values()]
-        if delta_ratios:
-            lines.append(f"    delta/base ratio: mean={sum(delta_ratios)/len(delta_ratios):.4f} "
-                        f"min={min(delta_ratios):.4f} max={max(delta_ratios):.4f}")
-        if entropies and any(e > 0 for e in entropies):
-            lines.append(f"    branch entropy:   mean={sum(entropies)/len(entropies):.3f} "
-                        f"(1.0=uniform, 0.0=collapsed)")
+        entropies = [m['branch_entropy_ratio'] for m in metrics.values()]
+        weight_stds = [m['branch_weight_std'] for m in metrics.values()]
+        temps = [m['temperature'] for m in metrics.values()]
+        lines.append(f"    branch entropy:   mean={sum(entropies)/len(entropies):.3f} "
+                    f"(1.0=uniform, 0.0=collapsed)")
+        lines.append(f"    position std:     mean={sum(weight_stds)/len(weight_stds):.4f} "
+                    f"(higher=more position-dependent)")
+        if any(t != 1.0 for t in temps):
+            lines.append(f"    temperature:      {temps[0]:.3f}")
         return "\n".join(lines)
 
-    @torch.no_grad()
-    def eval_ablation(self, model, x, targets):
-        """Compare loss with conditioning ON vs OFF.
 
-        Returns (loss_with, loss_without, delta).
-        """
-        model.eval()
-        # Loss with conditioning (normal)
-        loss_with = model(x, targets).item()
-
-        # Temporarily zero out conditioning
-        saved = {}
-        for name, mod in self._layers:
-            if isinstance(mod, LoKRLinear):
-                saved[name] = [v.data.clone() for v in mod.lora_down]
-                for v in mod.lora_down:
-                    v.data.zero_()
-
-        loss_without = model(x, targets).item()
-
-        # Restore
-        for name, mod in self._layers:
-            if name in saved:
-                for v, s in zip(mod.lora_down, saved[name]):
-                    v.data.copy_(s)
-
-        model.train()
-        return loss_with, loss_without, loss_with - loss_without
 
 
 class ResidualAdaptiveLinear(nn.Module):
@@ -2282,13 +2330,18 @@ class RemixedFeedForward(nn.Module):
             d_rank = getattr(config, 'cclblock_aesp_delta_rank', 4)
             self.c_fc   = AttentionEntropyStratifiedLinear(config.n_embd, 4 * config.n_embd, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(4 * config.n_embd, config.n_embd, n_strata=n_str, delta_rank=d_rank)
-        elif mode == 'ckr':
+        elif mode == 'ckr' or mode == 'ckr_ffn':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
             n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
             cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
-            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
-            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
+            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)  # 16A: anneal support
+            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd, temperature=temp)
+            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd, temperature=temp)
+        elif mode == 'com':
+            com_ks = getattr(config, 'cclblock_com_kernel_size', 32)
+            self.c_fc   = CausalOutputMixer(config.n_embd, 4 * config.n_embd, kernel_size=com_ks, max_seq_len=config.sequence_len)
+            self.c_proj = CausalOutputMixer(4 * config.n_embd, config.n_embd, kernel_size=com_ks, max_seq_len=config.sequence_len)
         elif mode == 'giad':
             giad_rank = getattr(config, 'cclblock_giad_rank', 32)
             self.c_fc   = GradientIsolatedDeltaLinear(config.n_embd, 4 * config.n_embd, delta_rank=giad_rank)
@@ -2385,10 +2438,23 @@ class RemixedMultiAttention(nn.Module):
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
             n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
             cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
-            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
-            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
-            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
-            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
+            temp = getattr(config, 'cclblock_ckr_temp_start', 1.0)  # 16A: anneal support
+            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
+            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
+            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
+            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd, temperature=temp)
+        elif mode == 'ckr_ffn':
+            # 16B: Plain Linear for attention (CKR only on FFN)
+            self.c_q    = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
+            self.c_k    = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+            self.c_v    = Linear(self.n_embd, self.n_kv_head * self.v_head_dim, bias=False)
+            self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        elif mode == 'com':
+            com_ks = getattr(config, 'cclblock_com_kernel_size', 32)
+            self.c_q    = CausalOutputMixer(self.n_embd, self.n_head * self.head_dim, kernel_size=com_ks, max_seq_len=config.sequence_len)
+            self.c_k    = CausalOutputMixer(self.n_embd, self.n_kv_head * self.head_dim, kernel_size=com_ks, max_seq_len=config.sequence_len)
+            self.c_v    = CausalOutputMixer(self.n_embd, self.n_kv_head * self.v_head_dim, kernel_size=com_ks, max_seq_len=config.sequence_len)
+            self.c_proj = CausalOutputMixer(self.n_embd, self.n_embd, kernel_size=com_ks, max_seq_len=config.sequence_len)
         elif mode == 'giad':
             giad_rank = getattr(config, 'cclblock_giad_rank', 32)
             self.c_q    = GradientIsolatedDeltaLinear(self.n_embd, self.n_head * self.head_dim, delta_rank=giad_rank)
@@ -2453,12 +2519,19 @@ class RemixedMultiAttention(nn.Module):
             self.c_v    = RemixedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
             self.c_proj = RemixedLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self._attn_mode = mode  # store for forward dispatch
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
         B, T, C = x.size()
-        q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
-        v_full = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.v_head_dim)
+        if self._attn_mode == 'ckr_ffn':
+            # Plain Linear for attention — no context_state
+            q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
+            k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
+            v_full = self.c_v(x).view(B, T, self.n_kv_head, self.v_head_dim)
+        else:
+            q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
+            k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
+            v_full = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.v_head_dim)
         v = v_full[..., :self.head_dim]
 
         if ve is not None:
@@ -2486,6 +2559,8 @@ class RemixedMultiAttention(nn.Module):
                 kv_cache.advance(T)
 
         y = y.contiguous().view(B, T, -1)
+        if self._attn_mode == 'ckr_ffn':
+            return self.c_proj(y)
         return self.c_proj(y, context_state)
 
     def forward_with_shadow(self, x, ve, cos_sin, window_size, kv_cache, context_state):
@@ -2675,9 +2750,9 @@ class RemixedBlock(nn.Module):
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
-        # FSI/AESP/CKR bypass: these modes don't use context streams at all.
+        # FSI/AESP/CKR/COM bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream', 'lokr'):
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr'):
             # Run attention with attn_out.detach() as the context signal
             # For attention projections: no context needed on the first pass (Q/K/V are computed
             # without context, since the routing signal comes from attention itself)

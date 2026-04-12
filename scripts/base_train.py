@@ -149,6 +149,10 @@ parser.add_argument("--cclblock-ss-kernel-size", type=int, default=64, help="Spl
 # Phase 15: LoKR + diagnostics
 parser.add_argument("--cclblock-lokr-branches", type=int, default=8, help="LoKR: number of low-rank perturbation branches")
 parser.add_argument("--cclblock-lokr-rank", type=int, default=16, help="LoKR: rank of each perturbation")
+# Phase 16: CKR-Anneal / COM
+parser.add_argument("--cclblock-ckr-temp-start", type=float, default=2.0, help="CKR-Anneal: initial softmax temperature")
+parser.add_argument("--cclblock-ckr-temp-end", type=float, default=0.3, help="CKR-Anneal: final softmax temperature")
+parser.add_argument("--cclblock-com-kernel-size", type=int, default=32, help="COM: causal output mixer kernel size")
 parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1], help="enable modulation layer diagnostics logging")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
@@ -887,6 +891,17 @@ while True:
         for module in orig_model.modules():
             if hasattr(module, 'temperature') and isinstance(getattr(module, 'temperature'), torch.Tensor):
                 module.temperature.fill_(perm_temp)
+    # Phase 16A: CKR temperature annealing (exponential: temp_start → temp_end)
+    if getattr(args, 'cclblock_modulation', '') in ('ckr', 'ckr_ffn'):
+        temp_start = getattr(args, 'cclblock_ckr_temp_start', 1.0)
+        temp_end = getattr(args, 'cclblock_ckr_temp_end', 1.0)
+        if temp_start != temp_end and num_iterations > 1:
+            progress = min(step / (num_iterations - 1), 1.0)
+            current_temp = temp_start * (temp_end / temp_start) ** progress
+            from nanochat.gpt import CausalKernelLinear
+            for module in orig_model.modules():
+                if isinstance(module, CausalKernelLinear):
+                    module.temperature = current_temp
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()
