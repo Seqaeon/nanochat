@@ -402,12 +402,18 @@ print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
 model.init_weights() # 3) All tensors get initialized
 
-# Phase 15: Initialize modulation diagnostics if enabled
+# Phase 17: Auto-enable modulation diagnostics for any research model
+# (always on for research, no need for --modulation-diagnostics flag)
 mod_diag = None
-if getattr(args, 'modulation_diagnostics', 0):
+diag_metrics = None  # Track last-collected metrics for wandb logging
+if args.use_remix_linear:
     from nanochat.gpt import ModulationDiagnostics
     mod_diag = ModulationDiagnostics(model)
-    print0(f"Modulation diagnostics enabled: tracking {len(mod_diag._layers)} conditioning layers")
+    if mod_diag._layers:
+        print0(f"Modulation diagnostics enabled: tracking {len(mod_diag._layers)} conditioning layers")
+    else:
+        print0(f"Modulation diagnostics: no position-conditioned layers found (mode={args.cclblock_modulation})")
+        mod_diag = None
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
@@ -947,7 +953,7 @@ while True:
     lr_msg = f"lr(adamw:{(sum(adamw_lrs)/len(adamw_lrs)) if adamw_lrs else 0:.3e}, muon:{(sum(muon_lrs)/len(muon_lrs)) if muon_lrs else 0:.3e})"
     if step % args.log_every == 0 or step == num_iterations - 1 or last_step:
         print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | {lr_msg} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
-        # Phase 15: Modulation diagnostics at log intervals
+        # Phase 17: Modulation diagnostics at log intervals
         if mod_diag is not None:
             diag_metrics = mod_diag.collect()
             if diag_metrics:
@@ -955,6 +961,8 @@ while True:
                 if master_process:
                     diag_file = os.path.join(checkpoint_dir, "modulation_diagnostics.jsonl")
                     mod_diag.save_to_file(diag_metrics, step, diag_file)
+            else:
+                diag_metrics = None
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -968,7 +976,7 @@ while True:
             "train/epoch": epoch,
         }
         # Add modulation diagnostics to wandb if available
-        if mod_diag is not None and diag_metrics:
+        if mod_diag is not None and diag_metrics is not None:
             log_data.update(mod_diag.to_dict(diag_metrics))
         wandb_run.log(log_data)
 

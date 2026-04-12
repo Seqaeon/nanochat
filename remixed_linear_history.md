@@ -464,3 +464,78 @@ PRB (position-dependent bias, no weight change) degraded, confirming CKR's value
 17A (CKR-Anneal), 17B (CKR-FFN), 17D (CKR-OrthoInit), 17E (CKR-BranchDrop) all need re-running.
 17F (Layer-Selective), 17G (Weight-Shared), 17H (Diversity Loss) are not yet implemented.
 
+---
+
+### Phase 17 Round 2 Results (post-NaN fix)
+
+All CKR variants now run without NaN. But the results are universally negative:
+
+| Variant | Loss delta vs dense baseline | Status |
+|---|---|---|
+| 17A: CKR-Anneal (temp 2.0→0.3) | +0.20 degradation | ❌ |
+| 17B: CKR-FFN-Only | +0.08 degradation | ❌ |
+| 17D: CKR + Ortho Init | +0.20 degradation | ❌ |
+| 17E: CKR + Branch Dropout | +0.20 degradation | ❌ |
+
+**WARNING: CKR's original +0.02 may not be reproducible.** All CKR variants are now WORSE than baseline. The original +0.02 from Phase 13 may have been noise.
+
+### Critical Re-Evaluation
+
+After 17 phases: ~170 experiments, ZERO reliably positive results. Possible explanations:
+1. **Baseline already well-optimized** — Muon + fp8 + QK-norm + value residuals near efficiency frontier
+2. **Parameter overhead ≠ capacity** — Extra params fit routing mechanics, not better representations
+3. **Position conditioning solving a non-problem** — RoPE already provides sufficient position info
+4. **Gradient interference** — ANY modification disrupts Muon + μP + compile gradient flow
+5. **Scale dependence** — Ideas might only help at larger scale where baseline plateaus
+
+### Diagnostic fix
+
+ModulationDiagnostics rewritten: supports ALL module types, auto-enabled for research models, saves per-layer JSONL. No more `--modulation-diagnostics 1` needed.
+
+---
+
+## Phase 18 Proposals: Beyond CKR — Fundamentally Different Approaches
+
+CKR is exhausted. Phase 18 explores completely different hypotheses about what could actually help.
+
+### Core question: what are the real bottlenecks at this scale?
+
+1. Parameter efficiency — more computation from fewer params
+2. Representation diversity — preventing redundant head/channel features
+3. Training dynamics — improving HOW it trains, not WHAT it computes
+4. Structural inductive bias — useful structure without adding params
+
+### Proposed experiments (10 ideas):
+
+#### 18A: Adaptive ReLU² Gate (ARG)
+y = W·x · g(x) where g(x) = sigmoid(w·x + b) per output channel. CONTENT-dependent, not position. g starts at 1.0. ~0.01% overhead.
+Hypothesis: An adaptive input-dependent gate lets the model learn when to attenuate/amplify specific output channels.
+
+#### 18B: Spectral Normalization + Gradient Penalty (SNGP)
+No architecture change. Regularizes Lipschitz constant via spectral norm + gradient penalty.
+Hypothesis: ALL experiments degrade because of gradient instability, not bad architecture.
+
+#### 18C: Kronecker-Factored Linear (KFL)
+Replace W·x with (A ⊗ B)·x. FEWER parameters than dense. Tests if baseline is over-parameterized.
+
+#### 18D: Shared-Basis Multi-Head Attention (SBMHA)
+All heads share one K/V projection, independent Q only. More aggressive than GQA.
+
+#### 18E: Stochastic Depth (LayerDrop)
+Randomly skip FFN blocks with probability p during training. Scale at eval by (1-p). Pure regularization.
+
+#### 18F: Per-Channel Learning Rates (PCLR)
+Each output channel gets its own learned LR multiplier. No architecture changes.
+
+#### 18G: Auxiliary Representation Similarity Loss (ARSL)
+Penalty for high cosine similarity between adjacent layers: L_sim = lambda * sum cos_sim(h_l, h_l+1).
+
+#### 18H: Mixture of Norms (MoN)
+norm(x) = w1*RMSNorm(x) + w2*LayerNorm(x) with learned w1, w2. Minimal overhead.
+
+#### 18I: Dynamic Activation Function (DAF)
+f(x) = alpha*ReLU²(x) + beta*GELU(x) + gamma*SiLU(x) with per-layer learned scalars. ~3 params per layer.
+
+#### 18J: Causal Attention Score Bias (CASB)
+Learned lower-triangular bias B in attention: attn = softmax(QK^T/sqrt(d) + B). Like learned ALiBi.
+

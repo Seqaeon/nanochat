@@ -2370,19 +2370,26 @@ class PositionalResidualBias(nn.Module):
 
 
 class ModulationDiagnostics:
-    """Diagnostic collector for position-routed conditioning layers (CKR, LoKR).
+    """Universal diagnostic collector for ALL position-conditioned linear modules.
 
-    Computes routing statistics DIRECTLY from model parameters using
-    torch.no_grad(). This is compile-safe because it runs OUTSIDE the
-    compiled forward graph — no attribute caching needed.
+    Supports: CKR, LoKR, PGR, CIL, PRB, COM, PSG, and any future module
+    with pos_signal or similar position-dependent routing.
 
-    Usage:
-        diag = ModulationDiagnostics(model)
-        if step % log_every == 0:
-            metrics = diag.collect()
-            print(diag.format(metrics))
+    Computes diagnostics DIRECTLY from model parameters using torch.no_grad().
+    This is compile-safe because it runs OUTSIDE the compiled forward graph.
+
+    Key diagnostics:
+    - branch_entropy: how uniform the routing is (1.0=uniform, 0.0=collapsed)
+    - position_std: how much routing varies by position (0=static, high=dynamic)
+    - gate_magnitude: average gate value (for gated architectures like PGR/PRB)
+    - weight_divergence: how different branch weights are from each other
+    - grad_norm: gradient norm of position signal (learning signal strength)
+    - temperature: current softmax temperature (CKR only)
     """
-    DIAG_TYPES = (CausalKernelLinear, LoKRLinear)
+    # All module types we can diagnose
+    DIAG_TYPES = (CausalKernelLinear, LoKRLinear, PositionGatedResidual,
+                  CausalInterpolationLinear, PositionalResidualBias,
+                  CausalOutputMixer, PositionalScalarGatedLinear)
 
     def __init__(self, model):
         self.model = model
@@ -2392,76 +2399,198 @@ class ModulationDiagnostics:
                 self._layers.append((name, mod))
 
     @torch.no_grad()
+    def _collect_branch_routing(self, mod):
+        """Collect branch routing stats for modules with pos_signal + branch_conv (CKR, LoKR)."""
+        sig = mod.pos_signal  # (1, C_pos, T_max)
+        raw_w = mod.branch_conv(sig.to(dtype=mod.branch_conv.weight.dtype))  # (1, K, T_max)
+        temp = 1.0
+        if hasattr(mod, '_temperature'):
+            temp = mod._temperature.item()
+        w = F.softmax(raw_w.float() / max(temp, 1e-8), dim=1)  # (1, K, T)
+
+        # Branch weight entropy (normalized)
+        log_w = torch.log(w.clamp(min=1e-8))
+        entropy = -(w * log_w).sum(dim=1).mean().item()
+        max_entropy = math.log(mod.n_branches)
+        entropy_ratio = entropy / max(max_entropy, 1e-8)
+
+        # Position variance (how much routing varies across positions)
+        weight_std = w.std(dim=2).mean().item()
+
+        # Weight divergence: mean pairwise cosine distance between branch weights
+        weight_div = 0.0
+        if hasattr(mod, 'branches'):
+            norms = []
+            for b in mod.branches:
+                norms.append(b.weight.float().reshape(-1))
+            if len(norms) >= 2:
+                cos_sims = []
+                for i in range(len(norms)):
+                    for j in range(i+1, len(norms)):
+                        cos = F.cosine_similarity(norms[i].unsqueeze(0), norms[j].unsqueeze(0)).item()
+                        cos_sims.append(cos)
+                weight_div = 1.0 - (sum(cos_sims) / len(cos_sims))  # 0=identical, 1=orthogonal
+
+        return {
+            'type': type(mod).__name__,
+            'entropy_ratio': entropy_ratio,
+            'position_std': weight_std,
+            'temperature': temp,
+            'weight_divergence': weight_div,
+            'pos_signal_norm': sig.float().norm().item(),
+            'pos_signal_grad_norm': sig.grad.float().norm().item() if sig.grad is not None else 0.0,
+        }
+
+    @torch.no_grad()
+    def _collect_gate_stats(self, mod):
+        """Collect gate stats for modules with a scalar position gate (PGR, CIL, PRB, COM, PSG)."""
+        sig = mod.pos_signal  # (1, 1, T_max)
+        # Determine gate conv
+        if isinstance(mod, PositionGatedResidual):
+            conv = mod.gate_conv
+            gate_name = 'position_gate'
+        elif isinstance(mod, CausalInterpolationLinear):
+            conv = mod.alpha_conv
+            gate_name = 'alpha'
+        elif isinstance(mod, PositionalResidualBias):
+            conv = mod.bias_conv
+            gate_name = 'bias_magnitude'
+        elif isinstance(mod, CausalOutputMixer):
+            conv = mod.gate_conv
+            gate_name = 'com_gate'
+        elif isinstance(mod, PositionalScalarGatedLinear):
+            conv = mod.gate_conv if hasattr(mod, 'gate_conv') else None
+            gate_name = 'psg_gate'
+        else:
+            return {'type': type(mod).__name__, 'error': 'unknown_gate_type'}
+
+        if conv is None:
+            return {'type': type(mod).__name__, 'error': 'no_conv'}
+
+        raw = conv(sig.to(dtype=conv.weight.dtype))  # (1, C_out, T_max)
+        gate_vals = torch.sigmoid(raw.float())
+
+        # For PRB, the "gate" is the bias magnitude, not sigmoid
+        if isinstance(mod, PositionalResidualBias):
+            gate_vals = raw.float()
+
+        result = {
+            'type': type(mod).__name__,
+            'gate_name': gate_name,
+            'gate_mean': gate_vals.mean().item(),
+            'gate_std': gate_vals.std().item(),
+            'gate_min': gate_vals.min().item(),
+            'gate_max': gate_vals.max().item(),
+            'pos_signal_norm': sig.float().norm().item(),
+            'pos_signal_grad_norm': sig.grad.float().norm().item() if sig.grad is not None else 0.0,
+        }
+
+        # Weight divergence for PGR (base vs delta)
+        if isinstance(mod, PositionGatedResidual):
+            base_w = mod.base.weight.float().reshape(-1)
+            delta_w = mod.delta.weight.float().reshape(-1)
+            delta_norm = delta_w.norm().item()
+            base_norm = base_w.norm().item()
+            result['delta_to_base_ratio'] = delta_norm / max(base_norm, 1e-8)
+
+        # Weight divergence for CIL (w0 vs w1)
+        if isinstance(mod, CausalInterpolationLinear):
+            w0 = mod.weight_0.float().reshape(-1)
+            w1 = mod.weight_1.float().reshape(-1)
+            cos = F.cosine_similarity(w0.unsqueeze(0), w1.unsqueeze(0)).item()
+            result['weight_cosine_sim'] = cos
+            result['weight_divergence'] = 1.0 - cos
+
+        return result
+
+    @torch.no_grad()
     def collect(self):
-        """Compute routing stats directly from pos_signal + branch_conv params."""
+        """Compute diagnostics for all tracked layers."""
         if not self._layers:
             return {}
         all_metrics = {}
         for name, mod in self._layers:
-            # Both CKR and LoKR have pos_signal and branch_conv
-            sig = mod.pos_signal  # (1, C_pos, T_max)
-            raw_w = mod.branch_conv(sig.to(dtype=mod.branch_conv.weight.dtype))  # (1, K, T_max)
-            temp = getattr(mod, 'temperature', 1.0)
-            w = F.softmax(raw_w.float() / temp, dim=1)  # (1, K, T)
-
-            # Branch weight entropy
-            log_w = torch.log(w.clamp(min=1e-8))
-            entropy = -(w * log_w).sum(dim=1).mean().item()
-            max_entropy = math.log(mod.n_branches)
-            entropy_ratio = entropy / max(max_entropy, 1e-8)
-
-            # Branch weight std across positions (how much routing varies by position)
-            weight_std = w.std(dim=2).mean().item()
-
-            # Read temperature from buffer (CKR) or default 1.0 (LoKR)
-            if hasattr(mod, '_temperature'):
-                temp = mod._temperature.item()
+            if isinstance(mod, (CausalKernelLinear, LoKRLinear)):
+                all_metrics[name] = self._collect_branch_routing(mod)
             else:
-                temp = 1.0
-
-            all_metrics[name] = {
-                'branch_entropy_ratio': entropy_ratio,
-                'branch_weight_std': weight_std,
-                'temperature': temp,
-            }
+                all_metrics[name] = self._collect_gate_stats(mod)
         return all_metrics
 
     def format(self, metrics):
         """Format diagnostics as a compact log string."""
         if not metrics:
-            return "  [diag] no data"
+            return "  [diag] no conditioning layers found"
         lines = ["  [modulation diagnostics]"]
-        entropies = [m['branch_entropy_ratio'] for m in metrics.values()]
-        weight_stds = [m['branch_weight_std'] for m in metrics.values()]
-        temps = [m['temperature'] for m in metrics.values()]
-        lines.append(f"    branch entropy:   mean={sum(entropies)/len(entropies):.3f} "
-                    f"(1.0=uniform, 0.0=collapsed)")
-        lines.append(f"    position std:     mean={sum(weight_stds)/len(weight_stds):.4f} "
-                    f"(higher=more position-dependent)")
-        if any(t != 1.0 for t in temps):
-            lines.append(f"    temperature:      {temps[0]:.3f}")
+        # Group by module type
+        by_type = {}
+        for name, m in metrics.items():
+            t = m.get('type', 'unknown')
+            by_type.setdefault(t, []).append(m)
+
+        for mod_type, mods in by_type.items():
+            lines.append(f"    {mod_type} ({len(mods)} layers):")
+            if 'entropy_ratio' in mods[0]:
+                ent = sum(m['entropy_ratio'] for m in mods) / len(mods)
+                pstd = sum(m['position_std'] for m in mods) / len(mods)
+                wdiv = sum(m.get('weight_divergence', 0) for m in mods) / len(mods)
+                gnorm = sum(m.get('pos_signal_grad_norm', 0) for m in mods) / len(mods)
+                lines.append(f"      entropy={ent:.3f}  pos_std={pstd:.4f}  "
+                           f"wt_div={wdiv:.3f}  grad_norm={gnorm:.4f}")
+                if any(m.get('temperature', 1.0) != 1.0 for m in mods):
+                    lines.append(f"      temperature={mods[0]['temperature']:.3f}")
+            elif 'gate_mean' in mods[0]:
+                gm = sum(m['gate_mean'] for m in mods) / len(mods)
+                gs = sum(m['gate_std'] for m in mods) / len(mods)
+                gnorm = sum(m.get('pos_signal_grad_norm', 0) for m in mods) / len(mods)
+                lines.append(f"      gate_mean={gm:.4f}  gate_std={gs:.4f}  "
+                           f"grad_norm={gnorm:.4f}")
+                if any('delta_to_base_ratio' in m for m in mods):
+                    ratio = sum(m.get('delta_to_base_ratio', 0) for m in mods) / len(mods)
+                    lines.append(f"      delta/base_ratio={ratio:.4f}")
+                if any('weight_divergence' in m for m in mods):
+                    wdiv = sum(m.get('weight_divergence', 0) for m in mods) / len(mods)
+                    lines.append(f"      weight_divergence={wdiv:.4f}")
         return "\n".join(lines)
 
     def to_dict(self, metrics):
         """Flatten metrics into a single dict for wandb/logging."""
         if not metrics:
             return {}
-        entropies = [m['branch_entropy_ratio'] for m in metrics.values()]
-        weight_stds = [m['branch_weight_std'] for m in metrics.values()]
-        temps = [m['temperature'] for m in metrics.values()]
-        return {
-            'diag/branch_entropy': sum(entropies) / len(entropies),
-            'diag/position_std': sum(weight_stds) / len(weight_stds),
-            'diag/temperature': temps[0] if temps else 1.0,
-        }
+        result = {}
+        # Compute means across all layers
+        all_vals = list(metrics.values())
+        if 'entropy_ratio' in all_vals[0]:
+            result['diag/branch_entropy'] = sum(m['entropy_ratio'] for m in all_vals) / len(all_vals)
+            result['diag/position_std'] = sum(m['position_std'] for m in all_vals) / len(all_vals)
+            result['diag/weight_divergence'] = sum(m.get('weight_divergence', 0) for m in all_vals) / len(all_vals)
+            result['diag/temperature'] = all_vals[0].get('temperature', 1.0)
+        if 'gate_mean' in all_vals[0]:
+            result['diag/gate_mean'] = sum(m['gate_mean'] for m in all_vals) / len(all_vals)
+            result['diag/gate_std'] = sum(m['gate_std'] for m in all_vals) / len(all_vals)
+        result['diag/pos_signal_grad_norm'] = sum(m.get('pos_signal_grad_norm', 0) for m in all_vals) / len(all_vals)
+        result['diag/pos_signal_norm'] = sum(m.get('pos_signal_norm', 0) for m in all_vals) / len(all_vals)
+        if any('delta_to_base_ratio' in m for m in all_vals):
+            result['diag/delta_to_base_ratio'] = sum(m.get('delta_to_base_ratio', 0) for m in all_vals) / len(all_vals)
+        if any('weight_divergence' in m for m in all_vals):
+            result['diag/weight_divergence'] = sum(m.get('weight_divergence', 0) for m in all_vals) / len(all_vals)
+        return result
 
     def save_to_file(self, metrics, step, filepath):
         """Append metrics as JSONL to a file."""
-        import json
+        import json, os
         if not metrics:
             return
         flat = self.to_dict(metrics)
         flat['step'] = step
+        # Also save per-layer breakdown for first 4 layers
+        for i, (name, m) in enumerate(metrics.items()):
+            if i >= 4:
+                break
+            prefix = f"layer_{i}"
+            for k, v in m.items():
+                if isinstance(v, (int, float)):
+                    flat[f"{prefix}/{k}"] = v
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'a', encoding='utf-8') as f:
             f.write(json.dumps(flat) + '\n')
 
