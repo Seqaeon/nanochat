@@ -220,7 +220,14 @@ class GPTConfig:
     cclblock_pgr_kernel_size: int = 64        # 17C: PGR causal conv kernel size
     cclblock_cil_kernel_size: int = 64        # 17I: CIL causal conv kernel size
     cclblock_prb_kernel_size: int = 64        # 17J: PRB causal conv kernel size
-
+    # Phase 18: Beyond CKR — orthogonal improvements
+    p18_layer_drop: float = 0.0               # 18E: stochastic depth drop probability
+    p18_dynamic_activation: int = 0           # 18I: learned activation mix (0/1)
+    p18_mixture_norm: int = 0                 # 18H: RMSNorm+LayerNorm mixture (0/1)
+    p18_causal_attn_bias: int = 0             # 18J: learned causal attention score bias (0/1)
+    p18_aux_sim_lambda: float = 0.0           # 18G: layer similarity penalty weight
+    p18_gradient_penalty: float = 0.0         # 18B: gradient penalty weight
+    p18_per_channel_scale: int = 0            # 18F: learnable per-channel output scale (0/1)
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
@@ -2369,6 +2376,190 @@ class PositionalResidualBias(nn.Module):
         return y + bias.permute(0, 2, 1)  # (B, T, out)
 
 
+# ============================================================================
+# Phase 18: Beyond CKR — Fundamentally Different Approaches
+# ============================================================================
+
+class AdaptiveGatedLinear(nn.Module):
+    """Phase 18A: Adaptive ReLU² Gate (ARG).
+
+    y = W·x · g(x)  where g(x) = sigmoid(w_g·x + b_g) per output channel.
+
+    Content-dependent (NOT position), minimal overhead (~D_out params).
+    g starts at 1.0 (bias=+5 → sigmoid(5) ≈ 0.993).
+    """
+    def __init__(self, in_features, out_features, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.ln_basis = nn.Identity()
+        self.base = Linear(in_features, out_features, bias=True)
+        # Gate: content-dependent per-channel gate
+        self.gate_w = nn.Parameter(torch.zeros(out_features, in_features))
+        self.gate_b = nn.Parameter(torch.full((out_features,), 5.0))  # sigmoid(5)≈0.993
+
+    def gate_parameters(self):
+        yield self.gate_w
+        yield self.gate_b
+
+    def non_gate_parameters(self):
+        yield from self.base.parameters()
+
+    def forward(self, x, context_state=None):
+        dtype = x.dtype
+        y = self.base(x)  # (B, T, out)
+        gate_logits = F.linear(x, self.gate_w.to(dtype), self.gate_b.to(dtype))  # (B, T, out)
+        gate = torch.sigmoid(gate_logits)
+        return y * gate
+
+
+class KroneckerLinear(nn.Module):
+    """Phase 18C: Kronecker-Factored Linear (KFL).
+
+    W = A ⊗ B where A is (d1, d1') and B is (d2, d2').
+    d1*d2 = D_out, d1'*d2' = D_in.
+
+    FEWER parameters than dense: d1² + d2² vs (d1*d2)².
+    Computation: reshape x to (..., d2', d1'), multiply by B left and A right, reshape.
+    """
+    def __init__(self, in_features, out_features, **_ignored):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.ln_basis = nn.Identity()
+        # Find factorization closest to sqrt
+        d2_in = self._find_factor(in_features)
+        d1_in = in_features // d2_in
+        d2_out = self._find_factor(out_features)
+        d1_out = out_features // d2_out
+        self.d1_in, self.d2_in = d1_in, d2_in
+        self.d1_out, self.d2_out = d1_out, d2_out
+        self.A = nn.Parameter(torch.empty(d1_out, d1_in))
+        self.B = nn.Parameter(torch.empty(d2_out, d2_in))
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        # Kronecker init: effective weight is A⊗B, so var(AB) = var(A)*var(B).
+        # Target var = 2/fan_in. So each factor gets var = sqrt(2/fan_in).
+        target_std = math.sqrt(math.sqrt(2.0 / in_features))
+        nn.init.normal_(self.A, std=target_std)
+        nn.init.normal_(self.B, std=target_std)
+
+    @staticmethod
+    def _find_factor(n):
+        """Find factor of n closest to sqrt(n)."""
+        s = int(math.sqrt(n))
+        for i in range(s, 0, -1):
+            if n % i == 0:
+                return i
+        return 1
+
+    def gate_parameters(self):
+        return iter([])
+
+    def non_gate_parameters(self):
+        yield self.A
+        yield self.B
+        yield self.bias
+
+    def forward(self, x, context_state=None):
+        B, T, _ = x.shape
+        dtype = x.dtype
+        # Reshape: (B, T, d2_in, d1_in)
+        x_r = x.view(B, T, self.d2_in, self.d1_in)
+        # B @ x_r → (B, T, d2_out, d1_in)
+        y = torch.matmul(self.B.to(dtype), x_r)
+        # y @ A^T → (B, T, d2_out, d1_out)
+        y = torch.matmul(y, self.A.to(dtype).t())
+        # Reshape back: (B, T, d2_out * d1_out)
+        y = y.reshape(B, T, self.out_features)
+        return y + self.bias.to(dtype)
+
+
+class MixtureNorm(nn.Module):
+    """Phase 18H: Mixture of Norms.
+
+    norm(x) = w₁·RMSNorm(x) + w₂·LayerNorm(x)
+
+    Learned mixture lets model keep magnitude info where useful.
+    Starts at pure RMSNorm (w₁=1, w₂=0).
+    """
+    def __init__(self, n_embd):
+        super().__init__()
+        self.rms = nn.RMSNorm(n_embd)
+        self.ln = nn.LayerNorm(n_embd, elementwise_affine=False)
+        self.w1 = nn.Parameter(torch.tensor(1.0))  # RMSNorm weight
+        self.w2 = nn.Parameter(torch.tensor(0.0))  # LayerNorm weight (starts off)
+
+    def forward(self, x):
+        return self.w1 * self.rms(x) + self.w2 * self.ln(x)
+
+
+class DynamicActivation(nn.Module):
+    """Phase 18I: Dynamic Activation Function.
+
+    f(x) = α·ReLU²(x) + β·GELU(x) + γ·SiLU(x)
+
+    Per-layer learned scalars. ~3 params per layer. Starts as pure ReLU².
+    """
+    def __init__(self):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.tensor(1.0))  # ReLU² weight
+        self.beta = nn.Parameter(torch.tensor(0.0))   # GELU weight
+        self.gamma = nn.Parameter(torch.tensor(0.0))  # SiLU weight
+
+    def forward(self, x):
+        return (self.alpha * F.relu(x).square()
+                + self.beta * F.gelu(x)
+                + self.gamma * F.silu(x))
+
+
+class CausalAttnBias(nn.Module):
+    """Phase 18J: Causal Attention Score Bias.
+
+    Learned lower-triangular bias added to attention scores before softmax.
+    Uses a factored representation: bias(i,j) = f(i-j) where f is a learned
+    function of relative distance, stored as a 1D vector of max_dist values.
+
+    Much cheaper than a full T×T matrix, and generalizes better.
+    """
+    def __init__(self, n_head, max_dist=2048):
+        super().__init__()
+        self.n_head = n_head
+        self.max_dist = max_dist
+        # Per-head learned bias as function of relative distance
+        # Shape: (n_head, max_dist) — bias for distance 0, 1, 2, ...
+        self.rel_bias = nn.Parameter(torch.zeros(n_head, max_dist))
+
+    def get_bias(self, T, device):
+        """Return (1, n_head, T, T) lower-triangular bias matrix."""
+        # Create relative distance matrix
+        pos = torch.arange(T, device=device)
+        dist = pos.unsqueeze(0) - pos.unsqueeze(1)  # (T, T), negative = future
+        dist = dist.clamp(min=0, max=self.max_dist - 1)  # causal: only past
+        # Mask future positions
+        causal_mask = (pos.unsqueeze(0) - pos.unsqueeze(1)) >= 0  # (T, T)
+        # Look up bias values
+        bias = self.rel_bias[:, dist]  # (n_head, T, T)
+        bias = bias * causal_mask.unsqueeze(0).float()
+        return bias.unsqueeze(0)  # (1, n_head, T, T)
+
+
+class PerChannelScale(nn.Module):
+    """Phase 18F: Per-Channel Learnable Scale.
+
+    Applied after a linear layer: y = Linear(x) * scale
+    where scale is a per-channel learned parameter initialized to 1.0.
+
+    Achieves similar effect to per-channel LR: channels that don't contribute
+    have their scale shrink, effectively reducing their influence.
+    """
+    def __init__(self, n_features):
+        super().__init__()
+        self.scale = nn.Parameter(torch.ones(n_features))
+
+    def forward(self, x):
+        return x * self.scale.to(x.dtype)
+
+
 class ModulationDiagnostics:
     """Universal diagnostic collector for ALL position-conditioned linear modules.
 
@@ -2389,7 +2580,10 @@ class ModulationDiagnostics:
     # All module types we can diagnose
     DIAG_TYPES = (CausalKernelLinear, LoKRLinear, PositionGatedResidual,
                   CausalInterpolationLinear, PositionalResidualBias,
-                  CausalOutputMixer, PositionalScalarGatedLinear)
+                  CausalOutputMixer, PositionalScalarGatedLinear,
+                  AdaptiveGatedLinear, KroneckerLinear)  # Phase 18
+    # Phase 18 types diagnosed from model-level (not per-layer module)
+    P18_TYPES = (DynamicActivation, MixtureNorm, PerChannelScale)
 
     def __init__(self, model):
         self.model = model
@@ -2397,6 +2591,11 @@ class ModulationDiagnostics:
         for name, mod in model.named_modules():
             if isinstance(mod, self.DIAG_TYPES):
                 self._layers.append((name, mod))
+        # Phase 18: Also track P18 modules
+        self._p18_layers = []
+        for name, mod in model.named_modules():
+            if isinstance(mod, self.P18_TYPES):
+                self._p18_layers.append((name, mod))
 
     @torch.no_grad()
     def _collect_branch_routing(self, mod):
@@ -2504,16 +2703,67 @@ class ModulationDiagnostics:
         return result
 
     @torch.no_grad()
+    def _collect_p18_stats(self, mod):
+        """Collect stats for Phase 18 modules (DynamicActivation, MixtureNorm, PerChannelScale)."""
+        result = {'type': type(mod).__name__}
+        if isinstance(mod, DynamicActivation):
+            result['alpha'] = mod.alpha.item()
+            result['beta'] = mod.beta.item()
+            result['gamma'] = mod.gamma.item()
+        elif isinstance(mod, MixtureNorm):
+            result['w_rms'] = mod.w1.item()
+            result['w_ln'] = mod.w2.item()
+        elif isinstance(mod, PerChannelScale):
+            result['scale_mean'] = mod.scale.float().mean().item()
+            result['scale_std'] = mod.scale.float().std().item()
+        return result
+
+    @torch.no_grad()
+    def _collect_arg_stats(self, mod):
+        """Collect stats for AdaptiveGatedLinear (18A)."""
+        gate_b = mod.gate_b.float()
+        gate_w_norm = mod.gate_w.float().norm().item()
+        return {
+            'type': 'AdaptiveGatedLinear',
+            'gate_mean': torch.sigmoid(gate_b).mean().item(),
+            'gate_std': torch.sigmoid(gate_b).std().item(),
+            'gate_w_norm': gate_w_norm,
+            'gate_b_mean': gate_b.mean().item(),
+        }
+
+    @torch.no_grad()
+    def _collect_kfl_stats(self, mod):
+        """Collect stats for KroneckerLinear (18C)."""
+        return {
+            'type': 'KroneckerLinear',
+            'A_norm': mod.A.float().norm().item(),
+            'B_norm': mod.B.float().norm().item(),
+            'factorization': f'{mod.d1_out}x{mod.d1_in} ⊗ {mod.d2_out}x{mod.d2_in}',
+            'param_ratio': (mod.A.numel() + mod.B.numel()) / (mod.in_features * mod.out_features),
+        }
+
+    @torch.no_grad()
     def collect(self):
         """Compute diagnostics for all tracked layers."""
-        if not self._layers:
+        if not self._layers and not self._p18_layers:
             return {}
         all_metrics = {}
         for name, mod in self._layers:
             if isinstance(mod, (CausalKernelLinear, LoKRLinear)):
                 all_metrics[name] = self._collect_branch_routing(mod)
+            elif isinstance(mod, AdaptiveGatedLinear):
+                all_metrics[name] = self._collect_arg_stats(mod)
+            elif isinstance(mod, KroneckerLinear):
+                all_metrics[name] = self._collect_kfl_stats(mod)
             else:
                 all_metrics[name] = self._collect_gate_stats(mod)
+        # P18 modules: aggregate by type (only report first instance per type)
+        seen_types = set()
+        for name, mod in self._p18_layers:
+            tname = type(mod).__name__
+            if tname not in seen_types:
+                all_metrics[f'p18/{tname}'] = self._collect_p18_stats(mod)
+                seen_types.add(tname)
         return all_metrics
 
     def format(self, metrics):
@@ -2550,6 +2800,34 @@ class ModulationDiagnostics:
                 if any('weight_divergence' in m for m in mods):
                     wdiv = sum(m.get('weight_divergence', 0) for m in mods) / len(mods)
                     lines.append(f"      weight_divergence={wdiv:.4f}")
+            elif 'alpha' in mods[0]:
+                # DynamicActivation
+                a = mods[0]['alpha']
+                b = mods[0]['beta']
+                g = mods[0]['gamma']
+                lines.append(f"      α(ReLU²)={a:.3f}  β(GELU)={b:.3f}  γ(SiLU)={g:.3f}")
+            elif 'w_rms' in mods[0]:
+                # MixtureNorm
+                w1 = mods[0]['w_rms']
+                w2 = mods[0]['w_ln']
+                lines.append(f"      w_rms={w1:.3f}  w_ln={w2:.3f}")
+            elif 'scale_mean' in mods[0]:
+                # PerChannelScale
+                sm = mods[0]['scale_mean']
+                ss = mods[0]['scale_std']
+                lines.append(f"      scale_mean={sm:.4f}  scale_std={ss:.4f}")
+            elif 'A_norm' in mods[0]:
+                # KroneckerLinear
+                an = sum(m['A_norm'] for m in mods) / len(mods)
+                bn = sum(m['B_norm'] for m in mods) / len(mods)
+                pr = mods[0].get('param_ratio', 0)
+                lines.append(f"      A_norm={an:.3f}  B_norm={bn:.3f}  param_ratio={pr:.4f}")
+            elif 'gate_w_norm' in mods[0]:
+                # AdaptiveGatedLinear
+                gm = sum(m['gate_mean'] for m in mods) / len(mods)
+                gs = sum(m['gate_std'] for m in mods) / len(mods)
+                gwn = sum(m['gate_w_norm'] for m in mods) / len(mods)
+                lines.append(f"      gate_mean={gm:.4f}  gate_std={gs:.4f}  gate_w_norm={gwn:.4f}")
         return "\n".join(lines)
 
     def to_dict(self, metrics):
@@ -2698,6 +2976,14 @@ class RemixedFeedForward(nn.Module):
             prb_ks = getattr(config, 'cclblock_prb_kernel_size', 64)
             self.c_fc   = PositionalResidualBias(config.n_embd, 4 * config.n_embd, kernel_size=prb_ks, max_seq_len=config.sequence_len)
             self.c_proj = PositionalResidualBias(4 * config.n_embd, config.n_embd, kernel_size=prb_ks, max_seq_len=config.sequence_len)
+        elif mode == 'arg':
+            # 18A: Adaptive ReLU² Gate — content-dependent per-channel gate
+            self.c_fc   = AdaptiveGatedLinear(config.n_embd, 4 * config.n_embd)
+            self.c_proj = AdaptiveGatedLinear(4 * config.n_embd, config.n_embd)
+        elif mode == 'kfl':
+            # 18C: Kronecker-Factored Linear — fewer params than dense
+            self.c_fc   = KroneckerLinear(config.n_embd, 4 * config.n_embd)
+            self.c_proj = KroneckerLinear(4 * config.n_embd, config.n_embd)
         elif mode == 'com':
             com_ks = getattr(config, 'cclblock_com_kernel_size', 32)
             self.c_fc   = CausalOutputMixer(config.n_embd, 4 * config.n_embd, kernel_size=com_ks, max_seq_len=config.sequence_len)
@@ -2742,11 +3028,20 @@ class RemixedFeedForward(nn.Module):
         else:
             self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
             self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate)
+        # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
+        self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
+        # 18F: Per-Channel Scale after projection
+        self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
 
     def forward(self, x, context_state):
         x = self.c_fc(x, context_state)
-        x = F.relu(x).square()
+        if self.dynamic_act is not None:
+            x = self.dynamic_act(x)
+        else:
+            x = F.relu(x).square()
         x = self.c_proj(x, context_state)
+        if self.channel_scale is not None:
+            x = self.channel_scale(x)
         return x
 
 
@@ -3054,6 +3349,15 @@ class RemixedBlock(nn.Module):
         ctx_source = getattr(config, 'cclblock_context_source', 'norm_x')
         chunk_size = getattr(config, 'cclblock_chunk_size', 0)
         self._modulation_mode = getattr(config, 'cclblock_modulation', 'weight')
+        # 18H: Mixture norm
+        if getattr(config, 'p18_mixture_norm', 0):
+            self.norm_attn = MixtureNorm(config.n_embd)
+            self.norm_mlp = MixtureNorm(config.n_embd)
+        else:
+            self.norm_attn = None
+            self.norm_mlp = None
+        # 18E: Stochastic depth (LayerDrop)
+        self.layer_drop = getattr(config, 'p18_layer_drop', 0.0)
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
@@ -3114,8 +3418,8 @@ class RemixedBlock(nn.Module):
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
-        # FSI/AESP/CKR: no context stream needed (bypass in forward)
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream', 'lokr'):
+        # FSI/AESP/CKR/ARG/KFL: no context stream needed (bypass in forward)
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream', 'lokr', 'arg', 'kfl'):
             self.ctx_stream = None
         elif per_head:
             # Design 7: two independent streams; attn uses pre-attn repr, ffn uses post-attn repr
@@ -3131,20 +3435,20 @@ class RemixedBlock(nn.Module):
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
-        # FSI/AESP/CKR/PGR/CIL/PRB bypass: these modes don't use context streams at all.
+        # FSI/AESP/CKR/PGR/CIL/PRB/ARG/KFL bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb'):
-            # Run attention with attn_out.detach() as the context signal
-            # For attention projections: no context needed on the first pass (Q/K/V are computed
-            # without context, since the routing signal comes from attention itself)
-            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state=None)
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb', 'arg', 'kfl'):
+            norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
+            norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
+            attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache, context_state=None)
             x = x + attn_out
-            # For FFN: use detached attn_out as the routing signal
-            # FSI: routes to different coordinate frames based on attn patterns
-            # AESP: uses attn_out norm as entropy proxy (mean over D → scalar per position)
-            # CKR: ignores context_state entirely (position-only routing)
             ctx_signal = attn_out.detach()
-            x = x + self.ffwd(norm(x), ctx_signal)
+            # 18E: Stochastic depth — randomly skip FFN during training
+            if self.training and self.layer_drop > 0 and torch.rand(1).item() < self.layer_drop:
+                pass  # Skip FFN
+            else:
+                scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
+                x = x + scale * self.ffwd(norm_fn_mlp(x), ctx_signal)
             self._last_ctx = ctx_signal
             return x, ctx_signal
 
@@ -3297,11 +3601,20 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
+        self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
+        # 18F: Per-Channel Scale after projection
+        self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x).square()
+        if self.dynamic_act is not None:
+            x = self.dynamic_act(x)
+        else:
+            x = F.relu(x).square()
         x = self.c_proj(x)
+        if self.channel_scale is not None:
+            x = self.channel_scale(x)
         return x
 
 
@@ -3310,10 +3623,26 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        # 18H: Mixture norm (learned RMSNorm + LayerNorm blend)
+        if getattr(config, 'p18_mixture_norm', 0):
+            self.norm_attn = MixtureNorm(config.n_embd)
+            self.norm_mlp = MixtureNorm(config.n_embd)
+        else:
+            self.norm_attn = None
+            self.norm_mlp = None
+        # 18E: Stochastic depth (LayerDrop)
+        self.layer_drop = getattr(config, 'p18_layer_drop', 0.0)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
+        norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
+        norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
+        x = x + self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        # 18E: Stochastic depth — randomly skip FFN during training
+        if self.training and self.layer_drop > 0 and torch.rand(1).item() < self.layer_drop:
+            pass  # Skip FFN
+        else:
+            scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
+            x = x + scale * self.mlp(norm_fn_mlp(x))
         return x
 
 
@@ -3602,6 +3931,24 @@ class GPT(nn.Module):
                     torch.nn.init.zeros_(sub.alpha_conv.weight)
                     torch.nn.init.constant_(sub.alpha_conv.bias, -5.0)
                     torch.nn.init.zeros_(sub.bias)
+                # Phase 18: re-init after to_empty()
+                elif isinstance(sub, KroneckerLinear):
+                    target_std = math.sqrt(math.sqrt(2.0 / sub.in_features))
+                    torch.nn.init.normal_(sub.A, std=target_std)
+                    torch.nn.init.normal_(sub.B, std=target_std)
+                    torch.nn.init.zeros_(sub.bias)
+                elif isinstance(sub, AdaptiveGatedLinear):
+                    torch.nn.init.zeros_(sub.gate_w)
+                    torch.nn.init.constant_(sub.gate_b, 5.0)  # sigmoid(5)≈0.993
+                elif isinstance(sub, DynamicActivation):
+                    sub.alpha.data.fill_(1.0)
+                    sub.beta.data.fill_(0.0)
+                    sub.gamma.data.fill_(0.0)
+                elif isinstance(sub, MixtureNorm):
+                    sub.w1.data.fill_(1.0)
+                    sub.w2.data.fill_(0.0)
+                elif isinstance(sub, PerChannelScale):
+                    sub.scale.data.fill_(1.0)
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
@@ -4023,6 +4370,9 @@ class GPT(nn.Module):
                 ctx_history.append(new_ctx)
         else:
             prev_ctx = None
+            collect_sim = float(getattr(self.config, 'p18_aux_sim_lambda', 0.0)) > 0
+            if collect_sim:
+                self._layer_outputs = []
             for i, block in enumerate(self.transformer.h):
                 x  = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
                 ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
@@ -4030,6 +4380,8 @@ class GPT(nn.Module):
                     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
                 else:
                     x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+                if collect_sim:
+                    self._layer_outputs.append(x.detach())
         x = norm(x)
 
         # Forward the lm_head (compute logits)
@@ -4080,6 +4432,20 @@ class GPT(nn.Module):
                         orth_terms.append(mod._last_orth_loss.to(dtype=loss.dtype))
                 if orth_terms:
                     loss = loss + orth_lambda * torch.stack(orth_terms).mean()
+
+            # 18G: Auxiliary representation similarity loss
+            # Penalize high cosine similarity between adjacent layers
+            sim_lambda = float(getattr(self.config, 'p18_aux_sim_lambda', 0.0))
+            if sim_lambda > 0.0 and loss_reduction == 'mean' and hasattr(self, '_layer_outputs'):
+                sim_losses = []
+                for i in range(len(self._layer_outputs) - 1):
+                    h_curr = self._layer_outputs[i].float()
+                    h_next = self._layer_outputs[i + 1].float()
+                    # Mean cosine similarity across batch and sequence
+                    cos_sim = F.cosine_similarity(h_curr, h_next, dim=-1).mean()
+                    sim_losses.append(cos_sim)
+                if sim_losses:
+                    loss = loss + sim_lambda * torch.stack(sim_losses).mean()
 
             return loss
         else:

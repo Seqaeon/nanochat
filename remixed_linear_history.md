@@ -538,4 +538,23 @@ f(x) = alpha*ReLU²(x) + beta*GELU(x) + gamma*SiLU(x) with per-layer learned sca
 
 #### 18J: Causal Attention Score Bias (CASB)
 Learned lower-triangular bias B in attention: attn = softmax(QK^T/sqrt(d) + B). Like learned ALiBi.
+**NOT IMPLEMENTED** — incompatible with FlashAttention3 (FA3 doesn't support arbitrary additive bias).
+
+### Implementation Status
+
+| Experiment | Mode | CLI Flag | Status |
+|---|---|---|---|
+| 18A: ARG | `--cclblock-modulation arg` | modulation mode | ✓ Implemented + tested |
+| 18B: SNGP | N/A | `--p18-gradient-penalty 0.001` | ✓ Weight Frobenius norm penalty |
+| 18C: KFL | `--cclblock-modulation kfl` | modulation mode | ✓ Implemented + tested |
+| 18D: SBMHA | N/A | `--n-kv-head 1` | ✓ Already supported via GQA |
+| 18E: LayerDrop | N/A | `--p18-layer-drop 0.1` | ✓ Implemented + tested |
+| 18F: PCLR | N/A | `--p18-per-channel-scale 1` | ✓ Per-channel learned scale |
+| 18G: ARSL | N/A | `--p18-aux-sim-lambda 0.01` | ✓ Layer similarity penalty |
+| 18H: MoN | N/A | `--p18-mixture-norm 1` | ✓ RMSNorm+LayerNorm blend |
+| 18I: DAF | N/A | `--p18-dynamic-activation 1` | ✓ Learned activation mix |
+| 18J: CASB | N/A | N/A | ✗ Incompatible with FA3 |
+
+All Phase 18 flags are orthogonal — they can be combined with ANY modulation mode including the dense baseline.
+Diagnostics auto-enabled: all modules report to `modulation_diagnostics.jsonl`.
 

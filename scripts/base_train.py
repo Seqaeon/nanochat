@@ -77,7 +77,7 @@ parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb"],
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
                     help="CCL block strategy")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
@@ -161,6 +161,13 @@ parser.add_argument("--cclblock-pgr-kernel-size", type=int, default=64, help="17
 parser.add_argument("--cclblock-cil-kernel-size", type=int, default=64, help="17I: CIL causal conv kernel size")
 parser.add_argument("--cclblock-prb-kernel-size", type=int, default=64, help="17J: PRB causal conv kernel size")
 parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1], help="enable modulation layer diagnostics logging")
+# Phase 18: Beyond CKR — orthogonal improvements
+parser.add_argument("--p18-layer-drop", type=float, default=0.0, help="18E: stochastic depth drop probability (0=off)")
+parser.add_argument("--p18-dynamic-activation", type=int, default=0, choices=[0, 1], help="18I: learned activation mix (ReLU²+GELU+SiLU)")
+parser.add_argument("--p18-mixture-norm", type=int, default=0, choices=[0, 1], help="18H: learned RMSNorm+LayerNorm mixture")
+parser.add_argument("--p18-aux-sim-lambda", type=float, default=0.0, help="18G: layer similarity penalty weight (0=off)")
+parser.add_argument("--p18-gradient-penalty", type=float, default=0.0, help="18B: gradient penalty weight for Lipschitz regularization (0=off)")
+parser.add_argument("--p18-per-channel-scale", type=int, default=0, choices=[0, 1], help="18F: learnable per-channel output scale")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -389,6 +396,13 @@ def build_model_meta(depth):
         # Phase 15: LoKR
         cclblock_lokr_branches=getattr(args, 'cclblock_lokr_branches', 8),
         cclblock_lokr_rank=getattr(args, 'cclblock_lokr_rank', 16),
+        # Phase 18: Beyond CKR
+        p18_layer_drop=getattr(args, 'p18_layer_drop', 0.0),
+        p18_dynamic_activation=getattr(args, 'p18_dynamic_activation', 0),
+        p18_mixture_norm=getattr(args, 'p18_mixture_norm', 0),
+        p18_aux_sim_lambda=getattr(args, 'p18_aux_sim_lambda', 0.0),
+        p18_gradient_penalty=getattr(args, 'p18_gradient_penalty', 0.0),
+        p18_per_channel_scale=getattr(args, 'p18_per_channel_scale', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -867,6 +881,15 @@ while True:
         if is_dp:
             loss = loss.mean()
         train_loss = loss.detach() # for logging
+        # 18B: Gradient penalty — weight Frobenius norm regularization
+        # Penalizes large weight norms to constrain Lipschitz constant
+        gp_lambda = float(getattr(args, 'p18_gradient_penalty', 0.0))
+        if gp_lambda > 0:
+            gp_loss = sum(
+                p.float().square().mean() for p in model.parameters()
+                if p.ndim >= 2 and p.requires_grad
+            )
+            loss = loss + gp_lambda * gp_loss
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()

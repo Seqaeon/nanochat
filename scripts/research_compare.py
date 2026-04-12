@@ -133,6 +133,13 @@ def run_training_sweep(args):
         "--cclblock-pgr-kernel-size", str(getattr(args, 'cclblock_pgr_kernel_size', 64)),
         "--cclblock-cil-kernel-size", str(getattr(args, 'cclblock_cil_kernel_size', 64)),
         "--cclblock-prb-kernel-size", str(getattr(args, 'cclblock_prb_kernel_size', 64)),
+        # Phase 18: Beyond CKR
+        "--p18-layer-drop", str(getattr(args, 'p18_layer_drop', 0.0)),
+        "--p18-dynamic-activation", str(getattr(args, 'p18_dynamic_activation', 0)),
+        "--p18-mixture-norm", str(getattr(args, 'p18_mixture_norm', 0)),
+        "--p18-aux-sim-lambda", str(getattr(args, 'p18_aux_sim_lambda', 0.0)),
+        "--p18-gradient-penalty", str(getattr(args, 'p18_gradient_penalty', 0.0)),
+        "--p18-per-channel-scale", str(getattr(args, 'p18_per_channel_scale', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -444,6 +451,13 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-cil-kernel-size", type=int, default=64)
     parser.add_argument("--cclblock-prb-kernel-size", type=int, default=64)
     parser.add_argument("--modulation-diagnostics", type=int, default=0, choices=[0, 1])
+    # Phase 18
+    parser.add_argument("--p18-layer-drop", type=float, default=0.0)
+    parser.add_argument("--p18-dynamic-activation", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p18-mixture-norm", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p18-aux-sim-lambda", type=float, default=0.0)
+    parser.add_argument("--p18-gradient-penalty", type=float, default=0.0)
+    parser.add_argument("--p18-per-channel-scale", type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     
     run_training_sweep(args)
