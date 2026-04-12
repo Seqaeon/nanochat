@@ -1796,19 +1796,40 @@ class CausalKernelLinear(nn.Module):
         return y
 
 
+class _StopGrad(torch.autograd.Function):
+    """Gradient isolation that is compatible with torch.compile + autocast.
+
+    Unlike x.detach(), which creates a new tensor node that breaks torch.compile's
+    dtype tracking (causing float32 propagation into FlashAttention), this custom
+    Function maintains the forward tensor identity while blocking gradients:
+
+    Forward: returns x unchanged (same dtype, same device, same compile graph)
+    Backward: returns zeros → no gradient flows through this path
+
+    Usage: x_frozen = _StopGrad.apply(x)
+    Mathematically identical to x.detach() but compile-safe.
+    """
+    @staticmethod
+    def forward(ctx, x):
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return torch.zeros_like(grad_output)
+
+
 class GradientIsolatedDeltaLinear(nn.Module):
     """Phase 14a: Gradient-Isolated Additive Delta (GIAD).
 
-    y = base(x) + scale * delta_net(x.detach())
+    y = base(x) + scale * delta_net(_StopGrad(x))
 
-    The critical innovation: delta_net receives x.detach(), so the backward graph
-    for x is IDENTICAL to the pure dense baseline. Content conditioning is achieved
-    through the forward pass, but ∂L/∂x = W^T · ∂L/∂y — exactly what a standard
-    Linear would produce.
+    The critical innovation: delta_net receives gradient-isolated input, so the
+    backward graph for x is IDENTICAL to the pure dense baseline. Content
+    conditioning is achieved through the forward pass, but ∂L/∂x = W^T · ∂L/∂y
+    — exactly what a standard Linear would produce.
 
-    Why this differs from RAL (Phase 9): RAL computed delta(x, ctx) with live x,
-    so ∂L/∂x included delta's contribution, creating the friction tax. Here,
-    delta's contribution to the backward graph is completely severed from x.
+    Uses _StopGrad (custom autograd Function) instead of x.detach() to avoid
+    breaking torch.compile's dtype tracking under fp8/bf16 autocast.
 
     Init: scale=0, delta_up.weight=0 → y = base(x) at step 0.
     """
@@ -1819,7 +1840,7 @@ class GradientIsolatedDeltaLinear(nn.Module):
         self.base = Linear(in_features, out_features, bias=True)
         self.ln_basis = nn.Identity()  # compat with setup_optimizer
 
-        # Low-rank bottleneck: x.detach() → rank-r → output
+        # Low-rank bottleneck: _StopGrad(x) → rank-r → output
         self.delta_down = Linear(in_features, delta_rank, bias=False)
         self.delta_up = Linear(delta_rank, out_features, bias=False)
         # Learned scale, starts at 0 so delta is initially invisible
@@ -1839,15 +1860,13 @@ class GradientIsolatedDeltaLinear(nn.Module):
 
     def forward(self, x, context_state=None):
         """
-        x: (B, T, D_in). context_state is ignored (delta uses x.detach() directly).
+        x: (B, T, D_in). context_state is ignored (delta uses gradient-isolated x).
         """
-        dtype = x.dtype
         y = self.base(x)
-        # Gradient isolation: delta sees frozen features, can't pollute ∂L/∂x
-        # Explicit dtype preservation required for torch.compile + fp8/bf16 autocast
-        x_frozen = x.detach().to(dtype=dtype)
+        # Gradient isolation via custom Function (compile-safe, unlike detach())
+        x_frozen = _StopGrad.apply(x)
         delta = self.delta_up(F.gelu(self.delta_down(x_frozen)))
-        return y + self.scale * delta.to(dtype=dtype)
+        return y + self.scale * delta
 
 
 class PositionalScalarGatedLinear(nn.Module):
