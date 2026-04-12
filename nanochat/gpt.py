@@ -4237,6 +4237,21 @@ class GPT(nn.Module):
                     # ve_gate (if present) is structural
                     if block.attn.ve_gate is not None:
                         struct_matrix_params.append(block.attn.ve_gate.weight)
+                    # Phase 18: MixtureNorm params (scalar weights)
+                    if hasattr(block, 'norm_attn') and block.norm_attn is not None:
+                        for p in block.norm_attn.parameters():
+                            (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+                    if hasattr(block, 'norm_mlp') and block.norm_mlp is not None:
+                        for p in block.norm_mlp.parameters():
+                            (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+                    # Phase 18: DynamicActivation params (α, β, γ scalars)
+                    if hasattr(block.ffwd, 'dynamic_act') and block.ffwd.dynamic_act is not None:
+                        for p in block.ffwd.dynamic_act.parameters():
+                            struct_adamw_params.append(p)
+                    # Phase 18: PerChannelScale params (1D scale vector)
+                    if hasattr(block.ffwd, 'channel_scale') and block.ffwd.channel_scale is not None:
+                        for p in block.ffwd.channel_scale.parameters():
+                            struct_adamw_params.append(p)
         else:
             # Regular Block: all transformer.h params go to candidate_matrix_params
             candidate = list(self.transformer.h.parameters())
