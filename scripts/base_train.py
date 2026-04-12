@@ -136,6 +136,10 @@ parser.add_argument("--cclblock-aesp-strata", type=int, default=4, help="AESP: n
 parser.add_argument("--cclblock-aesp-delta-rank", type=int, default=4, help="AESP: rank of per-stratum low-rank deltas")
 parser.add_argument("--cclblock-ckr-branches", type=int, default=4, help="CKR: number of parallel dense branches")
 parser.add_argument("--cclblock-ckr-kernel-size", type=int, default=64, help="CKR: causal conv1d kernel size")
+# Phase 13: CKR enhancements
+parser.add_argument("--cclblock-ckr-pos-channels", type=int, default=1, help="CKR: multi-channel position signal (1=original, 3=multi-scale)")
+parser.add_argument("--cclblock-ckr-dual-optim", type=int, default=0, choices=[0, 1], help="CKR: route gate params to dedicated conservative AdamW")
+parser.add_argument("--cclblock-ckr-content-bias", type=float, default=0.0, help="CKR: frozen content hash bias scale (0=pure position)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -351,6 +355,10 @@ def build_model_meta(depth):
         cclblock_aesp_delta_rank=getattr(args, 'cclblock_aesp_delta_rank', 4),
         cclblock_ckr_branches=getattr(args, 'cclblock_ckr_branches', 4),
         cclblock_ckr_kernel_size=getattr(args, 'cclblock_ckr_kernel_size', 64),
+        # Phase 13: CKR enhancements
+        cclblock_ckr_pos_channels=getattr(args, 'cclblock_ckr_pos_channels', 1),
+        cclblock_ckr_dual_optim=getattr(args, 'cclblock_ckr_dual_optim', 0),
+        cclblock_ckr_content_bias=getattr(args, 'cclblock_ckr_content_bias', 0.0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

@@ -109,6 +109,10 @@ def run_training_sweep(args):
         "--cclblock-aesp-delta-rank", str(getattr(args, 'cclblock_aesp_delta_rank', 4)),
         "--cclblock-ckr-branches", str(getattr(args, 'cclblock_ckr_branches', 4)),
         "--cclblock-ckr-kernel-size", str(getattr(args, 'cclblock_ckr_kernel_size', 64)),
+        # Phase 13: CKR enhancements
+        "--cclblock-ckr-pos-channels", str(getattr(args, 'cclblock_ckr_pos_channels', 1)),
+        "--cclblock-ckr-dual-optim", str(getattr(args, 'cclblock_ckr_dual_optim', 0)),
+        "--cclblock-ckr-content-bias", str(getattr(args, 'cclblock_ckr_content_bias', 0.0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -395,6 +399,10 @@ if __name__ == "__main__":
     parser.add_argument("--cclblock-aesp-delta-rank", type=int, default=4)
     parser.add_argument("--cclblock-ckr-branches", type=int, default=4)
     parser.add_argument("--cclblock-ckr-kernel-size", type=int, default=64)
+    # Phase 13: CKR enhancements
+    parser.add_argument("--cclblock-ckr-pos-channels", type=int, default=1)
+    parser.add_argument("--cclblock-ckr-dual-optim", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--cclblock-ckr-content-bias", type=float, default=0.0)
     args = parser.parse_args()
     
     run_training_sweep(args)

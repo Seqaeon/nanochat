@@ -192,6 +192,10 @@ class GPTConfig:
     # CKR: Causal Kernel Reparameterization
     cclblock_ckr_branches: int = 4        # number of parallel dense branches
     cclblock_ckr_kernel_size: int = 64    # causal conv1d kernel size
+    # Phase 13: CKR enhancements
+    cclblock_ckr_pos_channels: int = 1    # 13a: multi-channel position signal (1=original, 3=fast/med/slow)
+    cclblock_ckr_dual_optim: int = 0      # 13b: route CKR gate params to dedicated AdamW group
+    cclblock_ckr_content_bias: float = 0.0  # 13c: frozen content hash bias scale (0=pure position)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -226,6 +230,8 @@ RESEARCH_ALLOWED_KEYS = {
     "cclblock_fsi_rotations", "cclblock_fsi_selector_dim",
     "cclblock_aesp_strata", "cclblock_aesp_delta_rank",
     "cclblock_ckr_branches", "cclblock_ckr_kernel_size",
+    # Phase 13
+    "cclblock_ckr_pos_channels", "cclblock_ckr_dual_optim", "cclblock_ckr_content_bias",
 }
 
 
@@ -1684,24 +1690,29 @@ class CausalKernelLinear(nn.Module):
     Training:  y_t = sum_k  w_k(t) · (W_k · x_t)
     Inference: y_t = W_merged(t) · x_t  (structural reparameterization)
 
+    Phase 13 enhancements:
+    - 13a: Multi-channel position signal (C_pos > 1) for multi-scale temporal patterns
+    - 13c: Optional frozen content hash bias for document-type fingerprinting
+
     Key properties:
-    - w_k(t) depends on POSITION, not TOKEN CONTENT → breaks identity trap
+    - w_k(t) depends on POSITION (+ optional frozen content hash), not learned content
     - No chicken-and-egg: W_k learn features, w_k learn positions, independently
-    - Position weights from causal conv capture local structure (paragraph
-      boundaries, sentence rhythm, code blocks) naturally
-    - At init: equal branch weights → sum = standard dense layer
+    - Position weights from causal conv capture local structure naturally
+    - At init: conv output ≈ 0 → softmax(0) = 1/K → equal branch weighting
     - Reparameterizable at inference for zero overhead
 
     Compatible with setup_optimizer: gate_parameters() yields position signal +
     conv weights (small), non_gate_parameters() yields branch projections.
     """
     def __init__(self, in_features, out_features, n_branches=4, kernel_size=64,
-                 max_seq_len=2048, **_ignored):
+                 max_seq_len=2048, n_pos_channels=1, content_bias_scale=0.0,
+                 signal_dim=None, **_ignored):
         super().__init__()
         self.n_branches = n_branches
         self.in_features = in_features
         self.out_features = out_features
         self.kernel_size = kernel_size
+        self.content_bias_scale = content_bias_scale
         self.ln_basis = nn.Identity()  # compat
 
         # K parallel projection branches
@@ -1710,17 +1721,26 @@ class CausalKernelLinear(nn.Module):
             for i in range(n_branches)
         ])
 
-        # Tiny causal conv1d over a learned positional signal → branch weights
-        # Input: 1-channel learned 1D signal
-        # Output: K-channel softmax weights per position
-        self.pos_signal = nn.Parameter(torch.zeros(1, 1, max_seq_len))
+        # 13a: Multi-channel position signal (C_pos channels → conv → K branches)
+        # C_pos > 1 allows the conv to learn multi-scale temporal patterns
+        self.n_pos_channels = n_pos_channels
+        self.pos_signal = nn.Parameter(torch.zeros(1, n_pos_channels, max_seq_len))
         self.branch_conv = nn.Conv1d(
-            1, n_branches, kernel_size=kernel_size,
+            n_pos_channels, n_branches, kernel_size=kernel_size,
             padding=kernel_size - 1, bias=True  # causal: we trim the right padding
         )
         # Init: conv output ≈ 0 → softmax(0) = 1/K → equal branch weighting
         nn.init.zeros_(self.branch_conv.weight)
         nn.init.zeros_(self.branch_conv.bias)
+
+        # 13c: Frozen content hash for document-type fingerprinting
+        # Projects detached input → K-dim frozen logit bias
+        if content_bias_scale > 0:
+            sig_dim = signal_dim or in_features
+            self.register_buffer('content_proj',
+                torch.randn(sig_dim, n_branches) / (sig_dim ** 0.5))
+        else:
+            self.content_proj = None
 
     def gate_parameters(self):
         """Position signal and conv weights — the 'routing' side."""
@@ -1734,15 +1754,24 @@ class CausalKernelLinear(nn.Module):
 
     def forward(self, x, context_state=None):
         """
-        x: (B, T, D). context_state is ignored (position-only routing).
+        x: (B, T, D). context_state: optional (B, T, signal_dim) for content bias.
         """
         B, T, D = x.shape
         dtype = x.dtype
 
         # Position-dependent branch weights (NOT content-dependent)
-        sig = self.pos_signal[:, :, :T].expand(B, -1, -1)  # (B, 1, T)
+        sig = self.pos_signal[:, :, :T].expand(B, -1, -1)  # (B, C_pos, T)
         raw_weights = self.branch_conv(sig.to(dtype=self.branch_conv.weight.dtype))[:, :, :T]  # (B, K, T) — causal trim
-        w = F.softmax(raw_weights.to(dtype), dim=1)  # (B, K, T)
+        logits = raw_weights.to(dtype)  # (B, K, T)
+
+        # 13c: Add frozen content hash bias (if enabled)
+        if self.content_proj is not None and context_state is not None:
+            # Frozen projection of detached context → (B, T, K) logit bias
+            ctx = context_state.to(dtype=dtype).detach()
+            content_logits = ctx @ self.content_proj.to(dtype)  # (B, T, K)
+            logits = logits + self.content_bias_scale * content_logits.permute(0, 2, 1)  # (B, K, T)
+
+        w = F.softmax(logits, dim=1)  # (B, K, T)
 
         # Parallel branch computation
         y = torch.zeros(B, T, self.out_features, device=x.device, dtype=dtype)
@@ -1835,8 +1864,10 @@ class RemixedFeedForward(nn.Module):
         elif mode == 'ckr':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
-            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
-            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
+            cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
+            self.c_fc   = CausalKernelLinear(config.n_embd, 4 * config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
+            self.c_proj = CausalKernelLinear(4 * config.n_embd, config.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=config.n_embd)
         elif mode == 'tucker':
             self.c_fc = TuckerAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_proj = TuckerAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
@@ -1911,10 +1942,12 @@ class RemixedMultiAttention(nn.Module):
         elif mode == 'ckr':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
-            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
-            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
-            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
-            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len)
+            n_pc = getattr(config, 'cclblock_ckr_pos_channels', 1)
+            cb_scale = getattr(config, 'cclblock_ckr_content_bias', 0.0)
+            self.c_q    = CausalKernelLinear(self.n_embd, self.n_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
+            self.c_k    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
+            self.c_v    = CausalKernelLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
+            self.c_proj = CausalKernelLinear(self.n_embd, self.n_embd, n_branches=n_br, kernel_size=ksz, max_seq_len=config.sequence_len, n_pos_channels=n_pc, content_bias_scale=cb_scale, signal_dim=self.n_embd)
         elif mode == 'tucker':
             self.c_q = TuckerAdaptiveLinear(self.n_embd, self.n_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
             self.c_k = TuckerAdaptiveLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, tucker_rank=getattr(config, 'cclblock_tucker_rank', 32), tucker_modes=getattr(config, 'cclblock_tucker_modes', 8))
@@ -2834,6 +2867,7 @@ class GPT(nn.Module):
         gate_adamw_params    = []  # 1D gate params  → lower-LR AdamW
         struct_matrix_params = []  # 2D struct params → normal Muon
         struct_adamw_params  = []  # 1D struct params → normal AdamW
+        ckr_gate_adamw_params = []  # 13b: CKR gate params → dedicated conservative AdamW
 
         def _sort_ctx_stream_params(stream):
             """Route SelectiveContextStream/MultiScaleContext params to gate groups."""
@@ -2878,9 +2912,16 @@ class GPT(nn.Module):
                         block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
                         block.ffwd.c_fc, block.ffwd.c_proj,
                     ]
+                    # 13b: Dual-optimizer CKR — route CKR gate params to dedicated AdamW
+                    ckr_dual = (self.cclblock_modulation == 'ckr' and
+                                getattr(self.config, 'cclblock_ckr_dual_optim', 0))
                     for rl in remix_linears:
                         for p in rl.gate_parameters():
-                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                            if ckr_dual:
+                                # 13b: CKR gate params → dedicated AdamW (conservative)
+                                ckr_gate_adamw_params.append(p)
+                            else:
+                                (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                         for p in rl.non_gate_parameters():
                             (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
                         # ln_basis (LayerNorm)
@@ -2917,7 +2958,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                       embedding_params + lm_head_params + value_embeds_params +
-                      resid_params + x0_params)
+                      resid_params + x0_params + ckr_gate_adamw_params)
         assert len(list(self.parameters())) == len(all_params), (
             f"Parameter count mismatch: model has {len(list(self.parameters()))} params, "
             f"optimizer groups cover {len(all_params)}")
@@ -2959,6 +3000,14 @@ class GPT(nn.Module):
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=gate_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+        # 13b: Dedicated conservative AdamW for CKR position routing params
+        if ckr_gate_adamw_params:
+            param_groups.append(dict(
+                kind='adamw', params=ckr_gate_adamw_params,
+                lr=embedding_lr * dmodel_lr_scale * 0.5,  # conservative: half of embedding LR
+                betas=(0.9, 0.999),  # high β₂ for slow, stable adaptation
+                eps=1e-10, weight_decay=0.0,  # no decay on positional params
             ))
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
