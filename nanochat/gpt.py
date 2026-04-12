@@ -1799,20 +1799,17 @@ class CausalKernelLinear(nn.Module):
 class GradientIsolatedDeltaLinear(nn.Module):
     """Phase 14a: Gradient-Isolated Additive Delta (GIAD).
 
-    y = base(x) + scale * delta_net(x)
+    y = base(x) + delta_net(x)
 
     Approximate gradient isolation via initialization:
-    - scale = 0 at init → delta path output is exactly zero
-    - delta_up.weight = 0 at init → delta output is zero even if scale > 0
-    - Double protection: both scale AND weights start at zero
+    - delta_up.weight = 0 at init → delta output is exactly zero
+    - As training progresses, delta_up weights grow from zero,
+      gradually introducing the delta path's contribution
+    - Early training is virtually identical to the dense baseline
 
-    As training progresses, scale and delta_up weights grow from zero,
-    gradually introducing the delta path's contribution. Early training
-    is virtually identical to the dense baseline.
-
-    Note: exact gradient isolation (detach/custom autograd Functions) is
-    incompatible with torch.compile + fp8/bf16 autocast. This approximate
-    approach achieves the same practical effect.
+    Note: no separate scale parameter — nn.Parameter(torch.zeros(1))
+    is float32, which causes dtype promotion (float32 × bf16 → float32)
+    under torch.compile + fp8/bf16 autocast, crashing FlashAttention.
     """
     def __init__(self, in_features, out_features, delta_rank=32, **_ignored):
         super().__init__()
@@ -1821,17 +1818,14 @@ class GradientIsolatedDeltaLinear(nn.Module):
         self.base = Linear(in_features, out_features, bias=True)
         self.ln_basis = nn.Identity()  # compat with setup_optimizer
 
-        # Low-rank bottleneck: x → rank-r → output
+        # Low-rank bottleneck: x → rank-r → output (delta_up is zero-init)
         self.delta_down = Linear(in_features, delta_rank, bias=False)
         self.delta_up = Linear(delta_rank, out_features, bias=False)
-        # Learned scale, starts at 0 so delta is initially invisible
-        self.scale = nn.Parameter(torch.zeros(1))
 
     def gate_parameters(self):
         """Delta path params are the 'gate' side (lower LR)."""
         yield self.delta_down.weight
         yield self.delta_up.weight
-        yield self.scale
 
     def non_gate_parameters(self):
         """Base projection weights — standard dense, unaffected by delta."""
@@ -1844,9 +1838,9 @@ class GradientIsolatedDeltaLinear(nn.Module):
         x: (B, T, D_in). context_state is ignored.
         """
         y = self.base(x)
-        # scale=0 at init → no gradient contribution from delta path
+        # delta_up zero-init → starts at 0, grows naturally during training
         delta = self.delta_up(F.gelu(self.delta_down(x)))
-        return y + self.scale * delta
+        return y + delta
 
 
 class PositionalScalarGatedLinear(nn.Module):
