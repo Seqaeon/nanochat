@@ -343,7 +343,7 @@ for DEPTH in "$@"; do
 
     # research_compare orchestrates multiple training subprocesses itself.
     # Running it under torchrun causes nested distributed launches and rank/env collisions.
-    python -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" "${EXTRA_ARGS[@]}"
+    python -u -m scripts.research_compare --depth "${DEPTH}" --run-dir "${RUN_DIR}" "${EXTRA_ARGS[@]}"
     
     if [ $? -ne 0 ]; then
         echo "Error: Sweep failed for depth ${DEPTH}. Check logs in ${RUN_DIR}."

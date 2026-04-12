@@ -251,7 +251,7 @@ def run_training_sweep(args):
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
             if process.stdout:
                 for line in iter(process.stdout.readline, ""):
-                    print(line, end="")
+                    print(line, end="", flush=True)
             process.communicate()
             
             if process.returncode != 0:
