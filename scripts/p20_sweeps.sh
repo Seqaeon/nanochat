@@ -95,14 +95,50 @@ else
     echo "════════════════ $TAG COMPLETE ════════════════"
 fi
 
-# 20C: Frozen Content-Routed Branches (K=4)
+# 20C: Frozen Content-Routed Branches (K=4, full-size — already proven best)
 TAG="20C_LRCFB"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "3" "$TAG" "Frozen Content-Routed Branches (K=4)"
+    print_header "3" "$TAG" "Frozen Content-Routed Branches (K=4, full-size)"
     bash scripts/research_sweep.sh $COMMON \
       --p20-lrcfb-branches 4 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 20C-narrow: Frozen routing, narrow branches (param parity!)
+TAG="20C_NARROW"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "3b" "$TAG" "Frozen Content-Routed, Narrow Branches (K=4, param parity)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 20C-learned: Learned routing, narrow branches
+TAG="20C_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "3c" "$TAG" "Learned Content-Routed, Narrow Branches (K=4)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-learned 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 20C-topk1: Frozen routing, narrow branches, top-1 sparse (minimum FLOPs!)
+TAG="20C_TOPK1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "3d" "$TAG" "Frozen Narrow + Top-1 Sparse (K=4, only 1 active)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-topk 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
 fi
@@ -195,8 +231,61 @@ else
     echo "════════════════ $TAG COMPLETE ════════════════"
 fi
 
+# ─────────────────────────────────────────
+# PHASE 21: Pervasive Expert Routing (PER)
+# MoELinear replaces standard Linear layers
+# ─────────────────────────────────────────
+
+# 21-MLP-soft: MoELinear in MLP only, soft routing (all experts, weighted sum)
+TAG="21_PER_MLP_SOFT"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "11" "$TAG" "PER: MLP-only, K=4 experts, soft routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p21-per-experts 4 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 21-MLP-top1: MoELinear in MLP only, top-1 routing (maximum FLOP savings)
+TAG="21_PER_MLP_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "12" "$TAG" "PER: MLP-only, K=4 experts, top-1 routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p21-per-experts 4 --p21-per-topk 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 21-ALL-soft: MoELinear everywhere (MLP + attention), soft routing
+TAG="21_PER_ALL_SOFT"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "13" "$TAG" "PER: MLP+Attention, K=4 experts, soft routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p21-per-experts 4 --p21-per-attn 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
+# 21-ALL-top1: MoELinear everywhere, top-1 routing (maximum FLOP savings)
+TAG="21_PER_ALL_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "14" "$TAG" "PER: MLP+Attention, K=4 experts, top-1 routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p21-per-experts 4 --p21-per-topk 1 --p21-per-attn 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 20 Sweep Complete (All 10)                  ║"
+echo "║          Phase 20+21 Sweep Complete                        ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."

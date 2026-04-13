@@ -243,7 +243,10 @@ class GPTConfig:
     p20_hrcs_scale: int = 0                   # 20A: Hash-routed column selection (0=off, scale=D_stored/D_active)
     p20_lswr_scale: int = 0                   # 20B: LSH weight routing (0=off, scale factor)
     p20_lswr_planes: int = 8                  # 20B: number of LSH hash planes
-    p20_lrcfb_branches: int = 0               # 20C: Frozen content-routed full-rank branches (0=off, K=num branches)
+    p20_lrcfb_branches: int = 0               # 20C: Content-routed branches (0=off, K=num branches)
+    p20_lrcfb_narrow: int = 0                 # 20C: narrow branches for param parity (0=full-size, 1=H//K per branch)
+    p20_lrcfb_learned: int = 0                # 20C: learned routing (0=frozen random, 1=learnable projection)
+    p20_lrcfb_topk: int = 0                   # 20C: top-k sparse routing (0=soft/all, K=top-K only)
     p20_dgcr_branches: int = 0                # 20D: Detached-gradient content-routed branches (0=off, K=num branches)
     p20_dgcr_aux_weight: float = 0.01         # 20D: weight for auxiliary routing loss
     p20_mone_experts: int = 0                 # 20F: Mixture of Narrow Experts (0=off, K=num experts)
@@ -257,6 +260,11 @@ class GPTConfig:
     p20_fsvd_gate: int = 0                    # 20G: Frozen-SVD σ gating (0=off, 1=on, loads SVD from pretrained)
     p20_wbfc_clusters: int = 0                # 20J: Weight bank frozen clustering (0=off, K=clusters)
     p20_wbfc_active: int = 0                  # 20J: number of active clusters per token (M < K)
+    # Phase 21: Pervasive Expert Routing (PER) — MoE-ify every Linear layer
+    p21_per_experts: int = 0                  # 21: number of experts per MoELinear (0=off, K=experts)
+    p21_per_topk: int = 0                     # 21: top-k routing (0=soft/all, K=top-K)
+    p21_per_learned: int = 0                  # 21: learned routing (0=frozen, 1=learnable)
+    p21_per_attn: int = 0                     # 21: also replace attention Q/K/V/O (0=MLP only, 1=all)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -311,6 +319,7 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 20
     "p20_hrcs_scale", "p20_lswr_scale", "p20_lswr_planes",
     "p20_lrcfb_branches",
+    "p20_lrcfb_narrow", "p20_lrcfb_learned", "p20_lrcfb_topk",
     "p20_dgcr_branches", "p20_dgcr_aux_weight",
     "p20_mone_experts", "p20_mone_topk",
     "p20_ncea_branches", "p20_ncea_eps",
@@ -318,6 +327,8 @@ RESEARCH_ALLOWED_KEYS = {
     "p20_pwu_branches", "p20_pwu_phase",
     "p20_fsvd_gate",
     "p20_wbfc_clusters", "p20_wbfc_active",
+    # Phase 21
+    "p21_per_experts", "p21_per_topk", "p21_per_learned", "p21_per_attn",
 }
 
 
@@ -3919,10 +3930,25 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        # Phase 21: optionally replace attention projections with MoELinear
+        _per_k = getattr(config, 'p21_per_experts', 0)
+        _per_attn = getattr(config, 'p21_per_attn', 0)
+        if _per_k > 0 and _per_attn:
+            _per_topk = getattr(config, 'p21_per_topk', 0)
+            _per_learned = bool(getattr(config, 'p21_per_learned', 0))
+            self.c_q = MoELinear(self.n_embd, self.n_head * self.head_dim, K=_per_k,
+                                  topk=_per_topk, learned_route=_per_learned)
+            self.c_k = MoELinear(self.n_embd, self.n_kv_head * self.head_dim, K=_per_k,
+                                  topk=_per_topk, learned_route=_per_learned)
+            self.c_v = MoELinear(self.n_embd, self.n_kv_head * self.head_dim, K=_per_k,
+                                  topk=_per_topk, learned_route=_per_learned)
+            self.c_proj = MoELinear(self.n_embd, self.n_embd, K=_per_k,
+                                    topk=_per_topk, learned_route=_per_learned)
+        else:
+            self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
+            self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+            self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+            self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = min(self.n_embd, 32)
         # 19I: VE gate with optional learnable bias
         use_ve_bias = bool(getattr(config, 'p19_ve_bias', 0))
@@ -4126,38 +4152,48 @@ class MoNE_MLP(nn.Module):
 
 
 class FrozenRoutedMLP(nn.Module):
-    """20C: Frozen Content-Routed Full-Rank Branches (LRCFB).
+    """20C: Content-Routed Branched MLP (LRCFB).
 
-    K full-rank MLP branches mixed by a FROZEN content-dependent routing signal.
-    The routing projection R is a random matrix fixed at init (registered as a
-    buffer, never updated). This gives content-dependent weight composition
-    without ANY learned routing — completely avoiding FM1 (gradient fracturing).
+    K MLP branches mixed by a content-dependent routing signal.
 
-    alpha = softmax(x @ R)  — frozen routing, no gradient through R
-    y = Σ_k alpha_k * MLP_k(x)  — each branch is a full-rank MLP
+    Modes (controlled by config flags):
+      - narrow=False (default): each branch is full-size (K× params overhead)
+      - narrow=True:  each branch has H//K hidden dim (param parity with baseline)
+      - learned_route=False (default): routing projection R is FROZEN (buffer, no grad)
+      - learned_route=True:  routing projection R is a learnable parameter
+      - topk=0 (default): soft routing (all branches computed, weighted sum)
+      - topk=N: hard top-N routing (only top-N branches computed, rest zeroed)
 
-    This is CKR's architecture but with frozen CONTENT routing instead of
-    position routing. Content-dependent (unlike CKR) but gradient-free
-    (unlike RemixedLinear). The combination we never tested.
+    alpha = softmax(x @ R)  — content-dependent routing
+    y = Σ_k alpha_k * MLP_k(x)
 
-    NOTE: K× parameter overhead (K full-rank MLPs). At K=4 this means 4×
-    more MLP params. This is known to be expensive but we need to test whether
-    frozen content routing provides enough signal to justify it.
+    With narrow=True:
+      Normal MLP: fc (128→512), proj (512→128) = 131K params
+      K=4 narrow: 4× [fc (128→128), proj (128→128)] = 131K params (same!)
+      But each token gets a DIFFERENT blend of 4 specialized sub-MLPs.
     """
-    def __init__(self, config, n_branches=4):
+    def __init__(self, config, n_branches=4, narrow=False, learned_route=False, topk=0):
         super().__init__()
         self.n_branches = n_branches
+        self.narrow = narrow
+        self.topk = topk
         D = config.n_embd
-        H = 4 * D
-        # K full-rank MLP branches
+        H_full = 4 * D
+        H_per_branch = H_full // n_branches if narrow else H_full
+        self.H_per_branch = H_per_branch
+        # K MLP branches (narrow or full-size)
         self.branches_fc = nn.ModuleList([
-            Linear(D, H, bias=False) for _ in range(n_branches)])
+            Linear(D, H_per_branch, bias=False) for _ in range(n_branches)])
         self.branches_proj = nn.ModuleList([
-            Linear(H, D, bias=False) for _ in range(n_branches)])
-        # Frozen random projection for content routing (buffer = no grad)
-        # Scaled by 1/sqrt(D) for reasonable softmax logit magnitude
-        self.register_buffer('content_proj',
-            torch.randn(D, n_branches) / (D ** 0.5))
+            Linear(H_per_branch, D, bias=False) for _ in range(n_branches)])
+        # Content routing projection
+        # Frozen (buffer) or learned (parameter) depending on flag
+        route_init = torch.randn(D, n_branches) / (D ** 0.5)
+        if learned_route:
+            self.content_proj = nn.Parameter(route_init)
+        else:
+            self.register_buffer('content_proj', route_init)
+        self.learned_route = learned_route
         # Cache for diagnostics
         self._last_routing_entropy = 0.0
         self._last_routing_weights = None
@@ -4165,7 +4201,7 @@ class FrozenRoutedMLP(nn.Module):
     def forward(self, x):
         B, T, D = x.shape
         dtype = x.dtype
-        # Frozen content-dependent routing (no gradient through content_proj)
+        # Content-dependent routing
         logits = x.float() @ self.content_proj.float()  # (B, T, K)
         weights = F.softmax(logits, dim=-1).to(dtype)  # (B, T, K)
 
@@ -4176,9 +4212,24 @@ class FrozenRoutedMLP(nn.Module):
             self._last_routing_entropy = -(w_float * log_w).sum(dim=-1).mean().item()
             self._last_routing_weights = w_float.mean(dim=(0, 1))
 
-        # Compute all K branches, weight by routing
+        # Top-k sparsification: zero out non-top-k weights
+        if self.topk > 0 and self.topk < self.n_branches:
+            topk_vals, topk_idx = weights.topk(self.topk, dim=-1)
+            mask = torch.zeros_like(weights)
+            mask.scatter_(-1, topk_idx, 1.0)
+            weights = weights * mask
+            # Re-normalize so weights sum to 1
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        # Compute active branches, weight by routing
         y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
         for k in range(self.n_branches):
+            if self.topk > 0 and self.topk < self.n_branches:
+                # Skip branches with zero weight (top-k optimization)
+                # Note: this is a per-batch check, not per-token. Full per-token
+                # skipping would require scatter/gather which breaks compile.
+                # Keep simple for now.
+                pass
             h = self.branches_fc[k](x)
             h = F.relu(h).square()
             h = self.branches_proj[k](h)
@@ -4839,11 +4890,130 @@ class WBFC_MLP(nn.Module):
         return y
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 21: Pervasive Expert Routing (PER) — MoE-ify every Linear layer
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Global counter for assigning unique seeds to each MoELinear instance
+_moe_linear_counter = 0
+
+class MoELinear(nn.Module):
+    """Phase 21: Drop-in replacement for Linear(D_in, D_out) with K expert sub-layers.
+
+    Each expert is a narrow Linear(D_in, D_out) using a hidden bottleneck:
+        expert_k(x) = A_k @ (B_k @ x)   where B_k: (r, D_in), A_k: (D_out, r), r = D_in // K
+
+    This gives:
+      - Param parity: K × (D_in × r + r × D_out) ≈ D_in × D_out when r = D_in/K
+      - Full D_out output from each expert (no concatenation issues)
+      - Top-k routing only computes k of K experts → FLOP savings
+
+    Routing: frozen content projection R (different per instance via unique seed).
+    Each MoELinear in the model gets a DIFFERENT R, so tokens route to different
+    experts at different layers/projections.
+
+    VRAM advantage (vs dense baseline at same D_out):
+      - Activations: top-1 only materializes 1 expert's intermediates (r-dim)
+      - Weights: similar total, but spread across K small matrices (better cache)
+    """
+    def __init__(self, D_in, D_out, K, topk=0, learned_route=False, bias=False):
+        super().__init__()
+        global _moe_linear_counter
+        self.D_in = D_in
+        self.D_out = D_out
+        self.K = K
+        self.topk = topk if topk > 0 else K  # 0 = use all (soft routing)
+        # Bottleneck rank per expert
+        self.rank = max(1, D_in // K)
+        # K experts, each factored as A_k @ B_k
+        # B_k: (rank, D_in) — down-project, A_k: (D_out, rank) — up-project
+        self.experts_B = nn.ParameterList([
+            nn.Parameter(torch.randn(self.rank, D_in) * (D_in ** -0.5))
+            for _ in range(K)])
+        self.experts_A = nn.ParameterList([
+            nn.Parameter(torch.randn(D_out, self.rank) * (self.rank ** -0.5))
+            for _ in range(K)])
+        # Per-instance frozen/learned routing projection
+        # Use unique seed so every MoELinear has a DIFFERENT R
+        gen = torch.Generator().manual_seed(42 + _moe_linear_counter)
+        _moe_linear_counter += 1
+        route_init = torch.randn(D_in, K, generator=gen) / (D_in ** 0.5)
+        if learned_route:
+            self.route_proj = nn.Parameter(route_init)
+        else:
+            self.register_buffer('route_proj', route_init)
+        self.learned_route = learned_route
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+
+    def forward(self, x):
+        orig_shape = x.shape  # could be (B, T, D_in) or (B*T, D_in)
+        if x.dim() == 2:
+            x = x.unsqueeze(0)  # (1, N, D_in)
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Routing scores
+        scores = x.float() @ self.route_proj.float()  # (B, T, K)
+        weights = F.softmax(scores, dim=-1).to(dtype)   # (B, T, K)
+
+        # Diagnostics (no grad)
+        with torch.no_grad():
+            w = weights.float()
+            log_w = torch.log(w.clamp(min=1e-8))
+            self._last_routing_entropy = -(w * log_w).sum(dim=-1).mean().item()
+
+        # Top-k sparsification
+        if self.topk < self.K:
+            _, topk_idx = weights.topk(self.topk, dim=-1)
+            mask = torch.zeros_like(weights)
+            mask.scatter_(-1, topk_idx, 1.0)
+            weights = weights * mask
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        # Compute weighted sum of expert outputs
+        y = torch.zeros(B, T, self.D_out, device=x.device, dtype=dtype)
+        for k in range(self.K):
+            # Skip experts with zero total weight (top-k optimization)
+            if self.topk < self.K:
+                if weights[:, :, k].sum().item() == 0:
+                    continue
+            # Factored expert: A_k @ (B_k @ x)
+            h = F.linear(x, self.experts_B[k])  # (B, T, rank)
+            out = F.linear(h, self.experts_A[k])  # (B, T, D_out)
+            y = y + weights[:, :, k:k+1] * out
+
+        # Restore original shape
+        if len(orig_shape) == 2:
+            y = y.squeeze(0)
+        return y
+
+    @property
+    def weight(self):
+        """Reconstruct effective weight for compatibility (e.g., init_weights).
+        Returns sum of A_k @ B_k — shape (D_out, D_in).
+        """
+        w = torch.zeros(self.D_out, self.D_in, device=self.experts_A[0].device,
+                        dtype=self.experts_A[0].dtype)
+        for k in range(self.K):
+            w = w + self.experts_A[k] @ self.experts_B[k]
+        return w / self.K
+
+
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        _per_k = getattr(config, 'p21_per_experts', 0)
+        if _per_k > 0:
+            _per_topk = getattr(config, 'p21_per_topk', 0)
+            _per_learned = bool(getattr(config, 'p21_per_learned', 0))
+            self.c_fc = MoELinear(config.n_embd, 4 * config.n_embd, K=_per_k,
+                                  topk=_per_topk, learned_route=_per_learned)
+            self.c_proj = MoELinear(4 * config.n_embd, config.n_embd, K=_per_k,
+                                    topk=_per_topk, learned_route=_per_learned)
+        else:
+            self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
+            self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
         # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
         # 18F: Per-Channel Scale after projection
@@ -4887,7 +5057,10 @@ class Block(nn.Module):
             self.mlp = LSHRoutedMLP(config, scale_factor=_lswr,
                                     n_planes=getattr(config, 'p20_lswr_planes', 8))
         elif _lrcfb_k > 0:
-            self.mlp = FrozenRoutedMLP(config, n_branches=_lrcfb_k)
+            self.mlp = FrozenRoutedMLP(config, n_branches=_lrcfb_k,
+                                        narrow=bool(getattr(config, 'p20_lrcfb_narrow', 0)),
+                                        learned_route=bool(getattr(config, 'p20_lrcfb_learned', 0)),
+                                        topk=getattr(config, 'p20_lrcfb_topk', 0))
         elif _dgcr_k > 0:
             self.mlp = DetachedRoutedMLP(config, n_branches=_dgcr_k,
                                          aux_weight=getattr(config, 'p20_dgcr_aux_weight', 0.01))

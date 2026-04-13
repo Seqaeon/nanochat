@@ -184,7 +184,10 @@ parser.add_argument("--p19-weight-noise", type=float, default=0.0, help="19J: tr
 parser.add_argument("--p20-hrcs-scale", type=int, default=0, help="20A: Hash-routed column selection (0=off, scale=D_stored/D_active)")
 parser.add_argument("--p20-lswr-scale", type=int, default=0, help="20B: LSH weight routing (0=off, scale factor)")
 parser.add_argument("--p20-lswr-planes", type=int, default=8, help="20B: number of LSH hash planes")
-parser.add_argument("--p20-lrcfb-branches", type=int, default=0, help="20C: Frozen content-routed full-rank branches (0=off, K=branches)")
+parser.add_argument("--p20-lrcfb-branches", type=int, default=0, help="20C: Content-routed branches (0=off, K=branches)")
+parser.add_argument("--p20-lrcfb-narrow", type=int, default=0, choices=[0, 1], help="20C: narrow branches (0=full-size, 1=H//K param parity)")
+parser.add_argument("--p20-lrcfb-learned", type=int, default=0, choices=[0, 1], help="20C: learned routing (0=frozen, 1=learnable)")
+parser.add_argument("--p20-lrcfb-topk", type=int, default=0, help="20C: top-k sparse routing (0=soft/all)")
 parser.add_argument("--p20-dgcr-branches", type=int, default=0, help="20D: Detached-gradient content-routed branches (0=off, K=branches)")
 parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01, help="20D: auxiliary routing loss weight")
 parser.add_argument("--p20-mone-experts", type=int, default=0, help="20F: Mixture of Narrow Experts (0=off, K=num experts)")
@@ -198,6 +201,11 @@ parser.add_argument("--p20-pwu-phase", type=int, default=1, choices=[1, 2, 3], h
 parser.add_argument("--p20-fsvd-gate", type=int, default=0, choices=[0, 1], help="20G: Frozen-SVD σ gating (0=off, 1=on)")
 parser.add_argument("--p20-wbfc-clusters", type=int, default=0, help="20J: Weight bank frozen clustering (0=off, K=clusters)")
 parser.add_argument("--p20-wbfc-active", type=int, default=0, help="20J: active clusters per token (0=auto K//4)")
+# Phase 21: Pervasive Expert Routing
+parser.add_argument("--p21-per-experts", type=int, default=0, help="21: MoELinear experts per layer (0=off, K=experts)")
+parser.add_argument("--p21-per-topk", type=int, default=0, help="21: top-k routing (0=soft/all)")
+parser.add_argument("--p21-per-learned", type=int, default=0, choices=[0, 1], help="21: learned routing (0=frozen, 1=learnable)")
+parser.add_argument("--p21-per-attn", type=int, default=0, choices=[0, 1], help="21: also replace attention Q/K/V/O (0=MLP only, 1=all)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -452,6 +460,9 @@ def build_model_meta(depth):
         p20_lswr_scale=getattr(args, 'p20_lswr_scale', 0),
         p20_lswr_planes=getattr(args, 'p20_lswr_planes', 8),
         p20_lrcfb_branches=getattr(args, 'p20_lrcfb_branches', 0),
+        p20_lrcfb_narrow=getattr(args, 'p20_lrcfb_narrow', 0),
+        p20_lrcfb_learned=getattr(args, 'p20_lrcfb_learned', 0),
+        p20_lrcfb_topk=getattr(args, 'p20_lrcfb_topk', 0),
         p20_dgcr_branches=getattr(args, 'p20_dgcr_branches', 0),
         p20_dgcr_aux_weight=getattr(args, 'p20_dgcr_aux_weight', 0.01),
         p20_mone_experts=getattr(args, 'p20_mone_experts', 0),
@@ -465,6 +476,11 @@ def build_model_meta(depth):
         p20_fsvd_gate=getattr(args, 'p20_fsvd_gate', 0),
         p20_wbfc_clusters=getattr(args, 'p20_wbfc_clusters', 0),
         p20_wbfc_active=getattr(args, 'p20_wbfc_active', 0),
+        # Phase 21
+        p21_per_experts=getattr(args, 'p21_per_experts', 0),
+        p21_per_topk=getattr(args, 'p21_per_topk', 0),
+        p21_per_learned=getattr(args, 'p21_per_learned', 0),
+        p21_per_attn=getattr(args, 'p21_per_attn', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

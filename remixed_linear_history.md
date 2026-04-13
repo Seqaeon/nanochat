@@ -713,43 +713,332 @@ A linear layer where context dynamically determines the effective computation. T
 
 ### Implemented Proposals
 
-#### 20F: Mixture of Narrow Experts (MoNE) — `--p20-mone-experts K`
-K narrow expert MLPs (hidden_dim = 4D/K) with content-based router. **Same total params as dense MLP.** Zero parameter overhead. Soft routing during training; optional top-k sparse routing at inference. Router zero-init → uniform at step 0.
 
-#### 20C: Frozen Content-Routed Branches (LRCFB) — `--p20-lrcfb-branches K`
-K full-rank MLP branches mixed by a FROZEN random content projection. `alpha = softmax(x @ R_frozen)`. R is a buffer, never updated. Completes the 2×2 matrix: frozen+position (CKR) tested, learned+content (RemixedLinear) tested, **frozen+content never tested**. K× parameter overhead.
+## Phase 20 Proposals
 
-#### 20D: Detached-Gradient Content Routing (DGCR) — `--p20-dgcr-branches K`
-K full-rank MLP branches with a LEARNED router, but gradient flows only through an auxiliary loss. `alpha = router(x.detach()).detach()`. Router trained to predict which branch minimizes per-token error ex-post. K× parameter overhead. FM7 risk from x.detach().
+### 20A: Hash-Routed Column Selection (HRCS)
 
-#### 20A: Hash-Routed Column Selection (HRCS) — `--p20-hrcs-scale S`
-Stores a fat weight matrix W ∈ ℝ^{D×(S·D)} but selects only D_active columns per token via a DETERMINISTIC frozen hash of the input features. `indices = topk(|x @ H_frozen|)`, then mask non-selected hidden dims. Avoids FM1 (frozen hash), FM2 (content-based), FM3 (full columns). S× parameter overhead in MLP weights.
+**Core idea:** Store a fat weight matrix W ∈ ℝ^{D_stored × D_out}, but at each token position, select only D_active columns based on a **deterministic hash** of the input token's features. No learned gate — the routing is a frozen, content-sensitive hash function.
 
-#### 20B: Locality-Sensitive Weight Routing (LSWR) — `--p20-lswr-scale S --p20-lswr-planes N`
-LSH-based variant of 20A. Frozen random hyperplanes partition input space into 2^N buckets. Each bucket maps to a fixed set of active columns (precomputed at init). `hash_bits = sign(x @ H)` → bucket_id → column mask. LSH guarantees locality preservation. S× parameter overhead.
+**Mechanism:**
+```
+# W: (D_stored, D_out), D_stored = scale_factor * D_active
+# x: (B, T, D_active)
+# hash_fn: frozen LSH, maps x → indices of D_active columns in W
 
-#### 20H: Noise-Contrastive Expert Assignment (NCEA) — `--p20-ncea-branches K --p20-ncea-eps E`
-Shared base MLP + K learned perturbation directions (delta). Extends 19J (weight noise works) with STRUCTURED noise. `W_k = W_base + eps * delta_k`. Router predicts which perturbation helps most (aux loss only, not main loss). Same parameter overhead as delta directions only.
+indices = hash_fn(x)           # (B, T, D_active) — deterministic, no grad
+W_active = W[indices]          # (B, T, D_active, D_out) — gather
+y = einsum('btd,btdo->bto', x, W_active)
+```
 
-#### 20I: Attention-Derived Weight Interpolation (ADWI) — `--p20-adwi 1`
-Uses existing attention head output magnitudes as FFN routing signal. No new router module — reuses attention computation. Each head's ||attn_head_k||² determines which narrow expert to weight. H narrow experts (one per attention head). Same total params as dense MLP.
+**Why it might work:**
+- **Avoids FM1** (gradient fracturing): hash is frozen, no routing gradients
+- **Avoids FM2** (identity trap): hash is content-dependent but NOT learned
+- **Avoids FM3** (rank bottleneck): each selected W_active is full-rank in active dimensions
+- Active compute is D_active × D_out FLOPs (same as small model)
+- Stored capacity is D_stored × D_out (same as large model)
 
-### Model Names (critical for sweep commands)
-- **`base`** = standard dense transformer (`Block` + `MLP`). This is what P20 proposals modify.
-- **`remixed-linear`** = context-conditioned linear layers (`CCLBlock` + `RemixedLinear`)
-- **`moe_no_perm`** / **`moe_perm`** = MoE variants
-- ⚠️ **"dense" is NOT a valid model name** — always use `--models "base"`.
+**Risks:**
+- Random hashing may not route intelligently — similar inputs might get very different columns
+- The gather operation may not be compile/FlashAttention friendly
+- D_stored weights live in VRAM even if only D_active are used per step
 
-### Phase 2 Proposals (pretrain base → convert → continue training)
+**Scale ratio:** Configurable via `D_stored / D_active`
 
-#### 20E: Progressive Weight Unfreezing (PWU) — `--p20-pwu-branches K --p20-pwu-phase {1,2,3}`
-Forks a pre-trained MLP into K branches with small random perturbations, then trains a content-dependent router. Phase 2 (router-only): branches frozen, only router trains. Phase 3 (joint): everything unfrozen. `convert_to_phase2()` handles the MLP→PWU_MLP conversion automatically.
+---
 
-#### 20G: Frozen-SVD σ Gating — `--p20-fsvd-gate 1`
-Decomposes pre-trained MLP weights via SVD (W = UΣV^T), freezes U and V (directional structure), applies a frozen content-dependent gate to modulate σ per token. `gate = sigmoid(x @ R_frozen)`. Content-aware subspace traversal with no gradient through the gate. Unlike 19G (which was init'd from zeros and failed), U/V contain learned structure from pre-training.
+### 20B: Locality-Sensitive Weight Routing (LSWR)
 
-#### 20J: Weight Bank Frozen Clustering (WBFC) — `--p20-wbfc-clusters K --p20-wbfc-active M`
-Clusters a pre-trained MLP's hidden dimensions into K groups via K-means, then routes tokens to top-M clusters via frozen content projection. **This is the most direct realization of the original vision**: a large weight bank where context selects a subspace. Saves FLOPs at inference: only M/K of hidden dims are computed.
+**Core idea:** Like 20A but with **Locality-Sensitive Hashing** — similar inputs hash to similar column subsets. This creates smooth, content-dependent routing without learned gates.
+
+**Mechanism:**
+```
+# Fixed random hyperplanes for LSH (frozen at init, never updated)
+# H: (n_planes, D_active) — random unit vectors
+hash_bits = sign(x @ H.T)                    # (B, T, n_planes) — binary hash
+bucket_id = binary_to_int(hash_bits)          # (B, T) — integer bucket
+column_indices = bucket_to_columns[bucket_id] # (B, T, D_active) — precomputed lookup
+
+W_active = W[:, column_indices]               # gather active columns
+y = (x * W_active).sum(dim=-1)               # or proper matmul
+```
+
+**Why it might work:**
+- LSH guarantees nearby inputs in feature space → similar column selections → smooth weight landscape
+- Completely frozen routing — zero gradient interference
+- The "weight space" is much larger than what any single token uses
+
+**Risks:**
+- LSH buckets may be too coarse or too fine
+- Bucket-to-column mapping needs careful design (random assignment? learned once then frozen?)
+- Memory: full W must be in VRAM for the gather
+
+---
+
+### 20C: Low-Rank Weight Composition with Frozen Basis (LRCFB)
+
+**Core idea:** Instead of selecting columns, compose the effective weight from a **frozen bank of full-rank basis matrices** using content-derived coefficients. The basis matrices are initialized once (e.g., from orthogonal random matrices) and NEVER updated. Only the small composition coefficients are learned — but they're static (not input-dependent).
+
+Wait — that's just an ensemble. Let me refine:
+
+The composition coefficients ARE input-dependent but come from a **frozen random projection** of the input (not a learned gate):
+
+**Mechanism:**
+```
+# B_k: K frozen full-rank basis matrices, (D_in, D_out), K=4-8
+# R: frozen random projection matrix, (D_in, K)
+
+alpha = softmax(x @ R)              # (B, T, K) — frozen routing, no grad through R
+W_eff = sum_k alpha_k * B_k         # (D_in, D_out) — effective weight per token
+y = (x * W_eff).sum(-1)             # matmul with token-specific weight
+```
+
+**Why it might work:**
+- **Avoids FM1**: NO learned routing parameters — R is frozen, B_k are learned normally
+- **Avoids FM2**: R is random, not derived from normalized x
+- **Avoids FM3**: Each B_k is full-rank; the convex combination is full-rank
+- The gradient to each B_k is `∂L/∂B_k = alpha_k * (x^T δy)` — standard linear gradient scaled by a frozen coefficient. No gradient fracturing.
+- Effectively: each token gets a different "blend" of K weight matrices, but the blending is deterministic (from frozen R), so the optimizer only needs to learn the K base matrices
+
+**Key insight:** CKR used position to route, which is orthogonal but uninformative. LRCFB uses frozen content projection to route, which is content-sensitive but gradient-free. This is the missing combination we never tried.
+
+**Risks:**
+- Frozen random R may create arbitrary routing that doesn't correlate with useful input structure
+- K full-rank matrices = K× parameter overhead (same as CKR)
+- BUT: since we know K=4 is sufficient (Phase 13), this is manageable
+
+**Scale ratio:** K controls the capacity multiplier. K=4 gives ×4 capacity in weight space.
+
+---
+
+### 20D: Detached-Gradient Content Routing (DGCR)
+
+**Core idea:** Learn the routing network, but pass gradients to it ONLY through a separate auxiliary loss — never through the main next-token prediction loss. The main loss gradients treat the routing as a constant.
+
+**Mechanism:**
+```
+# Standard forward:
+alpha = router(x.detach())                        # content-dependent, gradient-stopped from main loss
+alpha_sg = alpha.detach()                          # stop grad for main branch
+W_eff = sum_k alpha_sg_k * W_k                    # effective weight (routing treated as constant)
+y = x @ W_eff                                     # main computation
+
+# Auxiliary loss (separate backward):
+# Train router to predict something useful about the input
+# e.g., predict which branch reduces reconstruction error
+with torch.no_grad():
+    per_branch_error = [((x @ W_k - target)**2).mean() for k in range(K)]
+best_branch = argmin(per_branch_error)
+aux_loss = cross_entropy(alpha_logits, best_branch)
+```
+
+**Why it might work:**
+- **Avoids FM1** completely: the main loss never backprops through the router
+- The router learns via its own loss signal (which branch would have been best)
+- The base matrices W_k see clean, standard gradients like CKR's branches
+- Content-dependent (not just position) without identity trap or gradient interference
+
+**Risks:**
+- The auxiliary loss is a proxy — "which branch is best ex-post" might not correlate with "which branch would help next-token prediction"
+- Two backward passes (main + aux) adds compute
+- The router is trained on a different objective than the goal, which may misalign
+
+> [!IMPORTANT]
+> This is the only proposal that attempts to learn content-dependent routing while avoiding FM1. If the auxiliary objective can be designed well, this overcomes the fundamental constraint.
+
+---
+
+### 20E: Progressive Weight Unfreezing (PWU)
+
+**Core idea:** Don't try to learn routing and weights simultaneously. Instead, train in phases:
+1. **Phase A (standard pretraining):** Train a dense model with K=1 normally. No routing.
+2. **Phase B (branch distillation):** Freeze the trained weights. Fork them into K copies with random perturbations. Train a small router to minimize reconstruction loss against the original model's outputs.
+3. **Phase C (joint fine-tuning):** Unfreeze everything with a heavily reduced LR on branches, normal LR on router.
+
+**Why it might work:**
+- **Avoids FM1** in the critical early phase: routing and features never compete simultaneously
+- The router starts with meaningful branches (from a pre-trained model) rather than random weights
+- By the time we do joint training (Phase C), the router has already learned a useful routing pattern
+
+**Risks:**
+- Multi-phase training is complex and may not fit our sweep infrastructure
+- The perturbations in Phase B may not create meaningfully different branches
+- This doesn't help with pretraining from scratch — only with fine-tuning
+
+---
+
+### 20F: Mixture of Narrow Experts (MoNE)
+
+**Core idea:** Instead of one wide MLP with D_in → 4×D_in → D_in, use K narrow MLPs each with D_in → (4×D_in/K) → D_in. A router selects the top-1 or top-2 experts per token. The total parameter count is the SAME as the baseline (each expert is 1/K the width), but different tokens use different experts.
+
+**Mechanism:**
+```
+# K narrow experts, each with hidden_dim = 4*D/K
+# Router: Linear(D, K) → softmax → top-1 or top-2
+
+router_logits = x @ R_router     # (B, T, K)
+top_idx = topk(router_logits, 1) # (B, T, 1)
+expert_out = experts[top_idx](x) # only compute 1 expert per token
+y = expert_out                   # or weighted sum of top-2
+```
+
+**Why it might work:**
+- **Zero parameter overhead**: Same total params as baseline (K experts of width 4D/K = total width 4D)
+- **Zero FLOP overhead**: Only 1 expert computed per token → same FLOPs as one narrow MLP
+- Each expert can specialize in different input patterns
+- This IS standard MoE but at the **intra-layer** level, at **parameter parity** with dense
+- The router is tiny (D × K params)
+
+**Risks:**
+- Standard MoE load-balancing issues (experts collapse to a few being used)
+- At small scale (D=128), K narrow experts may be too narrow (4D/K = 128 with K=4)
+- Router gradient interference (FM1) — but the router is very small
+
+**Scale ratio:** K controls the number of specialized modes. Active compute = 1/K of stored compute.
+
+> [!TIP]
+> This is conceptually closest to the user's original vision: the layer has K× more "weight capacity" (K different expert functions) but only uses 1/K of it per token, with content-aware routing deciding which.
+
+---
+
+### 20G: Frozen-SVD Weight Subspace Traversal (FSVD)
+
+**Core idea:** Take the dense weight matrix W, compute its SVD: W = UΣV^T. Freeze U and V (the directional structure). Then let a content-dependent signal SELECT which singular values to amplify/suppress. The effective weight varies per-token but stays in the span of the original SVD.
+
+Unlike Phase 19G (which failed): here U,V come from a PRE-TRAINED weight (not zero-init), and the σ modulation is content-dependent (not just learned scalars).
+
+**Mechanism:**
+```
+# Pre-training phase: train dense model normally
+# Post-training: decompose W = UΣV^T, freeze U, V
+# Content-dependent σ selection:
+
+sigma_gate = sigmoid(frozen_proj(x))  # (B, T, D) — frozen content projection
+sigma_eff = sigma * sigma_gate        # element-wise gating of singular values
+W_eff = U @ diag(sigma_eff) @ V.T    # effective weight per token
+y = x @ W_eff
+```
+
+**Why it might work:**
+- U, V capture the meaningful directional structure from pre-training
+- The frozen projection avoids FM1 (no routing gradients)
+- Content-dependent σ selection lets different inputs emphasize different spectral components
+- Each token uses a different "view" of the pre-trained weight — potentially more expressive than the original
+
+**Risks:**
+- Requires pre-training first (can't train from scratch)
+- The frozen gate may not select useful σ components
+- SVD is expensive at init (but only done once)
+- May not be much better than just using the original W
+
+---
+
+### 20H: Noise-Contrastive Expert Assignment (NCEA)
+
+**Core idea:** Take inspiration from 19J (weight noise works!). Instead of random noise, use **structured** noise — multiple weight banks that are perturbed versions of a shared base. The router uses contrastive learning to assign tokens to the bank whose perturbation direction is most beneficial, trained via reconstruction comparison (not main loss).
+
+This combines the success of 19J (noise helps) with MoE-style routing.
+
+**Mechanism:**
+```
+# W_base: shared base weight
+# delta_k: K learned perturbation directions (initialized random, small)
+# Assignment: which perturbation direction helps this token most?
+
+W_k = W_base + eps * delta_k                    # K perturbed weights
+y_k = [x @ W_k for k in range(K)]               # K candidate outputs
+y_base = x @ W_base                              # base output
+
+# Assignment via contrastive comparison (no grad to W_base/delta_k from router):
+with torch.no_grad():
+    scores = [-||y_k - target||² for k in range(K)]  # which is closest to target?
+    best_k = argmax(scores)
+
+y = y_k[best_k]  # or: soft weighted sum
+# Router aux loss to predict best_k from x
+```
+
+**Risks:**
+- Computing ALL K outputs defeats the purpose (we want to compute only 1)
+- Need a way to predict the best k WITHOUT computing all of them
+- The perturbations delta_k may collapse to zero
+
+---
+
+### 20I: Attention-Derived Weight Interpolation (ADWI)
+
+**Core idea:** The attention mechanism already computes content-dependent routing — that's what the attention weights ARE. Use the EXISTING attention weights (not a new router) to interpolate between weight matrices. Each attention head's contribution to the residual stream determines which expert's FFN weights to use.
+
+**Mechanism:**
+```
+# After attention: we have per-head outputs h_1, ..., h_H
+# Each head has learned to attend to different content patterns
+# Use head activation magnitudes as routing signal:
+
+head_magnitudes = [||h_k||² for k in range(H)]     # (B, T, H)
+alpha = softmax(head_magnitudes)                     # (B, T, H)
+
+# H expert FFNs (or shared base + H perturbations):
+y = sum_h alpha_h * FFN_h(x)
+```
+
+**Why it might work:**
+- **Reuses existing attention computation** — zero additional routing cost
+- Head magnitudes are a naturally content-dependent signal
+- Different heads attend to different patterns → natural routing diversity
+- The routing signal's gradient flows through the attention mechanism, which is already being trained
+
+**Risks:**
+- H experts at full width = H× parameter overhead (too expensive)
+- Could use H narrow experts (MoNE-style) to keep parameter parity
+- Head magnitudes may not correlate with useful routing patterns
+- Gradient coupling between attention and FFN routing
+
+---
+
+### 20J: Weight Bank with Frozen Clustering (WBFC)
+
+**Core idea:** Offline, cluster a large weight matrix's rows/columns into K groups using K-means on a pre-trained model. During training, store K centroids + per-row residuals. Route tokens to cluster centroids first (cheap), then apply residual refinement (if needed).
+
+This is the most direct realization of the user's vision: a large weight bank where context selects a subspace.
+
+**Mechanism:**
+```
+# Offline: cluster columns of W into K groups
+# centroids: (K, D_out) — cluster centers
+# residuals: (D_in, D_out) — per-column residuals from centroid
+# assignment: (D_in,) → K — which cluster each column belongs to
+
+# Online: for each token, select top-M clusters (M < K)
+cluster_affinity = frozen_proj(x) @ centroids.T   # (B, T, K)
+top_clusters = topk(cluster_affinity, M)           # (B, T, M)
+
+# Gather only the rows/columns from selected clusters
+W_active = gather_columns_from_clusters(W, top_clusters)
+y = x @ W_active
+```
+
+**Risks:**
+- Clustering is static (computed offline) — may not adapt well to training dynamics
+- The gather pattern may not vectorize well for GPU compute
+- Requires pre-training first
+
+---
+
+## Comparative Analysis
+
+| Proposal | Avoids FM1 (fracturing)? | Avoids FM2 (identity)? | Avoids FM3 (rank)? | Avoids FM4 (capacity tax)? | Compute savings? | Train from scratch? |
+|---|---|---|---|---|---|---|
+| **20A: HRCS** | ✅ (frozen hash) | ✅ (hash ≠ norm(x)) | ✅ (full columns) | ⚠️ (fat W in VRAM) | ✅ (D_active matmul) | ✅ |
+| **20B: LSWR** | ✅ (frozen LSH) | ✅ | ✅ | ⚠️ (fat W in VRAM) | ✅ | ✅ |
+| **20C: LRCFB** | ✅ (frozen R) | ✅ (R ≠ norm) | ✅ (full-rank B_k) | ❌ (K× weight params) | ❌ (K matmuls) | ✅ |
+| **20D: DGCR** | ✅ (aux loss only) | ✅ (detached input) | ✅ (full-rank W_k) | ❌ (K× weight params) | ⚠️ (need all K for aux) | ✅ |
+| **20E: PWU** | ✅ (phased training) | ✅ | ✅ | ❌ (K× weight params) | ❌ | ❌ (pre-train first) |
+| **20F: MoNE** | ⚠️ (tiny router) | ✅ (learned routing) | ✅ (narrow but full) | ✅ (same total params) | ✅ (1/K FLOPs) | ✅ |
+| **20G: FSVD** | ✅ (frozen proj) | ✅ | ✅ (modulates SVD) | ✅ (same params) | ❌ (recompose W) | ❌ (pre-train first) |
+| **20H: NCEA** | ⚠️ (aux loss) | ✅ | ✅ | ❌ (K× params) | ❌ (compute all K) | ✅ |
+| **20I: ADWI** | ⚠️ (coupled to attn) | ✅ (reuses attn) | ✅ | ❌ (H× params) | ❌ (H experts) | ✅ |
+| **20J: WBFC** | ✅ (frozen clusters) | ✅ | ✅ | ⚠️ (full W in VRAM) | ✅ (M/K columns) | ❌ (pre-train first) |
 
 ### Technical Fixes
 - **19E bug fix:** `num_scaling_params()` now counts GPT-level P19 params (depth_decay_raw, residual_mix_gamma).
@@ -778,3 +1067,51 @@ Clusters a pre-trained MLP's hidden dimensions into K groups via K-means, then r
 | 20J | WBFC (K=8) | — | — | ⚠️ Incomplete |
 
 **Key finding:** 20C (frozen content routing, K=4 branches) achieved **1.2323 BPB**, beating the dense baseline by 0.025 and beating CKR's best (4.08 at larger dim). This validates frozen content-dependent routing as a viable mechanism.
+
+### 20C Enhancements: Narrow Branches + Routing Ablations
+
+Based on 20C's strong results, added configurable variants via `--p20-lrcfb-narrow`, `--p20-lrcfb-learned`, `--p20-lrcfb-topk`:
+
+| Variant | Flags | Params vs Dense | FLOPs | Tests |
+|---|---|---|---|---|
+| 20C (original) | `--p20-lrcfb-branches 4` | 4× | 4× | ✅ Proven: 1.2323 BPB |
+| 20C-narrow | `+ --p20-lrcfb-narrow 1` | **1×** (param parity) | 1× | Does small-expert routing work? |
+| 20C-learned | `+ --p20-lrcfb-learned 1` | 1× | 1× | Learned vs frozen routing? |
+| 20C-topk1 | `+ --p20-lrcfb-topk 1` | 1× | **~¼×** | Top-1 sparse (min FLOPs) |
+
+With `narrow=True, K=4`: each branch has H//4 hidden dim instead of H. So 4 branches × (D→H/4→D) = same params as 1 × (D→H→D).
+
+---
+
+## Phase 21: Pervasive Expert Routing (PER)
+
+**The original vision realized:** Replace every Linear layer with K narrow expert sub-layers, each selected by frozen content routing. Different routing at every layer/projection guarantees each token takes a unique "path" through the network.
+
+### Architecture: `MoELinear`
+
+Drop-in replacement for `Linear(D_in, D_out)`:
+- K experts, each factored: `expert_k(x) = A_k @ (B_k @ x)` where B_k is (r, D_in), A_k is (D_out, r), r = D_in // K
+- Each expert outputs full D_out (no concatenation issues)
+- Per-instance frozen random routing projection R (unique seed per `MoELinear` instance)
+- Different routing at every layer/projection = different expert per layer
+
+#### VRAM advantage
+With narrow experts (r = D_in // K), activation intermediates are r-dimensional instead of D_out-dimensional. Even at the same model_dim, top-1 routing materializes only 1 expert's intermediates.
+
+#### Modes
+- `--p21-per-experts K`: number of experts (0=off)
+- `--p21-per-topk N`: top-N routing (0=soft, all experts weighted sum)
+- `--p21-per-learned 1`: learnable routing projection instead of frozen
+- `--p21-per-attn 1`: also replace attention Q/K/V/O (default: MLP only)
+
+#### Where MoELinear is applied
+- **MLP** (always when p21_per_experts > 0): `c_fc` and `c_proj`
+- **Attention** (when p21_per_attn = 1): `c_q`, `c_k`, `c_v`, `c_proj`
+
+#### Sweep entries
+| TAG | Experts | Top-k | Scope | What it tests |
+|---|---|---|---|---|
+| 21_PER_MLP_SOFT | K=4 | all | MLP only | Soft expert blending in MLP |
+| 21_PER_MLP_TOP1 | K=4 | 1 | MLP only | Maximum FLOP savings in MLP |
+| 21_PER_ALL_SOFT | K=4 | all | MLP+Attn | Full pervasive expert routing |
+| 21_PER_ALL_TOP1 | K=4 | 1 | MLP+Attn | Maximum FLOP savings everywhere |

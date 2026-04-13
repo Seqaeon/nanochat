@@ -1,0 +1,247 @@
+-- Training base ---
+Running: /root/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 128 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 4 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --compile --fp8 --tokenizer-dir /root/nanochat/tokenizer --data-dir /root/nanochat/data --max-shards 170 --checkpoints-dir /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base --model-tag base
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-13 05:28:19,067 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H100 80GB HBM3 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 1,
+  "n_kv_head": 1,
+  "n_embd": 128,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 4,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0
+}
+Checkpoints directory: /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base/base
+✓ FP8 training enabled (tensorwise scaling) - converted 49/51 linear layers, skipped 2 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 4,194,304
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 4,194,304
+transformer_matrices    : 2,359,360
+research                : 0
+scalars                 : 8
+total                   : 19,136,584
+Estimated FLOPs per token: 4.364736e+07
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.138208 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(128/768) = 2.449490
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 18.48
+Total training FLOPs estimate: 5.286155e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Total batch size 262,144 => gradient accumulation steps: 2
+[rank0]:W0413 05:28:19.563000 24325 .venv/lib/python3.10/site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] or:
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] to include these operations in the captured graph.
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break: from user code at:
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/root/nanochat/nanochat/gpt.py", line 5905, in forward
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/root/nanochat/nanochat/gpt.py", line 4945, in forward
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     block_out = scale * self.mlp(norm_fn_mlp(x))
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/root/nanochat/nanochat/gpt.py", line 4176, in forward
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     self._last_routing_entropy = -(w_float * log_w).sum(dim=-1).mean().item()
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0413 05:28:19.829000 24325 .venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+/root/nanochat/.venv/lib/python3.10/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+[rank0]:[W413 05:28:31.825248494 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+/root/nanochat/.venv/lib/python3.10/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+step 00000/00462 (0.00%) | loss: 10.397545 | lrm: 0.04 | lr(adamw:3.281e-02, muon:6.149e-04) | dt: 21278.44ms | tok/sec: 12,319 | bf16_mfu: 0.05 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+step 00200/00462 (43.29%) | loss: 4.444196 | lrm: 0.81 | lr(adamw:6.121e-01, muon:1.147e-02) | dt: 383.19ms | tok/sec: 684,101 | bf16_mfu: 3.02 | epoch: 1 pq: 1 rg: 16 | total time: 1.22m | eta: 1.7m
+step 00400/00462 (86.58%) | loss: 4.071511 | lrm: 0.19 | lr(adamw:1.449e-01, muon:2.715e-03) | dt: 383.80ms | tok/sec: 683,016 | bf16_mfu: 3.01 | epoch: 1 pq: 2 rg: 30 | total time: 2.50m | eta: 0.4m
+step 00461/00462 (99.78%) | loss: 4.052596 | lrm: 0.00 | lr(adamw:2.336e-03, muon:4.378e-05) | dt: 386.06ms | tok/sec: 679,020 | bf16_mfu: 3.00 | epoch: 1 pq: 2 rg: 59 | total time: 2.90m | eta: 0.0m
+/root/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/root/nanochat/.venv/lib/python3.10/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Step 00462 | Validation bpb: 1.232303
+<|bos|>The capital of France is a large, large, and large, large, large, large, large,
+<|bos|>The chemical symbol of gold is the symbol of gold and gold. The symbol of gold is gold, gold,
+<|bos|>If yesterday was Friday, then tomorrow will be the first time you have a new day, and then you have a new day
+<|bos|>The opposite of hot is the fact that the hot water is the most common type of hot water is the
+<|bos|>The planets of the solar system are: the solar system is the most important part of the solar system. The solar system
+<|bos|>My favorite color is the color of the color of the color of the color of the color of the
+<|bos|>If 5*x + 3 = 13, then x is 5.5x + 3 = 13, then x is 
+2026-04-13 05:32:30,573 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base/base/model_000462.pt
+2026-04-13 05:32:30,574 - nanochat.checkpoint_manager - INFO - Saved metadata to: /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base/base/meta_000462.json
+2026-04-13 05:32:30,661 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 4.052596 | early_stop: 0
+Peak memory usage: 70136.79MiB
+Total training time: 2.90m
+Minimum validation bpb: 1.232303
+Checkpoint directory /root/nanochat/out/research_sweep_20260413_052803/depth_4/ckpt_base/model does not exist.
+No results collected to plot.
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/research_sweep_20260413_052803
+================================================================
