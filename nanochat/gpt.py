@@ -239,6 +239,12 @@ class GPTConfig:
     p19_weight_anticollapse: float = 0.0      # 19H: weight anti-collapse penalty lambda (0=off)
     p19_ve_bias: int = 0                      # 19I: add learnable bias to VE gate (0/1)
     p19_weight_noise: float = 0.0             # 19J: training-time weight perturbation epsilon (0=off)
+    # Phase 20: Context-conditioned dynamic weight computation
+    p20_mone_experts: int = 0                 # 20F: Mixture of Narrow Experts (0=off, K=num experts)
+    p20_mone_topk: int = 0                    # 20F: top-k expert routing (0=compute all, K=top-k sparse)
+    p20_lrcfb_branches: int = 0               # 20C: Frozen content-routed full-rank branches (0=off, K=num branches)
+    p20_dgcr_branches: int = 0                # 20D: Detached-gradient content-routed branches (0=off, K=num branches)
+    p20_dgcr_aux_weight: float = 0.01         # 20D: weight for auxiliary routing loss
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
@@ -289,6 +295,9 @@ RESEARCH_ALLOWED_KEYS = {
     "p19_residual_gate", "p19_head_importance", "p19_residual_mix_groups",
     "p19_attn_logit_bias", "p19_residual_decay", "p19_grad_equilibrium",
     "p19_spectral_reparam", "p19_weight_anticollapse", "p19_ve_bias", "p19_weight_noise",
+    # Phase 20
+    "p20_mone_experts", "p20_mone_topk", "p20_lrcfb_branches",
+    "p20_dgcr_branches", "p20_dgcr_aux_weight",
 }
 
 
@@ -2918,8 +2927,15 @@ class ModulationDiagnostics:
             else:
                 cq_w = cp_w = None
             if hasattr(block, 'mlp'):
-                fc_w = block.mlp.c_fc.weight
-                proj_w = block.mlp.c_proj.weight
+                fc_w = getattr(block.mlp, 'c_fc', None)
+                fc_w = fc_w.weight if fc_w is not None else None
+                proj_w = getattr(block.mlp, 'c_proj', None)
+                proj_w = proj_w.weight if proj_w is not None else None
+                # P20 MLP variants: fall back to first/last 2D param
+                if fc_w is None:
+                    mat_params = [p for p in block.mlp.parameters() if p.ndim == 2]
+                    fc_w = mat_params[0] if mat_params else None
+                    proj_w = mat_params[-1] if len(mat_params) > 1 else fc_w
             elif hasattr(block, 'ffwd'):
                 fc_w = block.ffwd.c_fc.weight
                 proj_w = block.ffwd.c_proj.weight
@@ -3068,6 +3084,95 @@ class ModulationDiagnostics:
         for k, v in p19_metrics.items():
             if isinstance(v, (int, float)):
                 result[f"p19/{k}"] = v
+        return result
+
+    # ── Phase 20: Dynamic Weight Computation Diagnostics ──────────────────
+
+    @torch.no_grad()
+    def collect_p20(self, model):
+        """Collect Phase 20 diagnostics: routing entropy, expert load, branch divergence."""
+        metrics = {}
+        for i, block in enumerate(model.transformer.h):
+            mlp = block.mlp if hasattr(block, 'mlp') else (block.ffwd if hasattr(block, 'ffwd') else None)
+            if mlp is None:
+                continue
+            prefix = f"block_{i}"
+
+            if isinstance(mlp, MoNE_MLP):
+                # Router entropy
+                metrics[f"{prefix}/p20f_router_entropy"] = mlp._last_router_entropy
+                # Expert load balance (std of loads — 0 = perfect balance)
+                if mlp._last_expert_load is not None:
+                    load = mlp._last_expert_load.float()
+                    metrics[f"{prefix}/p20f_load_std"] = load.std().item()
+                    metrics[f"{prefix}/p20f_load_max"] = load.max().item()
+                    metrics[f"{prefix}/p20f_load_min"] = load.min().item()
+                # Expert weight divergence (cosine distance between expert fc weights)
+                norms = [e.weight.float().reshape(-1) for e in mlp.experts_fc]
+                if len(norms) >= 2:
+                    cos_sims = []
+                    for ii in range(len(norms)):
+                        for jj in range(ii + 1, len(norms)):
+                            cos = F.cosine_similarity(norms[ii].unsqueeze(0), norms[jj].unsqueeze(0)).item()
+                            cos_sims.append(cos)
+                    metrics[f"{prefix}/p20f_expert_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
+                # Router weight gradient norm
+                if mlp.router.weight.grad is not None:
+                    metrics[f"{prefix}/p20f_router_grad_norm"] = mlp.router.weight.grad.float().norm().item()
+
+            elif isinstance(mlp, FrozenRoutedMLP):
+                metrics[f"{prefix}/p20c_routing_entropy"] = mlp._last_routing_entropy
+                if mlp._last_routing_weights is not None:
+                    load = mlp._last_routing_weights.float()
+                    metrics[f"{prefix}/p20c_load_std"] = load.std().item()
+                # Branch weight divergence
+                norms = [b.weight.float().reshape(-1) for b in mlp.branches_fc]
+                if len(norms) >= 2:
+                    cos_sims = []
+                    for ii in range(len(norms)):
+                        for jj in range(ii + 1, len(norms)):
+                            cos = F.cosine_similarity(norms[ii].unsqueeze(0), norms[jj].unsqueeze(0)).item()
+                            cos_sims.append(cos)
+                    metrics[f"{prefix}/p20c_branch_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
+
+            elif isinstance(mlp, DetachedRoutedMLP):
+                metrics[f"{prefix}/p20d_routing_entropy"] = mlp._last_routing_entropy
+                # Router gradient norm (from aux loss)
+                router_last = mlp.router[-1]  # last Linear in router Sequential
+                if router_last.weight.grad is not None:
+                    metrics[f"{prefix}/p20d_router_grad_norm"] = router_last.weight.grad.float().norm().item()
+                # Branch divergence
+                norms = [b.weight.float().reshape(-1) for b in mlp.branches_fc]
+                if len(norms) >= 2:
+                    cos_sims = []
+                    for ii in range(len(norms)):
+                        for jj in range(ii + 1, len(norms)):
+                            cos = F.cosine_similarity(norms[ii].unsqueeze(0), norms[jj].unsqueeze(0)).item()
+                            cos_sims.append(cos)
+                    metrics[f"{prefix}/p20d_branch_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
+
+        return metrics
+
+    def format_p20(self, p20_metrics):
+        """Format Phase 20 diagnostics as a compact log string."""
+        if not p20_metrics:
+            return ""
+        lines = ["  [p20 diagnostics]"]
+        block_keys = sorted(set(k.split("/")[1] for k in p20_metrics if k.startswith("block_")))
+        for bk in block_keys:
+            vals = [p20_metrics.get(f"block_{i}/{bk}", None) for i in range(64) if f"block_{i}/{bk}" in p20_metrics]
+            if vals:
+                lines.append(f"    {bk}: [{vals[0]:.4f}...{vals[-1]:.4f}] (n={len(vals)})")
+        return "\n".join(lines)
+
+    def to_dict_p20(self, p20_metrics):
+        """Flatten P20 metrics into wandb dict with 'p20/' prefix."""
+        if not p20_metrics:
+            return {}
+        result = {}
+        for k, v in p20_metrics.items():
+            if isinstance(v, (int, float)):
+                result[f"p20/{k}"] = v
         return result
 
 
@@ -3862,6 +3967,260 @@ class SpectralReparamLinear(nn.Module):
         return F.linear(h, U)  # h @ U^T → (B, T, out)
 
 
+# ── Phase 20: Context-Conditioned Dynamic Weight Computation ────────────────
+
+class MoNE_MLP(nn.Module):
+    """20F: Mixture of Narrow Experts.
+
+    K narrow expert MLPs with content-based routing. Same total params as dense
+    MLP (each expert has hidden_dim = 4*D/K). Different tokens can route to
+    different experts, enabling content-dependent specialization without
+    parameter overhead.
+
+    Training: compute all K experts, weight by softmax routing scores.
+    Same total FLOPs as baseline (K × D × 4D/K = D × 4D), but each expert
+    can specialize.
+
+    Inference: can use top-1 for K× FLOP savings (not implemented yet).
+
+    The router is a tiny Linear(D, K) — routing gradients are small relative
+    to expert weight gradients, minimizing FM1 (gradient fracturing).
+
+    Identity-ish at init: all experts initialized identically (same as one
+    wide MLP split into K pieces), router output uniform → equal weighting.
+    """
+    def __init__(self, config, n_experts=4, topk=0):
+        super().__init__()
+        self.n_experts = n_experts
+        self.topk = topk  # 0 = compute all (soft MoE), >0 = sparse top-k
+        D = config.n_embd
+        expert_hidden = 4 * D // n_experts
+        assert expert_hidden * n_experts == 4 * D, (
+            f"4*D={4*D} must be divisible by n_experts={n_experts}")
+        # K narrow expert MLPs
+        self.experts_fc = nn.ModuleList([
+            Linear(D, expert_hidden, bias=False) for _ in range(n_experts)])
+        self.experts_proj = nn.ModuleList([
+            Linear(expert_hidden, D, bias=False) for _ in range(n_experts)])
+        # Router: tiny D → K linear (no bias → softmax is shift-invariant)
+        self.router = Linear(D, n_experts, bias=False)
+        # Load-balancing auxiliary loss coefficient (stored, not a parameter)
+        self._aux_balance_coeff = 0.01
+        # Cache routing weights for diagnostics (not a parameter, not a buffer)
+        self._last_router_entropy = 0.0
+        self._last_expert_load = None
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # Router: content-dependent routing scores
+        router_logits = self.router(x)  # (B, T, K)
+        router_weights = F.softmax(router_logits.float(), dim=-1).to(dtype)  # (B, T, K)
+
+        # Cache for diagnostics
+        with torch.no_grad():
+            rw_float = router_weights.float()
+            log_rw = torch.log(rw_float.clamp(min=1e-8))
+            self._last_router_entropy = -(rw_float * log_rw).sum(dim=-1).mean().item()
+            self._last_expert_load = rw_float.mean(dim=(0, 1))  # (K,) — average load per expert
+
+        if self.topk > 0 and self.topk < self.n_experts:
+            # Sparse top-k: only compute selected experts
+            topk_weights, topk_indices = router_weights.topk(self.topk, dim=-1)  # (B, T, topk)
+            topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-8)  # renormalize
+            y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+            for rank_idx in range(self.topk):
+                expert_idx = topk_indices[..., rank_idx]  # (B, T)
+                weight = topk_weights[..., rank_idx]  # (B, T)
+                # Compute each expert for all tokens, mask by selection
+                for k in range(self.n_experts):
+                    mask = (expert_idx == k)  # (B, T) bool
+                    if mask.any():
+                        h = self.experts_fc[k](x)
+                        h = F.relu(h).square()
+                        h = self.experts_proj[k](h)
+                        y = y + (weight * mask.to(dtype)).unsqueeze(-1) * h
+        else:
+            # Soft routing: compute all experts, weight by routing scores
+            y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+            for k in range(self.n_experts):
+                h = self.experts_fc[k](x)
+                h = F.relu(h).square()
+                h = self.experts_proj[k](h)
+                y = y + router_weights[..., k:k+1] * h
+
+        return y
+
+
+class FrozenRoutedMLP(nn.Module):
+    """20C: Frozen Content-Routed Full-Rank Branches (LRCFB).
+
+    K full-rank MLP branches mixed by a FROZEN content-dependent routing signal.
+    The routing projection R is a random matrix fixed at init (registered as a
+    buffer, never updated). This gives content-dependent weight composition
+    without ANY learned routing — completely avoiding FM1 (gradient fracturing).
+
+    alpha = softmax(x @ R)  — frozen routing, no gradient through R
+    y = Σ_k alpha_k * MLP_k(x)  — each branch is a full-rank MLP
+
+    This is CKR's architecture but with frozen CONTENT routing instead of
+    position routing. Content-dependent (unlike CKR) but gradient-free
+    (unlike RemixedLinear). The combination we never tested.
+
+    NOTE: K× parameter overhead (K full-rank MLPs). At K=4 this means 4×
+    more MLP params. This is known to be expensive but we need to test whether
+    frozen content routing provides enough signal to justify it.
+    """
+    def __init__(self, config, n_branches=4):
+        super().__init__()
+        self.n_branches = n_branches
+        D = config.n_embd
+        H = 4 * D
+        # K full-rank MLP branches
+        self.branches_fc = nn.ModuleList([
+            Linear(D, H, bias=False) for _ in range(n_branches)])
+        self.branches_proj = nn.ModuleList([
+            Linear(H, D, bias=False) for _ in range(n_branches)])
+        # Frozen random projection for content routing (buffer = no grad)
+        # Scaled by 1/sqrt(D) for reasonable softmax logit magnitude
+        self.register_buffer('content_proj',
+            torch.randn(D, n_branches) / (D ** 0.5))
+        # Cache for diagnostics
+        self._last_routing_entropy = 0.0
+        self._last_routing_weights = None
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # Frozen content-dependent routing (no gradient through content_proj)
+        logits = x.float() @ self.content_proj.float()  # (B, T, K)
+        weights = F.softmax(logits, dim=-1).to(dtype)  # (B, T, K)
+
+        # Cache for diagnostics
+        with torch.no_grad():
+            w_float = weights.float()
+            log_w = torch.log(w_float.clamp(min=1e-8))
+            self._last_routing_entropy = -(w_float * log_w).sum(dim=-1).mean().item()
+            self._last_routing_weights = w_float.mean(dim=(0, 1))
+
+        # Compute all K branches, weight by routing
+        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            h = self.branches_fc[k](x)
+            h = F.relu(h).square()
+            h = self.branches_proj[k](h)
+            y = y + weights[..., k:k+1] * h
+
+        return y
+
+
+class DetachedRoutedMLP(nn.Module):
+    """20D: Detached-Gradient Content Routing (DGCR).
+
+    K full-rank MLP branches with a LEARNED router, but the router's main-loss
+    gradient is stopped. The router only receives gradient through the auxiliary
+    routing loss, which trains it to predict which branch would minimize
+    per-token loss ex-post.
+
+    Main forward path:
+        alpha = router(x.detach()).detach()  # stop grad BOTH ways
+        y = Σ_k alpha_k * MLP_k(x)
+
+    Auxiliary loss (computed separately):
+        For each branch k, compute per-token error ||MLP_k(x) - y_target||²
+        Train router to assign high weight to the lowest-error branch
+
+    This avoids FM1 (gradient fracturing) because the main loss never
+    backprops through the router. The router learns independently via aux loss.
+
+    NOTE: K× parameter overhead. The aux loss requires computing all K branch
+    outputs even if we use top-k routing for the main path.
+    """
+    def __init__(self, config, n_branches=4, aux_weight=0.01):
+        super().__init__()
+        self.n_branches = n_branches
+        self.aux_weight = aux_weight
+        D = config.n_embd
+        H = 4 * D
+        # K full-rank MLP branches
+        self.branches_fc = nn.ModuleList([
+            Linear(D, H, bias=False) for _ in range(n_branches)])
+        self.branches_proj = nn.ModuleList([
+            Linear(H, D, bias=False) for _ in range(n_branches)])
+        # Learned router (receives grad only through aux loss)
+        self.router = nn.Sequential(
+            Linear(D, D // 4, bias=False),
+            nn.GELU(),
+            Linear(D // 4, n_branches, bias=False),
+        )
+        # Zero-init final router layer for uniform routing at start
+        nn.init.zeros_(self.router[-1].weight)
+        # Cache for aux loss computation and diagnostics
+        self._last_branch_outputs = None  # set during forward
+        self._last_router_logits = None
+        self._last_routing_entropy = 0.0
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Router: content-dependent but gradient-isolated from main loss
+        # x.detach() stops main-loss gradient from reaching router
+        router_logits = self.router(x.detach().to(dtype))  # (B, T, K)
+        self._last_router_logits = router_logits  # save for aux loss
+        # .detach() on output stops router gradient from reaching branch weights
+        router_weights = F.softmax(router_logits.float(), dim=-1).detach().to(dtype)  # (B, T, K)
+
+        # Cache for diagnostics
+        with torch.no_grad():
+            rw_float = router_weights.float()
+            log_rw = torch.log(rw_float.clamp(min=1e-8))
+            self._last_routing_entropy = -(rw_float * log_rw).sum(dim=-1).mean().item()
+
+        # Compute all branches (needed for aux loss)
+        branch_outputs = []
+        for k in range(self.n_branches):
+            h = self.branches_fc[k](x)
+            h = F.relu(h).square()
+            h = self.branches_proj[k](h)
+            branch_outputs.append(h)
+
+        # Save for aux loss (detached from main graph)
+        self._last_branch_outputs = [bo.detach() for bo in branch_outputs]
+
+        # Main output: weighted sum of branches
+        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            y = y + router_weights[..., k:k+1] * branch_outputs[k]
+
+        return y
+
+    def compute_aux_loss(self, target_output):
+        """Compute auxiliary routing loss.
+
+        target_output: the final model output AFTER this MLP (detached).
+        Trains router to assign weight to the branch closest to target.
+        """
+        if self._last_branch_outputs is None or self._last_router_logits is None:
+            return torch.tensor(0.0)
+        # Per-branch error: which branch output is closest to target?
+        target = target_output.detach()
+        errors = []
+        for bo in self._last_branch_outputs:
+            err = ((bo - target) ** 2).mean(dim=-1)  # (B, T)
+            errors.append(err)
+        errors = torch.stack(errors, dim=-1)  # (B, T, K)
+        # Best branch = lowest error
+        best_branch = errors.argmin(dim=-1)  # (B, T)
+        # Train router to predict best branch
+        logits = self._last_router_logits  # (B, T, K) — has grad to router params
+        aux_loss = F.cross_entropy(
+            logits.reshape(-1, self.n_branches),
+            best_branch.reshape(-1),
+        )
+        return self.aux_weight * aux_loss
+
+
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -3896,7 +4255,20 @@ class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        # Phase 20: Select MLP variant based on config
+        _mone_k = getattr(config, 'p20_mone_experts', 0)
+        _lrcfb_k = getattr(config, 'p20_lrcfb_branches', 0)
+        _dgcr_k = getattr(config, 'p20_dgcr_branches', 0)
+        if _dgcr_k > 0:
+            self.mlp = DetachedRoutedMLP(config, n_branches=_dgcr_k,
+                                         aux_weight=getattr(config, 'p20_dgcr_aux_weight', 0.01))
+        elif _lrcfb_k > 0:
+            self.mlp = FrozenRoutedMLP(config, n_branches=_lrcfb_k)
+        elif _mone_k > 0:
+            self.mlp = MoNE_MLP(config, n_experts=_mone_k,
+                                topk=getattr(config, 'p20_mone_topk', 0))
+        else:
+            self.mlp = MLP(config)
         # 18H: Mixture norm (learned RMSNorm + LayerNorm blend)
         if getattr(config, 'p18_mixture_norm', 0):
             self.norm_attn = MixtureNorm(config.n_embd)
@@ -3920,8 +4292,9 @@ class Block(nn.Module):
         # 19J: Weight noise — add isotropic noise to key weights during training
         if self.training and self._weight_noise_eps > 0:
             eps = self._weight_noise_eps
-            for p in [self.mlp.c_fc.weight, self.mlp.c_proj.weight]:
-                p.data.add_(eps * torch.randn_like(p))
+            for p in self.mlp.parameters():
+                if p.ndim == 2:  # only perturb weight matrices, not biases
+                    p.data.add_(eps * torch.randn_like(p))
         attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
         x = x + attn_out
         # 18E: Stochastic depth — randomly skip FFN during training
@@ -4312,8 +4685,27 @@ class GPT(nn.Module):
                 torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
                 torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
                 torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
-                torch.nn.init.zeros_(block.mlp.c_proj.weight)
+                # MLP init: handles both standard MLP and P20 variants
+                if hasattr(block.mlp, 'c_fc'):
+                    # Standard MLP
+                    torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+                    torch.nn.init.zeros_(block.mlp.c_proj.weight)
+                elif isinstance(block.mlp, MoNE_MLP):
+                    for expert_fc in block.mlp.experts_fc:
+                        torch.nn.init.uniform_(expert_fc.weight, -s, s)
+                    for expert_proj in block.mlp.experts_proj:
+                        torch.nn.init.zeros_(expert_proj.weight)
+                    torch.nn.init.zeros_(block.mlp.router.weight)
+                elif isinstance(block.mlp, (FrozenRoutedMLP, DetachedRoutedMLP)):
+                    for branch_fc in block.mlp.branches_fc:
+                        torch.nn.init.uniform_(branch_fc.weight, -s, s)
+                    for branch_proj in block.mlp.branches_proj:
+                        torch.nn.init.zeros_(branch_proj.weight)
+                    if isinstance(block.mlp, DetachedRoutedMLP):
+                        # Zero-init router for uniform routing at start
+                        for sub in block.mlp.router:
+                            if hasattr(sub, 'weight'):
+                                torch.nn.init.zeros_(sub.weight)
                 # 19I: VE gate bias zero-init for dense Block too
                 if block.attn.ve_gate is not None and block.attn.ve_gate.bias is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.bias)
@@ -4493,6 +4885,16 @@ class GPT(nn.Module):
         # AG-CCL: ctx_from_attn and ctx_ema_gate live inside transformer.h (RemixedBlock)
         # and are already counted in transformer_matrices above.
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        # P19: GPT-level scalar params (depth_decay_raw, residual_mix_gamma, residual_mixers)
+        # These are nn.Parameters on GPT, not inside transformer.h, so we must count them.
+        if self.depth_decay_raw is not None:
+            scalars += self.depth_decay_raw.numel()
+        if self.residual_mix_gamma is not None:
+            for gamma_p in self.residual_mix_gamma:
+                scalars += gamma_p.numel()
+        if self.residual_mixers is not None:
+            for mixer in self.residual_mixers:
+                scalars += sum(p.numel() for p in mixer.parameters())
         total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {

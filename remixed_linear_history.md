@@ -658,3 +658,71 @@ Expanded the existing diagnostic system with:
 - **Per-proposal metrics**: alpha values (19A), head scale distributions (19B), gamma scalars (19C), logit scale stats (19D), depth decay factor (19E), sigma entropy/ratio (19G), VE bias values (19I)
 
 All metrics compute in torch.no_grad() outside the compiled forward graph for zero training overhead.
+
+### Phase 19 Experimental Results (model_dim=128, depth=4, 121M tokens, H100)
+
+| Proposal | Val BPB | Δ from Baseline | Verdict |
+|---|---|---|---|
+| **Baseline** | **1.2573** | — | Reference |
+| **19D: Attn Logit Bias** | **1.2532** | **−0.0041** | 🏆 Best. Learned QK temperature helps. |
+| **19J: Weight Noise** | **1.2558** | **−0.0014** | 🥈 Flat-minima regularization works. |
+| **19H: Weight Anticollapse** | **1.2570** | **−0.0003** | Marginal improvement. |
+| 19F: Gradient Equilibrium | 1.2573 | +0.0000 | Neutral — no effect at this scale. |
+| 19A: Residual Gate | 1.2631 | +0.0059 | Hurt. Output scaling destabilizes. |
+| 19B: Head Importance | 1.2641 | +0.0068 | Hurt. Per-head scaling harmful at 1 head. |
+| 19I: VE Bias | 1.2654 | +0.0082 | Hurt. Biasing VE gates adds noise. |
+| 19G: Spectral Reparam | 1.3210 | +0.0637 | Severely hurt. Frozen U/V restricts gradients. |
+| 19E: Residual Decay | CRASHED | — | `num_scaling_params` assertion failed (mu-P bug). |
+| 19C: Residual Mixing | Not tested | — | Omitted from sweep. |
+
+**Key findings:**
+1. **19D (Attn Logit Bias)** is a clear winner — a per-head learned QK temperature (1 param per head) consistently helps. This is essentially free and should be kept as a default.
+2. **19J (Weight Noise)** works as a regularizer — SAM-like flat-minima exploration during training generalizes better.
+3. **19G (Spectral Reparam)** is the biggest failure — freezing U/V from the SVD of zero-init c_proj means the decomposition captures random noise, not meaningful directions. The frozen basis is toxic.
+4. **19B (Head Importance)** is meaningless at n_head=1 (model_dim=128 / head_dim=128). Needs re-testing at larger model dims.
+5. **19A (Residual Gate)** learning to scale block output hurts — at 4 layers, every block's output is critical; scaling any down degrades the model.
+
+### Post-Mortem: Phase 19 Lessons
+
+The indirect modulation thesis partially validated: **attention-side modulation works, weight-side modulation doesn't at this scale.** The two winners (19D, 19J) share a key property: they don't interfere with the gradient flow through the main computation path. 19D modulates attention logits (pre-softmax), and 19J adds noise that's consumed in the forward pass. All proposals that directly scaled or gated the residual/output path (19A, 19B, 19I) degraded performance.
+
+The spectral reparameterization (19G) failure reveals a deeper issue: at init, c_proj is zeros, so SVD of zeros → random U/V. Freezing these random bases and only learning σ creates an arbitrary reparameterization that the optimizer can't recover from.
+
+---
+
+## Phase 20: Context-Conditioned Dynamic Weight Computation
+
+### Core Vision
+
+A linear layer where context dynamically determines the effective computation. The layer stores more capacity than it uses per-forward-pass, and a context-aware mechanism selects *which* computation to perform. The ratio of stored-to-active capacity is a configurable hyperparameter (×4, ×6, ×8).
+
+### Systematic Failure Mode Catalogue (from 19 Phases)
+
+| FM | Name | Phases |
+|---|---|---|
+| FM1 | Gradient Fracturing (routing+feature weight coordination cost) | 3,7,8,9,14a,16D |
+| FM2 | Identity Trap (ctx from norm(x) → gate=identity) | 5,7,8 |
+| FM3 | Rank Bottleneck (subspace restriction) | 9,14b,14c,15a |
+| FM4 | Capacity Tax (overhead disproportionate at small scale) | 12–18 |
+| FM5 | Path Interference (post-processing gradient competition) | 16C,17C,17I |
+| FM6 | Context Staleness (lagging inputs) | 4,6,8 |
+| FM7 | Compile/Dtype Brittleness | 14a,15a,15b,16A |
+| FM8 | Position Ceiling (K>4 useless, CKR +0.02 may be noise) | 13a,17 |
+
+**Fundamental Constraint:** Any mechanism where the optimizer must simultaneously learn routing AND feature weights fails at our scale.
+
+### Implemented Proposals
+
+#### 20F: Mixture of Narrow Experts (MoNE) — `--p20-mone-experts K`
+K narrow expert MLPs (hidden_dim = 4D/K) with content-based router. **Same total params as dense MLP.** Zero parameter overhead. Soft routing during training; optional top-k sparse routing at inference. Router zero-init → uniform at step 0.
+
+#### 20C: Frozen Content-Routed Branches (LRCFB) — `--p20-lrcfb-branches K`
+K full-rank MLP branches mixed by a FROZEN random content projection. `alpha = softmax(x @ R_frozen)`. R is a buffer, never updated. Completes the 2×2 matrix: frozen+position (CKR) tested, learned+content (RemixedLinear) tested, **frozen+content never tested**. K× parameter overhead.
+
+#### 20D: Detached-Gradient Content Routing (DGCR) — `--p20-dgcr-branches K`
+K full-rank MLP branches with a LEARNED router, but gradient flows only through an auxiliary loss. `alpha = router(x.detach()).detach()`. Router trained to predict which branch minimizes per-token error ex-post. K× parameter overhead. FM7 risk from x.detach().
+
+### Technical Fixes
+- **19E bug fix:** `num_scaling_params()` now counts GPT-level P19 params (depth_decay_raw, residual_mix_gamma).
+- **19J generalized:** Weight noise iterates all 2D MLP params instead of hardcoding c_fc/c_proj.
+- **P20 diagnostics:** `collect_p20()`, `format_p20()`, `to_dict_p20()` track routing entropy, load balance, branch divergence, and router grad norms.

@@ -154,6 +154,12 @@ def run_training_sweep(args):
         "--p19-weight-anticollapse", str(getattr(args, 'p19_weight_anticollapse', 0.0)),
         "--p19-ve-bias", str(getattr(args, 'p19_ve_bias', 0)),
         "--p19-weight-noise", str(getattr(args, 'p19_weight_noise', 0.0)),
+        # Phase 20
+        "--p20-mone-experts", str(getattr(args, 'p20_mone_experts', 0)),
+        "--p20-mone-topk", str(getattr(args, 'p20_mone_topk', 0)),
+        "--p20-lrcfb-branches", str(getattr(args, 'p20_lrcfb_branches', 0)),
+        "--p20-dgcr-branches", str(getattr(args, 'p20_dgcr_branches', 0)),
+        "--p20-dgcr-aux-weight", str(getattr(args, 'p20_dgcr_aux_weight', 0.01)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -484,6 +490,12 @@ if __name__ == "__main__":
     parser.add_argument("--p19-weight-anticollapse", type=float, default=0.0)
     parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p19-weight-noise", type=float, default=0.0)
+    # Phase 20
+    parser.add_argument("--p20-mone-experts", type=int, default=0)
+    parser.add_argument("--p20-mone-topk", type=int, default=0)
+    parser.add_argument("--p20-lrcfb-branches", type=int, default=0)
+    parser.add_argument("--p20-dgcr-branches", type=int, default=0)
+    parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01)
     args = parser.parse_args()
     
     run_training_sweep(args)

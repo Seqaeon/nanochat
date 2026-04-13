@@ -180,6 +180,12 @@ parser.add_argument("--p19-spectral-reparam", type=int, default=0, choices=[0, 1
 parser.add_argument("--p19-weight-anticollapse", type=float, default=0.0, help="19H: weight anti-collapse penalty lambda (0=off)")
 parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1], help="19I: add learnable bias to VE gate (0/1)")
 parser.add_argument("--p19-weight-noise", type=float, default=0.0, help="19J: training-time weight perturbation epsilon (0=off)")
+# Phase 20: Context-conditioned dynamic weight computation
+parser.add_argument("--p20-mone-experts", type=int, default=0, help="20F: Mixture of Narrow Experts (0=off, K=num experts)")
+parser.add_argument("--p20-mone-topk", type=int, default=0, help="20F: top-k expert routing (0=compute all, K=top-k sparse)")
+parser.add_argument("--p20-lrcfb-branches", type=int, default=0, help="20C: Frozen content-routed full-rank branches (0=off, K=branches)")
+parser.add_argument("--p20-dgcr-branches", type=int, default=0, help="20D: Detached-gradient content-routed branches (0=off, K=branches)")
+parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01, help="20D: auxiliary routing loss weight")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -429,6 +435,12 @@ def build_model_meta(depth):
         p19_weight_anticollapse=getattr(args, 'p19_weight_anticollapse', 0.0),
         p19_ve_bias=getattr(args, 'p19_ve_bias', 0),
         p19_weight_noise=getattr(args, 'p19_weight_noise', 0.0),
+        # Phase 20: Context-conditioned dynamic weight computation
+        p20_mone_experts=getattr(args, 'p20_mone_experts', 0),
+        p20_mone_topk=getattr(args, 'p20_mone_topk', 0),
+        p20_lrcfb_branches=getattr(args, 'p20_lrcfb_branches', 0),
+        p20_dgcr_branches=getattr(args, 'p20_dgcr_branches', 0),
+        p20_dgcr_aux_weight=getattr(args, 'p20_dgcr_aux_weight', 0.01),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -1039,8 +1051,15 @@ while True:
                 p19_log = mod_diag.format_p19(p19_metrics)
                 if p19_log:
                     print0(p19_log)
+            # Phase 20: Dynamic weight computation diagnostics
+            p20_metrics = mod_diag.collect_p20(orig_model)
+            if p20_metrics:
+                p20_log = mod_diag.format_p20(p20_metrics)
+                if p20_log:
+                    print0(p20_log)
         else:
             p19_metrics = None
+            p20_metrics = None
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -1059,6 +1078,9 @@ while True:
         # Phase 19: expanded diagnostics
         if mod_diag is not None and p19_metrics:
             log_data.update(mod_diag.to_dict_p19(p19_metrics))
+        # Phase 20: dynamic weight diagnostics
+        if mod_diag is not None and p20_metrics:
+            log_data.update(mod_diag.to_dict_p20(p20_metrics))
         wandb_run.log(log_data)
 
     # state update
