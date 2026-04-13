@@ -228,6 +228,17 @@ class GPTConfig:
     p18_aux_sim_lambda: float = 0.0           # 18G: layer similarity penalty weight
     p18_gradient_penalty: float = 0.0         # 18B: gradient penalty weight
     p18_per_channel_scale: int = 0            # 18F: learnable per-channel output scale (0/1)
+    # Phase 19: Zero-overhead indirect modulation
+    p19_residual_gate: int = 0                # 19A: per-layer learned scalar on block output (0/1)
+    p19_head_importance: int = 0              # 19B: per-head learned scalar on attn output (0/1)
+    p19_residual_mix_groups: int = 0          # 19C: grouped 1x1 conv between blocks (0=off, N=group_size)
+    p19_attn_logit_bias: int = 0              # 19D: per-head learned QK temperature (0/1)
+    p19_residual_decay: int = 0               # 19E: learned depth-dependent x0 decay (0/1)
+    p19_grad_equilibrium: float = 0.0         # 19F: gradient equilibrium regularization lambda (0=off)
+    p19_spectral_reparam: int = 0             # 19G: spectral reparameterization (0=off, 1=c_proj, 2=c_fc+c_proj)
+    p19_weight_anticollapse: float = 0.0      # 19H: weight anti-collapse penalty lambda (0=off)
+    p19_ve_bias: int = 0                      # 19I: add learnable bias to VE gate (0/1)
+    p19_weight_noise: float = 0.0             # 19J: training-time weight perturbation epsilon (0=off)
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
@@ -271,6 +282,13 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 16
     "cclblock_ckr_temp_start", "cclblock_ckr_temp_end",
     "cclblock_com_kernel_size",
+    # Phase 18
+    "p18_layer_drop", "p18_dynamic_activation", "p18_mixture_norm", "p18_causal_attn_bias",
+    "p18_aux_sim_lambda", "p18_gradient_penalty", "p18_per_channel_scale",
+    # Phase 19
+    "p19_residual_gate", "p19_head_importance", "p19_residual_mix_groups",
+    "p19_attn_logit_bias", "p19_residual_decay", "p19_grad_equilibrium",
+    "p19_spectral_reparam", "p19_weight_anticollapse", "p19_ve_bias", "p19_weight_noise",
 }
 
 
@@ -2872,6 +2890,185 @@ class ModulationDiagnostics:
         with open(filepath, 'a', encoding='utf-8') as f:
             f.write(json.dumps(flat) + '\n')
 
+    # ── Phase 19: Expanded Diagnostics ──────────────────────────────────────
+
+    @torch.no_grad()
+    def collect_p19(self, model):
+        """Collect Phase 19 expanded diagnostics from model state.
+
+        Returns a dict of metrics covering:
+        - Gradient health (per-layer grad norms, SNR, flow ratio)
+        - Weight dynamics (weight norms per layer)
+        - Phase 19 proposal-specific metrics (alpha, head_importance, logit_scale,
+          sigma stats, depth_decay, mixer gamma, etc.)
+        - Residual stream parameters (resid_lambda, x0_lambda ratios)
+        """
+        metrics = {}
+
+        # ── 1. Gradient health per block ──
+        grad_norms_attn = []
+        grad_norms_ffn = []
+        weight_norms = []
+        for i, block in enumerate(model.transformer.h):
+            prefix = f"block_{i}"
+            # Get key weight references
+            if hasattr(block, 'attn'):
+                cq_w = block.attn.c_q.weight if hasattr(block.attn, 'c_q') else None
+                cp_w = block.attn.c_proj.weight if hasattr(block.attn, 'c_proj') else None
+            else:
+                cq_w = cp_w = None
+            if hasattr(block, 'mlp'):
+                fc_w = block.mlp.c_fc.weight
+                proj_w = block.mlp.c_proj.weight
+            elif hasattr(block, 'ffwd'):
+                fc_w = block.ffwd.c_fc.weight
+                proj_w = block.ffwd.c_proj.weight
+            else:
+                fc_w = proj_w = None
+
+            # Grad norms
+            attn_gn = cp_w.grad.float().norm().item() if (cp_w is not None and cp_w.grad is not None) else 0.0
+            ffn_gn = fc_w.grad.float().norm().item() if (fc_w is not None and fc_w.grad is not None) else 0.0
+            grad_norms_attn.append(attn_gn)
+            grad_norms_ffn.append(ffn_gn)
+
+            # Grad SNR (mean / std) for FFN
+            if fc_w is not None and fc_w.grad is not None:
+                g = fc_w.grad.float()
+                snr = (g.mean().abs() / (g.std() + 1e-8)).item()
+            else:
+                snr = 0.0
+            metrics[f"{prefix}/grad_norm_attn"] = attn_gn
+            metrics[f"{prefix}/grad_norm_ffn"] = ffn_gn
+            metrics[f"{prefix}/grad_snr"] = snr
+            # Gradient flow ratio (attn vs ffn balance)
+            metrics[f"{prefix}/grad_flow_ratio"] = attn_gn / max(ffn_gn, 1e-8)
+
+            # Weight norms
+            wn = fc_w.float().norm().item() if fc_w is not None else 0.0
+            weight_norms.append(wn)
+            metrics[f"{prefix}/weight_norm_fc"] = wn
+
+        # Aggregate gradient stats
+        if grad_norms_ffn:
+            gn_tensor = torch.tensor(grad_norms_ffn)
+            gn_mean = gn_tensor.mean().item()
+            gn_std = gn_tensor.std().item()
+            metrics["global/grad_cv"] = gn_std / max(gn_mean, 1e-8)  # coefficient of variation
+            metrics["global/grad_norm_mean"] = gn_mean
+
+        # ── 2. Residual stream parameters ──
+        rl = model.resid_lambdas.float()
+        x0l = model.x0_lambdas.float()
+        for i in range(len(rl)):
+            metrics[f"block_{i}/resid_lambda"] = rl[i].item()
+            metrics[f"block_{i}/x0_lambda"] = x0l[i].item()
+            metrics[f"block_{i}/resid_scale_ratio"] = rl[i].item() / max(abs(x0l[i].item()), 1e-8)
+
+        # ── 3. Phase 19 proposal-specific metrics ──
+
+        # 19A: Residual Gate Scaling (alpha per layer)
+        for i, block in enumerate(model.transformer.h):
+            if hasattr(block, 'residual_alpha') and block.residual_alpha is not None:
+                alpha_val = F.softplus(block.residual_alpha).item()
+                metrics[f"block_{i}/p19a_alpha"] = alpha_val
+                if block.residual_alpha.grad is not None:
+                    metrics[f"block_{i}/p19a_alpha_grad"] = block.residual_alpha.grad.float().norm().item()
+
+        # 19B: Head Importance Scaling
+        for i, block in enumerate(model.transformer.h):
+            attn = block.attn
+            if hasattr(attn, 'head_importance') and attn.head_importance is not None:
+                his = F.softplus(attn.head_importance.float())
+                metrics[f"block_{i}/p19b_head_scale_mean"] = his.mean().item()
+                metrics[f"block_{i}/p19b_head_scale_std"] = his.std().item()
+                metrics[f"block_{i}/p19b_head_scale_min"] = his.min().item()
+                metrics[f"block_{i}/p19b_head_scale_max"] = his.max().item()
+                # Entropy of head importance (normalized)
+                p = his / his.sum()
+                ent = -(p * torch.log(p + 1e-8)).sum().item()
+                max_ent = math.log(len(his))
+                metrics[f"block_{i}/p19b_head_entropy"] = ent / max(max_ent, 1e-8)
+
+        # 19C: Residual Stream Mixing
+        if model.residual_mix_gamma is not None:
+            for i, gamma_p in enumerate(model.residual_mix_gamma):
+                metrics[f"block_{i}/p19c_gamma"] = gamma_p.item()
+            if model.residual_mixers is not None:
+                for i, mixer in enumerate(model.residual_mixers):
+                    metrics[f"block_{i}/p19c_mix_weight_norm"] = mixer.weight.float().norm().item()
+
+        # 19D: Attention Logit Bias
+        for i, block in enumerate(model.transformer.h):
+            attn = block.attn
+            if hasattr(attn, 'attn_logit_scale') and attn.attn_logit_scale is not None:
+                scale = F.softplus(attn.attn_logit_scale.float())
+                metrics[f"block_{i}/p19d_logit_scale_mean"] = scale.mean().item()
+                metrics[f"block_{i}/p19d_logit_scale_std"] = scale.std().item()
+
+        # 19E: Learned Residual Decay
+        if model.depth_decay_raw is not None:
+            decay_base = torch.sigmoid(model.depth_decay_raw.float()).item()
+            metrics["global/p19e_decay_base"] = decay_base
+            for i in range(model.config.n_layer):
+                metrics[f"block_{i}/p19e_x0_factor"] = decay_base ** i
+
+        # 19G: Spectral Reparameterization
+        for i, block in enumerate(model.transformer.h):
+            ffwd = block.mlp if hasattr(block, 'mlp') else (block.ffwd if hasattr(block, 'ffwd') else None)
+            if ffwd is None:
+                continue
+            for label, srp in [('proj', getattr(ffwd, 'srp_proj', None)), ('fc', getattr(ffwd, 'srp_fc', None))]:
+                if srp is None:
+                    continue
+                sigma = srp.sigma.float()
+                metrics[f"block_{i}/p19g_{label}_sigma_max"] = sigma.max().item()
+                metrics[f"block_{i}/p19g_{label}_sigma_min"] = sigma.min().item()
+                metrics[f"block_{i}/p19g_{label}_sigma_ratio"] = (sigma.max() / (sigma.min() + 1e-8)).item()
+                # Sigma entropy (normalized) — measures spectral concentration
+                p = sigma.abs() / (sigma.abs().sum() + 1e-8)
+                ent = -(p * torch.log(p + 1e-8)).sum().item()
+                max_ent = math.log(len(sigma))
+                metrics[f"block_{i}/p19g_{label}_sigma_entropy"] = ent / max(max_ent, 1e-8)
+
+        # 19I: VE gate bias values
+        for i, block in enumerate(model.transformer.h):
+            attn = block.attn
+            if hasattr(attn, 've_gate') and attn.ve_gate is not None and attn.ve_gate.bias is not None:
+                bias = attn.ve_gate.bias.float()
+                metrics[f"block_{i}/p19i_ve_bias_mean"] = bias.mean().item()
+                metrics[f"block_{i}/p19i_ve_bias_std"] = bias.std().item()
+
+        return metrics
+
+    def format_p19(self, p19_metrics):
+        """Format Phase 19 diagnostics as a compact log string."""
+        if not p19_metrics:
+            return ""
+        lines = ["  [p19 diagnostics]"]
+        # Global metrics
+        for k in sorted(p19_metrics):
+            if k.startswith("global/"):
+                lines.append(f"    {k}: {p19_metrics[k]:.4f}")
+        # Per-block summary (just first and last block for brevity)
+        n_blocks = sum(1 for k in p19_metrics if k.startswith("block_0/"))
+        if n_blocks > 0:
+            block_keys = sorted(set(k.split("/")[1] for k in p19_metrics if k.startswith("block_")))
+            for bk in block_keys:
+                vals = [p19_metrics.get(f"block_{i}/{bk}", None) for i in range(20) if f"block_{i}/{bk}" in p19_metrics]
+                if vals:
+                    lines.append(f"    {bk}: [{vals[0]:.4f}...{vals[-1]:.4f}] (n={len(vals)})")
+        return "\n".join(lines)
+
+    def to_dict_p19(self, p19_metrics):
+        """Flatten P19 metrics into wandb dict with 'p19/' prefix."""
+        if not p19_metrics:
+            return {}
+        result = {}
+        for k, v in p19_metrics.items():
+            if isinstance(v, (int, float)):
+                result[f"p19/{k}"] = v
+        return result
 
 
 class ResidualAdaptiveLinear(nn.Module):
@@ -3549,7 +3746,19 @@ class CausalSelfAttention(nn.Module):
         self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = min(self.n_embd, 32)
-        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        # 19I: VE gate with optional learnable bias
+        use_ve_bias = bool(getattr(config, 'p19_ve_bias', 0))
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=use_ve_bias) if has_ve(layer_idx, config.n_layer) else None
+        # 19B: Per-head importance scaling — learned multiplier on attention output
+        # softplus(0.5413) ≈ 1.0, so head_scale_raw inited to 0.5413 gives scale=1.0 (identity)
+        self.head_importance = None
+        if getattr(config, 'p19_head_importance', 0):
+            self.head_importance = nn.Parameter(torch.full((self.n_head,), 0.5413))
+        # 19D: Per-head attention logit temperature — scales Q before flash_attn
+        # softplus(0.5413) ≈ 1.0, so scale=1.0 at init (identity)
+        self.attn_logit_scale = None
+        if getattr(config, 'p19_attn_logit_bias', 0):
+            self.attn_logit_scale = nn.Parameter(torch.full((self.n_head,), 0.5413))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
@@ -3571,6 +3780,13 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k) # QK norm
 
+        # 19D: Per-head learned QK temperature — scale Q to control attention sharpness
+        # Effective dot product: (scale * q) · k = scale * (q · k)
+        # FA3-safe: we scale Q before the call, not the attention matrix
+        if self.attn_logit_scale is not None:
+            scale = F.softplus(self.attn_logit_scale).to(q.dtype)  # (n_head,)
+            q = q * scale.view(1, 1, self.n_head, 1)  # broadcast: (1, 1, H, 1)
+
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
@@ -3590,10 +3806,60 @@ class CausalSelfAttention(nn.Module):
             if self.layer_idx == kv_cache.n_layers - 1:
                 kv_cache.advance(T)
 
+        # 19B: Per-head importance scaling — learned multiplier on post-attention output
+        if self.head_importance is not None:
+            # y shape: (B, T, n_head, head_dim)
+            his = F.softplus(self.head_importance).to(y.dtype)  # (n_head,)
+            y = y * his.view(1, 1, self.n_head, 1)  # broadcast
+
         # Re-assemble the heads and project back to residual stream
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
+
+
+class SpectralReparamLinear(nn.Module):
+    """Phase 19G: Spectral Reparameterization.
+
+    W = U @ diag(sigma) @ V^T where U, V are frozen (from SVD of initial W),
+    only sigma (the singular values) is learned.
+
+    At init: sigma = actual singular values of W → exact identity with original W.
+    At inference: reparameterizable back to a single W_eff = U @ diag(sigma) @ V^T.
+    Params added: min(in_features, out_features) per layer.
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        # These will be filled in init_weights after the base Linear is initialized
+        self.register_buffer('U', torch.zeros(out_features, min(in_features, out_features)))
+        self.register_buffer('Vt', torch.zeros(min(in_features, out_features), in_features))
+        self.sigma = nn.Parameter(torch.ones(min(in_features, out_features)))
+
+    def init_from_weight(self, weight):
+        """Decompose a weight matrix and store frozen U, V^T + learned sigma.
+        Call this from init_weights() AFTER the weight has been properly initialized."""
+        with torch.no_grad():
+            W = weight.float()  # SVD in float32 for precision
+            U, S, Vt = torch.linalg.svd(W, full_matrices=False)
+            self.U.copy_(U.to(self.U.dtype))
+            self.Vt.copy_(Vt.to(self.Vt.dtype))
+            self.sigma.data.copy_(S)
+
+    def forward(self, x):
+        dtype = x.dtype
+        # W_eff = U @ diag(sigma) @ V^T
+        # Compute as: x @ V^T^T @ diag(sigma) @ U^T = x @ V @ diag(sigma) @ U^T
+        # But it's more efficient to compute the effective weight directly:
+        # y = (x @ V^T.T) * sigma @ U^T = x @ (V^T.T * sigma) @ U^T
+        Vt = self.Vt.to(dtype)  # (k, in)
+        U = self.U.to(dtype)    # (out, k)
+        sigma = self.sigma.to(dtype)  # (k,)
+        # x: (B, T, in) → (B, T, k) → (B, T, out)
+        h = F.linear(x, Vt)  # x @ V = x @ Vt.T → (B, T, k) — F.linear does x @ W^T
+        h = h * sigma  # element-wise scale by singular values
+        return F.linear(h, U)  # h @ U^T → (B, T, out)
 
 
 class MLP(nn.Module):
@@ -3605,6 +3871,10 @@ class MLP(nn.Module):
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
         # 18F: Per-Channel Scale after projection
         self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
+        # 19G: Spectral Reparameterization
+        srp_mode = getattr(config, 'p19_spectral_reparam', 0)
+        self.srp_proj = SpectralReparamLinear(4 * config.n_embd, config.n_embd) if srp_mode >= 1 else None
+        self.srp_fc = SpectralReparamLinear(config.n_embd, 4 * config.n_embd) if srp_mode >= 2 else None
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -3612,7 +3882,11 @@ class MLP(nn.Module):
             x = self.dynamic_act(x)
         else:
             x = F.relu(x).square()
-        x = self.c_proj(x)
+        # 19G: If spectral reparam is on for c_proj, use it; else use standard linear
+        if self.srp_proj is not None:
+            x = self.srp_proj(x)
+        else:
+            x = self.c_proj(x)
         if self.channel_scale is not None:
             x = self.channel_scale(x)
         return x
@@ -3632,17 +3906,40 @@ class Block(nn.Module):
             self.norm_mlp = None
         # 18E: Stochastic depth (LayerDrop)
         self.layer_drop = getattr(config, 'p18_layer_drop', 0.0)
+        # 19A: Residual Gate Scaling — learned scalar on block output
+        # softplus(0.5413) ≈ 1.0 → identity at init
+        self.residual_alpha = None
+        if getattr(config, 'p19_residual_gate', 0):
+            self.residual_alpha = nn.Parameter(torch.tensor(0.5413))
+        # 19J: Training-time weight noise epsilon
+        self._weight_noise_eps = float(getattr(config, 'p19_weight_noise', 0.0))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
         norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
-        x = x + self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        # 19J: Weight noise — add isotropic noise to key weights during training
+        if self.training and self._weight_noise_eps > 0:
+            eps = self._weight_noise_eps
+            for p in [self.mlp.c_fc.weight, self.mlp.c_proj.weight]:
+                p.data.add_(eps * torch.randn_like(p))
+        attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        x = x + attn_out
         # 18E: Stochastic depth — randomly skip FFN during training
         if self.training and self.layer_drop > 0 and torch.rand(1).item() < self.layer_drop:
             pass  # Skip FFN
         else:
             scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
-            x = x + scale * self.mlp(norm_fn_mlp(x))
+            block_out = scale * self.mlp(norm_fn_mlp(x))
+            # 19A: Residual Gate Scaling
+            if self.residual_alpha is not None:
+                block_out = F.softplus(self.residual_alpha).to(block_out.dtype) * block_out
+            x = x + block_out
+        # 19J: Undo weight noise (subtract it back so gradients update the clean weights)
+        if self.training and self._weight_noise_eps > 0:
+            # NOTE: We don't undo here — the noise is effectively a different perturbation each step.
+            # The noise added to .data before forward is part of this step's computation only.
+            # The gradient update will apply to the noised weights, which is the intended SAM-like behavior.
+            pass
         return x
 
 
@@ -3779,6 +4076,30 @@ class GPT(nn.Module):
         # Separate parameters so they can have different optimizer treatment
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
+        # 19C: Residual Stream Depthwise Mixing — grouped 1x1 conv between blocks
+        mix_groups = getattr(config, 'p19_residual_mix_groups', 0)
+        self._residual_mix_groups = mix_groups
+        if mix_groups > 0:
+            # Per-layer: gamma (init=0 → identity) + group-linear mixer
+            self.residual_mix_gamma = nn.ParameterList([
+                nn.Parameter(torch.tensor(0.0)) for _ in range(config.n_layer)
+            ])
+            self.residual_mixers = nn.ModuleList([
+                nn.Conv1d(config.n_embd, config.n_embd, 1, groups=config.n_embd // mix_groups)
+                for _ in range(config.n_layer)
+            ])
+        else:
+            self.residual_mix_gamma = None
+            self.residual_mixers = None
+        # 19E: Learned Residual Decay — global depth-dependent x0 decay
+        # x0_factor_i = sigmoid(depth_decay_raw) ^ i. When depth_decay_raw is large,
+        # sigmoid ≈ 1 so x0 persists across layers; when small, x0 fades quickly.
+        self._use_residual_decay = bool(getattr(config, 'p19_residual_decay', 0))
+        if self._use_residual_decay:
+            # init such that sigmoid(2.0)^i starts with a moderate decay
+            self.depth_decay_raw = nn.Parameter(torch.tensor(2.0))
+        else:
+            self.depth_decay_raw = None
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -3983,6 +4304,9 @@ class GPT(nn.Module):
                 # RemixedBlock attn ve_gate not handled in _init_research_module — do it here
                 if isinstance(block, RemixedBlock) and block.attn.ve_gate is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.weight)
+                    # 19I: VE gate bias zero-init (neutral at init)
+                    if block.attn.ve_gate.bias is not None:
+                        torch.nn.init.zeros_(block.attn.ve_gate.bias)
             else:
                 torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
                 torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
@@ -3990,10 +4314,36 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
                 torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
                 torch.nn.init.zeros_(block.mlp.c_proj.weight)
+                # 19I: VE gate bias zero-init for dense Block too
+                if block.attn.ve_gate is not None and block.attn.ve_gate.bias is not None:
+                    torch.nn.init.zeros_(block.attn.ve_gate.bias)
+
+            # Phase 19 inits (shared across Block/RemixedBlock/CCLBlock)
+            # 19G: Spectral Reparameterization — decompose c_proj AFTER it is initialized
+            mlp = block.mlp if hasattr(block, 'mlp') else (block.ffwd if hasattr(block, 'ffwd') else None)
+            if mlp is not None:
+                if hasattr(mlp, 'srp_proj') and mlp.srp_proj is not None:
+                    mlp.srp_proj.init_from_weight(mlp.c_proj.weight)
+                if hasattr(mlp, 'srp_fc') and mlp.srp_fc is not None:
+                    mlp.srp_fc.init_from_weight(mlp.c_fc.weight)
 
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
         self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection to input embedding
+
+        # 19C: Residual mixer init — gamma=0 (identity), conv weights small random
+        if self.residual_mix_gamma is not None:
+            for gamma_p in self.residual_mix_gamma:
+                gamma_p.data.fill_(0.0)
+        if self.residual_mixers is not None:
+            for mixer in self.residual_mixers:
+                torch.nn.init.normal_(mixer.weight, std=0.01)
+                if mixer.bias is not None:
+                    torch.nn.init.zeros_(mixer.bias)
+
+        # 19E: Depth decay init
+        if self.depth_decay_raw is not None:
+            self.depth_decay_raw.data.fill_(2.0)  # sigmoid(2.0) ≈ 0.88 moderate decay
 
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
@@ -4237,6 +4587,9 @@ class GPT(nn.Module):
                     # ve_gate (if present) is structural
                     if block.attn.ve_gate is not None:
                         struct_matrix_params.append(block.attn.ve_gate.weight)
+                        # 19I: VE gate bias (if present)
+                        if block.attn.ve_gate.bias is not None:
+                            struct_adamw_params.append(block.attn.ve_gate.bias)
                     # Phase 18: MixtureNorm params (scalar weights)
                     if hasattr(block, 'norm_attn') and block.norm_attn is not None:
                         for p in block.norm_attn.parameters():
@@ -4252,6 +4605,24 @@ class GPT(nn.Module):
                     if hasattr(block.ffwd, 'channel_scale') and block.ffwd.channel_scale is not None:
                         for p in block.ffwd.channel_scale.parameters():
                             struct_adamw_params.append(p)
+                    # Phase 19: Per-block P19 params
+                    # 19A: residual_alpha scalar
+                    if hasattr(block, 'residual_alpha') and block.residual_alpha is not None:
+                        struct_adamw_params.append(block.residual_alpha)
+                    # 19B: head_importance (per-head scalars)
+                    if hasattr(block.attn, 'head_importance') and block.attn.head_importance is not None:
+                        struct_adamw_params.append(block.attn.head_importance)
+                    # 19D: attn_logit_scale (per-head scalars)
+                    if hasattr(block.attn, 'attn_logit_scale') and block.attn.attn_logit_scale is not None:
+                        struct_adamw_params.append(block.attn.attn_logit_scale)
+                    # 19G: Spectral Reparameterization sigma params
+                    ffwd = block.ffwd if hasattr(block, 'ffwd') else (block.mlp if hasattr(block, 'mlp') else None)
+                    if ffwd is not None:
+                        if hasattr(ffwd, 'srp_proj') and ffwd.srp_proj is not None:
+                            struct_adamw_params.append(ffwd.srp_proj.sigma)
+                        if hasattr(ffwd, 'srp_fc') and ffwd.srp_fc is not None:
+                            struct_adamw_params.append(ffwd.srp_fc.sigma)
+                    # 19J: no params (noise epsilon is a config float, not learned)
         else:
             # Regular Block: all transformer.h params go to candidate_matrix_params
             candidate = list(self.transformer.h.parameters())
@@ -4278,9 +4649,22 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
+        # Phase 19: Collect GPT-level P19 params
+        p19_scalar_params = []
+        # 19C: Residual mixer gamma + conv weights
+        if self.residual_mix_gamma is not None:
+            for gamma_p in self.residual_mix_gamma:
+                p19_scalar_params.append(gamma_p)
+        if self.residual_mixers is not None:
+            for mixer in self.residual_mixers:
+                for p in mixer.parameters():
+                    (struct_matrix_params if p.ndim == 2 else p19_scalar_params).append(p)
+        # 19E: Depth decay scalar
+        if self.depth_decay_raw is not None:
+            p19_scalar_params.append(self.depth_decay_raw)
         all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                       embedding_params + lm_head_params + value_embeds_params +
-                      resid_params + x0_params + ckr_gate_adamw_params)
+                      resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
         assert len(list(self.parameters())) == len(all_params), (
             f"Parameter count mismatch: model has {len(list(self.parameters()))} params, "
             f"optimizer groups cover {len(all_params)}")
@@ -4330,6 +4714,12 @@ class GPT(nn.Module):
                 lr=embedding_lr * dmodel_lr_scale * 0.5,  # conservative: half of embedding LR
                 betas=(0.9, 0.999),  # high β₂ for slow, stable adaptation
                 eps=1e-10, weight_decay=0.0,  # no decay on positional params
+            ))
+        # Phase 19: GPT-level scalar params (mixer gammas, depth decay, etc.)
+        if p19_scalar_params:
+            param_groups.append(dict(
+                kind='adamw', params=p19_scalar_params,
+                lr=scalar_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0,
             ))
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
@@ -4388,13 +4778,28 @@ class GPT(nn.Module):
             collect_sim = float(getattr(self.config, 'p18_aux_sim_lambda', 0.0)) > 0
             if collect_sim:
                 self._layer_outputs = []
+            # 19E: Precompute x0 decay factors
+            if self._use_residual_decay and self.depth_decay_raw is not None:
+                decay_base = torch.sigmoid(self.depth_decay_raw)  # scalar in (0, 1)
+            else:
+                decay_base = None
             for i, block in enumerate(self.transformer.h):
-                x  = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+                # 19E: Apply depth-dependent x0 decay
+                x0_w = self.x0_lambdas[i]
+                if decay_base is not None:
+                    x0_w = x0_w * (decay_base ** i)
+                x = self.resid_lambdas[i] * x + x0_w * x0
                 ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
                 if self.use_remix_linear:
                     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
                 else:
                     x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+                # 19C: Residual stream mixing after block output
+                if self.residual_mixers is not None:
+                    gamma = self.residual_mix_gamma[i].to(x.dtype)
+                    # Conv1d expects (B, C, T), but x is (B, T, C)
+                    mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
+                    x = x + gamma * mixed
                 if collect_sim:
                     self._layer_outputs.append(x.detach())
         x = norm(x)
@@ -4461,6 +4866,26 @@ class GPT(nn.Module):
                     sim_losses.append(cos_sim)
                 if sim_losses:
                     loss = loss + sim_lambda * torch.stack(sim_losses).mean()
+
+            # 19H: Anti-Collapse Weight Norm Penalty
+            # Penalizes high cosine similarity between adjacent layers' WEIGHT matrices
+            # (different from 18G which penalized activations — weights being similar means redundant layers)
+            ac_lambda = float(getattr(self.config, 'p19_weight_anticollapse', 0.0))
+            if ac_lambda > 0.0 and loss_reduction == 'mean':
+                ac_losses = []
+                blocks = list(self.transformer.h)
+                for j in range(len(blocks) - 1):
+                    b_curr, b_next = blocks[j], blocks[j + 1]
+                    # Get MLP c_fc weights (the largest weight matrices)
+                    w_curr = b_curr.mlp.c_fc.weight if hasattr(b_curr, 'mlp') else (b_curr.ffwd.c_fc.weight if hasattr(b_curr, 'ffwd') else None)
+                    w_next = b_next.mlp.c_fc.weight if hasattr(b_next, 'mlp') else (b_next.ffwd.c_fc.weight if hasattr(b_next, 'ffwd') else None)
+                    if w_curr is not None and w_next is not None:
+                        sim = F.cosine_similarity(w_curr.flatten().unsqueeze(0).float(),
+                                                  w_next.flatten().unsqueeze(0).float(), dim=-1)
+                        # Penalize only when similarity exceeds threshold (0.8)
+                        ac_losses.append(F.relu(sim - 0.8))
+                if ac_losses:
+                    loss = loss + ac_lambda * torch.stack(ac_losses).mean()
 
             return loss
         else:

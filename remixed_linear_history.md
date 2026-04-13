@@ -1,8 +1,13 @@
 # Iterations on Remixed-Linear: A Historical Analysis
 
-The core objective of the past several architectural iterations has been to solve **long-sequence context degradation (T ≥ 2048)** while maintaining a stable, low loss. 
+System / Context: I am working on novel Transformer architectures designed to efficiently condition internal representations on local or global sequence context. Attached are two papers that ground my conceptual goals: Remix (Don't Expand: Context-Aware Embedding Routing) and Context-Conditioned Linear Layers for Efficient Transformers (CCLL). The Problem Origin: Initially, my custom architecture showed incredible improvements on small-scale tests. However, upon testing longer context windows (T=2048 vs T=64), performance severely degraded. I investigated and discovered that my early "success" was actually a false positive caused by a causal leakage bug inside the `GlobalContextManager`'s cross-attention function. The model was looking into the future. Once I patched the causal leak, the architecture fundamentally failed to beat a standard, static dense Transformer baseline. The performance gap is strictly related to sequence length and sequence-time recurrence, not model width or depth. What I Have Already Tried (The Failed Ablations): I have spent the last 9 iterative phases trying to fix this conditional architecture. You can review the attached `remixed_linear_history.md` for full implementation details, but here is a summary of the traps my designs fall into that i have guessed:
+1. BPTT/Gradient Explosion: Passing continuous exponential moving average (EMA) context tokens recurrently between spatial blocks caused massive gradient explosions. We had to fix this by `detaching` the context history, but this breaks long-range gradient flow.
+2. The "Identity Trap": When we generate a "context signal" from the exact same `norm(x)` that the Feed-Forward Network (FFN) is about to process, the context branch becomes redundant. Multiplicative sigmoid gating collapses to identity, acting as high-frequency noise that drags down the dense weights.
+3. The Rank Bottleneck: Replacing a full dense projection with a low-rank context-gated projection starves the network of capacity.
+4. The Latency Mismatch: We tried chunking context (pooling over 64 tokens) and gating only at specific "learned boundaries" (like newlines) to improve signal-to-noise ratio. This failed because FFN transformations act locally, and providing them with "lagging" topological summaries doesn't help them with exact syntax prediction.
+5. Additive vs. Multiplicative Fractures: We recently built a "Residual Adaptive Linear" (RAL) layer that is mathematically identical to a static linear layer at initialization (`y = base(x) + delta(ctx)`). Even natively protected from regressions, the parallel task of learning to dynamically modulate the `delta` path causes gradient fracturing that underperforms a simple static dense layer. Weight modulation works better than activation normalization, but it still lags behind the baseline. My Request to You: My architecture was relying on a causal leak to function, and now that it is structurally sound, the optimization penalty of learning a dynamic context controller vastly outweighs the theoretical benefits of the added capacity. I need you to think deeply, conceptually analyze what the CCLL paper are striving for, and propose completely novel, mathematically feasible architectural redesigns. Do not suggest simple EMA smoothing, chunking, residual additive deltas, top-k sparse gating, or standard FiLM layers, as I have empirically proven these drag down pretraining efficiency. How can we achieve the goal of a highly efficient, contextually modulated projection layer that is intrinsically optimized to learn faster than a static dense baseline?
 
-The baseline architecture (yielding a validation loss of `4.15`) heavily utilizes a static Exponential Moving Average (EMA) context state with an explicit `.detach()` between tokens, alongside factorized weight modulation (basis/output gates) inside the MLP.
+The baseline architecture(without research branches, just normal gpt style) (yielding a validation loss of `4.15`) heavily utilizes a static Exponential Moving Average (EMA) context state with an explicit `.detach()` between tokens, alongside factorized weight modulation (basis/output gates) inside the MLP.
 
 Below is an analysis of all the major design experiments we have attempted to bridge the gap toward dynamic, long-range context understanding, why they were theorized to work, and why empirical sweeps (degrading to the `4.5` - `4.9` range) proved they failed.
 
@@ -558,3 +563,98 @@ Learned lower-triangular bias B in attention: attn = softmax(QK^T/sqrt(d) + B). 
 All Phase 18 flags are orthogonal — they can be combined with ANY modulation mode including the dense baseline.
 Diagnostics auto-enabled: all modules report to `modulation_diagnostics.jsonl`.
 
+### Phase 18 Results
+
+| Experiment | Result | Notes |
+|---|---|---|
+| 18A: ARG (Adaptive Gated Linear) | **OOM** | Content gate doubles FFN parameter count |
+| 18B: SNGP (Gradient Penalty) | **OOM** | Extra backward graph from penalty |
+| 18C: KFL (Kronecker-Factored Linear) | **+0.12 loss** | Too constrained — Kronecker structure can't represent dense W |
+| 18E: LayerDrop | **+0.12 loss** | Dropping FFN hurts more than it regularizes at this scale |
+| 18F: Per-Channel Scale | **OOM** | Extra params pushed over memory budget |
+| 18G: Aux Similarity Loss | **+0.12 loss** | Penalty on layer similarity may conflict with residual stream design |
+| 18H: Mixture of Norms | **OOM** | Two full norms per layer doubled norm memory |
+| 18I: Dynamic Activation | **OOM** | Three activation branches simultaneously materialized |
+
+**Critical observation**: The dense baseline at depth=4 already fits tightly in memory. ANY additional parameters or activation memory pushes it OOM. The approaches that didn't OOM (18C, 18E, 18G) all degraded loss by ~0.12 vs best baseline.
+
+### Post-Mortem: Why Phase 12–18 Failed
+
+All experiments across Phase 12–18 have one thing in common: **none beat the dense baseline**. The pattern is clear:
+
+1. **Overhead kills**: At our model scale (~46M params), ANY parameter overhead is proportionally large enough to hurt. A 5% parameter increase doesn't buy enough expressivity to compensate for the reduced effective width.
+
+2. **Position conditioning is a dead end for small models**: CKR, PGR, CIL, PRB — all position-based routing adds parameters that learn near-identity mappings. The model doesn't have enough capacity for "specialized modes."
+
+3. **Content conditioning needs zero overhead**: Ideas like ARG that use content to gate are sound in principle but double the parameter count of the FFN.
+
+4. **Memory is the binding constraint**: At depth=4 on A100 with FP8/bf16, we're at the memory ceiling. New ideas MUST be parameter-neutral or parameter-reducing.
+
+### Phase 19 Direction: Broader Modulation Scope
+
+The next phase should expand the search beyond "replace nn.Linear with something else" and explore **indirect modulation** — ways to increase expressivity without adding parameters to the linear layers themselves:
+
+**Attention-Level Modulation (Preferred — weight-adjacent):**
+- **Head Permutation/Routing**: Learn to reorder attention heads per-input, effectively creating input-dependent multi-head patterns from fixed weights
+- **Dynamic Head Scaling**: Per-head learned scale factors that modulate head importance based on input content (1 scalar per head, ~n_head params total)
+- **Cross-Head Mixing**: Lightweight linear combination of head outputs before projection, learned per-position or per-content
+- **Adaptive Head Dropping**: During training, randomly zero out entire heads (like DropHead); at inference, use all heads. Zero params added.
+
+**Activation-Level Modulation:**
+- **Residual Stream Gating**: Per-layer learned scalar gate on the residual connection (x = x + α·block(x)), α initialized to 1.0. Only 1 param per layer.
+- **Feature Mixing**: Lightweight 1×1 convolution on the residual stream between layers (D→D with grouped convolution, ~D params)
+- **Adaptive Skip Connections**: Learn which layers to skip entirely based on input content (requires differentiable routing)
+
+**Weight Sharing / Rearrangement (Zero Additional Params):**
+- **Cross-Layer Weight Sharing with Learned Offsets**: Share W across layers but learn a small per-layer delta (LoRA-style, rank-1 or rank-2)
+- **Weight Permutation**: Learn a fixed permutation of weight rows/columns that creates a "second mode" from the same parameters
+- **Spectral Reparameterization**: Reparameterize W = U·Σ·V^T and modulate only Σ (diagonal) based on content — D params, modulates the full D×D weight
+
+**Key constraints for Phase 19:**
+1. MUST NOT increase peak activation memory (no OOM)
+2. MUST add ≤ 0.1% parameters (effectively zero overhead)
+3. MUST be compatible with FlashAttention3 and torch.compile
+4. Prefer weight/attention modulation over activation/normalization modulation
+
+## Phase 19: Zero-Overhead Indirect Modulation (Implemented)
+
+Phase 19 realizes 10 proposals targeting indirect modulation — modifying the **environment around** nn.Linear rather than replacing it. All proposals use identity-at-init design (softplus-parameterized or zero-init gating) so the model starts as the exact dense baseline.
+
+### 19A: Residual Gate Scaling (RGS)
+Per-layer learned scalar α on block FFN output: `x = x + softplus(α) * mlp(x)`. Init softplus(0.5413) ≈ 1.0. **1 param per layer.**
+
+### 19B: Head Importance Scaling (HIS)
+Per-head learned multiplier on post-attention output, applied before c_proj reassembly. Lets model smoothly suppress redundant heads. **n_head params per layer.**
+
+### 19C: Residual Stream Depthwise Mixing (RSDM)
+Grouped 1×1 convolution between blocks on residual stream, gamma-gated (init=0 → identity). Group size controls parameter count. **n_embd × group_size params per layer.**
+
+### 19D: Attention Logit Bias Learning (ALB)
+Per-head learned QK temperature via Q-scaling before flash_attn (FA3-safe). softplus-parameterized for stability. **n_head params per layer.**
+
+### 19E: Learned Residual Decay (LRD)
+Global depth-dependent x0 decay: `x0_factor_i = sigmoid(decay_raw)^i`. 1 param controls how quickly x0 influence fades across layers.
+
+### 19F: Gradient Equilibrium Regularization (GER)
+Post-backward gradient modifier: equalizes per-block gradient norms by scaling toward the mean. **0 params.** Implemented in training loop.
+
+### 19G: Spectral Reparameterization (SRP)
+Decomposes c_proj as W = U·diag(σ)·V^T where U,V frozen from SVD at init, only σ learned. **D params per reparameterized layer.** Identity at init.
+
+### 19H: Anti-Collapse Norm Penalty (ACNP)
+Soft penalty on weight cosine similarity between adjacent layers' c_fc matrices. Unlike 18G (activation similarity), this targets weight redundancy. **0 params.**
+
+### 19I: Adaptive Value Residual Gating (AVRG)
+Adds learnable bias to ve_gate Linear, giving per-head baseline importance for value residuals. **n_kv_head params per VE-enabled layer.**
+
+### 19J: Training-Time Weight Perturbation (TWP)
+Isotropic noise on MLP weights during training (SAM-like flat-minima regularization). Disabled at eval. torch.compile-safe. **0 params.**
+
+### Diagnostics Expansion (ModulationDiagnosticsV2)
+Expanded the existing diagnostic system with:
+- **Gradient health**: per-layer grad norms, SNR, flow ratio (attn vs FFN balance)
+- **Weight dynamics**: per-layer weight norms
+- **Residual stream**: resid_lambda/x0_lambda values per block
+- **Per-proposal metrics**: alpha values (19A), head scale distributions (19B), gamma scalars (19C), logit scale stats (19D), depth decay factor (19E), sigma entropy/ratio (19G), VE bias values (19I)
+
+All metrics compute in torch.no_grad() outside the compiled forward graph for zero training overhead.

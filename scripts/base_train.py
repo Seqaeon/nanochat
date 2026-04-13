@@ -58,6 +58,7 @@ parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["ro
 # Model architecture
 parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
+parser.add_argument("--model-dim", type=int, default=0, help="explicit model_dim override (0 = use aspect-ratio)")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
@@ -168,6 +169,17 @@ parser.add_argument("--p18-mixture-norm", type=int, default=0, choices=[0, 1], h
 parser.add_argument("--p18-aux-sim-lambda", type=float, default=0.0, help="18G: layer similarity penalty weight (0=off)")
 parser.add_argument("--p18-gradient-penalty", type=float, default=0.0, help="18B: gradient penalty weight for Lipschitz regularization (0=off)")
 parser.add_argument("--p18-per-channel-scale", type=int, default=0, choices=[0, 1], help="18F: learnable per-channel output scale")
+# Phase 19: Zero-overhead indirect modulation
+parser.add_argument("--p19-residual-gate", type=int, default=0, choices=[0, 1], help="19A: per-layer learned scalar on block output (0/1)")
+parser.add_argument("--p19-head-importance", type=int, default=0, choices=[0, 1], help="19B: per-head learned scalar on attn output (0/1)")
+parser.add_argument("--p19-residual-mix-groups", type=int, default=0, help="19C: grouped 1x1 conv between blocks (0=off, N=group_size)")
+parser.add_argument("--p19-attn-logit-bias", type=int, default=0, choices=[0, 1], help="19D: per-head learned QK temperature (0/1)")
+parser.add_argument("--p19-residual-decay", type=int, default=0, choices=[0, 1], help="19E: learned depth-dependent x0 decay (0/1)")
+parser.add_argument("--p19-grad-equilibrium", type=float, default=0.0, help="19F: gradient equilibrium regularization lambda (0=off)")
+parser.add_argument("--p19-spectral-reparam", type=int, default=0, choices=[0, 1, 2], help="19G: spectral reparameterization (0=off, 1=c_proj, 2=c_fc+c_proj)")
+parser.add_argument("--p19-weight-anticollapse", type=float, default=0.0, help="19H: weight anti-collapse penalty lambda (0=off)")
+parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1], help="19I: add learnable bias to VE gate (0/1)")
+parser.add_argument("--p19-weight-noise", type=float, default=0.0, help="19J: training-time weight perturbation epsilon (0=off)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -291,8 +303,11 @@ def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    base_dim = depth * args.aspect_ratio
-    base_model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
+    if getattr(args, 'model_dim', 0) > 0:
+        base_model_dim = args.model_dim
+    else:
+        base_dim = depth * args.aspect_ratio
+        base_model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     base_num_heads = base_model_dim // args.head_dim
     if args.use_moe or args.use_remix_linear:
         model_dim = args.moe_embed_dim
@@ -403,6 +418,17 @@ def build_model_meta(depth):
         p18_aux_sim_lambda=getattr(args, 'p18_aux_sim_lambda', 0.0),
         p18_gradient_penalty=getattr(args, 'p18_gradient_penalty', 0.0),
         p18_per_channel_scale=getattr(args, 'p18_per_channel_scale', 0),
+        # Phase 19: Zero-overhead indirect modulation
+        p19_residual_gate=getattr(args, 'p19_residual_gate', 0),
+        p19_head_importance=getattr(args, 'p19_head_importance', 0),
+        p19_residual_mix_groups=getattr(args, 'p19_residual_mix_groups', 0),
+        p19_attn_logit_bias=getattr(args, 'p19_attn_logit_bias', 0),
+        p19_residual_decay=getattr(args, 'p19_residual_decay', 0),
+        p19_grad_equilibrium=getattr(args, 'p19_grad_equilibrium', 0.0),
+        p19_spectral_reparam=getattr(args, 'p19_spectral_reparam', 0),
+        p19_weight_anticollapse=getattr(args, 'p19_weight_anticollapse', 0.0),
+        p19_ve_bias=getattr(args, 'p19_ve_bias', 0),
+        p19_weight_noise=getattr(args, 'p19_weight_noise', 0.0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -920,6 +946,27 @@ while True:
         # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
         if args.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(orig_model.parameters(), args.max_grad_norm)
+        # 19F: Gradient Equilibrium Regularization (gradient modifier)
+        # Equalizes per-block gradient norms to prevent gradient starvation/domination
+        ger_lambda = float(getattr(args, 'p19_grad_equilibrium', 0.0))
+        if ger_lambda > 0:
+            with torch.no_grad():
+                block_grad_norms = []
+                block_key_params = []
+                for block in orig_model.transformer.h:
+                    mlp = block.mlp if hasattr(block, 'mlp') else (block.ffwd if hasattr(block, 'ffwd') else None)
+                    if mlp is not None and hasattr(mlp, 'c_fc') and mlp.c_fc.weight.grad is not None:
+                        gn = mlp.c_fc.weight.grad.float().norm()
+                        block_grad_norms.append(gn)
+                        block_key_params.append(mlp.c_fc.weight)
+                if len(block_grad_norms) >= 2:
+                    gn_stack = torch.stack(block_grad_norms)
+                    gn_mean = gn_stack.mean()
+                    # Correction factor: scale each layer's gradients toward the mean
+                    for idx, (gn, param) in enumerate(zip(block_grad_norms, block_key_params)):
+                        if gn > 1e-12:
+                            correction = (gn_mean / gn).clamp(1.0 - ger_lambda, 1.0 + ger_lambda)
+                            param.grad.mul_(correction.to(param.grad.dtype))
         optimizer.step()
     # Fix 1H: update PermutationMoE temperature each step
     if use_research_mode:
@@ -986,6 +1033,14 @@ while True:
                     mod_diag.save_to_file(diag_metrics, step, diag_file)
             else:
                 diag_metrics = None
+            # Phase 19: Expanded diagnostics (always collected, even without CKR layers)
+            p19_metrics = mod_diag.collect_p19(orig_model)
+            if p19_metrics:
+                p19_log = mod_diag.format_p19(p19_metrics)
+                if p19_log:
+                    print0(p19_log)
+        else:
+            p19_metrics = None
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -1001,6 +1056,9 @@ while True:
         # Add modulation diagnostics to wandb if available
         if mod_diag is not None and diag_metrics is not None:
             log_data.update(mod_diag.to_dict(diag_metrics))
+        # Phase 19: expanded diagnostics
+        if mod_diag is not None and p19_metrics:
+            log_data.update(mod_diag.to_dict_p19(p19_metrics))
         wandb_run.log(log_data)
 
     # state update

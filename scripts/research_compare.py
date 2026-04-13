@@ -34,9 +34,11 @@ def run_training_sweep(args):
     print("=" * 64)
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
-    if getattr(args, "research_dim", None) and args.research_dim > 0:
+    if args.research_dim > 0:
         print(f"  Overriding default target_dim ({target_dim}) with --research-dim {args.research_dim}")
         target_dim = args.research_dim
+    if args.model_dim > 0:
+        model_dim = args.model_dim
     max_seq_len = args.sequence_len
     
     device_batch_size = args.device_batch_size if args.device_batch_size > 0 else {4: 8, 8: 32, 16: 16, 24: 8}.get(depth, 16)
@@ -52,6 +54,7 @@ def run_training_sweep(args):
         "--depth", str(depth),
         "--aspect-ratio", str(aspect_ratio),
         "--head-dim", str(head_dim),
+        "--model-dim", str(model_dim),
         "--max-seq-len", str(max_seq_len),
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size), # standard for reference
@@ -140,6 +143,17 @@ def run_training_sweep(args):
         "--p18-aux-sim-lambda", str(getattr(args, 'p18_aux_sim_lambda', 0.0)),
         "--p18-gradient-penalty", str(getattr(args, 'p18_gradient_penalty', 0.0)),
         "--p18-per-channel-scale", str(getattr(args, 'p18_per_channel_scale', 0)),
+        # Phase 19: Zero-overhead indirect modulation
+        "--p19-residual-gate", str(getattr(args, 'p19_residual_gate', 0)),
+        "--p19-head-importance", str(getattr(args, 'p19_head_importance', 0)),
+        "--p19-residual-mix-groups", str(getattr(args, 'p19_residual_mix_groups', 0)),
+        "--p19-attn-logit-bias", str(getattr(args, 'p19_attn_logit_bias', 0)),
+        "--p19-residual-decay", str(getattr(args, 'p19_residual_decay', 0)),
+        "--p19-grad-equilibrium", str(getattr(args, 'p19_grad_equilibrium', 0.0)),
+        "--p19-spectral-reparam", str(getattr(args, 'p19_spectral_reparam', 0)),
+        "--p19-weight-anticollapse", str(getattr(args, 'p19_weight_anticollapse', 0.0)),
+        "--p19-ve-bias", str(getattr(args, 'p19_ve_bias', 0)),
+        "--p19-weight-noise", str(getattr(args, 'p19_weight_noise', 0.0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -341,6 +355,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--run-dir", type=str, required=True)
+    parser.add_argument("--model-dim", type=int, default=0, help="Explicit model_dim override for base_train.py")
     parser.add_argument("--fp8", action="store_true", help="Enable FP8 training (Blackwell optimization)")
     parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
     parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
@@ -458,6 +473,17 @@ if __name__ == "__main__":
     parser.add_argument("--p18-aux-sim-lambda", type=float, default=0.0)
     parser.add_argument("--p18-gradient-penalty", type=float, default=0.0)
     parser.add_argument("--p18-per-channel-scale", type=int, default=0, choices=[0, 1])
+    # Phase 19
+    parser.add_argument("--p19-residual-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p19-head-importance", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p19-residual-mix-groups", type=int, default=0)
+    parser.add_argument("--p19-attn-logit-bias", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p19-residual-decay", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p19-grad-equilibrium", type=float, default=0.0)
+    parser.add_argument("--p19-spectral-reparam", type=int, default=0, choices=[0, 1, 2])
+    parser.add_argument("--p19-weight-anticollapse", type=float, default=0.0)
+    parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p19-weight-noise", type=float, default=0.0)
     args = parser.parse_args()
     
     run_training_sweep(args)
