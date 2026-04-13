@@ -4943,6 +4943,7 @@ class MoELinear(nn.Module):
             return self._last_routing_entropy_t.item()
         return 0.0
 
+    @torch.compiler.disable
     def forward(self, x):
         orig_shape = x.shape
         if x.dim() == 2:
@@ -4950,15 +4951,9 @@ class MoELinear(nn.Module):
         B, T, D = x.shape
         dtype = x.dtype
 
-        # Routing scores
-        scores = x.float() @ self.route_proj.float()  # (B, T, K)
-        weights = F.softmax(scores, dim=-1).to(dtype)  # (B, T, K)
-
-        # Diagnostics (no grad, no .item())
-        with torch.no_grad():
-            w = weights.float()
-            log_w = torch.log(w.clamp(min=1e-8))
-            self._last_routing_entropy_t = -(w * log_w).sum(dim=-1).mean()
+        # Routing scores — cast to float for stable softmax, back to dtype
+        logits = x.float() @ self.route_proj.float()  # (B, T, K)
+        weights = F.softmax(logits, dim=-1).to(dtype)  # (B, T, K)
 
         # Top-k sparsification
         if self.topk < self.K:
@@ -4968,22 +4963,12 @@ class MoELinear(nn.Module):
             weights = weights * mask
             weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
-        # Vectorized expert computation — no for loop, torch.compile-friendly
-        # B_stack: (K, r, D_in), A_stack: (K, D_out, r)
+        # Vectorized expert computation via einsum
         B_w = self.experts_B.to(dtype)  # (K, r, D_in)
         A_w = self.experts_A.to(dtype)  # (K, D_out, r)
-
-        # Step 1: down-project through all experts at once
-        # x: (B, T, D_in) → h: (B, T, K, r)
-        h = torch.einsum('btd,krd->btkr', x, B_w)
-
-        # Step 2: up-project through all experts at once
-        # h: (B, T, K, r) → out: (B, T, K, D_out)
-        out = torch.einsum('btkr,kor->btko', h, A_w)
-
-        # Step 3: weighted sum across experts
-        # weights: (B, T, K) → (B, T, K, 1), out: (B, T, K, D_out)
-        y = (weights.unsqueeze(-1) * out).sum(dim=2)  # (B, T, D_out)
+        h = torch.einsum('btd,krd->btkr', x, B_w)      # (B, T, K, r)
+        out = torch.einsum('btkr,kor->btko', h, A_w)    # (B, T, K, D_out)
+        y = (weights.unsqueeze(-1) * out).sum(dim=2)     # (B, T, D_out)
 
         if len(orig_shape) == 2:
             y = y.squeeze(0)
