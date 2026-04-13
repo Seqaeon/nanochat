@@ -4903,18 +4903,12 @@ class MoELinear(nn.Module):
     Each expert is a narrow Linear(D_in, D_out) using a hidden bottleneck:
         expert_k(x) = A_k @ (B_k @ x)   where B_k: (r, D_in), A_k: (D_out, r), r = D_in // K
 
-    This gives:
-      - Param parity: K × (D_in × r + r × D_out) ≈ D_in × D_out when r = D_in/K
-      - Full D_out output from each expert (no concatenation issues)
-      - Top-k routing only computes k of K experts → FLOP savings
+    All expert weights are stored as single stacked tensors and computed via
+    batched einsum — no for loops, no ParameterList, torch.compile-friendly.
 
     Routing: frozen content projection R (different per instance via unique seed).
     Each MoELinear in the model gets a DIFFERENT R, so tokens route to different
     experts at different layers/projections.
-
-    VRAM advantage (vs dense baseline at same D_out):
-      - Activations: top-1 only materializes 1 expert's intermediates (r-dim)
-      - Weights: similar total, but spread across K small matrices (better cache)
     """
     def __init__(self, D_in, D_out, K, topk=0, learned_route=False, bias=False):
         super().__init__()
@@ -4925,16 +4919,12 @@ class MoELinear(nn.Module):
         self.topk = topk if topk > 0 else K  # 0 = use all (soft routing)
         # Bottleneck rank per expert
         self.rank = max(1, D_in // K)
-        # K experts, each factored as A_k @ B_k
-        # B_k: (rank, D_in) — down-project, A_k: (D_out, rank) — up-project
-        self.experts_B = nn.ParameterList([
-            nn.Parameter(torch.randn(self.rank, D_in) * (D_in ** -0.5))
-            for _ in range(K)])
-        self.experts_A = nn.ParameterList([
-            nn.Parameter(torch.randn(D_out, self.rank) * (self.rank ** -0.5))
-            for _ in range(K)])
+        # Stacked expert weights: B (K, rank, D_in), A (K, D_out, rank)
+        self.experts_B = nn.Parameter(
+            torch.randn(K, self.rank, D_in) * (D_in ** -0.5))
+        self.experts_A = nn.Parameter(
+            torch.randn(K, D_out, self.rank) * (self.rank ** -0.5))
         # Per-instance frozen/learned routing projection
-        # Use unique seed so every MoELinear has a DIFFERENT R
         gen = torch.Generator().manual_seed(42 + _moe_linear_counter)
         _moe_linear_counter += 1
         route_init = torch.randn(D_in, K, generator=gen) / (D_in ** 0.5)
@@ -4943,7 +4933,7 @@ class MoELinear(nn.Module):
         else:
             self.register_buffer('route_proj', route_init)
         self.learned_route = learned_route
-        # Diagnostics — stored as tensor to avoid .item() graph breaks in forward
+        # Diagnostics — stored as tensor to avoid .item() graph breaks
         self._last_routing_entropy_t = None
 
     @property
@@ -4954,17 +4944,17 @@ class MoELinear(nn.Module):
         return 0.0
 
     def forward(self, x):
-        orig_shape = x.shape  # could be (B, T, D_in) or (B*T, D_in)
+        orig_shape = x.shape
         if x.dim() == 2:
-            x = x.unsqueeze(0)  # (1, N, D_in)
+            x = x.unsqueeze(0)
         B, T, D = x.shape
         dtype = x.dtype
 
         # Routing scores
         scores = x.float() @ self.route_proj.float()  # (B, T, K)
-        weights = F.softmax(scores, dim=-1).to(dtype)   # (B, T, K)
+        weights = F.softmax(scores, dim=-1).to(dtype)  # (B, T, K)
 
-        # Diagnostics (no grad, no .item() to avoid graph breaks with torch.compile)
+        # Diagnostics (no grad, no .item())
         with torch.no_grad():
             w = weights.float()
             log_w = torch.log(w.clamp(min=1e-8))
@@ -4978,17 +4968,23 @@ class MoELinear(nn.Module):
             weights = weights * mask
             weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
-        # Compute weighted sum of expert outputs
-        # Note: zeroed weights from top-k handle skipping via multiplication;
-        # no .item() checks which would break torch.compile
-        y = torch.zeros(B, T, self.D_out, device=x.device, dtype=dtype)
-        for k in range(self.K):
-            # Factored expert: A_k @ (B_k @ x), cast to input dtype for bf16 compat
-            h = F.linear(x, self.experts_B[k].to(dtype))  # (B, T, rank)
-            out = F.linear(h, self.experts_A[k].to(dtype))  # (B, T, D_out)
-            y = y + weights[:, :, k:k+1] * out
+        # Vectorized expert computation — no for loop, torch.compile-friendly
+        # B_stack: (K, r, D_in), A_stack: (K, D_out, r)
+        B_w = self.experts_B.to(dtype)  # (K, r, D_in)
+        A_w = self.experts_A.to(dtype)  # (K, D_out, r)
 
-        # Restore original shape
+        # Step 1: down-project through all experts at once
+        # x: (B, T, D_in) → h: (B, T, K, r)
+        h = torch.einsum('btd,krd->btkr', x, B_w)
+
+        # Step 2: up-project through all experts at once
+        # h: (B, T, K, r) → out: (B, T, K, D_out)
+        out = torch.einsum('btkr,kor->btko', h, A_w)
+
+        # Step 3: weighted sum across experts
+        # weights: (B, T, K) → (B, T, K, 1), out: (B, T, K, D_out)
+        y = (weights.unsqueeze(-1) * out).sum(dim=2)  # (B, T, D_out)
+
         if len(orig_shape) == 2:
             y = y.squeeze(0)
         return y
@@ -4996,13 +4992,11 @@ class MoELinear(nn.Module):
     @property
     def weight(self):
         """Reconstruct effective weight for compatibility (e.g., init_weights).
-        Returns sum of A_k @ B_k — shape (D_out, D_in).
+        Returns mean of A_k @ B_k — shape (D_out, D_in).
         """
-        w = torch.zeros(self.D_out, self.D_in, device=self.experts_A[0].device,
-                        dtype=self.experts_A[0].dtype)
-        for k in range(self.K):
-            w = w + self.experts_A[k] @ self.experts_B[k]
-        return w / self.K
+        # experts_A: (K, D_out, r), experts_B: (K, r, D_in)
+        w = torch.einsum('kor,krd->kod', self.experts_A, self.experts_B)  # (K, D_out, D_in)
+        return w.mean(dim=0)  # (D_out, D_in)
 
 
 class MLP(nn.Module):
