@@ -4268,24 +4268,23 @@ class DetachedRoutedMLP(nn.Module):
 
         return y
 
-    def compute_aux_loss(self, target_output):
+    def compute_aux_loss(self):
         """Compute auxiliary routing loss.
 
-        target_output: the final model output AFTER this MLP (detached).
-        Trains router to assign weight to the branch closest to target.
+        Uses the mean of all branch outputs as the target. Trains the router
+        to predict which branch is closest to this consensus output, which
+        encourages branch specialization.
         """
         if self._last_branch_outputs is None or self._last_router_logits is None:
             return torch.tensor(0.0)
-        # Per-branch error: which branch output is closest to target?
-        target = target_output.detach()
+        # Target = mean of all branch outputs (consensus)
+        target = torch.stack(self._last_branch_outputs, dim=0).mean(dim=0)  # (B, T, D)
         errors = []
         for bo in self._last_branch_outputs:
             err = ((bo - target) ** 2).mean(dim=-1)  # (B, T)
             errors.append(err)
         errors = torch.stack(errors, dim=-1)  # (B, T, K)
-        # Best branch = lowest error
         best_branch = errors.argmin(dim=-1)  # (B, T)
-        # Train router to predict best branch
         logits = self._last_router_logits  # (B, T, K) — has grad to router params
         aux_loss = F.cross_entropy(
             logits.reshape(-1, self.n_branches),
@@ -4481,8 +4480,9 @@ class NoiseCEA_MLP(nn.Module):
         base_fc_w = self.c_fc.weight  # (H, D)
         base_proj_w = self.c_proj.weight  # (D, H)
         for k in range(self.n_branches):
-            fc_w = base_fc_w + self.eps * self.delta_fc[k]
-            proj_w = base_proj_w + self.eps * self.delta_proj[k]
+            # Cast deltas to match weight dtype to avoid bf16/float32 mismatch
+            fc_w = base_fc_w + self.eps * self.delta_fc[k].to(base_fc_w.dtype)
+            proj_w = base_proj_w + self.eps * self.delta_proj[k].to(base_proj_w.dtype)
             h = F.linear(x, fc_w)
             h = F.relu(h).square()
             out = F.linear(h, proj_w)
@@ -4496,11 +4496,12 @@ class NoiseCEA_MLP(nn.Module):
             y = y + router_weights[..., k:k+1] * branch_outputs[k]
         return y
 
-    def compute_aux_loss(self, target_output):
+    def compute_aux_loss(self):
         """Train router to predict which perturbation direction is best."""
         if self._last_branch_outputs is None or self._last_router_logits is None:
             return torch.tensor(0.0)
-        target = target_output.detach()
+        # Target = mean of all branch outputs (consensus)
+        target = torch.stack(self._last_branch_outputs, dim=0).mean(dim=0)
         errors = []
         for bo in self._last_branch_outputs:
             err = ((bo - target) ** 2).mean(dim=-1)

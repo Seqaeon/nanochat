@@ -757,3 +757,24 @@ Clusters a pre-trained MLP's hidden dimensions into K groups via K-means, then r
 - **P20 diagnostics:** `collect_p20()`, `format_p20()`, `to_dict_p20()` track routing entropy, load balance, branch divergence, sigma sparsity, and router grad norms for all 10 proposals.
 - **Aux loss wiring:** DGCR (20D) and NCEA (20H) aux losses added to the training loop in `base_train.py`.
 - **Phase 2 pipeline:** `GPT.convert_to_phase2()` converts standard MLP modules to PWU_MLP/FSVD_MLP/WBFC_MLP using pre-trained weights. Called after weight init, before optimizer setup.
+- **Bug fix (20D):** `compute_aux_loss()` no longer requires external `logits` — uses mean of branch outputs as consensus target.
+- **Bug fix (20H):** `NoiseCEA_MLP` delta params cast to weight dtype (`.to(base_fc_w.dtype)`) to fix bf16/float32 mismatch.
+
+### Phase 20 Sweep Results
+
+**Baseline**: 1.2573 BPB (dense base, dim=128, depth=4)
+
+| # | Proposal | BPB | Δ vs Dense | Status |
+|---|---|---|---|---|
+| 20A | HRCS (scale=4) | 1.2572 | -0.0001 | ✅ Neutral |
+| 20B | LSWR (scale=4) | 1.3443 | +0.0870 | ❌ Worse |
+| **20C** | **LRCFB (K=4)** | **1.2323** | **-0.0250** | 🏆 **Best!** |
+| 20D | DGCR (K=4) | — | — | ❌ Crashed (fixed) |
+| 20F | MoNE (K=4) | 1.2589 | +0.0016 | ✅ Neutral |
+| 20H | NCEA (K=4) | — | — | ❌ Crashed (fixed) |
+| 20I | ADWI | 1.2575 | +0.0002 | ✅ Neutral |
+| 20E | PWU (K=4) | 1.3568 | +0.0995 | ❌ Needs real pretrain |
+| 20G | FSVD gate | 1.3365 | +0.0792 | ❌ Needs real pretrain |
+| 20J | WBFC (K=8) | — | — | ⚠️ Incomplete |
+
+**Key finding:** 20C (frozen content routing, K=4 branches) achieved **1.2323 BPB**, beating the dense baseline by 0.025 and beating CKR's best (4.08 at larger dim). This validates frozen content-dependent routing as a viable mechanism.

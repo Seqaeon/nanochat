@@ -969,8 +969,7 @@ while True:
             aux_loss_total = torch.tensor(0.0, device=loss.device)
             for block in orig_model.transformer.h:
                 if hasattr(block, 'mlp') and hasattr(block.mlp, 'compute_aux_loss'):
-                    # target_output = current block output (detached inside compute_aux_loss)
-                    aux_loss_total = aux_loss_total + block.mlp.compute_aux_loss(logits.detach())
+                    aux_loss_total = aux_loss_total + block.mlp.compute_aux_loss()
             if aux_loss_total.item() > 0:
                 loss = loss + aux_loss_total
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here

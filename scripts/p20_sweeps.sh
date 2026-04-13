@@ -3,12 +3,22 @@
 # Each proposal runs independently against the dense baseline (model="base")
 # "base" = standard dense transformer with Block + MLP
 #
-# Phase 1 proposals (A,B,C,D,F,H,I): train from scratch
-# Phase 2 proposals (E,G,J): first pretrain base, then convert + continue
+# Features:
+#   - Resume: skips proposals that already have results in sweep.log
+#   - Demarcation: clear separators between each proposal run
 #
-# Usage: bash scripts/p20_sweeps.sh
+# Usage:
+#   bash scripts/p20_sweeps.sh           # run all (skipping completed)
+#   bash scripts/p20_sweeps.sh --force   # re-run everything
 
 set -e
+
+LOGFILE="${SWEEP_LOG:-sweep.log}"
+FORCE=0
+if [[ "$1" == "--force" ]]; then
+    FORCE=1
+    shift
+fi
 
 COMMON="--fp8 --max-shards 170 --models base \
   --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
@@ -17,10 +27,44 @@ COMMON="--fp8 --max-shards 170 --models base \
   --modulation-diagnostics 1"
 DEPTH=4
 
-echo "======================================"
-echo "  Phase 20 Full Sweep (A–J)"
-echo "======================================"
-echo "Baseline: base model, model_dim=128, depth=$DEPTH"
+# ─────────────────────────────────────────
+# Resume helper: check if a proposal already has results
+# ─────────────────────────────────────────
+check_completed() {
+    local tag="$1"
+    if [[ "$FORCE" -eq 1 ]]; then
+        return 1  # force re-run
+    fi
+    if [[ ! -f "$LOGFILE" ]]; then
+        return 1  # no log file yet
+    fi
+    # Check if both the start marker AND a "Minimum validation bpb" exist
+    # after it (before the next start marker)
+    if grep -q "▶▶▶ $tag ◀◀◀" "$LOGFILE" && \
+       awk "/▶▶▶ $tag ◀◀◀/,/▶▶▶/{if(/Minimum validation bpb/) found=1} END{exit !found}" "$LOGFILE"; then
+        return 0  # completed
+    fi
+    return 1  # not completed
+}
+
+# Demarcation helper
+print_header() {
+    local num="$1"
+    local tag="$2"
+    local desc="$3"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  [$num/10]  $tag"
+    echo "║  $desc"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "▶▶▶ $tag ◀◀◀"  # machine-readable marker for resume detection
+    echo ""
+}
+
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║          Phase 20 Full Sweep (A–J)                         ║"
+echo "║  Baseline: base model, model_dim=128, depth=$DEPTH             ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
 # ─────────────────────────────────────────
@@ -28,79 +72,131 @@ echo ""
 # ─────────────────────────────────────────
 
 # 20A: Hash-Routed Column Selection (×4 scale)
-echo "[1/10] Running 20A (HRCS, scale=4)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-hrcs-scale 4 \
-  $DEPTH
+TAG="20A_HRCS"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1" "$TAG" "Hash-Routed Column Selection (scale=4)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-hrcs-scale 4 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20B: LSH Weight Routing (×4 scale, 8 planes)
-echo "[2/10] Running 20B (LSWR, scale=4, planes=8)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-lswr-scale 4 --p20-lswr-planes 8 \
-  $DEPTH
+TAG="20B_LSWR"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "2" "$TAG" "LSH Weight Routing (scale=4, planes=8)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lswr-scale 4 --p20-lswr-planes 8 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20C: Frozen Content-Routed Branches (K=4)
-echo "[3/10] Running 20C (LRCFB, K=4)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-lrcfb-branches 4 \
-  $DEPTH
+TAG="20C_LRCFB"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "3" "$TAG" "Frozen Content-Routed Branches (K=4)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 4 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20D: Detached-Gradient Content Routing (K=4)
-echo "[4/10] Running 20D (DGCR, K=4)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-dgcr-branches 4 --p20-dgcr-aux-weight 0.01 \
-  $DEPTH
+TAG="20D_DGCR"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "4" "$TAG" "Detached-Gradient Content Routing (K=4)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-dgcr-branches 4 --p20-dgcr-aux-weight 0.01 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20F: Mixture of Narrow Experts (K=4, same total params)
-echo "[5/10] Running 20F (MoNE, K=4)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-mone-experts 4 \
-  $DEPTH
+TAG="20F_MoNE"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "5" "$TAG" "Mixture of Narrow Experts (K=4)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-mone-experts 4 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20H: Noise-Contrastive Expert Assignment (K=4)
-echo "[6/10] Running 20H (NCEA, K=4, eps=0.1)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-ncea-branches 4 --p20-ncea-eps 0.1 \
-  $DEPTH
+TAG="20H_NCEA"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "6" "$TAG" "Noise-Contrastive Expert Assignment (K=4, eps=0.1)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-ncea-branches 4 --p20-ncea-eps 0.1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20I: Attention-Derived Weight Interpolation
-echo "[7/10] Running 20I (ADWI)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-adwi 1 \
-  $DEPTH
+TAG="20I_ADWI"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "7" "$TAG" "Attention-Derived Weight Interpolation"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-adwi 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # ─────────────────────────────────────────
 # PHASE 2 PROPOSALS (pretrain then convert)
 # ─────────────────────────────────────────
-# These first train a base model (Phase 1), then convert the MLP weights
-# and continue training. The convert_to_phase2() function in GPT handles
-# the weight conversion automatically when the flags are set.
-#
-# NOTE: For Phase 2, the base model is trained with default settings first.
-# The Phase 2 flags trigger conversion of trained MLP weights before
-# optimizer setup. The research_sweep.sh runs a fresh training from random
-# init, so E/G/J will train base→convert→continue in a single run.
 
 # 20E: Progressive Weight Unfreezing (K=4 branches, Phase 2: router only)
-echo "[8/10] Running 20E (PWU, K=4, phase=2)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-pwu-branches 4 --p20-pwu-phase 2 \
-  $DEPTH
+TAG="20E_PWU"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "8" "$TAG" "Progressive Weight Unfreezing (K=4, phase=2)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-pwu-branches 4 --p20-pwu-phase 2 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20G: Frozen-SVD σ Gating
-echo "[9/10] Running 20G (FSVD gate)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-fsvd-gate 1 \
-  $DEPTH
+TAG="20G_FSVD"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "9" "$TAG" "Frozen-SVD Sigma Gating"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-fsvd-gate 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 # 20J: Weight Bank Frozen Clustering (K=8 clusters, M=2 active)
-echo "[10/10] Running 20J (WBFC, K=8, M=2)..."
-bash scripts/research_sweep.sh $COMMON \
-  --p20-wbfc-clusters 8 --p20-wbfc-active 2 \
-  $DEPTH
+TAG="20J_WBFC"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "10" "$TAG" "Weight Bank Frozen Clustering (K=8, M=2)"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-wbfc-clusters 8 --p20-wbfc-active 2 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+fi
 
 echo ""
-echo "======================================"
-echo "  Phase 20 Sweep Complete (All 10)"
-echo "======================================"
-echo "Check sweep.log for results."
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║          Phase 20 Sweep Complete (All 10)                  ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo "Check $LOGFILE for results."
