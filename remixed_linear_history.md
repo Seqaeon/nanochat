@@ -722,7 +722,38 @@ K full-rank MLP branches mixed by a FROZEN random content projection. `alpha = s
 #### 20D: Detached-Gradient Content Routing (DGCR) — `--p20-dgcr-branches K`
 K full-rank MLP branches with a LEARNED router, but gradient flows only through an auxiliary loss. `alpha = router(x.detach()).detach()`. Router trained to predict which branch minimizes per-token error ex-post. K× parameter overhead. FM7 risk from x.detach().
 
+#### 20A: Hash-Routed Column Selection (HRCS) — `--p20-hrcs-scale S`
+Stores a fat weight matrix W ∈ ℝ^{D×(S·D)} but selects only D_active columns per token via a DETERMINISTIC frozen hash of the input features. `indices = topk(|x @ H_frozen|)`, then mask non-selected hidden dims. Avoids FM1 (frozen hash), FM2 (content-based), FM3 (full columns). S× parameter overhead in MLP weights.
+
+#### 20B: Locality-Sensitive Weight Routing (LSWR) — `--p20-lswr-scale S --p20-lswr-planes N`
+LSH-based variant of 20A. Frozen random hyperplanes partition input space into 2^N buckets. Each bucket maps to a fixed set of active columns (precomputed at init). `hash_bits = sign(x @ H)` → bucket_id → column mask. LSH guarantees locality preservation. S× parameter overhead.
+
+#### 20H: Noise-Contrastive Expert Assignment (NCEA) — `--p20-ncea-branches K --p20-ncea-eps E`
+Shared base MLP + K learned perturbation directions (delta). Extends 19J (weight noise works) with STRUCTURED noise. `W_k = W_base + eps * delta_k`. Router predicts which perturbation helps most (aux loss only, not main loss). Same parameter overhead as delta directions only.
+
+#### 20I: Attention-Derived Weight Interpolation (ADWI) — `--p20-adwi 1`
+Uses existing attention head output magnitudes as FFN routing signal. No new router module — reuses attention computation. Each head's ||attn_head_k||² determines which narrow expert to weight. H narrow experts (one per attention head). Same total params as dense MLP.
+
+### Model Names (critical for sweep commands)
+- **`base`** = standard dense transformer (`Block` + `MLP`). This is what P20 proposals modify.
+- **`remixed-linear`** = context-conditioned linear layers (`CCLBlock` + `RemixedLinear`)
+- **`moe_no_perm`** / **`moe_perm`** = MoE variants
+- ⚠️ **"dense" is NOT a valid model name** — always use `--models "base"`.
+
+### Phase 2 Proposals (pretrain base → convert → continue training)
+
+#### 20E: Progressive Weight Unfreezing (PWU) — `--p20-pwu-branches K --p20-pwu-phase {1,2,3}`
+Forks a pre-trained MLP into K branches with small random perturbations, then trains a content-dependent router. Phase 2 (router-only): branches frozen, only router trains. Phase 3 (joint): everything unfrozen. `convert_to_phase2()` handles the MLP→PWU_MLP conversion automatically.
+
+#### 20G: Frozen-SVD σ Gating — `--p20-fsvd-gate 1`
+Decomposes pre-trained MLP weights via SVD (W = UΣV^T), freezes U and V (directional structure), applies a frozen content-dependent gate to modulate σ per token. `gate = sigmoid(x @ R_frozen)`. Content-aware subspace traversal with no gradient through the gate. Unlike 19G (which was init'd from zeros and failed), U/V contain learned structure from pre-training.
+
+#### 20J: Weight Bank Frozen Clustering (WBFC) — `--p20-wbfc-clusters K --p20-wbfc-active M`
+Clusters a pre-trained MLP's hidden dimensions into K groups via K-means, then routes tokens to top-M clusters via frozen content projection. **This is the most direct realization of the original vision**: a large weight bank where context selects a subspace. Saves FLOPs at inference: only M/K of hidden dims are computed.
+
 ### Technical Fixes
 - **19E bug fix:** `num_scaling_params()` now counts GPT-level P19 params (depth_decay_raw, residual_mix_gamma).
 - **19J generalized:** Weight noise iterates all 2D MLP params instead of hardcoding c_fc/c_proj.
-- **P20 diagnostics:** `collect_p20()`, `format_p20()`, `to_dict_p20()` track routing entropy, load balance, branch divergence, and router grad norms.
+- **P20 diagnostics:** `collect_p20()`, `format_p20()`, `to_dict_p20()` track routing entropy, load balance, branch divergence, sigma sparsity, and router grad norms for all 10 proposals.
+- **Aux loss wiring:** DGCR (20D) and NCEA (20H) aux losses added to the training loop in `base_train.py`.
+- **Phase 2 pipeline:** `GPT.convert_to_phase2()` converts standard MLP modules to PWU_MLP/FSVD_MLP/WBFC_MLP using pre-trained weights. Called after weight init, before optimizer setup.

@@ -240,11 +240,24 @@ class GPTConfig:
     p19_ve_bias: int = 0                      # 19I: add learnable bias to VE gate (0/1)
     p19_weight_noise: float = 0.0             # 19J: training-time weight perturbation epsilon (0=off)
     # Phase 20: Context-conditioned dynamic weight computation
-    p20_mone_experts: int = 0                 # 20F: Mixture of Narrow Experts (0=off, K=num experts)
-    p20_mone_topk: int = 0                    # 20F: top-k expert routing (0=compute all, K=top-k sparse)
+    p20_hrcs_scale: int = 0                   # 20A: Hash-routed column selection (0=off, scale=D_stored/D_active)
+    p20_lswr_scale: int = 0                   # 20B: LSH weight routing (0=off, scale factor)
+    p20_lswr_planes: int = 8                  # 20B: number of LSH hash planes
     p20_lrcfb_branches: int = 0               # 20C: Frozen content-routed full-rank branches (0=off, K=num branches)
     p20_dgcr_branches: int = 0                # 20D: Detached-gradient content-routed branches (0=off, K=num branches)
     p20_dgcr_aux_weight: float = 0.01         # 20D: weight for auxiliary routing loss
+    p20_mone_experts: int = 0                 # 20F: Mixture of Narrow Experts (0=off, K=num experts)
+    p20_mone_topk: int = 0                    # 20F: top-k expert routing (0=compute all, K=top-k sparse)
+    p20_ncea_branches: int = 0                # 20H: Noise-contrastive expert assignment (0=off, K=branches)
+    p20_ncea_eps: float = 0.1                 # 20H: perturbation magnitude for NCEA
+    p20_adwi: int = 0                         # 20I: Attention-derived weight interpolation (0=off, 1=on)
+    # Phase 20 (require pre-trained checkpoint — Phase 2 training)
+    p20_pwu_branches: int = 0                 # 20E: Progressive weight unfreezing (0=off, K=branches forked from pretrained)
+    p20_pwu_phase: int = 1                    # 20E: training phase (1=normal pretrain, 2=fork+route, 3=joint finetune)
+    p20_fsvd_gate: int = 0                    # 20G: Frozen-SVD σ gating (0=off, 1=on, loads SVD from pretrained)
+    p20_wbfc_clusters: int = 0                # 20J: Weight bank frozen clustering (0=off, K=clusters)
+    p20_wbfc_active: int = 0                  # 20J: number of active clusters per token (M < K)
+
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
@@ -296,8 +309,15 @@ RESEARCH_ALLOWED_KEYS = {
     "p19_attn_logit_bias", "p19_residual_decay", "p19_grad_equilibrium",
     "p19_spectral_reparam", "p19_weight_anticollapse", "p19_ve_bias", "p19_weight_noise",
     # Phase 20
-    "p20_mone_experts", "p20_mone_topk", "p20_lrcfb_branches",
+    "p20_hrcs_scale", "p20_lswr_scale", "p20_lswr_planes",
+    "p20_lrcfb_branches",
     "p20_dgcr_branches", "p20_dgcr_aux_weight",
+    "p20_mone_experts", "p20_mone_topk",
+    "p20_ncea_branches", "p20_ncea_eps",
+    "p20_adwi",
+    "p20_pwu_branches", "p20_pwu_phase",
+    "p20_fsvd_gate",
+    "p20_wbfc_clusters", "p20_wbfc_active",
 }
 
 
@@ -3151,6 +3171,59 @@ class ModulationDiagnostics:
                             cos_sims.append(cos)
                     metrics[f"{prefix}/p20d_branch_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
 
+            elif isinstance(mlp, HashRoutedMLP):
+                metrics[f"{prefix}/p20a_routing_entropy"] = mlp._last_routing_entropy
+
+            elif isinstance(mlp, LSHRoutedMLP):
+                metrics[f"{prefix}/p20b_routing_entropy"] = mlp._last_routing_entropy
+                if mlp._last_bucket_usage is not None:
+                    usage = mlp._last_bucket_usage.float()
+                    metrics[f"{prefix}/p20b_bucket_usage_std"] = usage.std().item()
+                    metrics[f"{prefix}/p20b_buckets_used"] = (usage > 1e-6).sum().item()
+
+            elif isinstance(mlp, NoiseCEA_MLP):
+                metrics[f"{prefix}/p20h_routing_entropy"] = mlp._last_routing_entropy
+                if mlp.router.weight.grad is not None:
+                    metrics[f"{prefix}/p20h_router_grad_norm"] = mlp.router.weight.grad.float().norm().item()
+                # Delta magnitude (how big are the perturbations?)
+                delta_norms = [d.float().norm().item() for d in mlp.delta_fc]
+                metrics[f"{prefix}/p20h_delta_fc_norm_mean"] = sum(delta_norms) / len(delta_norms)
+
+            elif isinstance(mlp, AttnDerivedMLP):
+                metrics[f"{prefix}/p20i_routing_entropy"] = mlp._last_routing_entropy
+                # Expert divergence
+                norms = [e.weight.float().reshape(-1) for e in mlp.experts_fc]
+                if len(norms) >= 2:
+                    cos_sims = []
+                    for ii in range(len(norms)):
+                        for jj in range(ii + 1, len(norms)):
+                            cos = F.cosine_similarity(norms[ii].unsqueeze(0), norms[jj].unsqueeze(0)).item()
+                            cos_sims.append(cos)
+                    metrics[f"{prefix}/p20i_expert_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
+
+            elif isinstance(mlp, PWU_MLP):
+                metrics[f"{prefix}/p20e_routing_entropy"] = mlp._last_routing_entropy
+                if mlp.router.weight.grad is not None:
+                    metrics[f"{prefix}/p20e_router_grad_norm"] = mlp.router.weight.grad.float().norm().item()
+                # Branch divergence
+                norms = [b.weight.float().reshape(-1) for b in mlp.branches_fc]
+                if len(norms) >= 2:
+                    cos_sims = []
+                    for ii in range(len(norms)):
+                        for jj in range(ii + 1, len(norms)):
+                            cos = F.cosine_similarity(norms[ii].unsqueeze(0), norms[jj].unsqueeze(0)).item()
+                            cos_sims.append(cos)
+                    metrics[f"{prefix}/p20e_branch_divergence"] = 1.0 - (sum(cos_sims) / len(cos_sims))
+
+            elif isinstance(mlp, FSVD_MLP):
+                metrics[f"{prefix}/p20g_routing_entropy"] = mlp._last_routing_entropy
+                metrics[f"{prefix}/p20g_sigma_sparsity"] = mlp._last_sigma_sparsity
+                metrics[f"{prefix}/p20g_sigma_fc_mean"] = mlp.sigma_fc.float().mean().item()
+                metrics[f"{prefix}/p20g_sigma_fc_std"] = mlp.sigma_fc.float().std().item()
+
+            elif isinstance(mlp, WBFC_MLP):
+                metrics[f"{prefix}/p20j_routing_entropy"] = mlp._last_routing_entropy
+
         return metrics
 
     def format_p20(self, p20_metrics):
@@ -4221,6 +4294,550 @@ class DetachedRoutedMLP(nn.Module):
         return self.aux_weight * aux_loss
 
 
+class HashRoutedMLP(nn.Module):
+    """20A: Hash-Routed Column Selection (HRCS).
+
+    Stores a fat weight matrix W ∈ ℝ^{D_stored × D_out} but at each token
+    position selects only D_active columns based on a DETERMINISTIC hash
+    of the input. No learned gate — routing is a frozen, content-sensitive
+    hash function applied to each token's feature vector.
+
+    The hash function is: hash(x) = top-D_active indices of |x @ H_frozen|
+    where H_frozen is a random frozen projection. This gives deterministic,
+    input-dependent column selection with no gradient through the hash.
+
+    Avoids FM1 (frozen hash), FM2 (content-based, not norm-based), FM3 (full columns).
+    Risk: fat W must live in VRAM. The gather may not be compile-friendly.
+    """
+    def __init__(self, config, scale_factor=4):
+        super().__init__()
+        D = config.n_embd
+        D_stored = D * scale_factor
+        D_out = D
+        # Fat fc weight: D → D_stored (stores scale_factor × more columns)
+        self.c_fc = Linear(D, D_stored, bias=False)
+        # Projection back: D_stored → D_out (only top-D_active columns used)
+        self.c_proj = Linear(D_stored, D_out, bias=False)
+        # Frozen hash projection: (D, D_stored) for column scoring
+        self.register_buffer('hash_proj',
+            torch.randn(D, D_stored) / (D ** 0.5))
+        self.D_active = 4 * D  # active columns = same as standard MLP hidden dim
+        self.D_stored = D_stored
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # Full fc projection
+        h = self.c_fc(x)  # (B, T, D_stored)
+        # Hash-based column selection: score each hidden dim
+        scores = (x.float() @ self.hash_proj.float()).abs()  # (B, T, D_stored)
+        # Select top-D_active columns
+        _, top_indices = scores.topk(self.D_active, dim=-1)  # (B, T, D_active)
+        # Mask: zero out non-selected columns
+        mask = torch.zeros_like(h)
+        mask.scatter_(-1, top_indices, 1.0)
+        h = h * mask  # (B, T, D_stored) — only D_active columns are non-zero
+        h = F.relu(h).square()
+        y = self.c_proj(h)  # (B, T, D_out)
+
+        # Diagnostics: how spread out is the column selection?
+        with torch.no_grad():
+            # Compute normalized selection frequency across tokens
+            sel_freq = mask.float().mean(dim=(0, 1))  # (D_stored,) — fraction of tokens selecting each col
+            sel_freq = sel_freq / (sel_freq.sum() + 1e-8)
+            log_sf = torch.log(sel_freq.clamp(min=1e-8))
+            self._last_routing_entropy = -(sel_freq * log_sf).sum().item()
+
+        return y
+
+
+class LSHRoutedMLP(nn.Module):
+    """20B: Locality-Sensitive Weight Routing (LSWR).
+
+    Like 20A but uses proper LSH: similar inputs hash to similar column subsets.
+    Frozen random hyperplanes partition input space into 2^n_planes buckets.
+    Each bucket maps to a fixed set of active columns (precomputed at init).
+
+    alpha = sign(x @ H)  → binary hash → bucket_id
+    columns = bucket_to_columns[bucket_id]
+    y = MLP with only those columns active
+
+    Avoids FM1 (frozen hash), FM2 (content-based). LSH guarantees locality
+    preservation: nearby inputs in feature space → similar column selections.
+    """
+    def __init__(self, config, scale_factor=4, n_planes=8):
+        super().__init__()
+        D = config.n_embd
+        D_stored = D * scale_factor
+        self.D_active = 4 * D
+        self.D_stored = D_stored
+        self.n_planes = n_planes
+        self.n_buckets = 2 ** n_planes
+        # Fat MLP layers
+        self.c_fc = Linear(D, D_stored, bias=False)
+        self.c_proj = Linear(D_stored, D, bias=False)
+        # Frozen LSH hyperplanes: (n_planes, D) — random unit vectors
+        planes = torch.randn(n_planes, D)
+        planes = planes / planes.norm(dim=-1, keepdim=True)
+        self.register_buffer('hyperplanes', planes)
+        # Precompute bucket → column mapping (frozen)
+        # Each bucket gets a random subset of D_active columns from D_stored
+        bucket_map = torch.zeros(self.n_buckets, D_stored)
+        for b in range(self.n_buckets):
+            perm = torch.randperm(D_stored)[:self.D_active]
+            bucket_map[b, perm] = 1.0
+        self.register_buffer('bucket_map', bucket_map)  # (n_buckets, D_stored)
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+        self._last_bucket_usage = None
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # LSH: compute binary hash
+        hash_bits = (x.float() @ self.hyperplanes.float().T) > 0  # (B, T, n_planes) bool
+        # Convert to bucket IDs
+        powers = (2 ** torch.arange(self.n_planes, device=x.device)).float()
+        bucket_ids = (hash_bits.float() @ powers).long()  # (B, T) integers in [0, n_buckets)
+        # Look up column masks for each bucket
+        mask = self.bucket_map[bucket_ids]  # (B, T, D_stored)
+        mask = mask.to(dtype)
+        # MLP with masked columns
+        h = self.c_fc(x)  # (B, T, D_stored)
+        h = h * mask
+        h = F.relu(h).square()
+        y = self.c_proj(h)
+
+        # Diagnostics
+        with torch.no_grad():
+            # Bucket usage entropy
+            bucket_counts = torch.zeros(self.n_buckets, device=x.device)
+            bucket_counts.scatter_add_(0, bucket_ids.reshape(-1),
+                                       torch.ones(B * T, device=x.device))
+            bucket_prob = bucket_counts / (B * T)
+            log_bp = torch.log(bucket_prob.clamp(min=1e-8))
+            self._last_routing_entropy = -(bucket_prob * log_bp).sum().item()
+            self._last_bucket_usage = bucket_prob
+
+        return y
+
+
+class NoiseCEA_MLP(nn.Module):
+    """20H: Noise-Contrastive Expert Assignment (NCEA).
+
+    A shared base MLP + K learned perturbation directions. Extends 19J
+    (weight noise works) with STRUCTURED noise: instead of random
+    perturbation, route tokens to the perturbation direction that is
+    most beneficial, trained via reconstruction comparison (not main loss).
+
+    W_k = W_base + eps * delta_k
+    Router predicts which perturbation helps most (aux loss, not main loss).
+    Main forward uses detached routing weights.
+
+    Avoids FM1 (aux-loss router only). Extends the proven 19J signal.
+    Risk: computing all K outputs at training time for aux loss is expensive.
+    """
+    def __init__(self, config, n_branches=4, eps=0.1):
+        super().__init__()
+        self.n_branches = n_branches
+        self.eps = eps
+        D = config.n_embd
+        H = 4 * D
+        # Shared base MLP
+        self.c_fc = Linear(D, H, bias=False)
+        self.c_proj = Linear(H, D, bias=False)
+        # K perturbation directions for fc (small init)
+        self.delta_fc = nn.ParameterList([
+            nn.Parameter(torch.randn(H, D) * 0.01) for _ in range(n_branches)])
+        # K perturbation directions for proj (small init)
+        self.delta_proj = nn.ParameterList([
+            nn.Parameter(torch.randn(D, H) * 0.01) for _ in range(n_branches)])
+        # Router: predicts best perturbation (trained via aux loss only)
+        self.router = Linear(D, n_branches, bias=False)
+        nn.init.zeros_(self.router.weight)
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+        self._last_branch_outputs = None
+        self._last_router_logits = None
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # Router: content-dependent, gradient-isolated from main loss
+        router_logits = self.router(x.detach())  # (B, T, K)
+        self._last_router_logits = router_logits
+        router_weights = F.softmax(router_logits.float(), dim=-1).detach().to(dtype)
+
+        # Diagnostics
+        with torch.no_grad():
+            rw = router_weights.float()
+            log_rw = torch.log(rw.clamp(min=1e-8))
+            self._last_routing_entropy = -(rw * log_rw).sum(dim=-1).mean().item()
+
+        # Compute all K perturbed outputs (needed for aux loss)
+        branch_outputs = []
+        base_fc_w = self.c_fc.weight  # (H, D)
+        base_proj_w = self.c_proj.weight  # (D, H)
+        for k in range(self.n_branches):
+            fc_w = base_fc_w + self.eps * self.delta_fc[k]
+            proj_w = base_proj_w + self.eps * self.delta_proj[k]
+            h = F.linear(x, fc_w)
+            h = F.relu(h).square()
+            out = F.linear(h, proj_w)
+            branch_outputs.append(out)
+
+        self._last_branch_outputs = [bo.detach() for bo in branch_outputs]
+
+        # Weighted sum
+        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            y = y + router_weights[..., k:k+1] * branch_outputs[k]
+        return y
+
+    def compute_aux_loss(self, target_output):
+        """Train router to predict which perturbation direction is best."""
+        if self._last_branch_outputs is None or self._last_router_logits is None:
+            return torch.tensor(0.0)
+        target = target_output.detach()
+        errors = []
+        for bo in self._last_branch_outputs:
+            err = ((bo - target) ** 2).mean(dim=-1)
+            errors.append(err)
+        errors = torch.stack(errors, dim=-1)
+        best_branch = errors.argmin(dim=-1)
+        logits = self._last_router_logits
+        return 0.01 * F.cross_entropy(
+            logits.reshape(-1, self.n_branches), best_branch.reshape(-1))
+
+
+class AttnDerivedMLP(nn.Module):
+    """20I: Attention-Derived Weight Interpolation (ADWI).
+
+    Uses the attention mechanism's per-head output magnitudes as a ROUTING
+    signal for FFN expert selection. No new router — reuses the existing
+    attention computation. Each head's contribution magnitude determines
+    which narrow expert to weight.
+
+    head_magnitudes = [||attn_head_k||² for k in range(H)]
+    alpha = softmax(head_magnitudes)
+    y = Σ_h alpha_h * Expert_h(x)
+
+    Avoids FM4 (zero routing overhead — reuses attention). Content-dependent
+    routing derived from an already-trained mechanism.
+
+    Implementation: This module receives `attn_head_norms` from the
+    CausalSelfAttention layer in Block.forward.
+    """
+    def __init__(self, config):
+        super().__init__()
+        n_heads = config.n_head
+        D = config.n_embd
+        expert_hidden = 4 * D // n_heads
+        self.n_experts = n_heads
+        assert expert_hidden * n_heads == 4 * D, (
+            f"4*D={4*D} must be divisible by n_heads={n_heads}")
+        # H narrow expert MLPs (one per attention head)
+        self.experts_fc = nn.ModuleList([
+            Linear(D, expert_hidden, bias=False) for _ in range(n_heads)])
+        self.experts_proj = nn.ModuleList([
+            Linear(expert_hidden, D, bias=False) for _ in range(n_heads)])
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+        self._attn_head_norms = None
+
+    def set_attn_head_norms(self, head_norms):
+        """Called by Block.forward to pass attention head magnitudes."""
+        self._attn_head_norms = head_norms
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        if self._attn_head_norms is not None:
+            # Use attention head magnitudes as routing signal
+            weights = F.softmax(self._attn_head_norms.float(), dim=-1).to(dtype)  # (B, T, H)
+        else:
+            # Fallback: uniform routing
+            weights = torch.ones(B, T, self.n_experts, device=x.device, dtype=dtype) / self.n_experts
+
+        # Diagnostics
+        with torch.no_grad():
+            w_float = weights.float()
+            log_w = torch.log(w_float.clamp(min=1e-8))
+            self._last_routing_entropy = -(w_float * log_w).sum(dim=-1).mean().item()
+
+        # Compute all experts, weight by routing
+        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+        for k in range(self.n_experts):
+            h = self.experts_fc[k](x)
+            h = F.relu(h).square()
+            h = self.experts_proj[k](h)
+            y = y + weights[..., k:k+1] * h
+        return y
+
+
+class PWU_MLP(nn.Module):
+    """20E: Progressive Weight Unfreezing (PWU).
+
+    Phase 2 architecture: takes a pre-trained MLP's weights, forks them into K
+    branches with random perturbations, and trains a router.
+
+    Three training phases controlled by p20_pwu_phase:
+      Phase 1: Normal pretraining (use standard MLP — this class is not used)
+      Phase 2: Freeze forked branches, train router only (router_only=True)
+      Phase 3: Unfreeze everything, joint training with reduced branch LR
+
+    from_pretrained_mlp() creates this from a trained standard MLP.
+    """
+    def __init__(self, config, n_branches=4, router_only=False):
+        super().__init__()
+        self.n_branches = n_branches
+        self.router_only = router_only
+        D = config.n_embd
+        H = 4 * D
+        # K branches (forked from pretrained weights)
+        self.branches_fc = nn.ModuleList([
+            Linear(D, H, bias=False) for _ in range(n_branches)])
+        self.branches_proj = nn.ModuleList([
+            Linear(H, D, bias=False) for _ in range(n_branches)])
+        # Content-dependent router
+        self.router = Linear(D, n_branches, bias=False)
+        nn.init.zeros_(self.router.weight)
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+
+    @classmethod
+    def from_pretrained_mlp(cls, config, pretrained_mlp, n_branches=4, router_only=True, perturb_scale=0.01):
+        """Create PWU_MLP by forking a pre-trained MLP's weights into K branches."""
+        module = cls(config, n_branches=n_branches, router_only=router_only)
+        fc_w = pretrained_mlp.c_fc.weight.data.clone()
+        proj_w = pretrained_mlp.c_proj.weight.data.clone()
+        for k in range(n_branches):
+            module.branches_fc[k].weight.data.copy_(fc_w + perturb_scale * torch.randn_like(fc_w))
+            module.branches_proj[k].weight.data.copy_(proj_w + perturb_scale * torch.randn_like(proj_w))
+            if router_only:
+                # Phase 2: freeze branches, only train router
+                module.branches_fc[k].weight.requires_grad_(False)
+                module.branches_proj[k].weight.requires_grad_(False)
+        return module
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+        # Router
+        router_logits = self.router(x)  # (B, T, K)
+        weights = F.softmax(router_logits.float(), dim=-1).to(dtype)
+
+        with torch.no_grad():
+            w = weights.float()
+            log_w = torch.log(w.clamp(min=1e-8))
+            self._last_routing_entropy = -(w * log_w).sum(dim=-1).mean().item()
+
+        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
+        for k in range(self.n_branches):
+            h = self.branches_fc[k](x)
+            h = F.relu(h).square()
+            h = self.branches_proj[k](h)
+            y = y + weights[..., k:k+1] * h
+        return y
+
+
+class FSVD_MLP(nn.Module):
+    """20G: Frozen-SVD Weight Subspace Traversal.
+
+    Phase 2 architecture: decomposes pre-trained MLP weights via SVD,
+    freezes U and V (directional structure), and lets a content-dependent
+    frozen gate SELECT which singular values to amplify/suppress per token.
+
+    Unlike 19G (which failed), U/V come from a PRE-TRAINED weight (not zero-init),
+    and the σ modulation is content-dependent via a frozen random projection.
+
+    W_eff = U @ diag(sigma * gate(x)) @ V^T per token
+    gate = sigmoid(x @ R_frozen)  — frozen, no gradient
+
+    Same total params as pretrained MLP (sigma replaces the original weight).
+    """
+    def __init__(self, config):
+        super().__init__()
+        D = config.n_embd
+        H = 4 * D
+        self.D = D
+        self.H = H
+        # SVD components (set by from_pretrained_mlp)
+        # fc: W = U_fc @ diag(sigma_fc) @ V_fc^T, shape (H, D) → U:(H,r), sigma:(r,), V:(D,r)
+        self.register_buffer('U_fc', torch.zeros(H, D))   # placeholder, set by from_pretrained
+        self.register_buffer('V_fc', torch.zeros(D, D))
+        self.sigma_fc = nn.Parameter(torch.ones(D))        # learnable singular values
+        # proj: W = U_proj @ diag(sigma_proj) @ V_proj^T, shape (D, H)
+        self.register_buffer('U_proj', torch.zeros(D, D))
+        self.register_buffer('V_proj', torch.zeros(H, D))
+        self.sigma_proj = nn.Parameter(torch.ones(D))
+        # Frozen content-dependent gate for sigma modulation
+        self.register_buffer('gate_proj_fc', torch.randn(D, D) / (D ** 0.5))
+        self.register_buffer('gate_proj_proj', torch.randn(D, D) / (D ** 0.5))
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+        self._last_sigma_sparsity = 0.0
+
+    @classmethod
+    def from_pretrained_mlp(cls, config, pretrained_mlp):
+        """Create FSVD_MLP by decomposing a pre-trained MLP's weights via SVD."""
+        module = cls(config)
+        D = config.n_embd
+        # SVD of fc weight (H, D)
+        fc_w = pretrained_mlp.c_fc.weight.data.float()
+        U_fc, S_fc, Vh_fc = torch.linalg.svd(fc_w, full_matrices=False)
+        # Keep rank = min(H, D) = D components
+        r = min(fc_w.shape)
+        module.U_fc = U_fc[:, :r]         # (H, r)
+        module.sigma_fc = nn.Parameter(S_fc[:r])  # (r,)
+        module.V_fc = Vh_fc[:r, :].T      # (D, r)  — note: Vh transposed
+
+        # SVD of proj weight (D, H)
+        proj_w = pretrained_mlp.c_proj.weight.data.float()
+        U_proj, S_proj, Vh_proj = torch.linalg.svd(proj_w, full_matrices=False)
+        r2 = min(proj_w.shape)
+        module.U_proj = U_proj[:, :r2]
+        module.sigma_proj = nn.Parameter(S_proj[:r2])
+        module.V_proj = Vh_proj[:r2, :].T
+
+        return module
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Content-dependent sigma gating (frozen — no gradient through gate)
+        gate_fc = torch.sigmoid(x.float() @ self.gate_proj_fc.float())     # (B, T, D)
+        gate_proj = torch.sigmoid(x.float() @ self.gate_proj_proj.float()) # (B, T, D)
+
+        # Modulated sigma
+        sigma_fc_eff = self.sigma_fc.float() * gate_fc      # (B, T, r)
+        sigma_proj_eff = self.sigma_proj.float() * gate_proj # (B, T, r)
+
+        # Diagnostics
+        with torch.no_grad():
+            # Sparsity: what fraction of sigma values are effectively zero?
+            self._last_sigma_sparsity = (gate_fc.mean(dim=(0, 1)) < 0.1).float().mean().item()
+            # Entropy of gate values
+            g = gate_fc.mean(dim=(0, 1)).clamp(1e-8, 1 - 1e-8)
+            self._last_routing_entropy = -(g * g.log() + (1-g) * (1-g).log()).mean().item()
+
+        # W_eff_fc = U_fc @ diag(sigma_fc_eff) @ V_fc^T per token
+        # h = x @ V_fc → scale by sigma → multiply by U_fc^T
+        h = x.float() @ self.V_fc.float()           # (B, T, r)
+        h = h * sigma_fc_eff                         # (B, T, r) — per-token sigma gating
+        h = h @ self.U_fc.float().T                  # (B, T, H)
+        h = F.relu(h).square()
+
+        # W_eff_proj = U_proj @ diag(sigma_proj_eff) @ V_proj^T per token
+        y = h @ self.V_proj.float()                  # (B, T, r)
+        y = y * sigma_proj_eff
+        y = y @ self.U_proj.float().T                # (B, T, D)
+        return y.to(dtype)
+
+
+class WBFC_MLP(nn.Module):
+    """20J: Weight Bank with Frozen Clustering (WBFC).
+
+    Phase 2 architecture: clusters a pre-trained MLP's hidden dimensions
+    into K groups using K-means, then routes tokens to top-M clusters
+    via a frozen content projection.
+
+    Online: for each token, select top-M clusters (M < K)
+    Only compute with the hidden dims belonging to those clusters.
+    This is the most direct realization of the user's vision:
+    a large weight bank where context selects a subspace.
+
+    Saves FLOPs at inference: only M/K of the hidden dims are computed.
+    """
+    def __init__(self, config, n_clusters=8, n_active=2):
+        super().__init__()
+        D = config.n_embd
+        H = 4 * D
+        self.n_clusters = n_clusters
+        self.n_active = n_active
+        self.D = D
+        self.H = H
+        # Standard MLP weights (full — we mask at runtime)
+        self.c_fc = Linear(D, H, bias=False)
+        self.c_proj = Linear(H, D, bias=False)
+        # Cluster assignments: which hidden dim belongs to which cluster
+        # Shape: (H,) — integer cluster ID for each hidden dim
+        self.register_buffer('cluster_ids', torch.zeros(H, dtype=torch.long))
+        # Cluster centroids for routing: (K, D)
+        self.register_buffer('centroids', torch.randn(n_clusters, D))
+        # Frozen content projection for cluster affinity
+        self.register_buffer('route_proj', torch.randn(D, n_clusters) / (D ** 0.5))
+        # Diagnostics
+        self._last_routing_entropy = 0.0
+
+    @classmethod
+    def from_pretrained_mlp(cls, config, pretrained_mlp, n_clusters=8, n_active=2):
+        """Create WBFC_MLP by clustering a pre-trained MLP's hidden dimensions."""
+        D = config.n_embd
+        H = 4 * D
+        module = cls(config, n_clusters=n_clusters, n_active=n_active)
+
+        # Copy pretrained weights
+        module.c_fc.weight.data.copy_(pretrained_mlp.c_fc.weight.data)
+        module.c_proj.weight.data.copy_(pretrained_mlp.c_proj.weight.data)
+
+        # K-means clustering on fc weight columns (each hidden dim is a D-vector)
+        fc_w = pretrained_mlp.c_fc.weight.data.float()  # (H, D)
+        # Simple K-means (10 iterations)
+        centroids = fc_w[torch.randperm(H)[:n_clusters]]  # random init
+        for _ in range(10):
+            dists = torch.cdist(fc_w, centroids)  # (H, K)
+            assignments = dists.argmin(dim=-1)      # (H,)
+            for k in range(n_clusters):
+                mask = (assignments == k)
+                if mask.sum() > 0:
+                    centroids[k] = fc_w[mask].mean(dim=0)
+        module.cluster_ids.copy_(assignments)
+        module.centroids.copy_(centroids)
+
+        return module
+
+    def forward(self, x):
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Cluster affinity: which clusters are relevant for this token?
+        affinity = x.float() @ self.route_proj.float()  # (B, T, K)
+        _, top_clusters = affinity.topk(self.n_active, dim=-1)  # (B, T, M)
+
+        # Build mask: which hidden dims to activate
+        # cluster_ids: (H,) — for each hidden dim, its cluster
+        # Expand and compare
+        mask = torch.zeros(B, T, self.H, device=x.device, dtype=dtype)
+        for m in range(self.n_active):
+            cluster_k = top_clusters[..., m]  # (B, T)
+            # For each (b, t), activate all hidden dims belonging to cluster_k[b,t]
+            cluster_k_expanded = cluster_k.unsqueeze(-1).expand(-1, -1, self.H)  # (B, T, H)
+            cluster_ids_expanded = self.cluster_ids.unsqueeze(0).unsqueeze(0).expand(B, T, -1)  # (B, T, H)
+            mask = mask + (cluster_ids_expanded == cluster_k_expanded).to(dtype)
+        mask = mask.clamp(max=1.0)
+
+        # MLP with masked hidden dims
+        h = self.c_fc(x)  # (B, T, H)
+        h = h * mask
+        h = F.relu(h).square()
+        y = self.c_proj(h)
+
+        # Diagnostics
+        with torch.no_grad():
+            # How many clusters are used on average?
+            active_frac = mask.float().mean(dim=-1).mean()  # fraction of active dims
+            # Cluster selection entropy
+            cluster_probs = affinity.float().softmax(dim=-1).mean(dim=(0, 1))  # (K,)
+            log_cp = torch.log(cluster_probs.clamp(min=1e-8))
+            self._last_routing_entropy = -(cluster_probs * log_cp).sum().item()
+
+        return y
+
+
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -4256,17 +4873,31 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         # Phase 20: Select MLP variant based on config
-        _mone_k = getattr(config, 'p20_mone_experts', 0)
+        _hrcs = getattr(config, 'p20_hrcs_scale', 0)
+        _lswr = getattr(config, 'p20_lswr_scale', 0)
         _lrcfb_k = getattr(config, 'p20_lrcfb_branches', 0)
         _dgcr_k = getattr(config, 'p20_dgcr_branches', 0)
-        if _dgcr_k > 0:
-            self.mlp = DetachedRoutedMLP(config, n_branches=_dgcr_k,
-                                         aux_weight=getattr(config, 'p20_dgcr_aux_weight', 0.01))
+        _mone_k = getattr(config, 'p20_mone_experts', 0)
+        _ncea_k = getattr(config, 'p20_ncea_branches', 0)
+        _adwi = getattr(config, 'p20_adwi', 0)
+        if _hrcs > 0:
+            self.mlp = HashRoutedMLP(config, scale_factor=_hrcs)
+        elif _lswr > 0:
+            self.mlp = LSHRoutedMLP(config, scale_factor=_lswr,
+                                    n_planes=getattr(config, 'p20_lswr_planes', 8))
         elif _lrcfb_k > 0:
             self.mlp = FrozenRoutedMLP(config, n_branches=_lrcfb_k)
+        elif _dgcr_k > 0:
+            self.mlp = DetachedRoutedMLP(config, n_branches=_dgcr_k,
+                                         aux_weight=getattr(config, 'p20_dgcr_aux_weight', 0.01))
         elif _mone_k > 0:
             self.mlp = MoNE_MLP(config, n_experts=_mone_k,
                                 topk=getattr(config, 'p20_mone_topk', 0))
+        elif _ncea_k > 0:
+            self.mlp = NoiseCEA_MLP(config, n_branches=_ncea_k,
+                                    eps=getattr(config, 'p20_ncea_eps', 0.1))
+        elif _adwi:
+            self.mlp = AttnDerivedMLP(config)
         else:
             self.mlp = MLP(config)
         # 18H: Mixture norm (learned RMSNorm + LayerNorm blend)
@@ -4296,6 +4927,15 @@ class Block(nn.Module):
                 if p.ndim == 2:  # only perturb weight matrices, not biases
                     p.data.add_(eps * torch.randn_like(p))
         attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        # 20I: If ADWI, extract per-head norms from attention output for FFN routing
+        if isinstance(self.mlp, AttnDerivedMLP):
+            _B, _T, _ = attn_out.shape
+            n_head = self.attn.n_head
+            head_dim = self.attn.head_dim
+            # Reshape attn output to (B, T, H, D) to get per-head norms
+            attn_reshaped = attn_out.view(_B, _T, n_head, head_dim)
+            head_norms = (attn_reshaped ** 2).sum(dim=-1).detach()  # (B, T, H) — detach to avoid coupling
+            self.mlp.set_attn_head_norms(head_norms)
         x = x + attn_out
         # 18E: Stochastic depth — randomly skip FFN during training
         if self.training and self.layer_drop > 0 and torch.rand(1).item() < self.layer_drop:
@@ -4686,11 +5326,8 @@ class GPT(nn.Module):
                 torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
                 torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
                 # MLP init: handles both standard MLP and P20 variants
-                if hasattr(block.mlp, 'c_fc'):
-                    # Standard MLP
-                    torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
-                    torch.nn.init.zeros_(block.mlp.c_proj.weight)
-                elif isinstance(block.mlp, MoNE_MLP):
+                # Check specific P20 types first (some have c_fc too)
+                if isinstance(block.mlp, MoNE_MLP):
                     for expert_fc in block.mlp.experts_fc:
                         torch.nn.init.uniform_(expert_fc.weight, -s, s)
                     for expert_proj in block.mlp.experts_proj:
@@ -4702,10 +5339,27 @@ class GPT(nn.Module):
                     for branch_proj in block.mlp.branches_proj:
                         torch.nn.init.zeros_(branch_proj.weight)
                     if isinstance(block.mlp, DetachedRoutedMLP):
-                        # Zero-init router for uniform routing at start
                         for sub in block.mlp.router:
                             if hasattr(sub, 'weight'):
                                 torch.nn.init.zeros_(sub.weight)
+                elif isinstance(block.mlp, AttnDerivedMLP):
+                    for expert_fc in block.mlp.experts_fc:
+                        torch.nn.init.uniform_(expert_fc.weight, -s, s)
+                    for expert_proj in block.mlp.experts_proj:
+                        torch.nn.init.zeros_(expert_proj.weight)
+                elif isinstance(block.mlp, NoiseCEA_MLP):
+                    # Base c_fc/c_proj + perturbation deltas + router
+                    torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+                    torch.nn.init.zeros_(block.mlp.c_proj.weight)
+                    torch.nn.init.zeros_(block.mlp.router.weight)
+                    for delta in block.mlp.delta_fc:
+                        torch.nn.init.normal_(delta, std=0.01)
+                    for delta in block.mlp.delta_proj:
+                        torch.nn.init.normal_(delta, std=0.01)
+                elif hasattr(block.mlp, 'c_fc'):
+                    # Standard MLP (or HashRoutedMLP / LSHRoutedMLP which have c_fc/c_proj)
+                    torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+                    torch.nn.init.zeros_(block.mlp.c_proj.weight)
                 # 19I: VE gate bias zero-init for dense Block too
                 if block.attn.ve_gate is not None and block.attn.ve_gate.bias is not None:
                     torch.nn.init.zeros_(block.attn.ve_gate.bias)
@@ -4907,6 +5561,59 @@ class GPT(nn.Module):
             'scalars': scalars,
             'total': total,
         }
+
+    def convert_to_phase2(self):
+        """Convert standard MLP modules in each Block to Phase 2 P20 variants.
+
+        Called AFTER loading a Phase 1 checkpoint. Replaces each block's MLP
+        with the Phase 2 variant (PWU_MLP, FSVD_MLP, or WBFC_MLP) by converting
+        the pre-trained MLP weights in-place.
+
+        Usage:
+            model.load_state_dict(checkpoint)
+            model.convert_to_phase2()  # converts MLPs using pretrained weights
+            optimizer = model.setup_optimizer(...)  # re-setup optimizer for new params
+        """
+        config = self.config
+        converted = 0
+        pwu_k = getattr(config, 'p20_pwu_branches', 0)
+        pwu_phase = getattr(config, 'p20_pwu_phase', 1)
+        fsvd = getattr(config, 'p20_fsvd_gate', 0)
+        wbfc_k = getattr(config, 'p20_wbfc_clusters', 0)
+        wbfc_m = getattr(config, 'p20_wbfc_active', 0)
+
+        if pwu_k == 0 and fsvd == 0 and wbfc_k == 0:
+            return 0  # nothing to convert
+
+        for i, block in enumerate(self.transformer.h):
+            if not isinstance(block, Block):
+                continue
+            if not isinstance(block.mlp, MLP):
+                continue  # skip if already converted or using another P20 variant
+
+            old_mlp = block.mlp
+            device = next(old_mlp.parameters()).device
+
+            if pwu_k > 0:
+                router_only = (pwu_phase == 2)
+                new_mlp = PWU_MLP.from_pretrained_mlp(
+                    config, old_mlp, n_branches=pwu_k,
+                    router_only=router_only)
+            elif fsvd > 0:
+                new_mlp = FSVD_MLP.from_pretrained_mlp(config, old_mlp)
+            elif wbfc_k > 0:
+                new_mlp = WBFC_MLP.from_pretrained_mlp(
+                    config, old_mlp, n_clusters=wbfc_k,
+                    n_active=wbfc_m if wbfc_m > 0 else max(1, wbfc_k // 4))
+            else:
+                continue
+
+            block.mlp = new_mlp.to(device)
+            converted += 1
+            del old_mlp
+
+        print(f"Phase 2 conversion: converted {converted} MLP modules")
+        return converted
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0):
         model_dim = self.config.n_embd

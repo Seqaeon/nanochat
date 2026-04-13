@@ -155,11 +155,23 @@ def run_training_sweep(args):
         "--p19-ve-bias", str(getattr(args, 'p19_ve_bias', 0)),
         "--p19-weight-noise", str(getattr(args, 'p19_weight_noise', 0.0)),
         # Phase 20
-        "--p20-mone-experts", str(getattr(args, 'p20_mone_experts', 0)),
-        "--p20-mone-topk", str(getattr(args, 'p20_mone_topk', 0)),
+        "--p20-hrcs-scale", str(getattr(args, 'p20_hrcs_scale', 0)),
+        "--p20-lswr-scale", str(getattr(args, 'p20_lswr_scale', 0)),
+        "--p20-lswr-planes", str(getattr(args, 'p20_lswr_planes', 8)),
         "--p20-lrcfb-branches", str(getattr(args, 'p20_lrcfb_branches', 0)),
         "--p20-dgcr-branches", str(getattr(args, 'p20_dgcr_branches', 0)),
         "--p20-dgcr-aux-weight", str(getattr(args, 'p20_dgcr_aux_weight', 0.01)),
+        "--p20-mone-experts", str(getattr(args, 'p20_mone_experts', 0)),
+        "--p20-mone-topk", str(getattr(args, 'p20_mone_topk', 0)),
+        "--p20-ncea-branches", str(getattr(args, 'p20_ncea_branches', 0)),
+        "--p20-ncea-eps", str(getattr(args, 'p20_ncea_eps', 0.1)),
+        "--p20-adwi", str(getattr(args, 'p20_adwi', 0)),
+        # Phase 2 proposals
+        "--p20-pwu-branches", str(getattr(args, 'p20_pwu_branches', 0)),
+        "--p20-pwu-phase", str(getattr(args, 'p20_pwu_phase', 1)),
+        "--p20-fsvd-gate", str(getattr(args, 'p20_fsvd_gate', 0)),
+        "--p20-wbfc-clusters", str(getattr(args, 'p20_wbfc_clusters', 0)),
+        "--p20-wbfc-active", str(getattr(args, 'p20_wbfc_active', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -491,11 +503,23 @@ if __name__ == "__main__":
     parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p19-weight-noise", type=float, default=0.0)
     # Phase 20
-    parser.add_argument("--p20-mone-experts", type=int, default=0)
-    parser.add_argument("--p20-mone-topk", type=int, default=0)
+    parser.add_argument("--p20-hrcs-scale", type=int, default=0)
+    parser.add_argument("--p20-lswr-scale", type=int, default=0)
+    parser.add_argument("--p20-lswr-planes", type=int, default=8)
     parser.add_argument("--p20-lrcfb-branches", type=int, default=0)
     parser.add_argument("--p20-dgcr-branches", type=int, default=0)
     parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01)
+    parser.add_argument("--p20-mone-experts", type=int, default=0)
+    parser.add_argument("--p20-mone-topk", type=int, default=0)
+    parser.add_argument("--p20-ncea-branches", type=int, default=0)
+    parser.add_argument("--p20-ncea-eps", type=float, default=0.1)
+    parser.add_argument("--p20-adwi", type=int, default=0, choices=[0, 1])
+    # Phase 2 proposals
+    parser.add_argument("--p20-pwu-branches", type=int, default=0)
+    parser.add_argument("--p20-pwu-phase", type=int, default=1, choices=[1, 2, 3])
+    parser.add_argument("--p20-fsvd-gate", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p20-wbfc-clusters", type=int, default=0)
+    parser.add_argument("--p20-wbfc-active", type=int, default=0)
     args = parser.parse_args()
     
     run_training_sweep(args)

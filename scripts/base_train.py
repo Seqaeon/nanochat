@@ -181,11 +181,23 @@ parser.add_argument("--p19-weight-anticollapse", type=float, default=0.0, help="
 parser.add_argument("--p19-ve-bias", type=int, default=0, choices=[0, 1], help="19I: add learnable bias to VE gate (0/1)")
 parser.add_argument("--p19-weight-noise", type=float, default=0.0, help="19J: training-time weight perturbation epsilon (0=off)")
 # Phase 20: Context-conditioned dynamic weight computation
-parser.add_argument("--p20-mone-experts", type=int, default=0, help="20F: Mixture of Narrow Experts (0=off, K=num experts)")
-parser.add_argument("--p20-mone-topk", type=int, default=0, help="20F: top-k expert routing (0=compute all, K=top-k sparse)")
+parser.add_argument("--p20-hrcs-scale", type=int, default=0, help="20A: Hash-routed column selection (0=off, scale=D_stored/D_active)")
+parser.add_argument("--p20-lswr-scale", type=int, default=0, help="20B: LSH weight routing (0=off, scale factor)")
+parser.add_argument("--p20-lswr-planes", type=int, default=8, help="20B: number of LSH hash planes")
 parser.add_argument("--p20-lrcfb-branches", type=int, default=0, help="20C: Frozen content-routed full-rank branches (0=off, K=branches)")
 parser.add_argument("--p20-dgcr-branches", type=int, default=0, help="20D: Detached-gradient content-routed branches (0=off, K=branches)")
 parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01, help="20D: auxiliary routing loss weight")
+parser.add_argument("--p20-mone-experts", type=int, default=0, help="20F: Mixture of Narrow Experts (0=off, K=num experts)")
+parser.add_argument("--p20-mone-topk", type=int, default=0, help="20F: top-k expert routing (0=compute all, K=top-k sparse)")
+parser.add_argument("--p20-ncea-branches", type=int, default=0, help="20H: Noise-contrastive expert assignment (0=off, K=branches)")
+parser.add_argument("--p20-ncea-eps", type=float, default=0.1, help="20H: perturbation magnitude")
+parser.add_argument("--p20-adwi", type=int, default=0, choices=[0, 1], help="20I: Attention-derived weight interpolation (0=off, 1=on)")
+# Phase 20 — Phase 2 proposals (require pre-trained checkpoint)
+parser.add_argument("--p20-pwu-branches", type=int, default=0, help="20E: Progressive weight unfreezing (0=off, K=branches)")
+parser.add_argument("--p20-pwu-phase", type=int, default=1, choices=[1, 2, 3], help="20E: training phase (1=pretrain, 2=router only, 3=joint)")
+parser.add_argument("--p20-fsvd-gate", type=int, default=0, choices=[0, 1], help="20G: Frozen-SVD σ gating (0=off, 1=on)")
+parser.add_argument("--p20-wbfc-clusters", type=int, default=0, help="20J: Weight bank frozen clustering (0=off, K=clusters)")
+parser.add_argument("--p20-wbfc-active", type=int, default=0, help="20J: active clusters per token (0=auto K//4)")
 # Fix 1A: per-layer context updaters
 parser.add_argument("--use-layer-context", type=int, default=1, choices=[0, 1], help="per-layer context deltas for remix_linear: 1=enable (Fix 1A), 0=static base context")
 parser.add_argument("--router-context-window", type=int, default=-1, help="sliding window size for GlobalContextManager (-1 for full)")
@@ -436,11 +448,23 @@ def build_model_meta(depth):
         p19_ve_bias=getattr(args, 'p19_ve_bias', 0),
         p19_weight_noise=getattr(args, 'p19_weight_noise', 0.0),
         # Phase 20: Context-conditioned dynamic weight computation
-        p20_mone_experts=getattr(args, 'p20_mone_experts', 0),
-        p20_mone_topk=getattr(args, 'p20_mone_topk', 0),
+        p20_hrcs_scale=getattr(args, 'p20_hrcs_scale', 0),
+        p20_lswr_scale=getattr(args, 'p20_lswr_scale', 0),
+        p20_lswr_planes=getattr(args, 'p20_lswr_planes', 8),
         p20_lrcfb_branches=getattr(args, 'p20_lrcfb_branches', 0),
         p20_dgcr_branches=getattr(args, 'p20_dgcr_branches', 0),
         p20_dgcr_aux_weight=getattr(args, 'p20_dgcr_aux_weight', 0.01),
+        p20_mone_experts=getattr(args, 'p20_mone_experts', 0),
+        p20_mone_topk=getattr(args, 'p20_mone_topk', 0),
+        p20_ncea_branches=getattr(args, 'p20_ncea_branches', 0),
+        p20_ncea_eps=getattr(args, 'p20_ncea_eps', 0.1),
+        p20_adwi=getattr(args, 'p20_adwi', 0),
+        # Phase 2 proposals
+        p20_pwu_branches=getattr(args, 'p20_pwu_branches', 0),
+        p20_pwu_phase=getattr(args, 'p20_pwu_phase', 1),
+        p20_fsvd_gate=getattr(args, 'p20_fsvd_gate', 0),
+        p20_wbfc_clusters=getattr(args, 'p20_wbfc_clusters', 0),
+        p20_wbfc_active=getattr(args, 'p20_wbfc_active', 0),
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -642,6 +666,15 @@ if batch_ratio != 1.0:
 weight_decay_scaled = args.weight_decay * math.sqrt(total_batch_size / B_REF) * (D_REF / target_tokens)
 if weight_decay_scaled != args.weight_decay:
     print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {args.depth}")
+
+# Phase 20 (E/G/J): Convert standard MLP to Phase 2 variant if flags are set
+# This must happen AFTER weights are initialized/loaded but BEFORE optimizer setup
+_p20_pwu = getattr(args, 'p20_pwu_branches', 0)
+_p20_fsvd = getattr(args, 'p20_fsvd_gate', 0)
+_p20_wbfc = getattr(args, 'p20_wbfc_clusters', 0)
+if _p20_pwu > 0 or _p20_fsvd > 0 or _p20_wbfc > 0:
+    n_converted = orig_model.convert_to_phase2()
+    print0(f"Phase 2 conversion complete: {n_converted} MLP modules converted")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
@@ -928,6 +961,18 @@ while True:
                 if p.ndim >= 2 and p.requires_grad
             )
             loss = loss + gp_lambda * gp_loss
+        # Phase 20: Auxiliary routing loss for DGCR (20D) and NCEA (20H)
+        # These train the router to predict which branch is best, separate from main loss
+        _p20_dgcr = getattr(args, 'p20_dgcr_branches', 0)
+        _p20_ncea = getattr(args, 'p20_ncea_branches', 0)
+        if _p20_dgcr > 0 or _p20_ncea > 0:
+            aux_loss_total = torch.tensor(0.0, device=loss.device)
+            for block in orig_model.transformer.h:
+                if hasattr(block, 'mlp') and hasattr(block.mlp, 'compute_aux_loss'):
+                    # target_output = current block output (detached inside compute_aux_loss)
+                    aux_loss_total = aux_loss_total + block.mlp.compute_aux_loss(logits.detach())
+            if aux_loss_total.item() > 0:
+                loss = loss + aux_loss_total
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
