@@ -4943,8 +4943,15 @@ class MoELinear(nn.Module):
         else:
             self.register_buffer('route_proj', route_init)
         self.learned_route = learned_route
-        # Diagnostics
-        self._last_routing_entropy = 0.0
+        # Diagnostics — stored as tensor to avoid .item() graph breaks in forward
+        self._last_routing_entropy_t = None
+
+    @property
+    def _last_routing_entropy(self):
+        """Lazy .item() — only called when diagnostics are read (outside compile)."""
+        if self._last_routing_entropy_t is not None:
+            return self._last_routing_entropy_t.item()
+        return 0.0
 
     def forward(self, x):
         orig_shape = x.shape  # could be (B, T, D_in) or (B*T, D_in)
@@ -4957,11 +4964,11 @@ class MoELinear(nn.Module):
         scores = x.float() @ self.route_proj.float()  # (B, T, K)
         weights = F.softmax(scores, dim=-1).to(dtype)   # (B, T, K)
 
-        # Diagnostics (no grad)
+        # Diagnostics (no grad, no .item() to avoid graph breaks with torch.compile)
         with torch.no_grad():
             w = weights.float()
             log_w = torch.log(w.clamp(min=1e-8))
-            self._last_routing_entropy = -(w * log_w).sum(dim=-1).mean().item()
+            self._last_routing_entropy_t = -(w * log_w).sum(dim=-1).mean()
 
         # Top-k sparsification
         if self.topk < self.K:
@@ -4972,12 +4979,10 @@ class MoELinear(nn.Module):
             weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         # Compute weighted sum of expert outputs
+        # Note: zeroed weights from top-k handle skipping via multiplication;
+        # no .item() checks which would break torch.compile
         y = torch.zeros(B, T, self.D_out, device=x.device, dtype=dtype)
         for k in range(self.K):
-            # Skip experts with zero total weight (top-k optimization)
-            if self.topk < self.K:
-                if weights[:, :, k].sum().item() == 0:
-                    continue
             # Factored expert: A_k @ (B_k @ x), cast to input dtype for bf16 compat
             h = F.linear(x, self.experts_B[k].to(dtype))  # (B, T, rank)
             out = F.linear(h, self.experts_A[k].to(dtype))  # (B, T, D_out)

@@ -14,9 +14,11 @@
 set -e
 
 LOGFILE="${SWEEP_LOG:-sweep.log}"
+STATEFILE="${LOGFILE%.log}.state"
 FORCE=0
 if [[ "$1" == "--force" ]]; then
     FORCE=1
+    rm -f "$STATEFILE"  # clear state on force
     shift
 fi
 
@@ -28,23 +30,25 @@ COMMON="--fp8 --max-shards 170 --models base \
 DEPTH=4
 
 # ─────────────────────────────────────────
-# Resume helper: check if a proposal already has results
+# Resume helper: uses a .state file (not the log, which gets truncated by tee)
 # ─────────────────────────────────────────
 check_completed() {
     local tag="$1"
     if [[ "$FORCE" -eq 1 ]]; then
         return 1  # force re-run
     fi
-    if [[ ! -f "$LOGFILE" ]]; then
-        return 1  # no log file yet
+    if [[ ! -f "$STATEFILE" ]]; then
+        return 1  # no state file yet
     fi
-    # Check if both the start marker AND a "Minimum validation bpb" exist
-    # after it (before the next start marker)
-    if grep -q "▶▶▶ $tag ◀◀◀" "$LOGFILE" && \
-       awk "/▶▶▶ $tag ◀◀◀/,/▶▶▶/{if(/Minimum validation bpb/) found=1} END{exit !found}" "$LOGFILE"; then
+    if grep -qx "$tag" "$STATEFILE" 2>/dev/null; then
         return 0  # completed
     fi
     return 1  # not completed
+}
+
+mark_completed() {
+    local tag="$1"
+    echo "$tag" >> "$STATEFILE"
 }
 
 # Demarcation helper
@@ -54,10 +58,9 @@ print_header() {
     local desc="$3"
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║  [$num/10]  $tag"
+    echo "║  [$num]  $tag"
     echo "║  $desc"
     echo "╚══════════════════════════════════════════════════════════════╝"
-    echo "▶▶▶ $tag ◀◀◀"  # machine-readable marker for resume detection
     echo ""
 }
 
@@ -81,6 +84,7 @@ echo ""
 #      --p20-hrcs-scale 4 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # 20B: LSH Weight Routing (×4 scale, 8 planes)
@@ -93,6 +97,7 @@ echo ""
 #      --p20-lswr-scale 4 --p20-lswr-planes 8 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # 20C: Frozen Content-Routed Branches (K=4, full-size — already proven best)
@@ -105,6 +110,7 @@ echo ""
 #      --p20-lrcfb-branches 4 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 
 # 20C-narrow: Frozen routing, narrow branches (param parity!)
@@ -117,6 +123,7 @@ else
       --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 # 20C-learned: Learned routing, narrow branches
@@ -129,6 +136,7 @@ else
       --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-learned 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 # 20C-topk1: Frozen routing, narrow branches, top-1 sparse (minimum FLOPs!)
@@ -141,6 +149,7 @@ else
       --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-topk 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 #
 # 20D: Detached-Gradient Content Routing (K=4)
@@ -153,6 +162,7 @@ fi
 #      --p20-dgcr-branches 4 --p20-dgcr-aux-weight 0.01 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 
 # 20F: Mixture of Narrow Experts (K=4, same total params)
@@ -165,6 +175,7 @@ else
       --p20-mone-experts 4 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 #
 # 20H: Noise-Contrastive Expert Assignment (K=4)
@@ -177,6 +188,7 @@ fi
 #      --p20-ncea-branches 4 --p20-ncea-eps 0.1 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # 20I: Attention-Derived Weight Interpolation
@@ -189,6 +201,7 @@ fi
 #      --p20-adwi 1 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # ─────────────────────────────────────────
@@ -205,6 +218,7 @@ fi
 #      --p20-pwu-branches 4 --p20-pwu-phase 2 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # 20G: Frozen-SVD σ Gating
@@ -217,6 +231,7 @@ fi
 #      --p20-fsvd-gate 1 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 #
 # 20J: Weight Bank Frozen Clustering (K=8 clusters, M=2 active)
@@ -229,6 +244,7 @@ fi
 #      --p20-wbfc-clusters 8 --p20-wbfc-active 2 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 #fi
 
 # ─────────────────────────────────────────
@@ -246,6 +262,7 @@ else
       --p21-per-experts 4 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 # 21-MLP-top1: MoELinear in MLP only, top-1 routing (maximum FLOP savings)
@@ -258,6 +275,7 @@ else
       --p21-per-experts 4 --p21-per-topk 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 # 21-ALL-soft: MoELinear everywhere (MLP + attention), soft routing
@@ -270,6 +288,7 @@ else
       --p21-per-experts 4 --p21-per-attn 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 # 21-ALL-top1: MoELinear everywhere, top-1 routing (maximum FLOP savings)
@@ -282,6 +301,7 @@ else
       --p21-per-experts 4 --p21-per-topk 1 --p21-per-attn 1 \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
 fi
 
 echo ""
