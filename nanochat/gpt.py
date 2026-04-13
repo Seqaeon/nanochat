@@ -4978,9 +4978,9 @@ class MoELinear(nn.Module):
             if self.topk < self.K:
                 if weights[:, :, k].sum().item() == 0:
                     continue
-            # Factored expert: A_k @ (B_k @ x)
-            h = F.linear(x, self.experts_B[k])  # (B, T, rank)
-            out = F.linear(h, self.experts_A[k])  # (B, T, D_out)
+            # Factored expert: A_k @ (B_k @ x), cast to input dtype for bf16 compat
+            h = F.linear(x, self.experts_B[k].to(dtype))  # (B, T, rank)
+            out = F.linear(h, self.experts_A[k].to(dtype))  # (B, T, D_out)
             y = y + weights[:, :, k:k+1] * out
 
         # Restore original shape
