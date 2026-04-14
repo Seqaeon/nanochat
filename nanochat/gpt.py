@@ -4917,12 +4917,11 @@ class MoELinear(nn.Module):
     Each expert is a narrow Linear(D_in, D_out) using a hidden bottleneck:
         expert_k(x) = A_k @ (B_k @ x)   where B_k: (r, D_in), A_k: (D_out, r), r = D_in // K
 
-    All expert weights are stored as single stacked tensors and computed via
-    batched einsum — no for loops, no ParameterList, torch.compile-friendly.
+    All expert weights are stored as single stacked tensors. The for-loop over K
+    experts is unrolled by torch.compile (K is a Python int constant). No graph
+    breaks, no ParameterList, fully compile + FP8 friendly.
 
     Routing: frozen content projection R (different per instance via unique seed).
-    Each MoELinear in the model gets a DIFFERENT R, so tokens route to different
-    experts at different layers/projections.
     """
     def __init__(self, D_in, D_out, K, topk=0, learned_route=False, bias=False):
         super().__init__()
@@ -4947,10 +4946,16 @@ class MoELinear(nn.Module):
         else:
             self.register_buffer('route_proj', route_init)
         self.learned_route = learned_route
-        # Diagnostics
-        self._last_routing_entropy = 0.0
+        # Diagnostics — use register_buffer + .copy_() so compile can trace
+        # buffer mutations (like BatchNorm's running_mean). No Python attribute
+        # assignment = no graph break.
+        self.register_buffer('_entropy_buf', torch.zeros(1), persistent=False)
 
-    @torch.compiler.disable
+    @property
+    def _last_routing_entropy(self):
+        """Lazy .item() — only called outside compile when diagnostics are read."""
+        return self._entropy_buf.item()
+
     def forward(self, x):
         orig_shape = x.shape
         if x.dim() == 2:
@@ -4958,17 +4963,17 @@ class MoELinear(nn.Module):
         B, T, D = x.shape
         dtype = x.dtype
 
-        # Routing scores — cast to float for stable softmax, back to dtype
+        # Routing scores — float for stable softmax, back to dtype
         logits = x.float() @ self.route_proj.float()  # (B, T, K)
         weights = F.softmax(logits, dim=-1).to(dtype)  # (B, T, K)
 
-        # Routing entropy diagnostic (safe — @torch.compiler.disable means eager execution)
+        # Routing entropy diagnostic — buffer mutation is compile-safe
         with torch.no_grad():
-            w = weights.float()
-            log_w = torch.log(w.clamp(min=1e-8))
-            self._last_routing_entropy = -(w * log_w).sum(dim=-1).mean().item()
+            w_f = weights.float()
+            entropy = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+            self._entropy_buf.copy_(entropy.detach())
 
-        # Top-k sparsification
+        # Top-k sparsification (static branch — self.topk/self.K are Python ints)
         if self.topk < self.K:
             _, topk_idx = weights.topk(self.topk, dim=-1)
             mask = torch.zeros_like(weights)
@@ -4976,9 +4981,9 @@ class MoELinear(nn.Module):
             weights = weights * mask
             weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
-        # Sequential expert computation — process one expert at a time to avoid
-        # materializing the full (B, T, K, D_out) tensor which OOMs for large D_out.
-        # Safe to loop since @torch.compiler.disable is on this method.
+        # Sequential expert computation — K is a Python int so the loop is
+        # unrolled by torch.compile. Each iteration only materializes (B, T, r)
+        # and (B, T, D_out), avoiding the (B, T, K, D_out) memory spike.
         y = torch.zeros(B, T, self.D_out, device=x.device, dtype=dtype)
         for k in range(self.K):
             h = F.linear(x, self.experts_B[k].to(dtype))    # (B, T, r)
