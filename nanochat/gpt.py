@@ -3235,6 +3235,20 @@ class ModulationDiagnostics:
             elif isinstance(mlp, WBFC_MLP):
                 metrics[f"{prefix}/p20j_routing_entropy"] = mlp._last_routing_entropy
 
+            # Phase 21: MoELinear diagnostics (MoELinear replaces layers inside standard MLP/Attn)
+            if isinstance(mlp, MLP):
+                for name, layer in [("fc", getattr(mlp, 'c_fc', None)),
+                                    ("proj", getattr(mlp, 'c_proj', None))]:
+                    if isinstance(layer, MoELinear):
+                        metrics[f"{prefix}/p21_{name}_routing_entropy"] = layer._last_routing_entropy
+            # Attention MoELinear layers
+            attn = block.attn if hasattr(block, 'attn') else None
+            if attn is not None:
+                for name in ['c_q', 'c_k', 'c_v', 'c_proj']:
+                    layer = getattr(attn, name, None)
+                    if isinstance(layer, MoELinear):
+                        metrics[f"{prefix}/p21_attn_{name}_entropy"] = layer._last_routing_entropy
+
         return metrics
 
     def format_p20(self, p20_metrics):
@@ -4933,15 +4947,8 @@ class MoELinear(nn.Module):
         else:
             self.register_buffer('route_proj', route_init)
         self.learned_route = learned_route
-        # Diagnostics — stored as tensor to avoid .item() graph breaks
-        self._last_routing_entropy_t = None
-
-    @property
-    def _last_routing_entropy(self):
-        """Lazy .item() — only called when diagnostics are read (outside compile)."""
-        if self._last_routing_entropy_t is not None:
-            return self._last_routing_entropy_t.item()
-        return 0.0
+        # Diagnostics
+        self._last_routing_entropy = 0.0
 
     @torch.compiler.disable
     def forward(self, x):
@@ -4955,6 +4962,12 @@ class MoELinear(nn.Module):
         logits = x.float() @ self.route_proj.float()  # (B, T, K)
         weights = F.softmax(logits, dim=-1).to(dtype)  # (B, T, K)
 
+        # Routing entropy diagnostic (safe — @torch.compiler.disable means eager execution)
+        with torch.no_grad():
+            w = weights.float()
+            log_w = torch.log(w.clamp(min=1e-8))
+            self._last_routing_entropy = -(w * log_w).sum(dim=-1).mean().item()
+
         # Top-k sparsification
         if self.topk < self.K:
             _, topk_idx = weights.topk(self.topk, dim=-1)
@@ -4963,12 +4976,14 @@ class MoELinear(nn.Module):
             weights = weights * mask
             weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
-        # Vectorized expert computation via einsum
-        B_w = self.experts_B.to(dtype)  # (K, r, D_in)
-        A_w = self.experts_A.to(dtype)  # (K, D_out, r)
-        h = torch.einsum('btd,krd->btkr', x, B_w)      # (B, T, K, r)
-        out = torch.einsum('btkr,kor->btko', h, A_w)    # (B, T, K, D_out)
-        y = (weights.unsqueeze(-1) * out).sum(dim=2)     # (B, T, D_out)
+        # Sequential expert computation — process one expert at a time to avoid
+        # materializing the full (B, T, K, D_out) tensor which OOMs for large D_out.
+        # Safe to loop since @torch.compiler.disable is on this method.
+        y = torch.zeros(B, T, self.D_out, device=x.device, dtype=dtype)
+        for k in range(self.K):
+            h = F.linear(x, self.experts_B[k].to(dtype))    # (B, T, r)
+            out = F.linear(h, self.experts_A[k].to(dtype))  # (B, T, D_out)
+            y = y + weights[:, :, k:k+1] * out
 
         if len(orig_shape) == 2:
             y = y.squeeze(0)
