@@ -295,6 +295,7 @@ def run_training_sweep(args):
         
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
         env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
 
         # Each model is trained as a proper DDP job via torchrun.
         cmd = RUNNER + ["-m", "scripts.base_train"] + train_cmd_args
