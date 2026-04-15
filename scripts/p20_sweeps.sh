@@ -107,50 +107,50 @@ echo ""
 #else
 #    print_header "3" "$TAG" "Frozen Content-Routed Branches (K=4, full-size)"
 #    bash scripts/research_sweep.sh $COMMON \
-#      --p20-lrcfb-branches 4 \
+#      --p20-lrcfb-branches 8 \
 #      $DEPTH
 #    echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
 #fi
 
 # 20C-narrow: Frozen routing, narrow branches (param parity!)
-TAG="20C_NARROW"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "3b" "$TAG" "Frozen Content-Routed, Narrow Branches (K=4, param parity)"
-    bash scripts/research_sweep.sh $COMMON \
-      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
+#TAG="20C_NARROW"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "3b" "$TAG" "Frozen Content-Routed, Narrow Branches (K=4, param parity)"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 1 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
-fi
-
+#fi
+#
 # 20C-learned: Learned routing, narrow branches
-TAG="20C_LEARNED"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "3c" "$TAG" "Learned Content-Routed, Narrow Branches (K=4)"
-    bash scripts/research_sweep.sh $COMMON \
-      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-learned 1 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
+#TAG="20C_LEARNED"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "3c" "$TAG" "Learned Content-Routed, Narrow Branches (K=4)"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 1 --p20-lrcfb-learned 1 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
-fi
-
+#fi
+#
 # 20C-topk1: Frozen routing, narrow branches, top-1 sparse (minimum FLOPs!)
-TAG="20C_TOPK1"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "3d" "$TAG" "Frozen Narrow + Top-1 Sparse (K=4, only 1 active)"
-    bash scripts/research_sweep.sh $COMMON \
-      --p20-lrcfb-branches 4 --p20-lrcfb-narrow 1 --p20-lrcfb-topk 1 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
+#TAG="20C_TOPK1"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "3d" "$TAG" "Frozen Narrow + Top-1 Sparse (K=4, only 1 active)"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 1 --p20-lrcfb-topk 1 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
-fi
+#fi
 #
 # 20D: Detached-Gradient Content Routing (K=4)
 #TAG="20D_DGCR"
@@ -166,17 +166,17 @@ fi
 #fi
 
 # 20F: Mixture of Narrow Experts (K=4, same total params)
-TAG="20F_MoNE"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "5" "$TAG" "Mixture of Narrow Experts (K=4)"
-    bash scripts/research_sweep.sh $COMMON \
-      --p20-mone-experts 4 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
+#TAG="20F_MoNE"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "5" "$TAG" "Mixture of Narrow Experts (K=4)"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p20-mone-experts 8 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
-fi
+#fi
 #
 # 20H: Noise-Contrastive Expert Assignment (K=4)
 #TAG="20H_NCEA"
@@ -252,31 +252,31 @@ fi
 # MoELinear replaces standard Linear layers
 # ─────────────────────────────────────────
 
-# 21-MLP-soft: MoELinear in MLP only, soft routing (all experts, weighted sum)
-TAG="21_PER_MLP_SOFT"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "11" "$TAG" "PER: MLP-only, K=4 experts, soft routing"
-    bash scripts/research_sweep.sh $COMMON \
-      --p21-per-experts 4 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# 21-MLP-soft: COMMENTED OUT — equivalent to MoNE (20F) which already tests MLP-only MoE
+#TAG="21_PER_MLP_SOFT"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "11" "$TAG" "PER: MLP-only, K=4 experts, soft routing"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p21-per-experts 4 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
 
-# 21-MLP-top1: MoELinear in MLP only, top-1 routing (maximum FLOP savings)
-TAG="21_PER_MLP_TOP1"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "12" "$TAG" "PER: MLP-only, K=4 experts, top-1 routing"
-    bash scripts/research_sweep.sh $COMMON \
-      --p21-per-experts 4 --p21-per-topk 1 \
-      $DEPTH
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# 21-MLP-top1: COMMENTED OUT — equivalent to MoNE (20F) with top-1
+#TAG="21_PER_MLP_TOP1"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "12" "$TAG" "PER: MLP-only, K=4 experts, top-1 routing"
+#    bash scripts/research_sweep.sh $COMMON \
+#      --p21-per-experts 4 --p21-per-topk 1 \
+#      $DEPTH
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
 
 # 21-ALL-soft: MoELinear everywhere (MLP + attention), soft routing
 TAG="21_PER_ALL_SOFT"
@@ -304,8 +304,204 @@ else
     mark_completed "$TAG"
 fi
 
+# ─────────────────────────────────────────
+# PHASE 22: True MoE (Full-Size Experts)
+# Each expert is full-width (4×D hidden), K× total params
+# ─────────────────────────────────────────
+
+# 22A: LRCFB Full — soft routing, frozen
+TAG="22_LRCFB_FULL_SOFT_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "15" "$TAG" "LRCFB Full: K=8 full experts, soft, frozen routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22B: LRCFB Full — soft routing, learned
+TAG="22_LRCFB_FULL_SOFT_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "16" "$TAG" "LRCFB Full: K=8 full experts, soft, learned routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 1 --p20-lrcfb-topk 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22C: LRCFB Full — hard top-1, frozen
+TAG="22_LRCFB_FULL_HARD_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "17" "$TAG" "LRCFB Full: K=8 full experts, hard top-1, frozen routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22D: LRCFB Full — hard top-1, learned
+TAG="22_LRCFB_FULL_HARD_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "18" "$TAG" "LRCFB Full: K=8 full experts, hard top-1, learned routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 1 --p20-lrcfb-topk 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22E: MoNE Full — soft routing, learned
+TAG="22_MONE_FULL_SOFT_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "19" "$TAG" "MoNE Full: K=8 full experts, soft, learned router"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 0 --p20-mone-topk 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22F: MoNE Full — soft routing, frozen
+TAG="22_MONE_FULL_SOFT_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "20" "$TAG" "MoNE Full: K=8 full experts, soft, frozen routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 1 --p20-mone-topk 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22G: MoNE Full — hard top-1, learned
+TAG="22_MONE_FULL_HARD_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "21" "$TAG" "MoNE Full: K=8 full experts, hard top-1, learned router"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 0 --p20-mone-topk 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22H: MoNE Full — hard top-1, frozen
+TAG="22_MONE_FULL_HARD_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "22" "$TAG" "MoNE Full: K=8 full experts, hard top-1, frozen routing"
+    bash scripts/research_sweep.sh $COMMON \
+      --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 1 --p20-mone-topk 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# ─────────────────────────────────────────
+# PHASE 22: RemixedLinear MoE Template Routing
+# K template_mixing matrices with content routing
+# Uses --models remixed-linear (CCLBlock path)
+# Common: norm_x context, selective stream, boundary aux
+# ─────────────────────────────────────────
+
+REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
+  --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
+  --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
+  --sequence-len 2048 --model-dim 128 \
+  --modulation-diagnostics 1 \
+  --cclblock-context-source norm_x \
+  --cclblock-context-stream selective \
+  --cclblock-aux-objective boundary --cclblock-aux-lambda 0.2"
+
+# 22I: RemixedLinear weight modulation, K=8 templates, frozen routing
+TAG="22_REMIX_WEIGHT_4T_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "23" "$TAG" "RemixedLinear weight mod, 8 templates, frozen routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p22-n-templates 8 --p22-template-routing-learned 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22J: RemixedLinear weight modulation, K=8 templates, learned routing
+TAG="22_REMIX_WEIGHT_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "24" "$TAG" "RemixedLinear weight mod, 8 templates, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p22-n-templates 8 --p22-template-routing-learned 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22K: RemixedLinear householder modulation, K=8 templates, frozen routing
+TAG="22_REMIX_HOUSE_4T_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "25" "$TAG" "RemixedLinear householder mod, 8 templates, frozen routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation householder \
+      --p22-n-templates 8 --p22-template-routing-learned 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22L: RemixedLinear householder modulation, K=8 templates, learned routing
+TAG="22_REMIX_HOUSE_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "26" "$TAG" "RemixedLinear householder mod, 8 templates, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation householder \
+      --p22-n-templates 8 --p22-template-routing-learned 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 22M: CKR (already MoE with K=8 full-rank branches, position+content routing)
+# n_templates doesn't apply — CKR uses CausalKernelLinear, not RemixedLinear
+TAG="22_CKR_FULL"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "27" "$TAG" "CKR K=8 branches (already overparameterized MoE)"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation ckr \
+      --cclblock-ckr-branches 8 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 20+21 Sweep Complete                        ║"
+echo "║          Phase 20+21+22 Sweep Complete                     ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."

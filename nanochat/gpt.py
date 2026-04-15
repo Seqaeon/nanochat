@@ -251,6 +251,8 @@ class GPTConfig:
     p20_dgcr_aux_weight: float = 0.01         # 20D: weight for auxiliary routing loss
     p20_mone_experts: int = 0                 # 20F: Mixture of Narrow Experts (0=off, K=num experts)
     p20_mone_topk: int = 0                    # 20F: top-k expert routing (0=compute all, K=top-k sparse)
+    p20_mone_narrow: int = 1                  # 20F: narrow experts (1=hidden=4D/K param parity, 0=full 4D each)
+    p20_mone_frozen: int = 0                  # 20F: frozen routing (0=learned Linear router, 1=frozen random proj)
     p20_ncea_branches: int = 0                # 20H: Noise-contrastive expert assignment (0=off, K=branches)
     p20_ncea_eps: float = 0.1                 # 20H: perturbation magnitude for NCEA
     p20_adwi: int = 0                         # 20I: Attention-derived weight interpolation (0=off, 1=on)
@@ -1214,9 +1216,29 @@ class RemixedLinear(nn.Module):
         # Operator-space modulation: none|householder|spectral|ocd
         self.operator_modulation = remixed_linear_kwargs.get('operator_modulation', 'none')
         self._last_orth_loss = None
+        # Phase 22: MoE-style overparameterized template mixing
+        # n_templates > 1 creates K template_mixing matrices with content routing
+        self.n_templates = remixed_linear_kwargs.get('n_templates', 1)
+        self.template_routing_learned = remixed_linear_kwargs.get('template_routing_learned', False)
 
         self.basis = Linear(in_features, basis_size, bias=False)
-        self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
+        if self.n_templates > 1:
+            # K separate template_mixing matrices: each (out_features, basis_size)
+            self.template_bank = nn.ParameterList([
+                nn.Parameter(torch.randn(out_features, basis_size))
+                for _ in range(self.n_templates)
+            ])
+            self.template_mixing = None  # use template_bank instead
+            # Content routing for template selection
+            route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+            if self.template_routing_learned:
+                self.template_route = nn.Parameter(route_init)
+            else:
+                self.register_buffer('template_route', route_init)
+            # Diagnostics
+            self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+        else:
+            self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
         self.ln_basis = nn.LayerNorm(basis_size)
         self.bias = nn.Parameter(torch.zeros(out_features))
 
@@ -1333,7 +1355,11 @@ class RemixedLinear(nn.Module):
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
         yield self.basis.weight
-        yield self.template_mixing
+        if self.template_mixing is not None:
+            yield self.template_mixing
+        if hasattr(self, 'template_bank'):
+            for t in self.template_bank:
+                yield t
         yield self.bias
         if hasattr(self, "ocd_in"):
             yield self.ocd_in
@@ -1418,7 +1444,23 @@ class RemixedLinear(nn.Module):
             gate_out = None
 
         h_gated = (h_basis * gate_basis).to(dtype=dtype)
-        pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
+        if self.n_templates > 1:
+            # MoE-style template routing: blend K template_mixing matrices
+            route_logits = x.float() @ self.template_route.float()  # (B, T, K)
+            route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
+            # Update diagnostics
+            with torch.no_grad():
+                w_f = route_weights.float()
+                ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                self._template_entropy_buf.copy_(ent.detach())
+            # Weighted sum of template outputs
+            pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
+                                     device=x.device, dtype=dtype)
+            for k in range(self.n_templates):
+                out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
+                pre_output = pre_output + route_weights[..., k:k+1] * out_k
+        else:
+            pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
 
         if self.use_context and context_state is not None and self.operator_modulation == 'ocd':
             coeffs = self.ocd_coeffs(ctx)                                         # (B, T, r)
@@ -1433,7 +1475,8 @@ class RemixedLinear(nn.Module):
                 self.ocd_out.to(dtype=dtype),
                 self.ocd_in.to(dtype=dtype),
             )                                                                       # (out, basis)
-            overlap = torch.matmul(self.template_mixing.to(dtype=dtype), w_dyn.transpose(0, 1))
+            tmix = self.template_mixing if self.template_mixing is not None else self.template_bank[0]
+            overlap = torch.matmul(tmix.to(dtype=dtype), w_dyn.transpose(0, 1))
             self._last_orth_loss = overlap.pow(2).mean()
         else:
             self._last_orth_loss = None
@@ -4083,40 +4126,46 @@ class SpectralReparamLinear(nn.Module):
 # ── Phase 20: Context-Conditioned Dynamic Weight Computation ────────────────
 
 class MoNE_MLP(nn.Module):
-    """20F: Mixture of Narrow Experts.
+    """20F: Mixture of Experts MLP.
 
-    K narrow expert MLPs with content-based routing. Same total params as dense
-    MLP (each expert has hidden_dim = 4*D/K). Different tokens can route to
-    different experts, enabling content-dependent specialization without
-    parameter overhead.
+    K expert MLPs with content-based routing.
 
-    Training: compute all K experts, weight by softmax routing scores.
-    Same total FLOPs as baseline (K × D × 4D/K = D × 4D), but each expert
-    can specialize.
+    Modes:
+      - narrow=True (default):  each expert has hidden_dim = 4*D/K (param parity)
+      - narrow=False:           each expert has hidden_dim = 4*D (full-size, K× params)
+      - frozen_route=False (default): learned Linear router
+      - frozen_route=True:      frozen random projection (no gradient through routing)
+      - topk=0:                 soft MoE (compute all, weighted sum)
+      - topk=N:                 sparse top-N routing
 
-    Inference: can use top-1 for K× FLOP savings (not implemented yet).
-
-    The router is a tiny Linear(D, K) — routing gradients are small relative
-    to expert weight gradients, minimizing FM1 (gradient fracturing).
-
-    Identity-ish at init: all experts initialized identically (same as one
-    wide MLP split into K pieces), router output uniform → equal weighting.
+    Training: compute active experts, weight by softmax routing scores.
     """
-    def __init__(self, config, n_experts=4, topk=0):
+    def __init__(self, config, n_experts=4, topk=0, narrow=True, frozen_route=False):
         super().__init__()
         self.n_experts = n_experts
         self.topk = topk  # 0 = compute all (soft MoE), >0 = sparse top-k
+        self.narrow = narrow
+        self.frozen_route = frozen_route
         D = config.n_embd
-        expert_hidden = 4 * D // n_experts
-        assert expert_hidden * n_experts == 4 * D, (
-            f"4*D={4*D} must be divisible by n_experts={n_experts}")
-        # K narrow expert MLPs
+        if narrow:
+            expert_hidden = 4 * D // n_experts
+            assert expert_hidden * n_experts == 4 * D, (
+                f"4*D={4*D} must be divisible by n_experts={n_experts}")
+        else:
+            expert_hidden = 4 * D  # full-size: each expert is as wide as the dense MLP
+        self.expert_hidden = expert_hidden
+        # K expert MLPs
         self.experts_fc = nn.ModuleList([
             Linear(D, expert_hidden, bias=False) for _ in range(n_experts)])
         self.experts_proj = nn.ModuleList([
             Linear(expert_hidden, D, bias=False) for _ in range(n_experts)])
-        # Router: tiny D → K linear (no bias → softmax is shift-invariant)
-        self.router = Linear(D, n_experts, bias=False)
+        # Router: learned or frozen
+        if frozen_route:
+            route_init = torch.randn(D, n_experts) / (D ** 0.5)
+            self.register_buffer('router_proj', route_init)
+            self.router = None
+        else:
+            self.router = Linear(D, n_experts, bias=False)
         # Load-balancing auxiliary loss coefficient (stored, not a parameter)
         self._aux_balance_coeff = 0.01
         # Cache routing weights for diagnostics (not a parameter, not a buffer)
@@ -4126,8 +4175,11 @@ class MoNE_MLP(nn.Module):
     def forward(self, x):
         B, T, D = x.shape
         dtype = x.dtype
-        # Router: content-dependent routing scores
-        router_logits = self.router(x)  # (B, T, K)
+        # Router: content-dependent routing scores (learned or frozen)
+        if self.router is not None:
+            router_logits = self.router(x)  # (B, T, K)
+        else:
+            router_logits = x.float() @ self.router_proj.float()  # (B, T, K)
         router_weights = F.softmax(router_logits.float(), dim=-1).to(dtype)  # (B, T, K)
 
         # Cache for diagnostics
@@ -5070,7 +5122,9 @@ class Block(nn.Module):
                                          aux_weight=getattr(config, 'p20_dgcr_aux_weight', 0.01))
         elif _mone_k > 0:
             self.mlp = MoNE_MLP(config, n_experts=_mone_k,
-                                topk=getattr(config, 'p20_mone_topk', 0))
+                                topk=getattr(config, 'p20_mone_topk', 0),
+                                narrow=bool(getattr(config, 'p20_mone_narrow', 1)),
+                                frozen_route=bool(getattr(config, 'p20_mone_frozen', 0)))
         elif _ncea_k > 0:
             self.mlp = NoiseCEA_MLP(config, n_branches=_ncea_k,
                                     eps=getattr(config, 'p20_ncea_eps', 0.1))
@@ -5352,7 +5406,11 @@ class GPT(nn.Module):
                         _init_ctx_stream(sub.ctx_stream)
                 if isinstance(sub, RemixedLinear):
                     torch.nn.init.orthogonal_(sub.basis.weight)
-                    torch.nn.init.kaiming_normal_(sub.template_mixing)
+                    if sub.template_mixing is not None:
+                        torch.nn.init.kaiming_normal_(sub.template_mixing)
+                    if hasattr(sub, 'template_bank'):
+                        for t in sub.template_bank:
+                            torch.nn.init.kaiming_normal_(t)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
                         # basis_modulator: zero-init ALL linear weights so that at init

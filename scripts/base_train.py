@@ -76,6 +76,9 @@ parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+# Phase 22: MoE-style overparameterized template mixing in RemixedLinear
+parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
+parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
@@ -192,6 +195,8 @@ parser.add_argument("--p20-dgcr-branches", type=int, default=0, help="20D: Detac
 parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01, help="20D: auxiliary routing loss weight")
 parser.add_argument("--p20-mone-experts", type=int, default=0, help="20F: Mixture of Narrow Experts (0=off, K=num experts)")
 parser.add_argument("--p20-mone-topk", type=int, default=0, help="20F: top-k expert routing (0=compute all, K=top-k sparse)")
+parser.add_argument("--p20-mone-narrow", type=int, default=1, choices=[0, 1], help="20F: narrow experts (1=4D/K, 0=full 4D each)")
+parser.add_argument("--p20-mone-frozen", type=int, default=0, choices=[0, 1], help="20F: frozen routing (0=learned, 1=frozen random proj)")
 parser.add_argument("--p20-ncea-branches", type=int, default=0, help="20H: Noise-contrastive expert assignment (0=off, K=branches)")
 parser.add_argument("--p20-ncea-eps", type=float, default=0.1, help="20H: perturbation magnitude")
 parser.add_argument("--p20-adwi", type=int, default=0, choices=[0, 1], help="20I: Attention-derived weight interpolation (0=off, 1=on)")
@@ -373,6 +378,8 @@ def build_model_meta(depth):
             use_context=bool(args.remix_use_context),
             sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
             gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
+            n_templates=getattr(args, 'p22_n_templates', 1),
+            template_routing_learned=bool(getattr(args, 'p22_template_routing_learned', 0)),
         ),
         # Fix 1A
         use_layer_context=bool(getattr(args, 'use_layer_context', 1)),

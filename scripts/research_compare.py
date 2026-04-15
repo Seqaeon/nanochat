@@ -71,6 +71,8 @@ def run_training_sweep(args):
         "--remix-use-basis-gate", str(getattr(args, 'remix_use_basis_gate', 1)),
         "--remix-use-output-gate", str(getattr(args, 'remix_use_output_gate', 1)),
         "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
+        "--p22-n-templates", str(getattr(args, 'p22_n_templates', 1)),
+        "--p22-template-routing-learned", str(getattr(args, 'p22_template_routing_learned', 0)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
@@ -166,6 +168,8 @@ def run_training_sweep(args):
         "--p20-dgcr-aux-weight", str(getattr(args, 'p20_dgcr_aux_weight', 0.01)),
         "--p20-mone-experts", str(getattr(args, 'p20_mone_experts', 0)),
         "--p20-mone-topk", str(getattr(args, 'p20_mone_topk', 0)),
+        "--p20-mone-narrow", str(getattr(args, 'p20_mone_narrow', 1)),
+        "--p20-mone-frozen", str(getattr(args, 'p20_mone_frozen', 0)),
         "--p20-ncea-branches", str(getattr(args, 'p20_ncea_branches', 0)),
         "--p20-ncea-eps", str(getattr(args, 'p20_ncea_eps', 0.1)),
         "--p20-adwi", str(getattr(args, 'p20_adwi', 0)),
@@ -411,6 +415,8 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
     parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+    parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
+    parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
@@ -523,6 +529,8 @@ if __name__ == "__main__":
     parser.add_argument("--p20-dgcr-aux-weight", type=float, default=0.01)
     parser.add_argument("--p20-mone-experts", type=int, default=0)
     parser.add_argument("--p20-mone-topk", type=int, default=0)
+    parser.add_argument("--p20-mone-narrow", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--p20-mone-frozen", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p20-ncea-branches", type=int, default=0)
     parser.add_argument("--p20-ncea-eps", type=float, default=0.1)
     parser.add_argument("--p20-adwi", type=int, default=0, choices=[0, 1])
