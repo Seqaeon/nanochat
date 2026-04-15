@@ -23,9 +23,10 @@ if [[ "$1" == "--force" ]]; then
 fi
 
 COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 --mu-p-mode base_only \
+  --warmup-ratio 0.15 \
   --modulation-diagnostics 1"
 DEPTH=4
 
@@ -78,7 +79,7 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "0" "$TAG" "Normal Base Model Baseline"
-    bash scripts/research_sweep.sh $COMMON $DEPTH
+    bash scripts/research_sweep.sh $COMMON --warmup-ratio 0.05 --device-batch-size 64 $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
 fi
@@ -434,9 +435,10 @@ fi
 # ─────────────────────────────────────────
 
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 \
+  --warmup-ratio 0.15 \
   --modulation-diagnostics 1 \
   --cclblock-context-source norm_x \
   --cclblock-context-stream selective \

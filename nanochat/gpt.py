@@ -1351,6 +1351,8 @@ class RemixedLinear(nn.Module):
                 yield from self.poly_coeffs.parameters()
             if hasattr(self, "grassmann_alpha"):
                 yield from self.grassmann_alpha.parameters()
+            if hasattr(self, "template_route") and isinstance(self.template_route, nn.Parameter):
+                yield self.template_route
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing, bias) — normal LR."""
@@ -5969,10 +5971,28 @@ class GPT(nn.Module):
                             struct_adamw_params.append(ffwd.srp_fc.sigma)
                     # 19J: no params (noise epsilon is a config float, not learned)
         else:
-            # Regular Block: all transformer.h params go to candidate_matrix_params
-            candidate = list(self.transformer.h.parameters())
-            struct_matrix_params = [p for p in candidate if p.ndim == 2]
-            struct_adamw_params  = [p for p in candidate if p.ndim != 2]
+            # Regular Block: split standard struct parameters from MoE router parameters
+            gate_param_ids = set()
+            for m in self.transformer.h.modules():
+                # MoNE_MLP router
+                if isinstance(m, MoNE_MLP) and getattr(m, 'router', None) is not None:
+                    for p in m.router.parameters():
+                        (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                        gate_param_ids.add(id(p))
+                # FrozenRoutedMLP router (if learned)
+                elif isinstance(m, FrozenRoutedMLP) and getattr(m, 'learned_route', False) and hasattr(m, 'content_proj'):
+                    p = m.content_proj
+                    if isinstance(p, nn.Parameter):
+                        (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                        gate_param_ids.add(id(p))
+
+            # All other parameters go to candidate_matrix_params / struct_adamw_params
+            for p in self.transformer.h.parameters():
+                if id(p) not in gate_param_ids:
+                    if p.ndim == 2:
+                        struct_matrix_params.append(p)
+                    else:
+                        struct_adamw_params.append(p)
 
         # Embedding model (MoE), if present
         if self.embedding_model is not None:
