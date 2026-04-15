@@ -25,7 +25,7 @@ fi
 COMMON="--fp8 --max-shards 170 --models base \
   --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
-  --sequence-len 2048 --mu-p-mode base_only --model-dim 128 \
+  --sequence-len 2048 --mu-p-mode base_only \
   --modulation-diagnostics 1"
 DEPTH=4
 
@@ -65,10 +65,23 @@ print_header() {
 }
 
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 20 Full Sweep (A–J)                         ║"
-echo "║  Baseline: base model, model_dim=128, depth=$DEPTH             ║"
+echo "║          Phase 20+21+22 Full Sweep                         ║"
+echo "║  Baseline: normal base model calculations for depth=$DEPTH ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
+
+# ─────────────────────────────────────────
+# BASELINE
+# ─────────────────────────────────────────
+TAG="00_BASELINE"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "0" "$TAG" "Normal Base Model Baseline"
+    bash scripts/research_sweep.sh $COMMON $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
 
 # ─────────────────────────────────────────
 # PHASE 1 PROPOSALS (train from scratch)
@@ -423,7 +436,7 @@ fi
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --device-batch-size 64 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
-  --sequence-len 2048 --model-dim 128 \
+  --sequence-len 2048 \
   --modulation-diagnostics 1 \
   --cclblock-context-source norm_x \
   --cclblock-context-stream selective \
