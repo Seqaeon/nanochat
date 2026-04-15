@@ -18,7 +18,7 @@ STATEFILE="${LOGFILE%.log}.state"
 FORCE=0
 if [[ "$1" == "--force" ]]; then
     FORCE=1
-    rm -f "$STATEFILE"  # clear state on force
+    rm -f "$STATEFILE"  # clear state on force 
     shift
 fi
 
