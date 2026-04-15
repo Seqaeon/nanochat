@@ -228,7 +228,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p22-n-templates|--p22-template-routing-learned)
+        --p22-n-templates|--p22-template-routing-learned|--p22-attn-moe-route)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

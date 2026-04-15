@@ -37,6 +37,9 @@ def run_training_sweep(args):
     if args.research_dim > 0:
         print(f"  Overriding default target_dim ({target_dim}) with --research-dim {args.research_dim}")
         target_dim = args.research_dim
+    elif args.research_dim == -1:
+        print(f"  Overriding default target_dim ({target_dim}) with full model_dim {model_dim}")
+        target_dim = model_dim
     if args.model_dim > 0:
         model_dim = args.model_dim
     max_seq_len = args.sequence_len
@@ -73,6 +76,7 @@ def run_training_sweep(args):
         "--remix-use-context", str(getattr(args, 'remix_use_context', 1)),
         "--p22-n-templates", str(getattr(args, 'p22_n_templates', 1)),
         "--p22-template-routing-learned", str(getattr(args, 'p22_template_routing_learned', 0)),
+        "--p22-attn-moe-route", str(getattr(args, 'p22_attn_moe_route', 'none')),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
@@ -417,6 +421,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
     parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
     parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
+    parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],

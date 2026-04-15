@@ -79,6 +79,7 @@ parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], 
 # Phase 22: MoE-style overparameterized template mixing in RemixedLinear
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
+parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj ('none'=off, 'sequence'=per-seq, 'token'=per-tok)")
 # CCL block modulation (only active when --use-remix-linear is set)
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
@@ -474,6 +475,8 @@ def build_model_meta(depth):
         p20_dgcr_aux_weight=getattr(args, 'p20_dgcr_aux_weight', 0.01),
         p20_mone_experts=getattr(args, 'p20_mone_experts', 0),
         p20_mone_topk=getattr(args, 'p20_mone_topk', 0),
+        p20_mone_narrow=getattr(args, 'p20_mone_narrow', 1),
+        p20_mone_frozen=getattr(args, 'p20_mone_frozen', 0),
         p20_ncea_branches=getattr(args, 'p20_ncea_branches', 0),
         p20_ncea_eps=getattr(args, 'p20_ncea_eps', 0.1),
         p20_adwi=getattr(args, 'p20_adwi', 0),
@@ -488,6 +491,8 @@ def build_model_meta(depth):
         p21_per_topk=getattr(args, 'p21_per_topk', 0),
         p21_per_learned=getattr(args, 'p21_per_learned', 0),
         p21_per_attn=getattr(args, 'p21_per_attn', 0),
+        # Phase 22
+        p22_attn_moe_route=getattr(args, 'p22_attn_moe_route', 'none'),
     )
     with torch.device("meta"):
         model_meta = GPT(config)

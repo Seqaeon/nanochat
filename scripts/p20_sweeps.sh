@@ -27,6 +27,7 @@ COMMON="--fp8 --max-shards 170 --models base \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
+  --research-dim -1 \
   --modulation-diagnostics 1"
 DEPTH=4
 
@@ -79,7 +80,7 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "0" "$TAG" "Normal Base Model Baseline"
-    bash scripts/research_sweep.sh $COMMON --warmup-ratio 0.05 --device-batch-size 64 $DEPTH
+    bash scripts/research_sweep.sh $COMMON $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
 fi
@@ -331,6 +332,7 @@ else
     print_header "15" "$TAG" "LRCFB Full: K=8 full experts, soft, frozen routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -344,6 +346,7 @@ else
     print_header "16" "$TAG" "LRCFB Full: K=8 full experts, soft, learned routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 1 --p20-lrcfb-topk 0 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -357,6 +360,7 @@ else
     print_header "17" "$TAG" "LRCFB Full: K=8 full experts, hard top-1, frozen routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 1 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -370,6 +374,7 @@ else
     print_header "18" "$TAG" "LRCFB Full: K=8 full experts, hard top-1, learned routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-lrcfb-branches 8 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 1 --p20-lrcfb-topk 1 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -383,6 +388,7 @@ else
     print_header "19" "$TAG" "MoNE Full: K=8 full experts, soft, learned router"
     bash scripts/research_sweep.sh $COMMON \
       --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 0 --p20-mone-topk 0 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -396,6 +402,7 @@ else
     print_header "20" "$TAG" "MoNE Full: K=8 full experts, soft, frozen routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 1 --p20-mone-topk 0 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -409,6 +416,7 @@ else
     print_header "21" "$TAG" "MoNE Full: K=8 full experts, hard top-1, learned router"
     bash scripts/research_sweep.sh $COMMON \
       --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 0 --p20-mone-topk 1 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -422,6 +430,7 @@ else
     print_header "22" "$TAG" "MoNE Full: K=8 full experts, hard top-1, frozen routing"
     bash scripts/research_sweep.sh $COMMON \
       --p20-mone-experts 8 --p20-mone-narrow 0 --p20-mone-frozen 1 --p20-mone-topk 1 \
+      --p22-attn-moe-route sequence \
       $DEPTH
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -439,6 +448,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
+  --research-dim -1 \
   --modulation-diagnostics 1 \
   --cclblock-context-source norm_x \
   --cclblock-context-stream selective \

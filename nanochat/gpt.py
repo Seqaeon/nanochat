@@ -55,7 +55,7 @@ class GPTConfig:
     # Recommended: 8 (gives 96-dim context for 768-dim model, 128-dim for 1024-dim, etc.)
     # Set to 0 to use the fixed remix_context_dim value instead.
     remix_context_dim_ratio: int = 6
-    remix_basis_size: int = 64
+    remix_basis_size: int = 0  # 0 = auto (match n_embd)
     # Rank of the low-rank output gate. Smaller r = more stable at long T.
     # r=8 works well from T=64 to T=2048. Increase to 16 only if needed.
     remix_output_gate_rank: int = 16
@@ -267,6 +267,8 @@ class GPTConfig:
     p21_per_topk: int = 0                     # 21: top-k routing (0=soft/all, K=top-K)
     p21_per_learned: int = 0                  # 21: learned routing (0=frozen, 1=learnable)
     p21_per_attn: int = 0                     # 21: also replace attention Q/K/V/O (0=MLP only, 1=all)
+    # Phase 22: MoE attention projections
+    p22_attn_moe_route: str = 'none'          # 22: MoE routing for attn Q/K/V/Proj ('none'|'sequence'|'token')
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -323,7 +325,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p20_lrcfb_branches",
     "p20_lrcfb_narrow", "p20_lrcfb_learned", "p20_lrcfb_topk",
     "p20_dgcr_branches", "p20_dgcr_aux_weight",
-    "p20_mone_experts", "p20_mone_topk",
+    "p20_mone_experts", "p20_mone_topk", "p20_mone_narrow", "p20_mone_frozen",
     "p20_ncea_branches", "p20_ncea_eps",
     "p20_adwi",
     "p20_pwu_branches", "p20_pwu_phase",
@@ -331,6 +333,8 @@ RESEARCH_ALLOWED_KEYS = {
     "p20_wbfc_clusters", "p20_wbfc_active",
     # Phase 21
     "p21_per_experts", "p21_per_topk", "p21_per_learned", "p21_per_attn",
+    # Phase 22
+    "p22_attn_moe_route",
 }
 
 
@@ -2998,23 +3002,33 @@ class ModulationDiagnostics:
             prefix = f"block_{i}"
             # Get key weight references
             if hasattr(block, 'attn'):
-                cq_w = block.attn.c_q.weight if hasattr(block.attn, 'c_q') else None
-                cp_w = block.attn.c_proj.weight if hasattr(block.attn, 'c_proj') else None
+                cq_w = block.attn.c_q.weight if (hasattr(block.attn, 'c_q') and hasattr(block.attn.c_q, 'weight')) else None
+                cp_w = block.attn.c_proj.weight if (hasattr(block.attn, 'c_proj') and hasattr(block.attn.c_proj, 'weight')) else None
+                if cp_w is None:
+                    mat_params = [p for p in block.attn.parameters() if p.ndim == 2]
+                    cp_w = mat_params[-1] if mat_params else None
             else:
                 cq_w = cp_w = None
+            
             if hasattr(block, 'mlp'):
                 fc_w = getattr(block.mlp, 'c_fc', None)
-                fc_w = fc_w.weight if fc_w is not None else None
+                fc_w = fc_w.weight if (fc_w is not None and hasattr(fc_w, 'weight')) else None
                 proj_w = getattr(block.mlp, 'c_proj', None)
-                proj_w = proj_w.weight if proj_w is not None else None
+                proj_w = proj_w.weight if (proj_w is not None and hasattr(proj_w, 'weight')) else None
                 # P20 MLP variants: fall back to first/last 2D param
                 if fc_w is None:
                     mat_params = [p for p in block.mlp.parameters() if p.ndim == 2]
                     fc_w = mat_params[0] if mat_params else None
                     proj_w = mat_params[-1] if len(mat_params) > 1 else fc_w
             elif hasattr(block, 'ffwd'):
-                fc_w = block.ffwd.c_fc.weight
-                proj_w = block.ffwd.c_proj.weight
+                fc_w = getattr(block.ffwd, 'c_fc', None)
+                fc_w = fc_w.weight if (fc_w is not None and hasattr(fc_w, 'weight')) else None
+                proj_w = getattr(block.ffwd, 'c_proj', None)
+                proj_w = proj_w.weight if (proj_w is not None and hasattr(proj_w, 'weight')) else None
+                if fc_w is None:
+                    mat_params = [p for p in block.ffwd.parameters() if p.ndim == 2]
+                    fc_w = mat_params[0] if mat_params else None
+                    proj_w = mat_params[-1] if len(mat_params) > 1 else fc_w
             else:
                 fc_w = proj_w = None
 
@@ -3992,7 +4006,35 @@ class CausalSelfAttention(nn.Module):
         # Phase 21: optionally replace attention projections with MoELinear
         _per_k = getattr(config, 'p21_per_experts', 0)
         _per_attn = getattr(config, 'p21_per_attn', 0)
-        if _per_k > 0 and _per_attn:
+        # Phase 22: MoNE/LRCFB attention projections (same pattern as MoNE_MLP/FrozenRoutedMLP)
+        _p22_route = getattr(config, 'p22_attn_moe_route', 'none')
+        _lrcfb_k = getattr(config, 'p20_lrcfb_branches', 0)
+        _mone_k = getattr(config, 'p20_mone_experts', 0)
+        _attn_moe_k = max(_lrcfb_k, _mone_k) if _p22_route != 'none' else 0
+        self._attn_moe_k = _attn_moe_k  # Python int, compile-safe branch condition
+        if _attn_moe_k > 0:
+            # K expert projection sets — mirrors MoNE_MLP.experts_fc / FrozenRoutedMLP.branches_fc
+            D = self.n_embd
+            D_q = self.n_head * self.head_dim
+            D_kv = self.n_kv_head * self.head_dim
+            self.c_q = nn.ModuleList([Linear(D, D_q, bias=False) for _ in range(_attn_moe_k)])
+            self.c_k = nn.ModuleList([Linear(D, D_kv, bias=False) for _ in range(_attn_moe_k)])
+            self.c_v = nn.ModuleList([Linear(D, D_kv, bias=False) for _ in range(_attn_moe_k)])
+            self.c_proj = nn.ModuleList([Linear(D, D, bias=False) for _ in range(_attn_moe_k)])
+            # Shared router for all 4 projections (ensures Q/K coordinate coherence)
+            # Mirrors MoNE_MLP.router (learned) / FrozenRoutedMLP.content_proj (frozen)
+            self._attn_moe_seq = (_p22_route == 'sequence')
+            if _lrcfb_k > 0:
+                _learned = bool(getattr(config, 'p20_lrcfb_learned', 0))
+                self._attn_moe_topk = getattr(config, 'p20_lrcfb_topk', 0)
+            else:
+                _learned = not bool(getattr(config, 'p20_mone_frozen', 0))
+                self._attn_moe_topk = getattr(config, 'p20_mone_topk', 0)
+            if _learned:
+                self._attn_router = Linear(D, _attn_moe_k, bias=False)
+            else:
+                self.register_buffer('_attn_router_proj', torch.randn(D, _attn_moe_k) / (D ** 0.5))
+        elif _per_k > 0 and _per_attn:
             _per_topk = getattr(config, 'p21_per_topk', 0)
             _per_learned = bool(getattr(config, 'p21_per_learned', 0))
             self.c_q = MoELinear(self.n_embd, self.n_head * self.head_dim, K=_per_k,
@@ -4023,14 +4065,40 @@ class CausalSelfAttention(nn.Module):
         if getattr(config, 'p19_attn_logit_bias', 0):
             self.attn_logit_scale = nn.Parameter(torch.full((self.n_head,), 0.5413))
 
+    def _compute_attn_moe_route(self, x):
+        """Phase 22: compute shared routing weights for all 4 attention projections.
+        Same routing logic as MoNE_MLP.forward / FrozenRoutedMLP.forward."""
+        if hasattr(self, '_attn_router'):
+            logits = self._attn_router(x)  # (B, T, K) — learned, like MoNE_MLP.router
+        else:
+            logits = torch.matmul(x.float(), self._attn_router_proj.float())  # frozen, like FrozenRoutedMLP.content_proj
+        if self._attn_moe_seq:
+            logits = logits.mean(dim=1, keepdim=True)  # (B, 1, K) per-sequence
+        topk = self._attn_moe_topk
+        if topk > 0 and topk < self._attn_moe_k:
+            _, topk_idx = logits.topk(topk, dim=-1)
+            mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
+            logits = logits.masked_fill(mask == 0, float('-inf'))
+        return F.softmax(logits, dim=-1).to(x.dtype)
+
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        if self._attn_moe_k > 0:
+            # Phase 22: MoNE/LRCFB routing — same weighted-sum pattern as MoNE_MLP.forward
+            _rw = self._compute_attn_moe_route(x)  # (B, 1, K) or (B, T, K)
+            q = sum(_rw[..., k:k+1] * self.c_q[k](x) for k in range(self._attn_moe_k))
+            q = q.view(B, T, self.n_head, self.head_dim)
+            k = sum(_rw[..., k:k+1] * self.c_k[k](x) for k in range(self._attn_moe_k))
+            k = k.view(B, T, self.n_kv_head, self.head_dim)
+            v = sum(_rw[..., k:k+1] * self.c_v[k](x) for k in range(self._attn_moe_k))
+            v = v.view(B, T, self.n_kv_head, self.head_dim)
+        else:
+            q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
+            k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
+            v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
@@ -4077,7 +4145,10 @@ class CausalSelfAttention(nn.Module):
 
         # Re-assemble the heads and project back to residual stream
         y = y.contiguous().view(B, T, -1)
-        y = self.c_proj(y)
+        if self._attn_moe_k > 0:
+            y = sum(_rw[..., k:k+1] * self.c_proj[k](y) for k in range(self._attn_moe_k))
+        else:
+            y = self.c_proj(y)
         return y
 
 
@@ -4149,7 +4220,11 @@ class MoNE_MLP(nn.Module):
         self.narrow = narrow
         self.frozen_route = frozen_route
         D = config.n_embd
-        if narrow:
+        if topk > 0:
+            expert_hidden = 4 * D // topk
+            assert expert_hidden * topk == 4 * D, (
+                f"4*D={4*D} must be divisible by topk={topk}")
+        elif narrow:
             expert_hidden = 4 * D // n_experts
             assert expert_hidden * n_experts == 4 * D, (
                 f"4*D={4*D} must be divisible by n_experts={n_experts}")
@@ -4247,7 +4322,14 @@ class FrozenRoutedMLP(nn.Module):
         self.topk = topk
         D = config.n_embd
         H_full = 4 * D
-        H_per_branch = H_full // n_branches if narrow else H_full
+        if topk > 0:
+            H_per_branch = H_full // topk
+            assert H_per_branch * topk == H_full, f"4*D={H_full} must be divisible by topk={topk}"
+        elif narrow:
+            H_per_branch = H_full // n_branches
+            assert H_per_branch * n_branches == H_full, f"4*D={H_full} must be divisible by n_branches={n_branches}"
+        else:
+            H_per_branch = H_full
         self.H_per_branch = H_per_branch
         # K MLP branches (narrow or full-size)
         self.branches_fc = nn.ModuleList([
@@ -4959,6 +5041,110 @@ class WBFC_MLP(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Phase 22: Full-size MoE Linear (for attention projections)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_moe_full_counter = 0
+
+class MoEFullLinear(nn.Module):
+    """Phase 22: Full-size MoE drop-in replacement for nn.Linear.
+
+    Each of the K experts is a full (D_out, D_in) weight matrix — no bottleneck.
+    Routing can be provided externally (for shared Q/K/V/Proj routing in attention)
+    or computed internally.
+
+    Per-sequence routing (sequence_route=True): computes routing from sequence-mean,
+    builds a single effective weight W_eff = Σ_k w_k W_k, then applies as one bmm.
+    This preserves Q-K dot-product coherence because all tokens share the same
+    projection matrix.
+    """
+    def __init__(self, D_in, D_out, K, topk=0, learned_route=False,
+                 has_router=True, sequence_route=True):
+        super().__init__()
+        global _moe_full_counter
+        self.D_in = D_in
+        self.D_out = D_out
+        self.K = K
+        self.topk = topk if topk > 0 else K  # 0 = soft (all experts)
+        self.sequence_route = sequence_route
+        # K full-size expert weight matrices: (K, D_out, D_in)
+        self.expert_weights = nn.Parameter(
+            torch.randn(K, D_out, D_in) * (D_in ** -0.5))
+        # Optional internal router
+        self.has_router = has_router
+        if has_router:
+            gen = torch.Generator().manual_seed(137 + _moe_full_counter)
+            _moe_full_counter += 1
+            route_init = torch.randn(D_in, K, generator=gen) / (D_in ** 0.5)
+            if learned_route:
+                self.route_proj = nn.Parameter(route_init)
+            else:
+                self.register_buffer('route_proj', route_init)
+        # Diagnostics
+        self.register_buffer('_entropy_buf', torch.zeros(1), persistent=False)
+
+    @property
+    def weight(self):
+        """Mean expert weight for init_weights / diagnostics compatibility."""
+        return self.expert_weights.mean(dim=0)  # (D_out, D_in)
+
+    def gate_parameters(self):
+        if self.has_router and isinstance(getattr(self, 'route_proj', None), nn.Parameter):
+            yield self.route_proj
+
+    def non_gate_parameters(self):
+        yield self.expert_weights
+
+    def _compute_routing(self, x):
+        """Compute routing weights from input using internal router."""
+        logits = torch.matmul(x.float(), self.route_proj.float())  # (B, T, K)
+        if self.sequence_route:
+            logits = logits.mean(dim=1, keepdim=True)  # (B, 1, K)
+        if self.topk < self.K:
+            _, topk_idx = logits.topk(self.topk, dim=-1)
+            mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
+            logits = logits.masked_fill(mask == 0, float('-inf'))
+        return F.softmax(logits, dim=-1)
+
+    def forward(self, x, route_weights=None):
+        """Forward pass. If route_weights is provided, uses those instead of internal router."""
+        orig_shape = x.shape
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+        B, T, D = x.shape
+        dtype = x.dtype
+
+        # Get routing weights
+        if route_weights is None:
+            assert self.has_router, "MoEFullLinear: no router and no external route_weights"
+            route_weights = self._compute_routing(x).to(dtype)
+        else:
+            route_weights = route_weights.to(dtype)
+
+        # Entropy diagnostic
+        with torch.no_grad():
+            probs = route_weights.float()
+            ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
+            self._entropy_buf.copy_(ent)
+
+        # Compute output
+        experts = self.expert_weights.to(dtype)  # (K, D_out, D_in)
+        if route_weights.shape[1] == 1:
+            # Per-sequence: build effective weight, single bmm (very efficient)
+            w = route_weights.squeeze(1)  # (B, K)
+            eff = torch.einsum('bk,koi->boi', w, experts)  # (B, D_out, D_in)
+            y = torch.bmm(x, eff.transpose(1, 2))  # (B, T, D_out)
+        else:
+            # Per-token: full K-way computation
+            all_out = torch.einsum('btd,kod->btko', x, experts)  # (B, T, K, D_out)
+            y = (all_out * route_weights.unsqueeze(-1)).sum(dim=2)  # (B, T, D_out)
+
+        if len(orig_shape) == 2:
+            y = y.squeeze(0)
+        return y
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Phase 21: Pervasive Expert Routing (PER) — MoE-ify every Linear layer
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -5231,6 +5417,9 @@ class GPT(nn.Module):
             print0(f"router_context_window auto-capped to 256 (sequence_len={config.sequence_len} > 512). "
                    f"Set router_context_window explicitly to override.")
         self.remix_context_dim = config.remix_context_dim
+        # Auto-scale: remix_basis_size=0 means "match model_dim"
+        if config.remix_basis_size <= 0:
+            config.remix_basis_size = config.n_embd
         self.remix_basis_size = config.remix_basis_size
         self.use_pos_embed = config.use_pos_embed
         if config.remixed_linear_kwargs is None:
@@ -5559,10 +5748,20 @@ class GPT(nn.Module):
                     if block.attn.ve_gate.bias is not None:
                         torch.nn.init.zeros_(block.attn.ve_gate.bias)
             else:
-                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-                torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
+                # Phase 22: MoEFullLinear attention projections
+                if getattr(block.attn, '_attn_moe_k', 0) > 0:
+                    for proj, is_output in [(block.attn.c_q, False), (block.attn.c_k, False),
+                                             (block.attn.c_v, False), (block.attn.c_proj, True)]:
+                        for k_idx in range(proj.K):
+                            if is_output:
+                                torch.nn.init.zeros_(proj.expert_weights.data[k_idx])
+                            else:
+                                torch.nn.init.uniform_(proj.expert_weights.data[k_idx], -s, s)
+                else:
+                    torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+                    torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                    torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                    torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
                 # MLP init: handles both standard MLP and P20 variants
                 # Check specific P20 types first (some have c_fc too)
                 if isinstance(block.mlp, MoNE_MLP):
@@ -5982,6 +6181,14 @@ class GPT(nn.Module):
                 # FrozenRoutedMLP router (if learned)
                 elif isinstance(m, FrozenRoutedMLP) and getattr(m, 'learned_route', False) and hasattr(m, 'content_proj'):
                     p = m.content_proj
+                    if isinstance(p, nn.Parameter):
+                        (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                        gate_param_ids.add(id(p))
+
+            # Phase 22: shared attention MoE router → gate group
+            for block in self.transformer.h:
+                if hasattr(block.attn, '_attn_shared_route'):
+                    p = block.attn._attn_shared_route
                     if isinstance(p, nn.Parameter):
                         (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                         gate_param_ids.add(id(p))
