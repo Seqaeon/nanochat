@@ -203,21 +203,21 @@ fi
 
 # 7: Tiny Expert weight mod — K_total=64, topk=16, frozen routing
 #    expert_dim = basis_size // 16  e.g. 256//16 = 16 per expert
-TAG="23_TINY_WEIGHT_4T_FROZEN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "7" "$TAG" "TinyExpert weight mod, K_total=64, topk=16, frozen routing"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation weight \
-      --p23-tiny-expert 1 \
-      --p23-n-experts 64 \
-      --p23-topk 16 \
-      --p23-learned-route 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# TAG="23_TINY_WEIGHT_4T_FROZEN"
+# if check_completed "$TAG"; then
+#     echo "⏭  Skipping $TAG (already completed)"
+# else
+#     print_header "7" "$TAG" "TinyExpert weight mod, K_total=64, topk=16, frozen routing"
+#     bash scripts/research_sweep.sh $REMIX_COMMON \
+#       --cclblock-modulation weight \
+#       --p23-tiny-expert 1 \
+#       --p23-n-experts 64 \
+#       --p23-topk 16 \
+#       --p23-learned-route 0 \
+#       $DEPTH 2>&1 | tee -a "$LOGFILE"
+#     echo "════════════════ $TAG COMPLETE ════════════════"
+#     mark_completed "$TAG"
+# fi
 
 # 8: Tiny Expert weight mod — K_total=64, topk=16, learned routing
 TAG="23_TINY_WEIGHT_4T_LEARNED"
@@ -238,21 +238,21 @@ fi
 
 # 9: Tiny Expert weight mod — K_total=64, topk=1, frozen routing
 #    expert_dim = basis_size (full-rank per expert) — max specialization
-TAG="23_TINY_WEIGHT_TOP1_FROZEN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "9" "$TAG" "TinyExpert weight mod, K_total=64, topk=1 (full expert_dim), frozen routing"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation weight \
-      --p23-tiny-expert 1 \
-      --p23-n-experts 64 \
-      --p23-topk 1 \
-      --p23-learned-route 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# TAG="23_TINY_WEIGHT_TOP1_FROZEN"
+# if check_completed "$TAG"; then
+#     echo "⏭  Skipping $TAG (already completed)"
+# else
+#     print_header "9" "$TAG" "TinyExpert weight mod, K_total=64, topk=1 (full expert_dim), frozen routing"
+#     bash scripts/research_sweep.sh $REMIX_COMMON \
+#       --cclblock-modulation weight \
+#       --p23-tiny-expert 1 \
+#       --p23-n-experts 64 \
+#       --p23-topk 1 \
+#       --p23-learned-route 0 \
+#       $DEPTH 2>&1 | tee -a "$LOGFILE"
+#     echo "════════════════ $TAG COMPLETE ════════════════"
+#     mark_completed "$TAG"
+# fi
 
 # 10: Tiny Expert weight mod — K_total=64, topk=1, learned routing
 TAG="23_TINY_WEIGHT_TOP1_LEARNED"
@@ -276,21 +276,21 @@ fi
 # ══════════════════════════════════════════════════════
 
 # 11: Tiny Expert householder mod — K_total=64, topk=16, frozen routing
-TAG="23_TINY_HOUSE_4T_FROZEN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "11" "$TAG" "TinyExpert householder mod, K_total=64, topk=16, frozen routing"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation householder \
-      --p23-tiny-expert 1 \
-      --p23-n-experts 64 \
-      --p23-topk 16 \
-      --p23-learned-route 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# TAG="23_TINY_HOUSE_4T_FROZEN"
+# if check_completed "$TAG"; then
+#     echo "⏭  Skipping $TAG (already completed)"
+# else
+#     print_header "11" "$TAG" "TinyExpert householder mod, K_total=64, topk=16, frozen routing"
+#     bash scripts/research_sweep.sh $REMIX_COMMON \
+#       --cclblock-modulation householder \
+#       --p23-tiny-expert 1 \
+#       --p23-n-experts 64 \
+#       --p23-topk 16 \
+#       --p23-learned-route 0 \
+#       $DEPTH 2>&1 | tee -a "$LOGFILE"
+#     echo "════════════════ $TAG COMPLETE ════════════════"
+#     mark_completed "$TAG"
+# fi
 
 # 12: Tiny Expert householder mod — K_total=64, topk=16, learned routing
 TAG="23_TINY_HOUSE_4T_LEARNED"
@@ -316,22 +316,22 @@ fi
 # ══════════════════════════════════════════════════════
 
 # 13: Tiny Expert CKR mod — K_total=64, topk=16, frozen routing
-TAG="23_TINY_CKR_4T_FROZEN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "13" "$TAG" "TinyExpert CKR mod, K_total=64, topk=16, K_ckr=8 branches, frozen routing"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation ckr \
-      --cclblock-ckr-branches 8 \
-      --p23-tiny-expert 1 \
-      --p23-n-experts 64 \
-      --p23-topk 16 \
-      --p23-learned-route 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+# TAG="23_TINY_CKR_4T_FROZEN"
+# if check_completed "$TAG"; then
+#     echo "⏭  Skipping $TAG (already completed)"
+# else
+#     print_header "13" "$TAG" "TinyExpert CKR mod, K_total=64, topk=16, K_ckr=8 branches, frozen routing"
+#     bash scripts/research_sweep.sh $REMIX_COMMON \
+#       --cclblock-modulation ckr \
+#       --cclblock-ckr-branches 8 \
+#       --p23-tiny-expert 1 \
+#       --p23-n-experts 64 \
+#       --p23-topk 16 \
+#       --p23-learned-route 0 \
+#       $DEPTH 2>&1 | tee -a "$LOGFILE"
+#     echo "════════════════ $TAG COMPLETE ════════════════"
+#     mark_completed "$TAG"
+# fi
 
 # 14: Tiny Expert CKR mod — K_total=64, topk=16, learned routing
 TAG="23_TINY_CKR_4T_LEARNED"
@@ -345,6 +345,65 @@ else
       --p23-tiny-expert 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
+      --p23-learned-route 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# ══════════════════════════════════════════════════════
+# LoKR EXPERTS — Iso-Parameter Low-Rank MoE
+# ══════════════════════════════════════════════════════
+
+# 15: LoKR weight mod — K_total=64, rank=4, topk=16, learned routing
+TAG="23_LOKR_WEIGHT_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "15" "$TAG" "LoKR weight mod, K_total=64, topk=16, rank=4, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-lokr 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-lokr-rank 4 \
+      --p23-learned-route 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 16: LoKR householder mod — K_total=64, rank=4, topk=16, learned routing
+TAG="23_LOKR_HOUSE_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "16" "$TAG" "LoKR householder mod, K_total=64, topk=16, rank=4, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation householder \
+      --p23-lokr 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-lokr-rank 4 \
+      --p23-learned-route 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 17: LoKR CKR mod — K_total=64, rank=4, topk=16, learned routing
+TAG="23_LOKR_CKR_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "17" "$TAG" "LoKR CKR mod, K_total=64, topk=16, rank=4, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation ckr \
+      --cclblock-ckr-branches 8 \
+      --p23-lokr 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-lokr-rank 4 \
       --p23-learned-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"
     echo "════════════════ $TAG COMPLETE ════════════════"

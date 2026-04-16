@@ -1247,15 +1247,57 @@ class RemixedLinear(nn.Module):
         self.tiny_expert = remixed_linear_kwargs.get('tiny_expert', False)
         self.tiny_expert_topk = remixed_linear_kwargs.get('tiny_expert_topk', 16)
 
-        # Initialise all optional attributed to None so non_gate_parameters() /
+        # Phase 23 LoKR: iso-parameter shared-base + low-rank expert adapters
+        # Shared base uses shrunk basis (B_shrunk = basis_size - K*rank) for param parity.
+        # Low-rank expert adapters: down(in→rank) + up(rank→out), top-k routed from x.
+        self.lokr_expert = remixed_linear_kwargs.get('lokr_expert', False)
+        self.lokr_n_experts = remixed_linear_kwargs.get('lokr_n_experts', 64)
+        self.lokr_topk = remixed_linear_kwargs.get('lokr_topk', 16)
+        self.lokr_rank = remixed_linear_kwargs.get('lokr_rank', 4)
+        self.lokr_learned = remixed_linear_kwargs.get('lokr_learned', False)
+
+        # Initialise all optional attrs to None so non_gate_parameters() /
         # gate_parameters() can always use `is not None` checks on every code path.
         self.template_bank = None
         self.template_mixing = None
         self.expert_up = None
         self.expert_down = None
+        self.lokr_down_w = None
+        self.lokr_up_w = None
+        self.lokr_route_proj = None
+
+        if self.lokr_expert:
+            # Iso-param: B_shrunk = basis_size - K*rank
+            # Ensures (B_shrunk + K*rank)*(in+out) = basis_size*(in+out)
+            K, R = self.lokr_n_experts, self.lokr_rank
+            b_shrunk = basis_size - K * R
+            assert b_shrunk > 0, (
+                f"LoKR: basis_size ({basis_size}) too small for "
+                f"{K} experts × rank {R} = {K*R} dims. "
+                f"Increase basis_size or reduce n_experts/rank."
+            )
+            # Override basis_size for the shared-base path
+            basis_size = b_shrunk
 
         self.basis = Linear(in_features, basis_size, bias=False)
-        if self.tiny_expert and self.n_templates > 1:
+        if self.lokr_expert:
+            # Low-rank expert adapters: stacked tensors for efficient batched matmul
+            # lokr_down_w: (K, rank, in_features)  — projects x to rank-r subspace
+            # lokr_up_w:   (K, out_features, rank) — zero-init for identity start
+            K, R = self.lokr_n_experts, self.lokr_rank
+            self.lokr_down_w = nn.Parameter(torch.empty(K, R, in_features))
+            self.lokr_up_w   = nn.Parameter(torch.zeros(K, out_features, R))
+            # Router: frozen (Parameter) or learned (weight of a Linear)
+            if self.lokr_learned:
+                self.lokr_route_proj = nn.Parameter(torch.empty(K, in_features))
+            else:
+                self.lokr_route_proj = nn.Parameter(torch.empty(K, in_features),
+                                                     requires_grad=False)
+            # template_mixing serves as the shrunk shared-base output matrix
+            self.template_mixing = nn.Parameter(torch.empty(out_features, basis_size))
+            # Store shrunk basis_size for diagnostics
+            self._lokr_basis_size = basis_size
+        elif self.tiny_expert and self.n_templates > 1:
 
             # Tiny Experts: K_total experts, each with small bottleneck dim
             # expert_dim = basis_size // topk  for compute parity with dense
@@ -1416,6 +1458,9 @@ class RemixedLinear(nn.Module):
                 yield from self.grassmann_alpha.parameters()
             if hasattr(self, "template_route") and isinstance(self.template_route, nn.Parameter):
                 yield self.template_route
+            # LoKR route projection (only when learned — i.e., requires_grad=True)
+            if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
+                yield self.lokr_route_proj
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing/experts, bias) — Muon/normal LR."""
@@ -1425,13 +1470,18 @@ class RemixedLinear(nn.Module):
         if self.template_bank is not None:
             for t in self.template_bank:
                 yield t
-        # Tiny Expert weight matrices go in Muon group (they are learned projections)
+        # Tiny Expert weight matrices → Muon group
         if self.expert_up is not None:
             for m in self.expert_up:
                 yield from m.parameters()
         if self.expert_down is not None:
             for m in self.expert_down:
                 yield from m.parameters()
+        # LoKR expert weight matrices → Muon group (always, even if route is frozen)
+        if self.lokr_down_w is not None:
+            yield self.lokr_down_w
+        if self.lokr_up_w is not None:
+            yield self.lokr_up_w
         yield self.bias
         if hasattr(self, "ocd_in"):
             yield self.ocd_in
@@ -1516,7 +1566,63 @@ class RemixedLinear(nn.Module):
             gate_out = None
 
         h_gated = (h_basis * gate_basis).to(dtype=dtype)
-        if self.tiny_expert and self.n_templates > 1:
+
+        if self.lokr_expert:
+            # ──────────────────────────────────────────────────────────────
+            # LoKR-Remix forward: shared base + top-k low-rank expert deltas
+            # ──────────────────────────────────────────────────────────────
+            # 1. Shared-base output (always active, shrunk template_mixing)
+            base_out = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
+
+            # 2. Router: per-token (FFN) or per-sequence (attn)
+            if self.routing_scope == 'per_sequence':
+                route_input = x.float().mean(dim=1, keepdim=True)  # (B, 1, in)
+            else:
+                route_input = x.float()                            # (B, T, in)
+            # route_proj: (K, in) — frozen or learned
+            route_logits = F.linear(route_input, self.lokr_route_proj.float())  # (B, *, K)
+            if self.routing_scope == 'per_sequence':
+                route_logits = route_logits.expand(-1, h_gated.shape[1], -1)  # (B, T, K)
+
+            # 3. Top-k routing and batched low-rank expert computation
+            K = self.lokr_n_experts
+            topk = self.lokr_topk
+            if topk > 0 and topk < K:
+                topk_w, topk_idx = route_logits.topk(topk, dim=-1)  # (B, T, topk)
+                topk_w = F.softmax(topk_w.float(), dim=-1).to(dtype)
+
+                # Batched low-rank matmul over ALL experts, then gather top-k
+                # lokr_down_w: (K, R, in) → all_h: (B, T, K, R)
+                all_h = torch.einsum('bti,kri->btkr', x.to(self.lokr_down_w.dtype),
+                                     self.lokr_down_w)  # (B, T, K, R)
+                # lokr_up_w: (K, out, R) → all_out: (B, T, K, out)
+                all_out = torch.einsum('btkr,kor->btko', all_h,
+                                       self.lokr_up_w)  # (B, T, K, out)
+                all_out = all_out.to(dtype)
+
+                # Gather: (B, T, topk, out)
+                idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, all_out.shape[-1])
+                topk_out = torch.gather(all_out, dim=-2, index=idx_exp)
+                expert_delta = (topk_out * topk_w.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
+            else:
+                # Soft routing: all experts, weighted sum
+                soft_w = F.softmax(route_logits.float(), dim=-1).to(dtype)  # (B, T, K)
+                all_h = torch.einsum('bti,kri->btkr', x.to(self.lokr_down_w.dtype),
+                                     self.lokr_down_w)
+                all_out = torch.einsum('btkr,kor->btko', all_h,
+                                       self.lokr_up_w).to(dtype)
+                expert_delta = (all_out * soft_w.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
+
+            # Diagnostics: router entropy
+            with torch.no_grad():
+                prob_f = F.softmax(route_logits.float(), dim=-1)
+                ent = -(prob_f * torch.log(prob_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                if hasattr(self, '_template_entropy_buf'):
+                    self._template_entropy_buf.copy_(ent.detach())
+
+            pre_output = base_out + expert_delta
+
+        elif self.tiny_expert and self.n_templates > 1:
             # Phase 23 Tiny Experts: compute content-based routing then apply top-k active experts
             # routing_scope='per_token': route_logits shape (B, T, K_total)
             # routing_scope='per_sequence': pool x over T, expand back for consistent broadcast
@@ -1597,7 +1703,11 @@ class RemixedLinear(nn.Module):
                 self.ocd_out.to(dtype=dtype),
                 self.ocd_in.to(dtype=dtype),
             )                                                                       # (out, basis)
-            tmix = self.template_mixing if self.template_mixing is not None else self.template_bank[0]
+            # Guard: template_bank may be None (n_templates=1 or tiny_expert/lokr modes)
+            _tmix = self.template_mixing
+            if _tmix is None and self.template_bank is not None:
+                _tmix = self.template_bank[0]
+            tmix = _tmix
             overlap = torch.matmul(tmix.to(dtype=dtype), w_dyn.transpose(0, 1))
             self._last_orth_loss = overlap.pow(2).mean()
         else:
@@ -4493,8 +4603,26 @@ class StandardMoE_MLP(nn.Module):
         with torch.no_grad():
             rw_float = router_weights.float()
             log_rw = torch.log(rw_float.clamp(min=1e-8))
-            self._last_router_entropy = -(rw_float * log_rw).sum(dim=-1).mean().item()
+            entropy = -(rw_float * log_rw).sum(dim=-1).mean().item()
+            self._last_router_entropy = entropy
             self._last_expert_load = rw_float.mean(dim=(0, 1))  # (K,)
+            # Estimate router efficiency coefficient c ≈ entropy / log(K)
+            # c=1: perfectly uniform (no specialisation), c≈0: one expert always wins
+            # Typical trained MoE: 0.3–0.4
+            max_entropy = math.log(max(self.n_experts, 2))
+            self._last_router_c = entropy / max_entropy if max_entropy > 0 else 0.0
+            # Optimal number of experts at current scale:
+            # P_eff ≈ P_active * E^c  — marginal gain of doubling E is worth it while
+            # 2^c > 1.15 (15% threshold), i.e. c*log2 > log(1.15), i.e. c > 0.20
+            # Below that threshold, the current scale is too small to benefit from sparsity.
+            c = self._last_router_c
+            if c > 0.20:
+                # Optimal E: point where adding another doubling gives <15% gain
+                # Empirically: E_opt ≈ (P_dense / P_active)^(1/c) when routing is efficient
+                # For now, report as informational
+                self._optimal_e_feasible = True
+            else:
+                self._optimal_e_feasible = False  # at this scale, K=1 (dense) is optimal
 
         y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
         if self.topk > 0 and self.topk < self.n_experts:
@@ -5835,9 +5963,16 @@ class GPT(nn.Module):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     if sub.template_mixing is not None:
                         torch.nn.init.kaiming_normal_(sub.template_mixing)
-                    if hasattr(sub, 'template_bank'):
+                    if sub.template_bank is not None:
                         for t in sub.template_bank:
                             torch.nn.init.kaiming_normal_(t)
+                    # LoKR: kaiming for down projections, zeros for up (identity start)
+                    if sub.lokr_down_w is not None:
+                        torch.nn.init.kaiming_uniform_(sub.lokr_down_w, a=math.sqrt(5))
+                    if sub.lokr_up_w is not None:
+                        torch.nn.init.zeros_(sub.lokr_up_w)
+                    if sub.lokr_route_proj is not None:
+                        torch.nn.init.normal_(sub.lokr_route_proj, std=0.02)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
                         # basis_modulator: zero-init ALL linear weights so that at init
@@ -6211,17 +6346,23 @@ class GPT(nn.Module):
             for submod in block.modules():
                 if not isinstance(submod, RemixedLinear):
                     continue
-                if not (submod.tiny_expert and submod.n_templates > 1):
-                    continue
-                topk = submod.tiny_expert_topk
-                K = submod.n_templates
-                if topk > 0 and topk < K:
-                    expert_params = sum(
-                        p.numel() for ml in (submod.expert_up, submod.expert_down)
-                        for p in ml.parameters()
-                    )
-                    inactive_frac = 1.0 - (topk / K)
-                    inactive_expert_params += int(expert_params * inactive_frac)
+                if submod.tiny_expert and submod.n_templates > 1:
+                    topk = submod.tiny_expert_topk
+                    K = submod.n_templates
+                    if topk > 0 and topk < K:
+                        expert_params = sum(
+                            p.numel() for ml in (submod.expert_up, submod.expert_down)
+                            for p in ml.parameters()
+                        )
+                        inactive_frac = 1.0 - (topk / K)
+                        inactive_expert_params += int(expert_params * inactive_frac)
+                elif getattr(submod, 'lokr_expert', False):
+                    topk = submod.lokr_topk
+                    K = submod.lokr_n_experts
+                    if topk > 0 and topk < K:
+                        expert_params = submod.lokr_down_w.numel() + submod.lokr_up_w.numel()
+                        inactive_frac = 1.0 - (topk / K)
+                        inactive_expert_params += int(expert_params * inactive_frac)
 
         active_flops = total_flops - 6 * inactive_expert_params
         return total_flops, active_flops

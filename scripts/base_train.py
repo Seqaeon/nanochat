@@ -88,6 +88,8 @@ parser.add_argument("--p23-learned-route", type=int, default=0, choices=[0, 1], 
 parser.add_argument("--p23-std-moe-experts", type=int, default=0, help="23: enable StandardMoE_MLP with K full-size experts (0=off)")
 parser.add_argument("--p23-std-moe-topk", type=int, default=1, help="23: top-k active experts for StandardMoE_MLP (0=all/soft)")
 parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="23: load-balance auxiliary loss weight for StandardMoE_MLP")
+parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1], help="23: enable LoKR mode in RemixedLinear")
+parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
@@ -398,9 +400,16 @@ def build_model_meta(depth):
             ),
             template_routing_learned=bool(
                 getattr(args, 'p23_learned_route', 0)
-                if getattr(args, 'p23_tiny_expert', 0)
+                if getattr(args, 'p23_tiny_expert', 0) or getattr(args, 'p23_lokr', 0)
                 else getattr(args, 'p22_template_routing_learned', 0)
             ),
+            tiny_expert=bool(getattr(args, 'p23_tiny_expert', 0)),
+            tiny_expert_topk=getattr(args, 'p23_topk', 16),
+            lokr_expert=bool(getattr(args, 'p23_lokr', 0)),
+            lokr_n_experts=getattr(args, 'p23_n_experts', 64),
+            lokr_topk=getattr(args, 'p23_topk', 16),
+            lokr_rank=getattr(args, 'p23_lokr_rank', 4),
+            lokr_learned=bool(getattr(args, 'p23_learned_route', 0)),
         ),
 
         # Fix 1A
@@ -522,6 +531,8 @@ def build_model_meta(depth):
         p23_std_moe_experts=getattr(args, 'p23_std_moe_experts', 0),
         p23_std_moe_topk=getattr(args, 'p23_std_moe_topk', 1),
         p23_std_moe_aux_weight=getattr(args, 'p23_std_moe_aux_weight', 0.01),
+        p23_lokr=getattr(args, 'p23_lokr', 0),
+        p23_lokr_rank=getattr(args, 'p23_lokr_rank', 4),
     )
 
     with torch.device("meta"):

@@ -232,7 +232,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p23-tiny-expert|--p23-n-experts|--p23-topk|--p23-learned-route|--p23-std-moe-experts|--p23-std-moe-topk|--p23-std-moe-aux-weight)
+        --p23-tiny-expert|--p23-n-experts|--p23-topk|--p23-learned-route|--p23-std-moe-experts|--p23-std-moe-topk|--p23-std-moe-aux-weight|--p23-lokr|--p23-lokr-rank)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
