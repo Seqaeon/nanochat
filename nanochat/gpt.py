@@ -280,6 +280,8 @@ class GPTConfig:
     p23_std_moe_experts: int = 0              # 23: 0=off, K=standard MoE with K full-size experts
     p23_std_moe_topk: int = 1                 # 23: top-k active experts (1=sparse, 0=dense all)
     p23_std_moe_aux_weight: float = 0.01      # 23: load-balance auxiliary loss weight
+    p23_lokr: int = 0                         # 23: enable LoKR mode in RemixedLinear
+    p23_lokr_rank: int = 4                    # 23: low-rank bottleneck for each LoKR expert
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -349,6 +351,7 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 23
     "p23_tiny_expert", "p23_n_experts", "p23_topk", "p23_learned_route",
     "p23_std_moe_experts", "p23_std_moe_topk", "p23_std_moe_aux_weight",
+    "p23_lokr", "p23_lokr_rank",
 }
 
 
@@ -3711,10 +3714,18 @@ class RemixedFeedForward(nn.Module):
             self.c_fc   = ResidualAdaptiveLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_proj = ResidualAdaptiveLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, rank=ral_rank)
         else:
-            # Enrich kwargs with Phase 23 Tiny Expert settings
+            # Enrich kwargs with Phase 23 LoKR / Tiny Expert settings
+            lokr_expert = bool(getattr(config, 'p23_lokr', 0))
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
-            if tiny_expert:
+            if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
+            if lokr_expert:
+                kwargs['lokr_expert'] = True
+                kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
+                kwargs['lokr_topk'] = getattr(config, 'p23_topk', 16)
+                kwargs['lokr_rank'] = getattr(config, 'p23_lokr_rank', 4)
+                kwargs['lokr_learned'] = bool(getattr(config, 'p23_learned_route', 0))
+            elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
             self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_token')
@@ -3882,10 +3893,18 @@ class RemixedMultiAttention(nn.Module):
             self.c_v    = ResidualAdaptiveLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, rank=ral_rank)
             self.c_proj = ResidualAdaptiveLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, rank=ral_rank)
         else:
-            # Enrich kwargs with Phase 23 Tiny Expert settings
+            # Enrich kwargs with Phase 23 LoKR / Tiny Expert settings
+            lokr_expert = bool(getattr(config, 'p23_lokr', 0))
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
-            if tiny_expert:
+            if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy
+            if lokr_expert:
+                kwargs['lokr_expert'] = True
+                kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
+                kwargs['lokr_topk'] = getattr(config, 'p23_topk', 16)
+                kwargs['lokr_rank'] = getattr(config, 'p23_lokr_rank', 4)
+                kwargs['lokr_learned'] = bool(getattr(config, 'p23_learned_route', 0))
+            elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
             # Attention layers use per-sequence routing (one routing decision per sequence)
