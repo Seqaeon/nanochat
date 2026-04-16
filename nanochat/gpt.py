@@ -1247,8 +1247,16 @@ class RemixedLinear(nn.Module):
         self.tiny_expert = remixed_linear_kwargs.get('tiny_expert', False)
         self.tiny_expert_topk = remixed_linear_kwargs.get('tiny_expert_topk', 16)
 
+        # Initialise all optional attributed to None so non_gate_parameters() /
+        # gate_parameters() can always use `is not None` checks on every code path.
+        self.template_bank = None
+        self.template_mixing = None
+        self.expert_up = None
+        self.expert_down = None
+
         self.basis = Linear(in_features, basis_size, bias=False)
         if self.tiny_expert and self.n_templates > 1:
+
             # Tiny Experts: K_total experts, each with small bottleneck dim
             # expert_dim = basis_size // topk  for compute parity with dense
             topk = self.tiny_expert_topk
@@ -1418,10 +1426,10 @@ class RemixedLinear(nn.Module):
             for t in self.template_bank:
                 yield t
         # Tiny Expert weight matrices go in Muon group (they are learned projections)
-        if hasattr(self, 'expert_up'):
+        if self.expert_up is not None:
             for m in self.expert_up:
                 yield from m.parameters()
-        if hasattr(self, 'expert_down'):
+        if self.expert_down is not None:
             for m in self.expert_down:
                 yield from m.parameters()
         yield self.bias
