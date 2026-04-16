@@ -188,6 +188,14 @@ def run_training_sweep(args):
         "--p21-per-topk", str(getattr(args, 'p21_per_topk', 0)),
         "--p21-per-learned", str(getattr(args, 'p21_per_learned', 0)),
         "--p21-per-attn", str(getattr(args, 'p21_per_attn', 0)),
+        # Phase 23: Tiny Experts RemixedLinear + Standard MoE baseline
+        "--p23-tiny-expert", str(getattr(args, 'p23_tiny_expert', 0)),
+        "--p23-n-experts", str(getattr(args, 'p23_n_experts', 64)),
+        "--p23-topk", str(getattr(args, 'p23_topk', 16)),
+        "--p23-learned-route", str(getattr(args, 'p23_learned_route', 0)),
+        "--p23-std-moe-experts", str(getattr(args, 'p23_std_moe_experts', 0)),
+        "--p23-std-moe-topk", str(getattr(args, 'p23_std_moe_topk', 1)),
+        "--p23-std-moe-aux-weight", str(getattr(args, 'p23_std_moe_aux_weight', 0.01)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -550,6 +558,14 @@ if __name__ == "__main__":
     parser.add_argument("--p21-per-topk", type=int, default=0)
     parser.add_argument("--p21-per-learned", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p21-per-attn", type=int, default=0, choices=[0, 1])
+    # Phase 23: Tiny Experts RemixedLinear + Standard MoE baseline
+    parser.add_argument("--p23-tiny-expert", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p23-n-experts", type=int, default=64)
+    parser.add_argument("--p23-topk", type=int, default=16)
+    parser.add_argument("--p23-learned-route", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p23-std-moe-experts", type=int, default=0)
+    parser.add_argument("--p23-std-moe-topk", type=int, default=1)
+    parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01)
     args = parser.parse_args()
     
     run_training_sweep(args)

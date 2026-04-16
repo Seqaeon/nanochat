@@ -527,6 +527,164 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 20+21+22 Sweep Complete                     ║"
+echo "║          Phase 20+21+22+23 Sweep Complete                  ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo "Check $LOGFILE for results."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 23: Tiny-Experts RemixedLinear + Standard MoE Baseline
+# ═══════════════════════════════════════════════════════════════════════════
+# Key design:
+#   - K_total=64 experts in the bank; topk active per forward pass
+#   - expert_dim = remix_basis_size // topk  (compute parity with dense)
+#   - FFN layers: per-token routing; Attention layers: per-sequence routing
+#   - Standard MoE (full-size experts) as performance comparison baseline
+#
+# Variables:
+#   DEPTH and REMIX_COMMON are inherited from the Phase 22/prior setup.
+
+echo ""
+echo "═══════════════ Phase 23: Tiny Experts ═══════════════"
+
+# 23A: Standard MoE baseline — K=8 full-size experts, top-1 routing
+TAG="23_STD_MOE_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "28" "$TAG" "StandardMoE K=8 full-size experts, top-1 routing (baseline)"
+    bash scripts/research_sweep.sh \
+      --models base \
+      --p23-std-moe-experts 8 \
+      --p23-std-moe-topk 1 \
+      --p23-std-moe-aux-weight 0.01 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23B: Standard MoE baseline — K=8 full-size experts, top-2 routing
+TAG="23_STD_MOE_TOP2"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29" "$TAG" "StandardMoE K=8 full-size experts, top-2 routing (baseline)"
+    bash scripts/research_sweep.sh \
+      --models base \
+      --p23-std-moe-experts 8 \
+      --p23-std-moe-topk 2 \
+      --p23-std-moe-aux-weight 0.01 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23C: Tiny Expert weight mod — K_total=64, topk=16, frozen routing
+#   expert_dim = basis_size // 16 (e.g. 256//16 = 16 per expert)
+#   16 experts active per token, compute parity with dense
+TAG="23_TINY_WEIGHT_4T_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "30" "$TAG" "TinyExpert weight mod, K_total=64, topk=16, frozen routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-learned-route 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23D: Tiny Expert weight mod — K_total=64, topk=16, learned routing
+TAG="23_TINY_WEIGHT_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "31" "$TAG" "TinyExpert weight mod, K_total=64, topk=16, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-learned-route 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23E: Tiny Expert weight mod — K_total=64, topk=1, frozen routing
+#   expert_dim = basis_size (full-rank per expert), max specialization
+TAG="23_TINY_WEIGHT_TOP1_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "32" "$TAG" "TinyExpert weight mod, K_total=64, topk=1 (full expert), frozen routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 1 \
+      --p23-learned-route 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23F: Tiny Expert weight mod — K_total=64, topk=1, learned routing
+TAG="23_TINY_WEIGHT_TOP1_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "33" "$TAG" "TinyExpert weight mod, K_total=64, topk=1 (full expert), learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 1 \
+      --p23-learned-route 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23G: Tiny Expert householder mod — K_total=64, topk=16, frozen routing
+TAG="23_TINY_HOUSE_4T_FROZEN"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "34" "$TAG" "TinyExpert householder mod, K_total=64, topk=16, frozen routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation householder \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-learned-route 0 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# 23H: Tiny Expert householder mod — K_total=64, topk=16, learned routing
+TAG="23_TINY_HOUSE_4T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "35" "$TAG" "TinyExpert householder mod, K_total=64, topk=16, learned routing"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation householder \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-learned-route 1 \
+      $DEPTH
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║          Phase 23 Sweep Complete                           ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."

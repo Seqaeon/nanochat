@@ -80,7 +80,16 @@ parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], 
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
 parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj ('none'=off, 'sequence'=per-seq, 'token'=per-tok)")
+# Phase 23: Tiny-Experts RemixedLinear + Standard MoE baseline
+parser.add_argument("--p23-tiny-expert", type=int, default=0, choices=[0, 1], help="23: enable Tiny Experts mode in RemixedLinear (each expert_dim=basis_size//topk for compute parity)")
+parser.add_argument("--p23-n-experts", type=int, default=64, help="23: total experts in the Tiny Expert bank (K_total)")
+parser.add_argument("--p23-topk", type=int, default=16, help="23: active experts per forward pass (expert_dim=basis_size//topk); 0=soft all-expert routing")
+parser.add_argument("--p23-learned-route", type=int, default=0, choices=[0, 1], help="23: learned routing projection in Tiny Expert (0=frozen, 1=learned)")
+parser.add_argument("--p23-std-moe-experts", type=int, default=0, help="23: enable StandardMoE_MLP with K full-size experts (0=off)")
+parser.add_argument("--p23-std-moe-topk", type=int, default=1, help="23: top-k active experts for StandardMoE_MLP (0=all/soft)")
+parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="23: load-balance auxiliary loss weight for StandardMoE_MLP")
 # CCL block modulation (only active when --use-remix-linear is set)
+
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
                     help="CCL block strategy")
@@ -379,9 +388,21 @@ def build_model_meta(depth):
             use_context=bool(args.remix_use_context),
             sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
             gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
-            n_templates=getattr(args, 'p22_n_templates', 1),
-            template_routing_learned=bool(getattr(args, 'p22_template_routing_learned', 0)),
+            # n_templates = K_total (total experts in the bank):
+            # When p23_tiny_expert=1, p23_n_experts sets K_total.
+            # Otherwise falls back to p22_n_templates (legacy template bank).
+            n_templates=(
+                getattr(args, 'p23_n_experts', 64)
+                if getattr(args, 'p23_tiny_expert', 0)
+                else getattr(args, 'p22_n_templates', 1)
+            ),
+            template_routing_learned=bool(
+                getattr(args, 'p23_learned_route', 0)
+                if getattr(args, 'p23_tiny_expert', 0)
+                else getattr(args, 'p22_template_routing_learned', 0)
+            ),
         ),
+
         # Fix 1A
         use_layer_context=bool(getattr(args, 'use_layer_context', 1)),
         # Fix 1B
@@ -493,7 +514,16 @@ def build_model_meta(depth):
         p21_per_attn=getattr(args, 'p21_per_attn', 0),
         # Phase 22
         p22_attn_moe_route=getattr(args, 'p22_attn_moe_route', 'none'),
+        # Phase 23: Tiny Expert RemixedLinear + Standard MoE baseline
+        p23_tiny_expert=getattr(args, 'p23_tiny_expert', 0),
+        p23_n_experts=getattr(args, 'p23_n_experts', 64),
+        p23_topk=getattr(args, 'p23_topk', 16),
+        p23_learned_route=getattr(args, 'p23_learned_route', 0),
+        p23_std_moe_experts=getattr(args, 'p23_std_moe_experts', 0),
+        p23_std_moe_topk=getattr(args, 'p23_std_moe_topk', 1),
+        p23_std_moe_aux_weight=getattr(args, 'p23_std_moe_aux_weight', 0.01),
     )
+
     with torch.device("meta"):
         model_meta = GPT(config)
     return model_meta
@@ -643,8 +673,10 @@ print0(f"Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
 num_params = param_counts['total']
-num_flops_per_token = orig_model.estimate_flops()
-print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+num_flops_per_token, num_active_flops_per_token = orig_model.estimate_flops()
+print0(f"Estimated FLOPs per token (total):  {num_flops_per_token:e}")
+print0(f"Estimated FLOPs per token (active): {num_active_flops_per_token:e}")
+
 
 # 1) Use scaling laws to determine the optimal training horizon in tokens
 # The compute-optimal models satisfy the Tokens:Params ratio of --target-param-data-ratio (derived experimentally via scaling laws analysis).
