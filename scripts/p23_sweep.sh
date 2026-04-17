@@ -87,7 +87,9 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --research-dim -1"
 
 # RemixedLinear flags shared by all remix experiments
-REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
+# --no-compile: 64 experts = 3180 Linear layers; torch.compile traces every one
+#   and hangs for 20+ minutes before step 1. Eager mode is fine for 462 steps.
+REMIX_COMMON="--fp8 --no-compile --max-shards 170 --models remixed-linear \
   --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 \
