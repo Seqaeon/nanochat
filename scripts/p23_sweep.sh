@@ -77,7 +77,7 @@ print_header() {
 # ─────────────────────────────────────────
 # Shared settings (mirrors p20_sweeps.sh)
 # ─────────────────────────────────────────
-DEPTH=4
+DEPTH=16
 
 # Dense base-model flags (for baseline and StandardMoE runs)
 BASE_COMMON="--fp8 --max-shards 170 --models base \
