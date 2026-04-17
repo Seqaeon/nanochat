@@ -1658,6 +1658,11 @@ class RemixedLinear(nn.Module):
                     expert_mask = (topk_idx == k)           # (B, T, topk) bool
                     any_mask = expert_mask.any(dim=-1)       # (B, T) bool
                     if not any_mask.any():
+                        # Force parameters into the computation graph to prevent DDP deadlocks
+                        # DDP gradient accumulation hangs if unused parameters change between microbatches
+                        dummy_up = sum(p.sum() for p in self.expert_up[k].parameters())
+                        dummy_down = sum(p.sum() for p in self.expert_down[k].parameters())
+                        pre_output = pre_output + 0.0 * (dummy_up + dummy_down) * pre_output.sum()
                         continue
                     # Compute expert k output for ALL tokens (necessary for gradient through h_gated)
                     # but weight by combined weight across all topk slots that chose this expert
@@ -4662,6 +4667,10 @@ class StandardMoE_MLP(nn.Module):
                 expert_mask = (topk_idx == k)                               # (B, T, topk) bool
                 any_mask    = expert_mask.any(dim=-1)                        # (B, T)
                 if not any_mask.any():
+                    # Force unused experts into the computation graph to prevent DDP deadlocks
+                    dummy_fc = sum(p.sum() for p in self.experts_fc[k].parameters())
+                    dummy_proj = sum(p.sum() for p in self.experts_proj[k].parameters())
+                    y = y + 0.0 * (dummy_fc + dummy_proj) * y.sum()
                     continue
                 h = self.experts_fc[k](x)
                 h = F.relu(h).square()

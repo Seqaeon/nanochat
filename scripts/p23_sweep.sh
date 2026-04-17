@@ -110,57 +110,66 @@ echo ""
 # ══════════════════════════════════════════════════════
 # DENSE BASELINES
 # ══════════════════════════════════════════════════════
-
+#
 # 1: Plain dense transformer (no MoE, no remix) — anchor reference
-TAG="23_BASE_DENSE"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-    bash scripts/research_sweep.sh $BASE_COMMON \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+#TAG="23_BASE_DENSE"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+#    bash scripts/research_sweep.sh $BASE_COMMON \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
 
-# 2: Dense RemixedLinear, weight modulation — n_templates=1 (no expert bank)
+# 2: Tiny Expert RemixedLinear, weight modulation — K=8, topk=1 (no expert bank)
 TAG="23_REMIX_WEIGHT"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "2" "$TAG" "Dense RemixedLinear, weight mod (no template bank)"
+    print_header "2" "$TAG" "Tiny RemixedLinear, weight mod, K=8, top-1"
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation weight \
-      --p22-n-templates 1 \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 8 \
+      --p23-topk 1 \
+      --p23-learned-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
 fi
 
-# 3: Dense RemixedLinear, householder modulation
+# 3: Tiny Expert RemixedLinear, householder modulation — K=8, topk=1
 TAG="23_REMIX_HOUSE"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "3" "$TAG" "Dense RemixedLinear, householder mod (no template bank)"
+    print_header "3" "$TAG" "Tiny RemixedLinear, householder mod, K=8, top-1"
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation householder \
-      --p22-n-templates 1 \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 8 \
+      --p23-topk 1 \
+      --p23-learned-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
 fi
 
-# 4: Dense RemixedLinear, CKR (causal kernel regression) modulation
+# 4: Tiny Expert RemixedLinear, CKR (causal kernel regression) modulation — K=8, topk=1
 TAG="23_REMIX_CKR"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "4" "$TAG" "Dense RemixedLinear, CKR mod, K=8 branches (no template bank)"
+    print_header "4" "$TAG" "Tiny RemixedLinear, CKR mod, K=8 branches, K_exp=8, top-1"
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation ckr \
       --cclblock-ckr-branches 8 \
-      --p22-n-templates 1 \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 8 \
+      --p23-topk 1 \
+      --p23-learned-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"
     echo "════════════════ $TAG COMPLETE ════════════════"
     mark_completed "$TAG"
@@ -171,36 +180,36 @@ fi
 # ══════════════════════════════════════════════════════
 
 # 5: StandardMoE K=8, top-1 routing
-TAG="23_STD_MOE_TOP1"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "5" "$TAG" "StandardMoE K=8 full-size experts, top-1 routing"
-    bash scripts/research_sweep.sh $BASE_COMMON \
-      --p23-std-moe-experts 8 \
-      --p23-std-moe-topk 1 \
-      --p23-std-moe-aux-weight 0.01 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
-
+#TAG="23_STD_MOE_TOP1"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "5" "$TAG" "StandardMoE K=8 full-size experts, top-1 routing"
+#    bash scripts/research_sweep.sh $BASE_COMMON \
+#      --p23-std-moe-experts 8 \
+#      --p23-std-moe-topk 1 \
+#      --p23-std-moe-aux-weight 0.01 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
+#
 # 6: StandardMoE K=8, optimal-sparsity topk (= E^(1-c) = 8^0.7 ≈ 5 for c=0.3)
 #    Pass topk=-1 → StandardMoE_MLP resolves to _moe_optimal_topk(8, c=0.3)=5
-TAG="23_STD_MOE_TOP_OPT"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "6" "$TAG" "StandardMoE K=8 param-parity experts, optimal-sparsity topk (c=0.3 scaling law)"
-    bash scripts/research_sweep.sh $BASE_COMMON \
-      --p23-std-moe-experts 8 \
-      --p23-std-moe-topk -1 \
-      --p23-std-moe-aux-weight 0.01 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
-
+#TAG="23_STD_MOE_TOP_OPT"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "6" "$TAG" "StandardMoE K=8 param-parity experts, optimal-sparsity topk (c=0.3 scaling law)"
+#    bash scripts/research_sweep.sh $BASE_COMMON \
+#      --p23-std-moe-experts 8 \
+#      --p23-std-moe-topk -1 \
+#      --p23-std-moe-aux-weight 0.01 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
+#
 # ══════════════════════════════════════════════════════
 # TINY EXPERTS — weight modulation
 # expert_dim = basis_size // topk  (compute parity)
