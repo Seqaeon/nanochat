@@ -6566,9 +6566,7 @@ class GPT(nn.Module):
                 topk = mlp.topk if mlp.topk > 0 else K  # topk=0 means all
                 if topk < K:
                     # Total expert params in this MLP block
-                    expert_params = sum(
-                        p.numel() for m in (mlp.experts_fc, mlp.experts_proj) for p in m.parameters()
-                    )
+                    expert_params = mlp.experts_fc_w.numel() + mlp.experts_proj_w.numel()
                     # Active fraction: topk/K; rest is inactive
                     inactive_frac = 1.0 - (topk / K)
                     inactive_expert_params += int(expert_params * inactive_frac)
@@ -6582,10 +6580,7 @@ class GPT(nn.Module):
                     topk = submod.tiny_expert_topk
                     K = submod.n_templates
                     if topk > 0 and topk < K:
-                        expert_params = sum(
-                            p.numel() for ml in (submod.expert_up, submod.expert_down)
-                            for p in ml.parameters()
-                        )
+                        expert_params = submod.expert_up_w.numel() + submod.expert_down_w.numel()
                         inactive_frac = 1.0 - (topk / K)
                         inactive_expert_params += int(expert_params * inactive_frac)
                 elif getattr(submod, 'lokr_expert', False):
