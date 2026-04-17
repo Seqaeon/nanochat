@@ -39,6 +39,7 @@
 #   SWEEP_LOG=p23.log bash scripts/p23_sweep.sh
 
 set -e
+set -o pipefail  # pipefail: pipeline exit code = first failing command, not tee's
 
 LOGFILE="${SWEEP_LOG:-sweep.log}"
 STATEFILE="${LOGFILE%.log}.state"
