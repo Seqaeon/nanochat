@@ -198,6 +198,9 @@ def run_training_sweep(args):
         "--p23-std-moe-aux-weight", str(getattr(args, 'p23_std_moe_aux_weight', 0.01)),
         "--p23-lokr", str(getattr(args, 'p23_lokr', 0)),
         "--p23-lokr-rank", str(getattr(args, 'p23_lokr_rank', 4)),
+        "--p23-use-shared-block-router", str(getattr(args, 'p23_use_shared_block_router', 0)),
+        "--p23-linear-moe-experts", str(getattr(args, 'p23_linear_moe_experts', 0)),
+        "--p23-linear-moe-topk", str(getattr(args, 'p23_linear_moe_topk', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -570,6 +573,9 @@ if __name__ == "__main__":
     parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01)
     parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p23-lokr-rank", type=int, default=4)
+    parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p23-linear-moe-experts", type=int, default=0)
+    parser.add_argument("--p23-linear-moe-topk", type=int, default=0)
     args = parser.parse_args()
     
     run_training_sweep(args)

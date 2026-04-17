@@ -77,12 +77,12 @@ print_header() {
 # ─────────────────────────────────────────
 # Shared settings (mirrors p20_sweeps.sh)
 # ─────────────────────────────────────────
-DEPTH=16
+DEPTH=4
 
 # Dense base-model flags (for baseline and StandardMoE runs)
 BASE_COMMON="--fp8 --max-shards 170 --models base \
   --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
-  --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
+  --data-dir data --tokenizer-dir tokenizer \
   --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
   --research-dim -1"
@@ -92,7 +92,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   and hangs for 20+ minutes before step 1. Eager mode is fine for 462 steps.
 REMIX_COMMON="--fp8 --no-compile --max-shards 170 --models remixed-linear \
   --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
-  --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
+  --data-dir data --tokenizer-dir tokenizer \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
   --research-dim -1 \
@@ -132,6 +132,7 @@ else
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation weight \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 8 \
       --p23-topk 1 \
       --p23-learned-route 1 \
@@ -149,6 +150,7 @@ else
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation householder \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 8 \
       --p23-topk 1 \
       --p23-learned-route 1 \
@@ -167,6 +169,7 @@ else
       --cclblock-modulation ckr \
       --cclblock-ckr-branches 8 \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 8 \
       --p23-topk 1 \
       --p23-learned-route 1 \
@@ -211,6 +214,23 @@ fi
 #fi
 #
 # ══════════════════════════════════════════════════════
+
+# 6.5: LinearMoE K=8, top-1 routed blending
+TAG="23_LINEAR_MOE_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "18" "$TAG" "LinearMoE K=8 weight matrices, top-1 blending"
+    bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p23-linear-moe-experts 8 \
+      --p23-linear-moe-topk 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
+
+# ══════════════════════════════════════════════════════
 # TINY EXPERTS — weight modulation
 # expert_dim = basis_size // topk  (compute parity)
 # ══════════════════════════════════════════════════════
@@ -225,6 +245,7 @@ fi
 #     bash scripts/research_sweep.sh $REMIX_COMMON \
 #       --cclblock-modulation weight \
 #       --p23-tiny-expert 1 \
+#       --p23-use-shared-block-router 1 \
 #       --p23-n-experts 64 \
 #       --p23-topk 16 \
 #       --p23-learned-route 0 \
@@ -242,6 +263,7 @@ else
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation weight \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-learned-route 1 \
@@ -260,6 +282,7 @@ fi
 #     bash scripts/research_sweep.sh $REMIX_COMMON \
 #       --cclblock-modulation weight \
 #       --p23-tiny-expert 1 \
+#       --p23-use-shared-block-router 1 \
 #       --p23-n-experts 64 \
 #       --p23-topk 1 \
 #       --p23-learned-route 0 \
@@ -277,6 +300,7 @@ else
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation weight \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 1 \
       --p23-learned-route 1 \
@@ -298,6 +322,7 @@ fi
 #     bash scripts/research_sweep.sh $REMIX_COMMON \
 #       --cclblock-modulation householder \
 #       --p23-tiny-expert 1 \
+#       --p23-use-shared-block-router 1 \
 #       --p23-n-experts 64 \
 #       --p23-topk 16 \
 #       --p23-learned-route 0 \
@@ -315,6 +340,7 @@ else
     bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation householder \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-learned-route 1 \
@@ -339,6 +365,7 @@ fi
 #       --cclblock-modulation ckr \
 #       --cclblock-ckr-branches 8 \
 #       --p23-tiny-expert 1 \
+#       --p23-use-shared-block-router 1 \
 #       --p23-n-experts 64 \
 #       --p23-topk 16 \
 #       --p23-learned-route 0 \
@@ -357,6 +384,7 @@ else
       --cclblock-modulation ckr \
       --cclblock-ckr-branches 8 \
       --p23-tiny-expert 1 \
+      --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-learned-route 1 \

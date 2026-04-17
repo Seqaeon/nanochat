@@ -1259,12 +1259,16 @@ class RemixedLinear(nn.Module):
         self.lokr_rank = remixed_linear_kwargs.get('lokr_rank', 4)
         self.lokr_learned = remixed_linear_kwargs.get('lokr_learned', False)
 
+        # Whether routing is handled externally by SharedBlockRouter (injected via forward kwarg)
+        self._use_shared_route = remixed_linear_kwargs.get('use_shared_route', False)
+
         # Initialise all optional attrs to None so non_gate_parameters() /
         # gate_parameters() can always use `is not None` checks on every code path.
         self.template_bank = None
         self.template_mixing = None
-        self.expert_up = None
-        self.expert_down = None
+        self.expert_up_w = None    # 3D stacked: (K, expert_dim, basis_size)
+        self.expert_down_w = None  # 3D stacked: (K, out_features, expert_dim)
+        self.template_route = None
         self.lokr_down_w = None
         self.lokr_up_w = None
         self.lokr_route_proj = None
@@ -1301,32 +1305,31 @@ class RemixedLinear(nn.Module):
             # Store shrunk basis_size for diagnostics
             self._lokr_basis_size = basis_size
         elif self.tiny_expert and self.n_templates > 1:
-
-            # Tiny Experts: K_total experts, each with small bottleneck dim
-            # expert_dim = basis_size // topk  for compute parity with dense
+            # Phase 23 Tiny Experts — vectorized 3D stacked parameters (no Python loop in forward).
+            # expert_dim = basis_size // topk  for compute parity with dense.
+            # Stacked layout:
+            #   expert_up_w:   (K, expert_dim, basis_size)  — up-projection weights
+            #   expert_down_w: (K, out_features, expert_dim) — down-projection weights
+            # Forward uses einsum over all K experts then gathers top-k.
+            # ALL expert weights always participate in the computation graph → no DDP deadlock.
             topk = self.tiny_expert_topk
             assert topk > 0, "tiny_expert_topk must be > 0"
             assert basis_size % topk == 0, (
                 f"basis_size ({basis_size}) must be divisible by tiny_expert_topk ({topk})"
             )
             self.expert_dim = basis_size // topk
-            # K_total tiny expert pairs: up projects basis→expert_dim, down projects expert_dim→out_features
-            self.expert_up = nn.ModuleList([
-                Linear(basis_size, self.expert_dim, bias=False)
-                for _ in range(self.n_templates)
-            ])
-            self.expert_down = nn.ModuleList([
-                Linear(self.expert_dim, out_features, bias=False)
-                for _ in range(self.n_templates)
-            ])
+            K = self.n_templates
+            self.expert_up_w   = nn.Parameter(torch.empty(K, self.expert_dim, basis_size))
+            self.expert_down_w = nn.Parameter(torch.empty(K, out_features, self.expert_dim))
             self.template_bank = None
             self.template_mixing = None
-            # Content routing for expert selection (routes based on input x)
-            route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
-            if self.template_routing_learned:
-                self.template_route = nn.Parameter(route_init)
-            else:
-                self.register_buffer('template_route', route_init)
+            # Content routing — only created when NOT using SharedBlockRouter
+            if not self._use_shared_route:
+                route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+                if self.template_routing_learned:
+                    self.template_route = nn.Parameter(route_init)
+                else:
+                    self.register_buffer('template_route', route_init)
             # Diagnostics
             self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         elif self.n_templates > 1:
@@ -1459,7 +1462,7 @@ class RemixedLinear(nn.Module):
                 yield from self.poly_coeffs.parameters()
             if hasattr(self, "grassmann_alpha"):
                 yield from self.grassmann_alpha.parameters()
-            if hasattr(self, "template_route") and isinstance(self.template_route, nn.Parameter):
+            if self.template_route is not None and isinstance(self.template_route, nn.Parameter):
                 yield self.template_route
             # LoKR route projection (only when learned — i.e., requires_grad=True)
             if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
@@ -1473,14 +1476,12 @@ class RemixedLinear(nn.Module):
         if self.template_bank is not None:
             for t in self.template_bank:
                 yield t
-        # Tiny Expert weight matrices → Muon group
-        if self.expert_up is not None:
-            for m in self.expert_up:
-                yield from m.parameters()
-        if self.expert_down is not None:
-            for m in self.expert_down:
-                yield from m.parameters()
-        # LoKR expert weight matrices → Muon group (always, even if route is frozen)
+        # Tiny Expert stacked 3D weight tensors → structural AdamW group (ndim=3)
+        if self.expert_up_w is not None:
+            yield self.expert_up_w
+        if self.expert_down_w is not None:
+            yield self.expert_down_w
+        # LoKR expert weight matrices
         if self.lokr_down_w is not None:
             yield self.lokr_down_w
         if self.lokr_up_w is not None:
@@ -1497,7 +1498,11 @@ class RemixedLinear(nn.Module):
         if hasattr(self, "grassmann_bank"):
             yield self.grassmann_bank
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, route_weights=None):
+        """
+        route_weights: optional (B, T, K) pre-computed routing tensor from SharedBlockRouter.
+            When provided, local template_route computation is skipped entirely.
+        """
         dtype = x.dtype
         h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
 
@@ -1626,59 +1631,52 @@ class RemixedLinear(nn.Module):
             pre_output = base_out + expert_delta
 
         elif self.tiny_expert and self.n_templates > 1:
-            # Phase 23 Tiny Experts: compute content-based routing then apply top-k active experts
-            # routing_scope='per_token': route_logits shape (B, T, K_total)
-            # routing_scope='per_sequence': pool x over T, expand back for consistent broadcast
-            if self.routing_scope == 'per_sequence':
-                # Mean-pool x over sequence dimension for a single routing decision per sequence
-                x_pool = x.float().mean(dim=1, keepdim=True)  # (B, 1, in_features)
-                route_logits = x_pool @ self.template_route.float()  # (B, 1, K_total)
-                route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, 1, K_total)
-                # Expand to (B, T, K_total) for per-token weighting (broadcast-safe)
-                route_weights = route_weights.expand(-1, h_gated.shape[1], -1)
+            # Phase 23 Tiny Experts — vectorized via stacked 3D parameter tensors.
+            # expert_up_w:   (K, expert_dim, basis_size)
+            # expert_down_w: (K, out_features, expert_dim)
+            # ALL K experts are computed simultaneously with two einsums; top-k gather
+            # selects contributions.  No Python loop → no DDP deadlock → torch.compile-safe.
+            K = self.n_templates
+            B, T, _ = h_gated.shape
+            out_features = self.expert_down_w.shape[1]
+
+            # ── Routing ──────────────────────────────────────────────────────────
+            if route_weights is not None:
+                # Pre-computed by SharedBlockRouter — skip local routing entirely
+                rw = route_weights  # (B, T, K) already softmaxed
+            elif not self._use_shared_route:
+                if self.routing_scope == 'per_sequence':
+                    x_pool = x.float().mean(dim=1, keepdim=True)              # (B, 1, D)
+                    rw = F.softmax(x_pool @ self.template_route.float(), dim=-1).to(dtype)  # (B, 1, K)
+                    rw = rw.expand(-1, T, -1)                                  # (B, T, K)
+                else:
+                    rw = F.softmax(x.float() @ self.template_route.float(), dim=-1).to(dtype)  # (B, T, K)
             else:
-                # Per-token routing (standard for FFN)
-                route_logits = x.float() @ self.template_route.float()  # (B, T, K_total)
-                route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K_total)
-            # Update diagnostics buffer
+                raise RuntimeError("TinyExpert with use_shared_route=True requires route_weights kwarg")
+
             with torch.no_grad():
-                w_f = route_weights.float()
+                w_f = rw.float()
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
-            B, T, _ = h_gated.shape
-            pre_output = torch.zeros(B, T, self.expert_down[0].weight.shape[0], device=x.device, dtype=dtype)
-            topk = self.tiny_expert_topk
-            if topk > 0 and topk < self.n_templates:
-                # Sparse top-k: only compute topk active experts per token
-                topk_w, topk_idx = route_weights.topk(topk, dim=-1)  # (B, T, topk)
-                topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)  # renormalise
-                for k in range(self.n_templates):
-                    # Build mask for tokens that selected expert k in any of their topk slots
-                    # Combine all topk slots: mask is True if any slot chose expert k
-                    expert_mask = (topk_idx == k)           # (B, T, topk) bool
-                    any_mask = expert_mask.any(dim=-1)       # (B, T) bool
-                    if not any_mask.any():
-                        # Force parameters into the computation graph to prevent DDP deadlocks
-                        # DDP gradient accumulation hangs if unused parameters change between microbatches
-                        dummy_up = sum(p.sum() for p in self.expert_up[k].parameters())
-                        dummy_down = sum(p.sum() for p in self.expert_down[k].parameters())
-                        pre_output = pre_output + 0.0 * (dummy_up + dummy_down) * pre_output.sum()
-                        continue
-                    # Compute expert k output for ALL tokens (necessary for gradient through h_gated)
-                    # but weight by combined weight across all topk slots that chose this expert
-                    h_up = self.expert_up[k](h_gated)        # (B, T, expert_dim)
-                    h_act = F.relu(h_up).square()
-                    h_out = self.expert_down[k](h_act)       # (B, T, out_features)
-                    # Sum weights across topk slots that selected this expert
-                    combined_w = (topk_w * expert_mask.to(dtype)).sum(dim=-1, keepdim=True)  # (B, T, 1)
-                    pre_output = pre_output + combined_w * h_out
+
+            # ── Vectorized expert computation ─────────────────────────────────────
+            # up:  h_gated (B,T,B_sz) × expert_up_w^T  (K,H,B_sz) → (B,T,K,H)
+            all_up  = torch.einsum('btb,khb->btkh',
+                                   h_gated.float(), self.expert_up_w.float())
+            all_up  = F.relu(all_up).square().to(dtype)
+            # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
+            all_out = torch.einsum('btkh,koh->btko',
+                                   all_up.float(), self.expert_down_w.float()).to(dtype)
+
+            topk_val = self.tiny_expert_topk
+            if 0 < topk_val < K:
+                topk_w, topk_idx = rw.topk(topk_val, dim=-1)                # (B, T, tk)
+                topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
+                idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, out_features)  # (B,T,tk,O)
+                topk_out = torch.gather(all_out, dim=2, index=idx_exp)      # (B, T, tk, O)
+                pre_output = (topk_out * topk_w.unsqueeze(-1)).sum(dim=2)   # (B, T, O)
             else:
-                # Soft routing: compute all experts, weighted sum
-                for k in range(self.n_templates):
-                    h_up = self.expert_up[k](h_gated)        # (B, T, expert_dim)
-                    h_act = F.relu(h_up).square()
-                    h_out = self.expert_down[k](h_act)       # (B, T, out_features)
-                    pre_output = pre_output + route_weights[..., k:k+1] * h_out
+                pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)        # (B, T, O)
         elif self.n_templates > 1:
             # Legacy Phase 22: MoE-style template routing (full-rank per-token)
             route_logits = x.float() @ self.template_route.float()  # (B, T, K)
@@ -3625,6 +3623,63 @@ class ResidualAdaptiveLinear(nn.Module):
         return y
 
 
+class LinearMoE(nn.Module):
+    """Weight-space Mixture of Experts — blends K expert weight matrices before a single F.linear call.
+
+    Route: W_eff[b,t] = Σ_k w_k(x[b,t]) * W_k  then  y[b,t] = F.linear(x[b,t], W_eff[b,t])
+
+    Properties:
+      - Fully differentiable everywhere (no discrete routing decisions)
+      - No dead-expert gradient problem (all weights get gradient via chain rule)
+      - Compatible with torch.compile (no Python-level branches on dynamic tensors)
+      - Efficient: soft blending in weight-space → one batched einsum, not K forward passes
+    """
+    def __init__(self, in_features: int, out_features: int, n_experts: int = 8,
+                 topk: int = 0, bias: bool = True):
+        super().__init__()
+        self.n_experts = n_experts
+        self.topk = topk  # 0 = soft (all experts), N = hard top-N
+        # Expert weight bank: (K, out_features, in_features)
+        self.experts_w = nn.Parameter(torch.empty(n_experts, out_features, in_features))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        # Router: in_features → K logits; zero-init → uniform at t=0
+        self.router = nn.Linear(in_features, n_experts, bias=False)
+        nn.init.zeros_(self.router.weight)
+        # Kaiming init for expert weights
+        nn.init.kaiming_uniform_(self.experts_w.view(n_experts * out_features, in_features),
+                                 a=math.sqrt(5))
+        self.experts_w.data = self.experts_w.data.view(n_experts, out_features, in_features)
+        # Compat attrs expected by setup_optimizer / diagnostics
+        self.ln_basis = nn.Identity()
+
+    def gate_parameters(self):
+        yield from self.router.parameters()
+
+    def non_gate_parameters(self):
+        yield self.experts_w
+        if self.bias is not None:
+            yield self.bias
+
+    def forward(self, x, context_state=None, route_weights=None):
+        """x: (B, T, in_features) → (B, T, out_features)."""
+        B, T, _ = x.shape
+        logits = self.router(x)                                    # (B, T, K)
+        if self.topk > 0 and self.topk < self.n_experts:
+            topk_w, topk_idx = logits.topk(self.topk, dim=-1)
+            w = torch.zeros_like(logits).scatter_(-1, topk_idx,
+                                                  F.softmax(topk_w, dim=-1))
+        else:
+            w = F.softmax(logits, dim=-1)                          # (B, T, K) soft
+        # Blend expert weights in parameter space: W_eff = Σ_k w_k * W_k
+        W_eff = torch.einsum('btk,koi->btoi',
+                             w.float(), self.experts_w.float()).to(x.dtype)  # (B, T, out, in)
+        # Single batched matmul (no expert loop)
+        out = torch.einsum('bti,btoi->bto', x, W_eff)
+        if self.bias is not None:
+            out = out + self.bias
+        return out
+
+
 class RemixedFeedForward(nn.Module):
     """Feedforward path using RemixedLinear (or RAL) in the base MLP framework."""
     def __init__(self, config):
@@ -3636,7 +3691,13 @@ class RemixedFeedForward(nn.Module):
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
-        if mode == 'fsi':
+        # Phase 23 LinearMoE mode: weight-space blending of K expert matrices
+        linear_moe_k = getattr(config, 'p23_linear_moe_experts', 0)
+        if linear_moe_k > 0:
+            linear_moe_topk = getattr(config, 'p23_linear_moe_topk', 0)
+            self.c_fc   = LinearMoE(config.n_embd, 4 * config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk)
+            self.c_proj = LinearMoE(4 * config.n_embd, config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk)
+        elif mode == 'fsi':
             n_rot = getattr(config, 'cclblock_fsi_rotations', 8)
             sel_dim = getattr(config, 'cclblock_fsi_selector_dim', 64)
             self.c_fc   = FrozenSubspaceIndexedLinear(config.n_embd, 4 * config.n_embd, n_rotations=n_rot, selector_dim=sel_dim, signal_dim=config.n_embd)
@@ -3741,13 +3802,16 @@ class RemixedFeedForward(nn.Module):
         # 18F: Per-Channel Scale after projection
         self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
 
-    def forward(self, x, context_state):
-        x = self.c_fc(x, context_state)
+    def forward(self, x, context_state, route_weights=None):
+        """route_weights: optional dict from SharedBlockRouter with 'c_fc' and 'c_proj_ffn' keys."""
+        rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   RemixedLinear)) else None
+        rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, RemixedLinear)) else None
+        x = self.c_fc(x, context_state, route_weights=rw_fc)
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:
             x = F.relu(x).square()
-        x = self.c_proj(x, context_state)
+        x = self.c_proj(x, context_state, route_weights=rw_proj)
         if self.channel_scale is not None:
             x = self.channel_scale(x)
         return x
@@ -3921,7 +3985,10 @@ class RemixedMultiAttention(nn.Module):
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
         self._attn_mode = mode  # store for forward dispatch
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state, route_weights=None):
+        """route_weights: optional dict from SharedBlockRouter with 'c_q','c_k','c_v','c_proj_attn'."""
+        is_rl = isinstance(self.c_q, RemixedLinear)  # True for weight-mod path
+        rw = route_weights if (route_weights is not None and is_rl) else None
         B, T, C = x.size()
         if self._attn_mode == 'ckr_ffn':
             # Plain Linear for attention — no context_state
@@ -3929,9 +3996,9 @@ class RemixedMultiAttention(nn.Module):
             k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
             v_full = self.c_v(x).view(B, T, self.n_kv_head, self.v_head_dim)
         else:
-            q = self.c_q(x, context_state).view(B, T, self.n_head, self.head_dim)
-            k = self.c_k(x, context_state).view(B, T, self.n_kv_head, self.head_dim)
-            v_full = self.c_v(x, context_state).view(B, T, self.n_kv_head, self.v_head_dim)
+            q = self.c_q(x, context_state, route_weights=rw['c_q']      if rw else None).view(B, T, self.n_head, self.head_dim)
+            k = self.c_k(x, context_state, route_weights=rw['c_k']      if rw else None).view(B, T, self.n_kv_head, self.head_dim)
+            v_full = self.c_v(x, context_state, route_weights=rw['c_v'] if rw else None).view(B, T, self.n_kv_head, self.v_head_dim)
         v = v_full[..., :self.head_dim]
 
         if ve is not None:
@@ -3961,7 +4028,7 @@ class RemixedMultiAttention(nn.Module):
         y = y.contiguous().view(B, T, -1)
         if self._attn_mode == 'ckr_ffn':
             return self.c_proj(y)
-        return self.c_proj(y, context_state)
+        return self.c_proj(y, context_state, route_weights=rw['c_proj_attn'] if rw else None)
 
     def forward_with_shadow(self, x, ve, cos_sin, window_size, kv_cache, context_state):
         """Dual-V routing: return content output plus shadow stream routed by same attention map."""
@@ -4051,6 +4118,72 @@ class RemixedMultiAttention(nn.Module):
         return self.c_proj(y, context_state), q_stats
 
 
+class SharedBlockRouter(nn.Module):
+    """Pre-computes routing weights for ALL RemixedLinear layers in a block in two matmuls.
+
+    Instead of each of the 6 RemixedLinear layers independently computing K routing logits
+    (6 separate matmuls), this module batches all logits into two combined matmuls at block entry:
+
+      - Token-level  (c_fc, c_proj_ffn)            : (B, T, K×2) in one shot
+      - Sequence-level (c_q, c_k, c_v, c_proj_attn): (B, 1, K×4) then expand to (B, T, K×4)
+
+    Each RemixedLinear receives its corresponding slice via the `route_weights` kwarg
+    and skips local routing entirely.  This cuts routing kernel launches from 6 to 2 per block.
+    """
+    N_TOKEN_LAYERS = 2   # c_fc, c_proj_ffn
+    N_SEQ_LAYERS   = 4   # c_q, c_k, c_v, c_proj_attn
+    TOKEN_KEYS     = ('c_fc', 'c_proj_ffn')
+    SEQ_KEYS       = ('c_q', 'c_k', 'c_v', 'c_proj_attn')
+
+    def __init__(self, n_embd: int, n_experts: int, learned: bool = True):
+        super().__init__()
+        self.n_experts = n_experts
+        K = n_experts
+        if learned:
+            self.token_proj = nn.Parameter(torch.empty(n_embd, K * self.N_TOKEN_LAYERS))
+            self.seq_proj   = nn.Parameter(torch.empty(n_embd, K * self.N_SEQ_LAYERS))
+            nn.init.normal_(self.token_proj, std=n_embd ** -0.5)
+            nn.init.normal_(self.seq_proj,   std=n_embd ** -0.5)
+        else:
+            self.register_buffer('token_proj',
+                torch.randn(n_embd, K * self.N_TOKEN_LAYERS) / (n_embd ** 0.5))
+            self.register_buffer('seq_proj',
+                torch.randn(n_embd, K * self.N_SEQ_LAYERS)   / (n_embd ** 0.5))
+
+    def forward(self, x: 'Tensor') -> dict:
+        """x: (B, T, D) — normalized residual stream.
+        Returns dict: layer_name → (B, T, K) softmax routing weights.
+        """
+        B, T, _ = x.shape
+        K       = self.n_experts
+        dtype   = x.dtype
+        # Token routing: one matmul → (B, T, N_tok * K) → softmax over last K
+        tok_logits  = x.float() @ self.token_proj.float()                        # (B, T, K*2)
+        tok_weights = F.softmax(
+            tok_logits.view(B, T, self.N_TOKEN_LAYERS, K), dim=-1
+        ).to(dtype)                                                               # (B, T, 2, K)
+        # Sequence routing: mean-pool → one matmul → expand
+        x_pool      = x.float().mean(dim=1, keepdim=True)                        # (B, 1, D)
+        seq_logits  = x_pool @ self.seq_proj.float()                             # (B, 1, K*4)
+        seq_weights = F.softmax(
+            seq_logits.view(B, 1, self.N_SEQ_LAYERS, K), dim=-1
+        ).to(dtype).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()             # (B, T, 4, K)
+        return {
+            'c_fc':         tok_weights[:, :, 0, :],   # (B, T, K)
+            'c_proj_ffn':   tok_weights[:, :, 1, :],
+            'c_q':          seq_weights[:, :, 0, :],
+            'c_k':          seq_weights[:, :, 1, :],
+            'c_v':          seq_weights[:, :, 2, :],
+            'c_proj_attn':  seq_weights[:, :, 3, :],
+        }
+
+    def gate_parameters(self):
+        """Routing projection tensors go into the lower-LR gate group."""
+        if isinstance(self.token_proj, nn.Parameter):
+            yield self.token_proj
+            yield self.seq_proj
+
+
 class RemixedBlock(nn.Module):
     """Attention-Grounded Context-Conditioned Linear block — 'weight' modulation path.
 
@@ -4082,6 +4215,18 @@ class RemixedBlock(nn.Module):
             self.norm_mlp = None
         # 18E: Stochastic depth (LayerDrop)
         self.layer_drop = getattr(config, 'p18_layer_drop', 0.0)
+        # Phase 23: Block-level shared router.
+        # Computes routing logits for ALL RemixedLinear layers in a single pair of matmuls per block.
+        # When enabled, each RemixedLinear skips its own local template_route computation.
+        self._shared_router = None
+        if (getattr(config, 'p23_tiny_expert', 0) and
+                getattr(config, 'p23_n_experts', 1) > 1 and
+                getattr(config, 'p23_use_shared_block_router', 0)):
+            self._shared_router = SharedBlockRouter(
+                n_embd=config.n_embd,
+                n_experts=getattr(config, 'p23_n_experts', 8),
+                learned=bool(getattr(config, 'p23_learned_route', 0)),
+            )
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
@@ -4159,6 +4304,12 @@ class RemixedBlock(nn.Module):
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
 
+        # Phase 23 shared routing: compute all K*N_layers routing decisions in 2 matmuls
+        # from norm(x) before any transformation.  Each sub-module receives its slice.
+        block_route = None
+        if self._shared_router is not None:
+            block_route = self._shared_router(norm(x))
+
         # FSI/AESP/CKR/PGR/CIL/PRB/ARG/KFL bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
         if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb', 'arg', 'kfl'):
@@ -4227,20 +4378,22 @@ class RemixedBlock(nn.Module):
             
             if is_dacs:
                 # Attention runs WITHOUT context
-                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, context_state=None)
+                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+                                     context_state=None, route_weights=block_route)
                 x = x + attn_out
                 # Compute context FROM attn_out
                 ctx = stream(attn_out, None if local else prev_ctx)
             else:
                 # Attention runs WITH context (unless local/shifted)
                 attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
-                                     None if (local or self.is_shifted) else prev_ctx)
+                                     None if (local or self.is_shifted) else prev_ctx,
+                                     route_weights=block_route)
                 x = x + attn_out
                 # Context source: 'shifted' reads from x_entry (prev layer), others from post-attn norm(x)
                 ctx_src = norm(x_entry if self.is_shifted else x)
                 ctx = stream(ctx_src, None if local else prev_ctx)
-                
-            x = x + self.ffwd(norm(x), ctx)
+
+            x = x + self.ffwd(norm(x), ctx, route_weights=block_route)
             out_ctx = ctx.detach() if (local or self.is_shifted or is_dacs) else ctx
             self._last_ctx = out_ctx
             return x, out_ctx
@@ -4601,6 +4754,7 @@ class StandardMoE_MLP(nn.Module):
         self.n_experts = n_experts
         self.aux_weight = aux_weight
         D = config.n_embd
+        self.n_embd = D
         # Param-parity: each expert is 1/E the size of a dense FFN
         H = max(1, (4 * D) // n_experts)
         self.expert_hidden = H
@@ -4610,12 +4764,19 @@ class StandardMoE_MLP(nn.Module):
         self.topk = topk
         print(f"StandardMoE_MLP: E={n_experts}, H_expert={H} (parity), topk={topk} "
               f"({'optimal' if topk == _moe_optimal_topk(n_experts, self.ROUTER_C_PRIOR) else 'fixed'})")
-        # E param-parity expert pairs
-        self.experts_fc   = nn.ModuleList([Linear(D, H, bias=False) for _ in range(n_experts)])
-        self.experts_proj = nn.ModuleList([Linear(H, D, bias=False) for _ in range(n_experts)])
+        # Stacked 3D expert weights — vectorized, no Python loop in forward:
+        #   experts_fc_w:   (E, H, D)  up-projection   (equiv. E × Linear(D, H))
+        #   experts_proj_w: (E, D, H)  down-projection (equiv. E × Linear(H, D))
+        # All expert weights always participate in the graph → DDP-safe, compile-safe.
+        self.experts_fc_w   = nn.Parameter(torch.empty(n_experts, H, D))
+        self.experts_proj_w = nn.Parameter(torch.empty(n_experts, D, H))
         # Learned router: D → E logits; zero-init → uniform routing at t=0
         self.router = Linear(D, n_experts, bias=False)
         nn.init.zeros_(self.router.weight)
+        # Kaiming-uniform init for fc_w; zeros for proj_w (mirrors Linear init convention)
+        nn.init.kaiming_uniform_(self.experts_fc_w.view(n_experts * H, D), a=math.sqrt(5))
+        self.experts_fc_w.data = self.experts_fc_w.data.view(n_experts, H, D)
+        nn.init.zeros_(self.experts_proj_w)
         # Diagnostics (non-parameter state, not saved to checkpoint)
         self._last_router_entropy   = 0.0
         self._last_expert_load      = None
@@ -4657,33 +4818,26 @@ class StandardMoE_MLP(nn.Module):
             # Optimal-E feasibility: 15% gain threshold from doubling E
             self._optimal_e_feasible = (c > 0.20)
 
-        # ── Expert computation ────────────────────────────────────────────────
-        y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
-        if 0 < self.topk < self.n_experts:
-            # Sparse top-k routing
-            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)  # (B, T, k)
+        # ── Vectorized expert computation ─────────────────────────────────────
+        # experts_fc_w:   (E, H, D)  — all E up-projections in one einsum
+        # experts_proj_w: (E, D, H)  — all E down-projections in one einsum
+        # Then top-k gather: no Python loop, DDP-safe, torch.compile-safe.
+        E = self.n_experts
+
+        # (B, T, D) × (E, H, D)^T → (B, T, E, H)
+        all_h = torch.einsum('btd,ehd->bteh', x.float(), self.experts_fc_w.float())
+        all_h = F.relu(all_h).square().to(dtype)
+        # (B, T, E, H) × (E, D, H)^T → (B, T, E, D)
+        all_out = torch.einsum('bteh,edh->bted', all_h.float(), self.experts_proj_w.float()).to(dtype)
+
+        if 0 < self.topk < E:
+            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)       # (B, T, k)
             topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)
-            for k in range(self.n_experts):
-                expert_mask = (topk_idx == k)                               # (B, T, topk) bool
-                any_mask    = expert_mask.any(dim=-1)                        # (B, T)
-                if not any_mask.any():
-                    # Force unused experts into the computation graph to prevent DDP deadlocks
-                    dummy_fc = sum(p.sum() for p in self.experts_fc[k].parameters())
-                    dummy_proj = sum(p.sum() for p in self.experts_proj[k].parameters())
-                    y = y + 0.0 * (dummy_fc + dummy_proj) * y.sum()
-                    continue
-                h = self.experts_fc[k](x)
-                h = F.relu(h).square()
-                h = self.experts_proj[k](h)
-                combined_w = (topk_w * expert_mask.to(dtype)).sum(dim=-1, keepdim=True)  # (B,T,1)
-                y = y + combined_w * h
+            idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, D)     # (B, T, k, D)
+            topk_out = torch.gather(all_out, dim=2, index=idx_exp)          # (B, T, k, D)
+            y = (topk_out * topk_w.unsqueeze(-1)).sum(dim=2)                # (B, T, D)
         else:
-            # Soft routing (topk=0 or topk≥E): compute all experts, weighted sum
-            for k in range(self.n_experts):
-                h = self.experts_fc[k](x)
-                h = F.relu(h).square()
-                h = self.experts_proj[k](h)
-                y = y + router_weights[..., k:k+1] * h
+            y = (all_out * router_weights.unsqueeze(-1)).sum(dim=2)         # (B, T, D)
 
         return y
 
@@ -6004,6 +6158,12 @@ class GPT(nn.Module):
                     if sub.template_bank is not None:
                         for t in sub.template_bank:
                             torch.nn.init.kaiming_normal_(t)
+                    # Phase 23 Stacked Tiny Experts
+                    if sub.expert_up_w is not None:
+                        K, H, B_sz = sub.expert_up_w.shape
+                        torch.nn.init.kaiming_uniform_(sub.expert_up_w.view(K * H, B_sz), a=math.sqrt(5))
+                    if sub.expert_down_w is not None:
+                        torch.nn.init.zeros_(sub.expert_down_w)
                     # LoKR: kaiming for down projections, zeros for up (identity start)
                     if sub.lokr_down_w is not None:
                         torch.nn.init.kaiming_uniform_(sub.lokr_down_w, a=math.sqrt(5))
@@ -6011,6 +6171,12 @@ class GPT(nn.Module):
                         torch.nn.init.zeros_(sub.lokr_up_w)
                     if sub.lokr_route_proj is not None:
                         torch.nn.init.normal_(sub.lokr_route_proj, std=0.02)
+                    # Phase 23 Stacked Tiny Experts
+                    if sub.expert_up_w is not None:
+                        K, H, B_sz = sub.expert_up_w.shape
+                        torch.nn.init.kaiming_uniform_(sub.expert_up_w.view(K * H, B_sz), a=math.sqrt(5))
+                    if sub.expert_down_w is not None:
+                        torch.nn.init.zeros_(sub.expert_down_w)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
                         # basis_modulator: zero-init ALL linear weights so that at init
@@ -6032,6 +6198,30 @@ class GPT(nn.Module):
                         torch.nn.init.zeros_(sub.output_gate_basis)
                         torch.nn.init.constant_(sub.output_gate_scale, 0.1)
                     continue  # Skip further processing of this module's sub-components here
+
+                if isinstance(sub, StandardMoE_MLP):
+                    if hasattr(sub, 'experts_fc_w'):
+                        E, H, D = sub.experts_fc_w.shape
+                        torch.nn.init.kaiming_uniform_(sub.experts_fc_w.view(E * H, D), a=math.sqrt(5))
+                        torch.nn.init.zeros_(sub.experts_proj_w)
+                    if hasattr(sub, 'router'):
+                        torch.nn.init.zeros_(sub.router.weight)
+                    continue
+
+                if isinstance(sub, LinearMoE):
+                    K, O, I = sub.experts_w.shape
+                    torch.nn.init.kaiming_uniform_(sub.experts_w.view(K * O, I), a=math.sqrt(5))
+                    if sub.bias is not None:
+                        torch.nn.init.zeros_(sub.bias)
+                    torch.nn.init.zeros_(sub.router.weight)
+                    continue
+
+                if isinstance(sub, SharedBlockRouter):
+                    n_embd = sub.token_proj.shape[0]
+                    if isinstance(sub.token_proj, nn.Parameter):
+                        torch.nn.init.normal_(sub.token_proj, std=n_embd ** -0.5)
+                        torch.nn.init.normal_(sub.seq_proj, std=n_embd ** -0.5)
+                    continue
 
                 if isinstance(sub, ImprovedContextAwareRouter):
                     torch.nn.init.normal_(sub.routing_queries, mean=0.0, std=sub.router_dim ** -0.5)

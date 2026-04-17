@@ -90,6 +90,9 @@ parser.add_argument("--p23-std-moe-topk", type=int, default=-1, help="23: top-k 
 parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="23: load-balance auxiliary loss weight for StandardMoE_MLP")
 parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1], help="23: enable LoKR mode in RemixedLinear")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
+parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1], help="23: block-level single pass router for all RemixedLinear inner experts")
+parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
+parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
@@ -533,6 +536,9 @@ def build_model_meta(depth):
         p23_std_moe_aux_weight=getattr(args, 'p23_std_moe_aux_weight', 0.01),
         p23_lokr=getattr(args, 'p23_lokr', 0),
         p23_lokr_rank=getattr(args, 'p23_lokr_rank', 4),
+        p23_use_shared_block_router=getattr(args, 'p23_use_shared_block_router', 0),
+        p23_linear_moe_experts=getattr(args, 'p23_linear_moe_experts', 0),
+        p23_linear_moe_topk=getattr(args, 'p23_linear_moe_topk', 0),
     )
 
     with torch.device("meta"):
