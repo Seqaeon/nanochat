@@ -86,7 +86,7 @@ parser.add_argument("--p23-n-experts", type=int, default=64, help="23: total exp
 parser.add_argument("--p23-topk", type=int, default=16, help="23: active experts per forward pass (expert_dim=basis_size//topk); 0=soft all-expert routing")
 parser.add_argument("--p23-learned-route", type=int, default=0, choices=[0, 1], help="23: learned routing projection in Tiny Expert (0=frozen, 1=learned)")
 parser.add_argument("--p23-std-moe-experts", type=int, default=0, help="23: enable StandardMoE_MLP with K full-size experts (0=off)")
-parser.add_argument("--p23-std-moe-topk", type=int, default=1, help="23: top-k active experts for StandardMoE_MLP (0=all/soft)")
+parser.add_argument("--p23-std-moe-topk", type=int, default=-1, help="23: top-k active experts for StandardMoE_MLP (-1=optimal sparsity via E^(1-c), 0=all/soft, N=fixed)")
 parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="23: load-balance auxiliary loss weight for StandardMoE_MLP")
 parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1], help="23: enable LoKR mode in RemixedLinear")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")

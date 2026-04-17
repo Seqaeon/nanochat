@@ -4554,112 +4554,122 @@ class MoNE_MLP(nn.Module):
         return y
 
 
-class StandardMoE_MLP(nn.Module):
-    """23: Standard Mixture-of-Experts MLP (full-size experts, learned router).
+def _moe_optimal_topk(n_experts: int, c: float = 0.3) -> int:
+    """Compute theoretically optimal number of active experts for a Standard MoE.
 
-    K full-size experts (each hidden_dim = 4*D), learned softmax router with load-balancing
-    auxiliary loss. Used as the Phase 23 performance baseline to compare against
-    Tiny-Expert RemixedLinear.
+    From the effective-parameter scaling law  P_eff ≈ P_active · E^c:
+    * P_active is fixed by param-parity (topk · H_expert = 4D, where H_expert = 4D/E).
+    * The model should use exactly E tokens per token when compute parity ≡ dense,
+      i.e. topk=E  (0% sparsity) is optimal when E is small.
+    * As E → ∞ the optimal sparsity fraction approaches 1-c, giving
+          topk_opt = E^(1-c)   [rounds to nearest int, clamped ≥ 1]
 
-    Modes:
-      - topk=0:  soft routing (compute all K experts, weighted sum) — high compute
-      - topk=N:  sparse top-N routing — only N experts compute per token
-
-    Load-balance aux loss encourages uniform expert utilisation:
-        aux_loss = K * Σ_k (mean_fraction_k * mean_prob_k)
-    (Zbigniew / Switch Transformer formulation)
+    With c=0.3: topk_opt(8) = 8^0.7 ≈ 5   (37.5% sparsity)
+                topk_opt(4) = 4^0.7 ≈ 3   (25% sparsity)
+                topk_opt(2) = 2^0.7 ≈ 1.6 → 2 (0% sparsity ≡ dense)
     """
-    def __init__(self, config, n_experts=8, topk=1, aux_weight=0.01):
+    return max(1, round(n_experts ** (1.0 - c)))
+
+
+class StandardMoE_MLP(nn.Module):
+    """23: Standard Mixture-of-Experts MLP (param-parity experts, learned router).
+
+    Expert sizing follows **compute parity** with the dense baseline:
+        H_expert = 4 * D // E
+    so that when *all* experts are active (topk=E, 0% sparsity) the active FLOPs
+    exactly match a dense FFN.  This is the only fair comparison point.
+
+    topk modes:
+      -1  → optimal sparsity: topk = max(1, round(E^(1-c))) with c=0.3
+                               Follows the P_eff ≈ P_active·E^c scaling law.
+       0  → soft routing: all E experts are computed and averaged (highest compute)
+       N  → fixed sparse top-N routing
+
+    Load-balance aux loss (Switch Transformer formulation):
+        aux_loss = E * Σ_k (mean_fraction_k * mean_prob_k)
+    """
+    # Default router efficiency assumed for optimal topk when c hasn't been measured yet
+    ROUTER_C_PRIOR = 0.3
+
+    def __init__(self, config, n_experts: int = 8, topk: int = -1, aux_weight: float = 0.01):
         super().__init__()
         self.n_experts = n_experts
-        self.topk = topk
         self.aux_weight = aux_weight
         D = config.n_embd
-        H = 4 * D  # full-size hidden dim per expert
+        # Param-parity: each expert is 1/E the size of a dense FFN
+        H = max(1, (4 * D) // n_experts)
         self.expert_hidden = H
-        # K full-size expert pairs
-        self.experts_fc = nn.ModuleList([
-            Linear(D, H, bias=False) for _ in range(n_experts)])
-        self.experts_proj = nn.ModuleList([
-            Linear(H, D, bias=False) for _ in range(n_experts)])
-        # Learned router: D → K logits
+        # Resolve topk=-1 → optimal sparsity
+        if topk == -1:
+            topk = _moe_optimal_topk(n_experts, c=self.ROUTER_C_PRIOR)
+        self.topk = topk
+        print(f"StandardMoE_MLP: E={n_experts}, H_expert={H} (parity), topk={topk} "
+              f"({'optimal' if topk == _moe_optimal_topk(n_experts, self.ROUTER_C_PRIOR) else 'fixed'})")
+        # E param-parity expert pairs
+        self.experts_fc   = nn.ModuleList([Linear(D, H, bias=False) for _ in range(n_experts)])
+        self.experts_proj = nn.ModuleList([Linear(H, D, bias=False) for _ in range(n_experts)])
+        # Learned router: D → E logits; zero-init → uniform routing at t=0
         self.router = Linear(D, n_experts, bias=False)
-        # Zero-init router for uniform routing at start
         nn.init.zeros_(self.router.weight)
-        # Diagnostics (not parameters, not buffers)
-        self._last_router_entropy = 0.0
-        self._last_expert_load = None
-        # Cache router logits for aux loss computation in training loop
-        self._last_router_logits = None
+        # Diagnostics (non-parameter state, not saved to checkpoint)
+        self._last_router_entropy   = 0.0
+        self._last_expert_load      = None
+        self._last_router_c         = self.ROUTER_C_PRIOR
+        self._optimal_e_feasible    = False
+        self._last_router_logits    = None
 
     def compute_aux_loss(self):
-        """Switch Transformer load-balance loss. Called by training loop after forward."""
+        """Switch Transformer load-balance loss. Call after forward() in training loop."""
         if self._last_router_logits is None:
             return None
-        logits = self._last_router_logits  # (B, T, K)
-        K = self.n_experts
-        # router_probs: softmax probabilities per token
-        probs = F.softmax(logits.float(), dim=-1)          # (B, T, K)
-        # mean_prob: average routing probability per expert
-        mean_prob = probs.mean(dim=(0, 1))                 # (K,)
-        # mean_fraction: fraction of tokens dispatched to each expert (top-1 hard fraction)
-        _, hard_idx = logits.topk(1, dim=-1)               # (B, T, 1)
-        one_hot = torch.zeros_like(probs)
+        logits = self._last_router_logits  # (B, T, E)
+        E = self.n_experts
+        probs    = F.softmax(logits.float(), dim=-1)   # (B, T, E)
+        mean_prob = probs.mean(dim=(0, 1))              # (E,)
+        _, hard_idx = logits.topk(1, dim=-1)            # (B, T, 1)
+        one_hot  = torch.zeros_like(probs)
         one_hot.scatter_(-1, hard_idx, 1.0)
-        mean_frac = one_hot.mean(dim=(0, 1))               # (K,)
-        aux_loss = K * (mean_prob * mean_frac).sum()
+        mean_frac = one_hot.mean(dim=(0, 1))            # (E,)
+        aux_loss  = E * (mean_prob * mean_frac).sum()
         return self.aux_weight * aux_loss
 
     def forward(self, x):
         B, T, D = x.shape
         dtype = x.dtype
-        # Learned router: per-token routing logits
-        router_logits = self.router(x)        # (B, T, K)
-        self._last_router_logits = router_logits  # save for aux loss
-        router_weights = F.softmax(router_logits.float(), dim=-1).to(dtype)  # (B, T, K)
+        router_logits  = self.router(x)                                   # (B, T, E)
+        self._last_router_logits = router_logits
+        router_weights = F.softmax(router_logits.float(), dim=-1).to(dtype)  # (B, T, E)
 
-        # Cache diagnostics
+        # ── Diagnostics ───────────────────────────────────────────────────────
         with torch.no_grad():
-            rw_float = router_weights.float()
-            log_rw = torch.log(rw_float.clamp(min=1e-8))
-            entropy = -(rw_float * log_rw).sum(dim=-1).mean().item()
+            rw_f = router_weights.float()
+            entropy = -(rw_f * torch.log(rw_f.clamp(min=1e-8))).sum(dim=-1).mean().item()
             self._last_router_entropy = entropy
-            self._last_expert_load = rw_float.mean(dim=(0, 1))  # (K,)
-            # Estimate router efficiency coefficient c ≈ entropy / log(K)
-            # c=1: perfectly uniform (no specialisation), c≈0: one expert always wins
-            # Typical trained MoE: 0.3–0.4
+            self._last_expert_load    = rw_f.mean(dim=(0, 1))  # (E,)
             max_entropy = math.log(max(self.n_experts, 2))
-            self._last_router_c = entropy / max_entropy if max_entropy > 0 else 0.0
-            # Optimal number of experts at current scale:
-            # P_eff ≈ P_active * E^c  — marginal gain of doubling E is worth it while
-            # 2^c > 1.15 (15% threshold), i.e. c*log2 > log(1.15), i.e. c > 0.20
-            # Below that threshold, the current scale is too small to benefit from sparsity.
-            c = self._last_router_c
-            if c > 0.20:
-                # Optimal E: point where adding another doubling gives <15% gain
-                # Empirically: E_opt ≈ (P_dense / P_active)^(1/c) when routing is efficient
-                # For now, report as informational
-                self._optimal_e_feasible = True
-            else:
-                self._optimal_e_feasible = False  # at this scale, K=1 (dense) is optimal
+            c = entropy / max_entropy if max_entropy > 0 else 0.0
+            self._last_router_c = c
+            # Optimal-E feasibility: 15% gain threshold from doubling E
+            self._optimal_e_feasible = (c > 0.20)
 
+        # ── Expert computation ────────────────────────────────────────────────
         y = torch.zeros(B, T, D, device=x.device, dtype=dtype)
-        if self.topk > 0 and self.topk < self.n_experts:
+        if 0 < self.topk < self.n_experts:
             # Sparse top-k routing
-            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)  # (B, T, topk)
+            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)  # (B, T, k)
             topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)
             for k in range(self.n_experts):
-                expert_mask = (topk_idx == k)              # (B, T, topk) bool
-                any_mask = expert_mask.any(dim=-1)          # (B, T)
+                expert_mask = (topk_idx == k)                               # (B, T, topk) bool
+                any_mask    = expert_mask.any(dim=-1)                        # (B, T)
                 if not any_mask.any():
                     continue
                 h = self.experts_fc[k](x)
                 h = F.relu(h).square()
                 h = self.experts_proj[k](h)
-                combined_w = (topk_w * expert_mask.to(dtype)).sum(dim=-1, keepdim=True)  # (B, T, 1)
+                combined_w = (topk_w * expert_mask.to(dtype)).sum(dim=-1, keepdim=True)  # (B,T,1)
                 y = y + combined_w * h
         else:
-            # Soft routing: all experts, weighted sum
+            # Soft routing (topk=0 or topk≥E): compute all experts, weighted sum
             for k in range(self.n_experts):
                 h = self.experts_fc[k](x)
                 h = F.relu(h).square()

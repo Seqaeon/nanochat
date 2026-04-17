@@ -254,7 +254,7 @@ class MuonAdamW(torch.optim.Optimizer):
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 
         # Stack grads and params (NOTE: this assumes all params have the same shape)
-        stacked_grads = torch.stack([p.grad for p in params])
+        stacked_grads = torch.stack([(p.grad if p.grad is not None else torch.zeros_like(p)) for p in params])
         stacked_params = torch.stack(params)
 
         # Fill all the 0-D tensors with current values
@@ -283,15 +283,16 @@ class MuonAdamW(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
-            active_params = [p for p in group['params'] if p.grad is not None]
-            if not active_params:
-                continue
-            active_group = dict(group)
-            active_group['params'] = active_params
             if group['kind'] == 'adamw':
+                active_params = [p for p in group['params'] if p.grad is not None]
+                if not active_params:
+                    continue
+                active_group = dict(group)
+                active_group['params'] = active_params
                 self._step_adamw(active_group)
             elif group['kind'] == 'muon':
-                self._step_muon(active_group)
+                # Muon needs consistent param lists since state shape is tied to group size
+                self._step_muon(group)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
@@ -398,7 +399,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
         shape, device, dtype = p.shape, p.device, p.dtype
 
         # Stack grads and zero-pad to padded_num_params
-        grad_stack = torch.stack([p.grad for p in params])
+        grad_stack = torch.stack([(p.grad if p.grad is not None else torch.zeros_like(p)) for p in params])
         stacked_grads = torch.empty(padded_num_params, *shape, dtype=dtype, device=device)
         stacked_grads[:len(params)].copy_(grad_stack)
         if len(params) < padded_num_params:
@@ -518,16 +519,18 @@ class DistMuonAdamW(torch.optim.Optimizer):
         active_groups: list[dict] = []
         reduce_infos: list[dict] = []
         for group in self.param_groups:
-            active_params = [p for p in group['params'] if p.grad is not None]
-            if not active_params:
-                continue
-            active_group = dict(group)
-            active_group['params'] = active_params
-            active_groups.append(active_group)
             if group['kind'] == 'adamw':
+                active_params = [p for p in group['params'] if p.grad is not None]
+                if not active_params:
+                    continue
+                active_group = dict(group)
+                active_group['params'] = active_params
+                active_groups.append(active_group)
                 reduce_infos.append(self._reduce_adamw(active_group, world_size))
             elif group['kind'] == 'muon':
-                reduce_infos.append(self._reduce_muon(active_group, world_size))
+                # Muon needs consistent param lists since state shape is tied to group size
+                active_groups.append(group)
+                reduce_infos.append(self._reduce_muon(group, world_size))
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 

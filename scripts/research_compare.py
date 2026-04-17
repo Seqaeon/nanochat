@@ -194,7 +194,7 @@ def run_training_sweep(args):
         "--p23-topk", str(getattr(args, 'p23_topk', 16)),
         "--p23-learned-route", str(getattr(args, 'p23_learned_route', 0)),
         "--p23-std-moe-experts", str(getattr(args, 'p23_std_moe_experts', 0)),
-        "--p23-std-moe-topk", str(getattr(args, 'p23_std_moe_topk', 1)),
+        "--p23-std-moe-topk", str(getattr(args, 'p23_std_moe_topk', -1)),
         "--p23-std-moe-aux-weight", str(getattr(args, 'p23_std_moe_aux_weight', 0.01)),
         "--p23-lokr", str(getattr(args, 'p23_lokr', 0)),
         "--p23-lokr-rank", str(getattr(args, 'p23_lokr_rank', 4)),
@@ -328,8 +328,8 @@ def run_training_sweep(args):
             process.communicate()
             
             if process.returncode != 0:
-                print(f"Error training {model_name}. Skipping to next.")
-                continue
+                print(f"Error training {model_name}. Exiting to preserve resume capability.")
+                sys.exit(1)
                 
             # Extract final checkpoint val_bpb
             # Checkpoint format is usually checkpoints_dir/model/state_*.pt etc
@@ -566,7 +566,7 @@ if __name__ == "__main__":
     parser.add_argument("--p23-topk", type=int, default=16)
     parser.add_argument("--p23-learned-route", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p23-std-moe-experts", type=int, default=0)
-    parser.add_argument("--p23-std-moe-topk", type=int, default=1)
+    parser.add_argument("--p23-std-moe-topk", type=int, default=-1)
     parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01)
     parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p23-lokr-rank", type=int, default=4)

@@ -9,9 +9,10 @@
 #   23_REMIX_HOUSE     — dense RemixedLinear, householder mod, no template bank
 #   23_REMIX_CKR       — dense RemixedLinear, CKR (causal kernel) mod
 #
-#   ── STANDARD MOE (full-size expert baseline) ────────────────────────────
-#   23_STD_MOE_TOP1    — StandardMoE K=8 full-size experts, top-1 routing
-#   23_STD_MOE_TOP2    — StandardMoE K=8 full-size experts, top-2 routing
+#   ── STANDARD MOE (param-parity experts, learned router) ───────────────────
+#   23_STD_MOE_TOP1    — StandardMoE K=8, topk=1  (max sparsity)
+#   23_STD_MOE_TOP_OPT — StandardMoE K=8, topk=optimal (E^0.7≈5 for E=8, c=0.3)
+#   (expert_dim = 4*D // E for both — param parity with dense)
 #
 #   ── TINY EXPERTS — weight modulation ──────────────────────────────────────
 #   23_TINY_WEIGHT_4T_FROZEN   — K_total=64, topk=16, frozen route
@@ -83,7 +84,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
-  --research-dim -1"
+  --research-dim 0"
 
 # RemixedLinear flags shared by all remix experiments
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
@@ -91,7 +92,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
-  --research-dim -1 \
+  --research-dim 0 \
   --modulation-diagnostics 1 \
   --cclblock-context-source norm_x \
   --cclblock-context-stream selective \
@@ -181,15 +182,16 @@ else
     mark_completed "$TAG"
 fi
 
-# 6: StandardMoE K=8, top-2 routing
-TAG="23_STD_MOE_TOP2"
+# 6: StandardMoE K=8, optimal-sparsity topk (= E^(1-c) = 8^0.7 ≈ 5 for c=0.3)
+#    Pass topk=-1 → StandardMoE_MLP resolves to _moe_optimal_topk(8, c=0.3)=5
+TAG="23_STD_MOE_TOP_OPT"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "6" "$TAG" "StandardMoE K=8 full-size experts, top-2 routing"
+    print_header "6" "$TAG" "StandardMoE K=8 param-parity experts, optimal-sparsity topk (c=0.3 scaling law)"
     bash scripts/research_sweep.sh $BASE_COMMON \
       --p23-std-moe-experts 8 \
-      --p23-std-moe-topk 2 \
+      --p23-std-moe-topk -1 \
       --p23-std-moe-aux-weight 0.01 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"
     echo "════════════════ $TAG COMPLETE ════════════════"
