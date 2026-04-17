@@ -282,6 +282,9 @@ class GPTConfig:
     p23_std_moe_aux_weight: float = 0.01      # 23: load-balance auxiliary loss weight
     p23_lokr: int = 0                         # 23: enable LoKR mode in RemixedLinear
     p23_lokr_rank: int = 4                    # 23: low-rank bottleneck for each LoKR expert
+    p23_use_shared_block_router: int = 0      # 23: block-level single pass router for all RemixedLinear inner experts
+    p23_linear_moe_experts: int = 0           # 23: enable weight-space LinearMoE with K experts (0=off)
+    p23_linear_moe_topk: int = 0              # 23: top-k selected experts in LinearMoE (0=soft all-expert blend)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -352,6 +355,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p23_tiny_expert", "p23_n_experts", "p23_topk", "p23_learned_route",
     "p23_std_moe_experts", "p23_std_moe_topk", "p23_std_moe_aux_weight",
     "p23_lokr", "p23_lokr_rank",
+    "p23_use_shared_block_router", "p23_linear_moe_experts", "p23_linear_moe_topk",
 }
 
 
