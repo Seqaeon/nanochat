@@ -84,7 +84,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
-  --research-dim 0"
+  --research-dim -1"
 
 # RemixedLinear flags shared by all remix experiments
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
@@ -92,7 +92,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --data-dir /root/nanochat/data --tokenizer-dir /root/nanochat/tokenizer \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
-  --research-dim 0 \
+  --research-dim -1 \
   --modulation-diagnostics 1 \
   --cclblock-context-source norm_x \
   --cclblock-context-stream selective \
