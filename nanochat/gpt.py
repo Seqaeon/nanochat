@@ -1664,23 +1664,34 @@ class RemixedLinear(nn.Module):
                 self._template_entropy_buf.copy_(ent.detach())
 
             # ── Vectorized expert computation ─────────────────────────────────────
-            # up:  h_gated (B,T,B_sz) × expert_up_w^T  (K,H,B_sz) → (B,T,K,H)
-            all_up  = torch.einsum('btb,khb->btkh',
-                                   h_gated.float(), self.expert_up_w.float())
-            all_up  = F.relu(all_up).square().to(dtype)
-            # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
-            all_out = torch.einsum('btkh,koh->btko',
-                                   all_up.float(), self.expert_down_w.float()).to(dtype)
-
             topk_val = self.tiny_expert_topk
             if 0 < topk_val < K:
-                topk_w, topk_idx = rw.topk(topk_val, dim=-1)                # (B, T, tk)
+                # Memory-efficient path: select top-k experts BEFORE matrix multiply.
+                # Intermediate tensors are (B,T,tk,H) not (B,T,K,H) — K/tk× smaller.
+                topk_w, topk_idx = rw.topk(topk_val, dim=-1)                # (B,T,tk)
                 topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
-                idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, out_features)  # (B,T,tk,O)
-                topk_out = torch.gather(all_out, dim=2, index=idx_exp)      # (B, T, tk, O)
-                pre_output = (topk_out * topk_w.unsqueeze(-1)).sum(dim=2)   # (B, T, O)
+                # Gather expert weights for selected experts only
+                # expert_up_w:   (K, H, S) → select tk → (B, T, tk, H, S)
+                sel_up_w  = self.expert_up_w[topk_idx]                      # (B, T, tk, H, S)
+                sel_down_w = self.expert_down_w[topk_idx]                   # (B, T, tk, O, H)
+                # up projection: h_gated (B,T,S) → (B,T,tk,H)
+                h_exp = h_gated.float().unsqueeze(2).unsqueeze(-1)           # (B,T,1,S,1)
+                up = (sel_up_w.float() @ h_exp.expand(B, T, topk_val, -1, 1)).squeeze(-1)  # (B,T,tk,H)
+                up = F.relu(up).square().to(dtype)
+                # down projection: (B,T,tk,H) → (B,T,tk,O)
+                u_exp = up.float().unsqueeze(-1)                              # (B,T,tk,H,1)
+                out = (sel_down_w.float() @ u_exp).squeeze(-1).to(dtype)     # (B,T,tk,O)
+                pre_output = (out * topk_w.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
             else:
-                pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)        # (B, T, O)
+                # Soft routing: compute all K experts (high VRAM, use on large GPUs only)
+                # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
+                all_up  = torch.einsum('bts,khs->btkh',
+                                       h_gated.float(), self.expert_up_w.float())
+                all_up  = F.relu(all_up).square().to(dtype)
+                # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
+                all_out = torch.einsum('btkh,koh->btko',
+                                       all_up.float(), self.expert_down_w.float()).to(dtype)
+                pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
         elif self.n_templates > 1:
             # Legacy Phase 22: MoE-style template routing (full-rank per-token)
             route_logits = x.float() @ self.template_route.float()  # (B, T, K)
