@@ -331,8 +331,9 @@ def run_training_sweep(args):
             process.communicate()
             
             if process.returncode != 0:
-                print(f"Error training {model_name}. Exiting to preserve resume capability.")
-                sys.exit(1)
+                print(f"Error training {model_name}. Marking as failed and continuing to next model.")
+                results[f"{model_name}"] = "FAILED"
+                continue
                 
             # Extract final checkpoint val_bpb
             # Checkpoint format is usually checkpoints_dir/model/state_*.pt etc
