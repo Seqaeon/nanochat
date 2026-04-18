@@ -1598,11 +1598,11 @@ class RemixedLinear(nn.Module):
 
             # 2. Router: per-token (FFN) or per-sequence (attn)
             if self.routing_scope == 'per_sequence':
-                route_input = x.float().mean(dim=1, keepdim=True)  # (B, 1, in)
+                route_input = x.mean(dim=1, keepdim=True)                  # (B, 1, in)
             else:
-                route_input = x.float()                            # (B, T, in)
-            # route_proj: (K, in) — frozen or learned
-            route_logits = F.linear(route_input, self.lokr_route_proj.float())  # (B, *, K)
+                route_input = x                                            # (B, T, in)
+            # route_proj: (K, in) — frozen or learned; cast to x.dtype to stay in bf16
+            route_logits = F.linear(route_input, self.lokr_route_proj.to(dtype))  # (B, *, K)
             if self.routing_scope == 'per_sequence':
                 route_logits = route_logits.expand(-1, h_gated.shape[1], -1)  # (B, T, K)
 
@@ -1675,12 +1675,10 @@ class RemixedLinear(nn.Module):
 
             # ── Fully vectorized expert computation (single pair of einsums) ────────
             # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
-            all_up  = torch.einsum('bts,khs->btkh',
-                                   h_gated.float(), self.expert_up_w.float())
-            all_up  = F.relu(all_up).square().to(dtype)
+            all_up  = torch.einsum('bts,khs->btkh', h_gated, self.expert_up_w.to(dtype))
+            all_up  = F.relu(all_up).square()
             # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
-            all_out = torch.einsum('btkh,koh->btko',
-                                   all_up.float(), self.expert_down_w.float()).to(dtype)
+            all_out = torch.einsum('btkh,koh->btko', all_up, self.expert_down_w.to(dtype))
 
             topk_val = self.tiny_expert_topk
             if 0 < topk_val < K:
@@ -1738,7 +1736,7 @@ class RemixedLinear(nn.Module):
         if gate_out is not None:
             pre_output = pre_output * gate_out
 
-        return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
+        return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype) if self.bias is not None else pre_output.to(dtype=dtype)
 
 
 class DecoupledAdaptiveLinear(nn.Module):
@@ -3679,7 +3677,7 @@ class LinearMoE(nn.Module):
     def forward(self, x, context_state=None, route_weights=None):
         """x: (B, T, in_features) → (B, T, out_features)."""
         B, T, _ = x.shape
-        logits = self.router(x.to(self.router.weight.dtype))             # (B, T, K)
+        logits = F.linear(x, self.router.weight.to(x.dtype))                    # (B, T, K)
         if self.topk > 0 and self.topk < self.n_experts:
             topk_w, topk_idx = logits.topk(self.topk, dim=-1)
             w = torch.zeros_like(logits).scatter_(-1, topk_idx,
@@ -4174,16 +4172,16 @@ class SharedBlockRouter(nn.Module):
         K       = self.n_experts
         dtype   = x.dtype
         # Token routing: one matmul → (B, T, N_tok * K) → softmax over last K
-        tok_logits  = x.float() @ self.token_proj.float()                        # (B, T, K*2)
+        tok_logits  = x @ self.token_proj.to(dtype)                               # (B, T, K*2)
         tok_weights = F.softmax(
             tok_logits.view(B, T, self.N_TOKEN_LAYERS, K), dim=-1
-        ).to(dtype)                                                               # (B, T, 2, K)
+        )                                                                          # (B, T, 2, K)
         # Sequence routing: mean-pool → one matmul → expand
-        x_pool      = x.float().mean(dim=1, keepdim=True)                        # (B, 1, D)
-        seq_logits  = x_pool @ self.seq_proj.float()                             # (B, 1, K*4)
+        x_pool      = x.mean(dim=1, keepdim=True)                                 # (B, 1, D)
+        seq_logits  = x_pool @ self.seq_proj.to(dtype)                            # (B, 1, K*4)
         seq_weights = F.softmax(
             seq_logits.view(B, 1, self.N_SEQ_LAYERS, K), dim=-1
-        ).to(dtype).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()             # (B, T, 4, K)
+        ).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()                         # (B, T, 4, K)
         return {
             'c_fc':         tok_weights[:, :, 0, :],   # (B, T, K)
             'c_proj_ffn':   tok_weights[:, :, 1, :],
@@ -6898,9 +6896,25 @@ class GPT(nn.Module):
         all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                       embedding_params + lm_head_params + value_embeds_params +
                       resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
+
+        # Safety catch-all: route any uncovered params (e.g. lokr_route_proj when
+        # use_context=False, which is gated inside gate_parameters()) to struct groups.
+        covered_ids = {id(p) for p in all_params}
+        orphan_params = [p for p in self.parameters() if id(p) not in covered_ids]
+        if orphan_params:
+            orphan_names = [n for n, p in self.named_parameters()
+                            if id(p) in {id(o) for o in orphan_params}]
+            print0(f"[setup_optimizer] Catch-all: routing {len(orphan_params)} uncovered "
+                   f"params to struct groups: {orphan_names}")
+            for p in orphan_params:
+                (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+            all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
+                          embedding_params + lm_head_params + value_embeds_params +
+                          resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
+
         assert len(list(self.parameters())) == len(all_params), (
-            f"Parameter count mismatch: model has {len(list(self.parameters()))} params, "
-            f"optimizer groups cover {len(all_params)}")
+            f"Parameter count mismatch even after catch-all: model has "
+            f"{len(list(self.parameters()))} params, optimizer groups cover {len(all_params)}")
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model, μP-style).
         # Can be disabled via disable_mu_p=True so raw flags are used directly (e.g. for research models

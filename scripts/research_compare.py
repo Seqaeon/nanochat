@@ -383,6 +383,9 @@ def run_training_sweep(args):
     names = [n for n in names if isinstance(results[n], dict)]
     if not names:
         print("No successful runs to plot.")
+        if failed_models:
+            print(f"\n[ERROR] The following models FAILED: {failed_models}")
+            sys.exit(1)
         return
     # Ensure all collected BPBs are floats for math
     bpbs = [float(results[n]["val_bpb"]) for n in names]
