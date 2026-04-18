@@ -124,22 +124,22 @@ echo ""
 #fi
 
 # 2: Tiny Expert RemixedLinear, weight modulation — K=8, topk=1 (no expert bank)
-TAG="23_REMIX_WEIGHT"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "2" "$TAG" "Tiny RemixedLinear, weight mod, K=8, top-1"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation weight \
-      --p23-tiny-expert 1 \
-      --p23-use-shared-block-router 1 \
-      --p23-n-experts 8 \
-      --p23-topk 1 \
-      --p23-learned-route 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
+#TAG="23_REMIX_WEIGHT"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "2" "$TAG" "Tiny RemixedLinear, weight mod, K=8, top-1"
+#    bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --cclblock-modulation weight \
+#      --p23-tiny-expert 1 \
+#      --p23-use-shared-block-router 1 \
+#      --p23-n-experts 8 \
+#      --p23-topk 1 \
+#      --p23-learned-route 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
 #
 # 3: Tiny Expert RemixedLinear, householder modulation — K=8, topk=1
 TAG="23_REMIX_HOUSE"
