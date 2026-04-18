@@ -81,9 +81,9 @@ DEPTH=4
 
 # Dense base-model flags (for baseline and StandardMoE runs)
 BASE_COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 2 --use-onecycle 0 --log-every 200 --skip-core \
-  --data-dir "${DATA_DIR:-data}" --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" \
-  --sequence-len 512 --mu-p-mode base_only \
+  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
+  --data-dir \"${DATA_DIR:-data}\" --tokenizer-dir \"${TOKENIZER_DIR:-tokenizer}\" \
+  --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
   --research-dim -1"
 
@@ -91,9 +91,9 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 # --no-compile: 64 experts = 3180 Linear layers; torch.compile traces every one
 #   and hangs for 20+ minutes before step 1. Eager mode is fine for 462 steps.
 REMIX_COMMON="--fp8 --no-compile --max-shards 170 --models remixed-linear \
-  --device-batch-size 2 --use-onecycle 0 --log-every 200 --skip-core \
-  --data-dir "${DATA_DIR:-data}" --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" \
-  --sequence-len 512 \
+  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
+  --data-dir \"${DATA_DIR:-data}\" --tokenizer-dir \"${TOKENIZER_DIR:-tokenizer}\" \
+  --sequence-len 2048 \
   --warmup-ratio 0.15 \
   --research-dim -1 \
   --modulation-diagnostics 1 \

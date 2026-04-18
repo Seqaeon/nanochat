@@ -286,6 +286,8 @@ mkdir -p "${ROOT_OUT_DIR}"
 
 if [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
     echo "UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation."
+    echo "Validating system environment dependencies via uv..."
+    uv pip install -e .[gpu] --system
 elif [[ "${NANOCHAT_SKIP_ENV_SETUP:-0}" == "1" ]]; then
     echo "Skipping environment setup (NANOCHAT_SKIP_ENV_SETUP=1)."
     if [[ ! -d ".venv" ]]; then
