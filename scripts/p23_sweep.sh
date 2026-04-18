@@ -91,7 +91,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 # --no-compile: 64 experts = 3180 Linear layers; torch.compile traces every one
 #   and hangs for 20+ minutes before step 1. Eager mode is fine for 462 steps.
 REMIX_COMMON="--fp8 --no-compile --max-shards 170 --models remixed-linear \
-  --device-batch-size 2 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 2 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
