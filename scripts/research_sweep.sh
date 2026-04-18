@@ -285,21 +285,29 @@ SKIP_ENV_SETUP="${NANOCHAT_SKIP_ENV_SETUP:-0}"
 
 if [[ "$SKIP_ENV_SETUP" == "1" ]]; then
     echo "Skipping environment setup because NANOCHAT_SKIP_ENV_SETUP=1"
-    if [[ ! -d ".venv" ]]; then
-        echo "Error: .venv not found, cannot skip setup. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
+    if [[ "${UV_SYSTEM_PYTHON:-0}" != "1" ]] && [[ ! -d ".venv" ]]; then
+        echo "Error: .venv not found and UV_SYSTEM_PYTHON is not set. Cannot skip setup. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
         exit 1
     fi
 else
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
     # ── 2. Create venv and install dependencies ───────────────────────────────
-    [ -d ".venv" ] || uv venv
-    uv sync --extra gpu
+    if [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
+        echo "UV_SYSTEM_PYTHON=1 found: installing directly to system environment."
+        uv pip install -e .[gpu] --system
+    else
+        [ -d ".venv" ] || uv venv
+        uv sync --extra gpu
+    fi
 fi
 
 # ── 3. Activate venv ──────────────────────────────────────────────────────────
-source .venv/bin/activate
-
+if [[ "${UV_SYSTEM_PYTHON:-0}" != "1" ]]; then
+    if [[ -f ".venv/bin/activate" ]]; then
+        source .venv/bin/activate
+    fi
+fi
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
 if command -v torchrun &> /dev/null; then
     RUNNER="torchrun --standalone --nproc_per_node=${NPROC_PER_NODE}"
