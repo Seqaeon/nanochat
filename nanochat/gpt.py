@@ -1666,22 +1666,23 @@ class RemixedLinear(nn.Module):
             # ── Vectorized expert computation ─────────────────────────────────────
             topk_val = self.tiny_expert_topk
             if 0 < topk_val < K:
-                # Memory-efficient path: select top-k experts BEFORE matrix multiply.
-                # Intermediate tensors are (B,T,tk,H) not (B,T,K,H) — K/tk× smaller.
-                topk_w, topk_idx = rw.topk(topk_val, dim=-1)                # (B,T,tk)
+                # Memory-efficient: compute only top-k experts via a small loop.
+                # Avoids materializing (B,T,K,H) or (B,T,tk,H,S) tensors.
+                topk_w, topk_idx = rw.topk(topk_val, dim=-1)            # (B,T,tk)
                 topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
-                # Gather expert weights for selected experts only
-                # expert_up_w:   (K, H, S) → select tk → (B, T, tk, H, S)
-                sel_up_w  = self.expert_up_w[topk_idx]                      # (B, T, tk, H, S)
-                sel_down_w = self.expert_down_w[topk_idx]                   # (B, T, tk, O, H)
-                # up projection: h_gated (B,T,S) → (B,T,tk,H)
-                h_exp = h_gated.float().unsqueeze(2).unsqueeze(-1)           # (B,T,1,S,1)
-                up = (sel_up_w.float() @ h_exp.expand(B, T, topk_val, -1, 1)).squeeze(-1)  # (B,T,tk,H)
-                up = F.relu(up).square().to(dtype)
-                # down projection: (B,T,tk,H) → (B,T,tk,O)
-                u_exp = up.float().unsqueeze(-1)                              # (B,T,tk,H,1)
-                out = (sel_down_w.float() @ u_exp).squeeze(-1).to(dtype)     # (B,T,tk,O)
-                pre_output = (out * topk_w.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
+                pre_output = torch.zeros(B, T, out_features, device=x.device, dtype=dtype)
+                for i in range(topk_val):
+                    idx_i = topk_idx[:, :, i]                            # (B, T)
+                    w_i   = topk_w[:, :, i].unsqueeze(-1)                # (B, T, 1)
+                    up_w  = self.expert_up_w[idx_i]                      # (B, T, H, S)
+                    dn_w  = self.expert_down_w[idx_i]                    # (B, T, O, H)
+                    # up: (B,T,H,S) @ (B,T,S,1) → (B,T,H,1) → relu² → (B,T,H)
+                    h_vec = h_gated.unsqueeze(-1)                         # (B,T,S,1)
+                    up    = (up_w.float() @ h_vec.float()).squeeze(-1)    # (B,T,H)
+                    up    = F.relu(up).square().to(dtype)
+                    # down: (B,T,O,H) @ (B,T,H,1) → (B,T,O,1) → (B,T,O)
+                    dn    = (dn_w.float() @ up.float().unsqueeze(-1)).squeeze(-1).to(dtype)  # (B,T,O)
+                    pre_output = pre_output + w_i * dn
             else:
                 # Soft routing: compute all K experts (high VRAM, use on large GPUs only)
                 # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
