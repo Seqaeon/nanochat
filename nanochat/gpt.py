@@ -1287,6 +1287,16 @@ class RemixedLinear(nn.Module):
                 f"{K} experts × rank {R} = {K*R} dims. "
                 f"Increase basis_size or reduce n_experts/rank."
             )
+            if b_shrunk <= 0:
+                # Auto-clamp: reduce rank so at least 1 dim remains for shared base
+                R = max(1, (basis_size - 1) // K)
+                b_shrunk = basis_size - K * R
+                self.lokr_rank = R
+                import warnings
+                warnings.warn(
+                    f"LoKR: auto-clamped rank from {self.lokr_rank} to {R} "
+                    f"(basis={basis_size}, K={K})"
+                )
             # Override basis_size for the shared-base path
             basis_size = b_shrunk
 
@@ -1663,35 +1673,25 @@ class RemixedLinear(nn.Module):
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
 
-            # ── Vectorized expert computation ─────────────────────────────────────
+            # ── Fully vectorized expert computation (single pair of einsums) ────────
+            # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
+            all_up  = torch.einsum('bts,khs->btkh',
+                                   h_gated.float(), self.expert_up_w.float())
+            all_up  = F.relu(all_up).square().to(dtype)
+            # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
+            all_out = torch.einsum('btkh,koh->btko',
+                                   all_up.float(), self.expert_down_w.float()).to(dtype)
+
             topk_val = self.tiny_expert_topk
             if 0 < topk_val < K:
-                # Memory-efficient: compute only top-k experts via a small loop.
-                # Avoids materializing (B,T,K,H) or (B,T,tk,H,S) tensors.
-                topk_w, topk_idx = rw.topk(topk_val, dim=-1)            # (B,T,tk)
+                # Sparse gather: pick top-k expert outputs then weighted-sum
+                topk_w, topk_idx = rw.topk(topk_val, dim=-1)                # (B,T,tk)
                 topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
-                pre_output = torch.zeros(B, T, out_features, device=x.device, dtype=dtype)
-                for i in range(topk_val):
-                    idx_i = topk_idx[:, :, i]                            # (B, T)
-                    w_i   = topk_w[:, :, i].unsqueeze(-1)                # (B, T, 1)
-                    up_w  = self.expert_up_w[idx_i]                      # (B, T, H, S)
-                    dn_w  = self.expert_down_w[idx_i]                    # (B, T, O, H)
-                    # up: (B,T,H,S) @ (B,T,S,1) → (B,T,H,1) → relu² → (B,T,H)
-                    h_vec = h_gated.unsqueeze(-1)                         # (B,T,S,1)
-                    up    = (up_w.float() @ h_vec.float()).squeeze(-1)    # (B,T,H)
-                    up    = F.relu(up).square().to(dtype)
-                    # down: (B,T,O,H) @ (B,T,H,1) → (B,T,O,1) → (B,T,O)
-                    dn    = (dn_w.float() @ up.float().unsqueeze(-1)).squeeze(-1).to(dtype)  # (B,T,O)
-                    pre_output = pre_output + w_i * dn
+                idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, out_features)  # (B,T,tk,O)
+                topk_out = torch.gather(all_out, dim=2, index=idx_exp)       # (B,T,tk,O)
+                pre_output = (topk_out * topk_w.unsqueeze(-1)).sum(dim=2)   # (B,T,O)
             else:
-                # Soft routing: compute all K experts (high VRAM, use on large GPUs only)
-                # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
-                all_up  = torch.einsum('bts,khs->btkh',
-                                       h_gated.float(), self.expert_up_w.float())
-                all_up  = F.relu(all_up).square().to(dtype)
-                # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
-                all_out = torch.einsum('btkh,koh->btko',
-                                       all_up.float(), self.expert_down_w.float()).to(dtype)
+                # Soft routing: weighted sum over all K experts
                 pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
         elif self.n_templates > 1:
             # Legacy Phase 22: MoE-style template routing (full-rank per-token)
@@ -2158,7 +2158,7 @@ class CausalKernelLinear(nn.Module):
         for branch in self.branches:
             yield from branch.parameters()
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **kwargs):
         """
         x: (B, T, D). context_state: optional (B, T, signal_dim) for content bias.
         """
@@ -3679,7 +3679,7 @@ class LinearMoE(nn.Module):
     def forward(self, x, context_state=None, route_weights=None):
         """x: (B, T, in_features) → (B, T, out_features)."""
         B, T, _ = x.shape
-        logits = self.router(x)                                    # (B, T, K)
+        logits = self.router(x.to(self.router.weight.dtype))             # (B, T, K)
         if self.topk > 0 and self.topk < self.n_experts:
             topk_w, topk_idx = logits.topk(self.topk, dim=-1)
             w = torch.zeros_like(logits).scatter_(-1, topk_idx,

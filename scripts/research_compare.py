@@ -373,9 +373,14 @@ def run_training_sweep(args):
     plt.figure(figsize=(10, 6))
     
     names = list(results.keys())
+    # Filter out failed runs (stored as string "FAILED", not a result dict)
+    names = [n for n in names if isinstance(results[n], dict)]
+    if not names:
+        print("No successful runs to plot.")
+        return
     # Ensure all collected BPBs are floats for math
     bpbs = [float(results[n]["val_bpb"]) for n in names]
-    
+
     bars = plt.bar(names, bpbs, color=sns.color_palette("husl", len(names)))
     
     plt.title(f"Validation BPB Comparison at Depth {depth} ({target_tokens:,} tokens)", fontsize=14)
