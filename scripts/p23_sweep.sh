@@ -112,16 +112,16 @@ echo ""
 # ══════════════════════════════════════════════════════
 #
 # 1: Plain dense transformer (no MoE, no remix) — anchor reference
-#TAG="23_BASE_DENSE"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-#    bash scripts/research_sweep.sh $BASE_COMMON \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"
-#    echo "════════════════ $TAG COMPLETE ════════════════"
-#    mark_completed "$TAG"
-#fi
+TAG="23_BASE_DENSE"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+    bash scripts/research_sweep.sh $BASE_COMMON \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"
+    echo "════════════════ $TAG COMPLETE ════════════════"
+    mark_completed "$TAG"
+fi
 
 # 2: Tiny Expert RemixedLinear, weight modulation — K=8, topk=1 (no expert bank)
 TAG="23_REMIX_WEIGHT"
