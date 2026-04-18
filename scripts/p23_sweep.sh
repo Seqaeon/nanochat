@@ -216,20 +216,20 @@ echo ""
 # ══════════════════════════════════════════════════════
 
 # 6.5: LinearMoE K=8, top-1 routed blending
-TAG="23_LINEAR_MOE_TOP1"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "18" "$TAG" "LinearMoE K=8 weight matrices, top-1 blending"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
-      --cclblock-modulation weight \
-      --p23-linear-moe-experts 8 \
-      --p23-linear-moe-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
-fi
-
+#TAG="23_LINEAR_MOE_TOP1"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "18" "$TAG" "LinearMoE K=8 weight matrices, top-1 blending"
+#    bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --cclblock-modulation weight \
+#      --p23-linear-moe-experts 8 \
+#      --p23-linear-moe-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"
+#    echo "════════════════ $TAG COMPLETE ════════════════"
+#    mark_completed "$TAG"
+#fi
+#
 # ══════════════════════════════════════════════════════
 # TINY EXPERTS — weight modulation
 # expert_dim = basis_size // topk  (compute parity)
