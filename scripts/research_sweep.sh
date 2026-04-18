@@ -280,33 +280,24 @@ fi
 echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
-# ── 1. Install uv if missing ──────────────────────────────────────────────────
-SKIP_ENV_SETUP="${NANOCHAT_SKIP_ENV_SETUP:-0}"
+# ── 1. Install / sync environment ─────────────────────────────────────────────
+# UV_SYSTEM_PYTHON=1  → use the calling shell's Python / site-packages as-is.
+# NANOCHAT_SKIP_ENV_SETUP=1 → skip all uv setup (venv must already exist).
 
-if [[ "$SKIP_ENV_SETUP" == "1" ]]; then
-    echo "Skipping environment setup because NANOCHAT_SKIP_ENV_SETUP=1"
-    if [[ "${UV_SYSTEM_PYTHON:-0}" != "1" ]] && [[ ! -d ".venv" ]]; then
-        echo "Error: .venv not found and UV_SYSTEM_PYTHON is not set. Cannot skip setup. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
+if [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
+    echo "UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation."
+elif [[ "${NANOCHAT_SKIP_ENV_SETUP:-0}" == "1" ]]; then
+    echo "Skipping environment setup (NANOCHAT_SKIP_ENV_SETUP=1)."
+    if [[ ! -d ".venv" ]]; then
+        echo "Error: .venv not found. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
         exit 1
     fi
+    source .venv/bin/activate
 else
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # ── 2. Create venv and install dependencies ───────────────────────────────
-    if [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
-        echo "UV_SYSTEM_PYTHON=1 found: installing directly to system environment."
-        uv pip install -e .[gpu] --system
-    else
-        [ -d ".venv" ] || uv venv
-        uv sync --extra gpu
-    fi
-fi
-
-# ── 3. Activate venv ──────────────────────────────────────────────────────────
-if [[ "${UV_SYSTEM_PYTHON:-0}" != "1" ]]; then
-    if [[ -f ".venv/bin/activate" ]]; then
-        source .venv/bin/activate
-    fi
+    [ -d ".venv" ] || uv venv
+    uv sync --extra gpu
+    source .venv/bin/activate
 fi
 # ── 4. Resolve torchrun (prefers venv, falls back to system) ──────────────────
 if command -v torchrun &> /dev/null; then
