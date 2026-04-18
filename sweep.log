@@ -13,7 +13,7 @@ Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
 Using NPROC_PER_NODE=1
 NANOCHAT_SKIP_ENV_SETUP=0
 ===== GPU Info =====
-Fri Apr 17 22:12:45 2026       
+Sat Apr 18 06:20:12 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -22,7 +22,7 @@ Fri Apr 17 22:12:45 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 |   0  NVIDIA GeForce RTX 3050 ...    Off |   00000000:01:00.0 Off |                  N/A |
-| N/A   87C    P5             19W /   20W |      15MiB /   4096MiB |     19%      Default |
+| N/A   80C    P5             13W /   20W |      15MiB /   4096MiB |      3%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -33,12 +33,156 @@ Fri Apr 17 22:12:45 2026
 |=========================================================================================|
 |    0   N/A  N/A            1680      G   /usr/lib/xorg/Xorg                        4MiB |
 +-----------------------------------------------------------------------------------------+
-Starting Research Sweep. Output directory: out/research_sweep_20260417_221245
-Resolved 142 packages in 1ms
-Audited 129 packages in 2ms
+Starting Research Sweep. Output directory: out/research_sweep_20260418_062012
+Resolved 142 packages in 12ms
+Audited 129 packages in 17ms
 Reset report and wrote header to out/report/header.md
 Dataset (up to 170 shards) already exists in data, skipping download.
-Tokenizer already exists in tokenizer, skipping training.
+Tokenizer not found in tokenizer, training...
+2026-04-18 06:20:17,561 - rustbpe - [32m[1mINFO[0m - Processing sequences from iterator (buffer_size: 8192)
+2026-04-18 06:21:27,174 - rustbpe - [32m[1mINFO[0m - Processed 758523 sequences total, 2098273 unique
+2026-04-18 06:21:27,380 - rustbpe - [32m[1mINFO[0m - Starting BPE training: 32503 merges to compute
+2026-04-18 06:21:27,380 - rustbpe - [32m[1mINFO[0m - Computing initial pair counts from 2098273 unique sequences
+2026-04-18 06:21:30,008 - rustbpe - [32m[1mINFO[0m - Building heap with 19260 unique pairs
+2026-04-18 06:21:30,009 - rustbpe - [32m[1mINFO[0m - Starting merge loop
+2026-04-18 06:21:35,058 - rustbpe - [32m[1mINFO[0m - Progress: [1m1%[0m (326/32503 merges) - Last merge: (277, 115) -> 581 (frequency: 613290)
+2026-04-18 06:21:35,843 - rustbpe - [32m[1mINFO[0m - Progress: [1m2%[0m (651/32503 merges) - Last merge: (316, 291) -> 906 (frequency: 250642)
+2026-04-18 06:21:36,308 - rustbpe - [32m[1mINFO[0m - Progress: [1m3%[0m (976/32503 merges) - Last merge: (119, 624) -> 1231 (frequency: 156115)
+2026-04-18 06:21:36,637 - rustbpe - [32m[1mINFO[0m - Progress: [1m4%[0m (1301/32503 merges) - Last merge: (346, 280) -> 1556 (frequency: 110039)
+2026-04-18 06:21:36,873 - rustbpe - [32m[1mINFO[0m - Progress: [1m5%[0m (1626/32503 merges) - Last merge: (300, 388) -> 1881 (frequency: 84284)
+2026-04-18 06:21:37,098 - rustbpe - [32m[1mINFO[0m - Progress: [1m6%[0m (1951/32503 merges) - Last merge: (1144, 386) -> 2206 (frequency: 67727)
+2026-04-18 06:21:37,265 - rustbpe - [32m[1mINFO[0m - Progress: [1m7%[0m (2276/32503 merges) - Last merge: (837, 2269) -> 2531 (frequency: 55610)
+2026-04-18 06:21:37,436 - rustbpe - [32m[1mINFO[0m - Progress: [1m8%[0m (2601/32503 merges) - Last merge: (644, 600) -> 2856 (frequency: 47028)
+2026-04-18 06:21:37,633 - rustbpe - [32m[1mINFO[0m - Progress: [1m9%[0m (2926/32503 merges) - Last merge: (98, 322) -> 3181 (frequency: 39894)
+2026-04-18 06:21:37,776 - rustbpe - [32m[1mINFO[0m - Progress: [1m10%[0m (3251/32503 merges) - Last merge: (3041, 320) -> 3506 (frequency: 34126)
+2026-04-18 06:21:37,929 - rustbpe - [32m[1mINFO[0m - Progress: [1m11%[0m (3576/32503 merges) - Last merge: (257, 384) -> 3831 (frequency: 30077)
+2026-04-18 06:21:38,033 - rustbpe - [32m[1mINFO[0m - Progress: [1m12%[0m (3901/32503 merges) - Last merge: (1833, 735) -> 4156 (frequency: 26416)
+2026-04-18 06:21:38,168 - rustbpe - [32m[1mINFO[0m - Progress: [1m13%[0m (4226/32503 merges) - Last merge: (968, 3473) -> 4481 (frequency: 23775)
+2026-04-18 06:21:38,327 - rustbpe - [32m[1mINFO[0m - Progress: [1m14%[0m (4551/32503 merges) - Last merge: (289, 438) -> 4806 (frequency: 21338)
+2026-04-18 06:21:38,440 - rustbpe - [32m[1mINFO[0m - Progress: [1m15%[0m (4876/32503 merges) - Last merge: (409, 2725) -> 5131 (frequency: 19344)
+2026-04-18 06:21:38,580 - rustbpe - [32m[1mINFO[0m - Progress: [1m16%[0m (5201/32503 merges) - Last merge: (266, 3869) -> 5456 (frequency: 17654)
+2026-04-18 06:21:38,669 - rustbpe - [32m[1mINFO[0m - Progress: [1m17%[0m (5526/32503 merges) - Last merge: (345, 1139) -> 5781 (frequency: 16294)
+2026-04-18 06:21:38,751 - rustbpe - [32m[1mINFO[0m - Progress: [1m18%[0m (5851/32503 merges) - Last merge: (1397, 726) -> 6106 (frequency: 14993)
+2026-04-18 06:21:38,820 - rustbpe - [32m[1mINFO[0m - Progress: [1m19%[0m (6176/32503 merges) - Last merge: (356, 115) -> 6431 (frequency: 13908)
+2026-04-18 06:21:38,979 - rustbpe - [32m[1mINFO[0m - Progress: [1m20%[0m (6501/32503 merges) - Last merge: (3589, 358) -> 6756 (frequency: 12876)
+2026-04-18 06:21:39,113 - rustbpe - [32m[1mINFO[0m - Progress: [1m21%[0m (6826/32503 merges) - Last merge: (1829, 116) -> 7081 (frequency: 11963)
+2026-04-18 06:21:39,165 - rustbpe - [32m[1mINFO[0m - Progress: [1m22%[0m (7151/32503 merges) - Last merge: (3198, 388) -> 7406 (frequency: 11153)
+2026-04-18 06:21:39,238 - rustbpe - [32m[1mINFO[0m - Progress: [1m23%[0m (7476/32503 merges) - Last merge: (83, 109) -> 7731 (frequency: 10513)
+2026-04-18 06:21:39,302 - rustbpe - [32m[1mINFO[0m - Progress: [1m24%[0m (7801/32503 merges) - Last merge: (1523, 274) -> 8056 (frequency: 9859)
+2026-04-18 06:21:39,351 - rustbpe - [32m[1mINFO[0m - Progress: [1m25%[0m (8126/32503 merges) - Last merge: (276, 779) -> 8381 (frequency: 9284)
+2026-04-18 06:21:39,426 - rustbpe - [32m[1mINFO[0m - Progress: [1m26%[0m (8451/32503 merges) - Last merge: (264, 258) -> 8706 (frequency: 8800)
+2026-04-18 06:21:39,488 - rustbpe - [32m[1mINFO[0m - Progress: [1m27%[0m (8776/32503 merges) - Last merge: (446, 485) -> 9031 (frequency: 8291)
+2026-04-18 06:21:39,538 - rustbpe - [32m[1mINFO[0m - Progress: [1m28%[0m (9101/32503 merges) - Last merge: (311, 5303) -> 9356 (frequency: 7846)
+2026-04-18 06:21:39,603 - rustbpe - [32m[1mINFO[0m - Progress: [1m29%[0m (9426/32503 merges) - Last merge: (3938, 5300) -> 9681 (frequency: 7442)
+2026-04-18 06:21:39,646 - rustbpe - [32m[1mINFO[0m - Progress: [1m30%[0m (9751/32503 merges) - Last merge: (403, 378) -> 10006 (frequency: 7105)
+2026-04-18 06:21:39,675 - rustbpe - [32m[1mINFO[0m - Progress: [1m31%[0m (10076/32503 merges) - Last merge: (1632, 432) -> 10331 (frequency: 6733)
+2026-04-18 06:21:39,738 - rustbpe - [32m[1mINFO[0m - Progress: [1m32%[0m (10401/32503 merges) - Last merge: (463, 112) -> 10656 (frequency: 6411)
+2026-04-18 06:21:39,786 - rustbpe - [32m[1mINFO[0m - Progress: [1m33%[0m (10726/32503 merges) - Last merge: (2885, 1642) -> 10981 (frequency: 6107)
+2026-04-18 06:21:39,839 - rustbpe - [32m[1mINFO[0m - Progress: [1m34%[0m (11052/32503 merges) - Last merge: (7338, 659) -> 11307 (frequency: 5823)
+2026-04-18 06:21:39,896 - rustbpe - [32m[1mINFO[0m - Progress: [1m35%[0m (11377/32503 merges) - Last merge: (366, 466) -> 11632 (frequency: 5557)
+2026-04-18 06:21:39,947 - rustbpe - [32m[1mINFO[0m - Progress: [1m36%[0m (11702/32503 merges) - Last merge: (6414, 3329) -> 11957 (frequency: 5302)
+2026-04-18 06:21:39,992 - rustbpe - [32m[1mINFO[0m - Progress: [1m37%[0m (12027/32503 merges) - Last merge: (317, 2969) -> 12282 (frequency: 5078)
+2026-04-18 06:21:40,037 - rustbpe - [32m[1mINFO[0m - Progress: [1m38%[0m (12352/32503 merges) - Last merge: (329, 98) -> 12607 (frequency: 4876)
+2026-04-18 06:21:40,073 - rustbpe - [32m[1mINFO[0m - Progress: [1m39%[0m (12677/32503 merges) - Last merge: (296, 2198) -> 12932 (frequency: 4667)
+2026-04-18 06:21:40,154 - rustbpe - [32m[1mINFO[0m - Progress: [1m40%[0m (13002/32503 merges) - Last merge: (1033, 10279) -> 13257 (frequency: 4466)
+2026-04-18 06:21:40,202 - rustbpe - [32m[1mINFO[0m - Progress: [1m41%[0m (13327/32503 merges) - Last merge: (6205, 481) -> 13582 (frequency: 4293)
+2026-04-18 06:21:40,235 - rustbpe - [32m[1mINFO[0m - Progress: [1m42%[0m (13652/32503 merges) - Last merge: (6098, 280) -> 13907 (frequency: 4134)
+2026-04-18 06:21:40,272 - rustbpe - [32m[1mINFO[0m - Progress: [1m43%[0m (13977/32503 merges) - Last merge: (404, 836) -> 14232 (frequency: 3983)
+2026-04-18 06:21:40,312 - rustbpe - [32m[1mINFO[0m - Progress: [1m44%[0m (14302/32503 merges) - Last merge: (264, 3056) -> 14557 (frequency: 3831)
+2026-04-18 06:21:40,362 - rustbpe - [32m[1mINFO[0m - Progress: [1m45%[0m (14627/32503 merges) - Last merge: (8335, 115) -> 14882 (frequency: 3688)
+2026-04-18 06:21:40,425 - rustbpe - [32m[1mINFO[0m - Progress: [1m46%[0m (14952/32503 merges) - Last merge: (273, 5886) -> 15207 (frequency: 3557)
+2026-04-18 06:21:40,458 - rustbpe - [32m[1mINFO[0m - Progress: [1m47%[0m (15277/32503 merges) - Last merge: (5397, 581) -> 15532 (frequency: 3427)
+2026-04-18 06:21:40,488 - rustbpe - [32m[1mINFO[0m - Progress: [1m48%[0m (15602/32503 merges) - Last merge: (3539, 1400) -> 15857 (frequency: 3307)
+2026-04-18 06:21:40,524 - rustbpe - [32m[1mINFO[0m - Progress: [1m49%[0m (15927/32503 merges) - Last merge: (954, 258) -> 16182 (frequency: 3191)
+2026-04-18 06:21:40,554 - rustbpe - [32m[1mINFO[0m - Progress: [1m50%[0m (16252/32503 merges) - Last merge: (282, 1124) -> 16507 (frequency: 3088)
+2026-04-18 06:21:40,583 - rustbpe - [32m[1mINFO[0m - Progress: [1m51%[0m (16577/32503 merges) - Last merge: (1790, 11915) -> 16832 (frequency: 2986)
+2026-04-18 06:21:40,618 - rustbpe - [32m[1mINFO[0m - Progress: [1m52%[0m (16902/32503 merges) - Last merge: (3608, 3279) -> 17157 (frequency: 2894)
+2026-04-18 06:21:40,648 - rustbpe - [32m[1mINFO[0m - Progress: [1m53%[0m (17227/32503 merges) - Last merge: (404, 8211) -> 17482 (frequency: 2807)
+2026-04-18 06:21:40,686 - rustbpe - [32m[1mINFO[0m - Progress: [1m54%[0m (17552/32503 merges) - Last merge: (447, 8844) -> 17807 (frequency: 2732)
+2026-04-18 06:21:40,715 - rustbpe - [32m[1mINFO[0m - Progress: [1m55%[0m (17877/32503 merges) - Last merge: (2016, 1223) -> 18132 (frequency: 2655)
+2026-04-18 06:21:40,739 - rustbpe - [32m[1mINFO[0m - Progress: [1m56%[0m (18202/32503 merges) - Last merge: (461, 268) -> 18457 (frequency: 2573)
+2026-04-18 06:21:40,761 - rustbpe - [32m[1mINFO[0m - Progress: [1m57%[0m (18527/32503 merges) - Last merge: (265, 274) -> 18782 (frequency: 2499)
+2026-04-18 06:21:40,785 - rustbpe - [32m[1mINFO[0m - Progress: [1m58%[0m (18852/32503 merges) - Last merge: (431, 4264) -> 19107 (frequency: 2431)
+2026-04-18 06:21:40,831 - rustbpe - [32m[1mINFO[0m - Progress: [1m59%[0m (19177/32503 merges) - Last merge: (860, 434) -> 19432 (frequency: 2363)
+2026-04-18 06:21:40,854 - rustbpe - [32m[1mINFO[0m - Progress: [1m60%[0m (19502/32503 merges) - Last merge: (489, 1629) -> 19757 (frequency: 2293)
+2026-04-18 06:21:40,894 - rustbpe - [32m[1mINFO[0m - Progress: [1m61%[0m (19827/32503 merges) - Last merge: (316, 111) -> 20082 (frequency: 2234)
+2026-04-18 06:21:40,937 - rustbpe - [32m[1mINFO[0m - Progress: [1m62%[0m (20152/32503 merges) - Last merge: (373, 17797) -> 20407 (frequency: 2174)
+2026-04-18 06:21:40,971 - rustbpe - [32m[1mINFO[0m - Progress: [1m63%[0m (20477/32503 merges) - Last merge: (6072, 1429) -> 20732 (frequency: 2121)
+2026-04-18 06:21:41,010 - rustbpe - [32m[1mINFO[0m - Progress: [1m64%[0m (20802/32503 merges) - Last merge: (5829, 1269) -> 21057 (frequency: 2065)
+2026-04-18 06:21:41,035 - rustbpe - [32m[1mINFO[0m - Progress: [1m65%[0m (21127/32503 merges) - Last merge: (3781, 4610) -> 21382 (frequency: 2011)
+2026-04-18 06:21:41,071 - rustbpe - [32m[1mINFO[0m - Progress: [1m66%[0m (21452/32503 merges) - Last merge: (1520, 8522) -> 21707 (frequency: 1958)
+2026-04-18 06:21:41,116 - rustbpe - [32m[1mINFO[0m - Progress: [1m67%[0m (21778/32503 merges) - Last merge: (468, 2578) -> 22033 (frequency: 1905)
+2026-04-18 06:21:41,142 - rustbpe - [32m[1mINFO[0m - Progress: [1m68%[0m (22103/32503 merges) - Last merge: (738, 9526) -> 22358 (frequency: 1858)
+2026-04-18 06:21:41,195 - rustbpe - [32m[1mINFO[0m - Progress: [1m69%[0m (22428/32503 merges) - Last merge: (12489, 6674) -> 22683 (frequency: 1813)
+2026-04-18 06:21:41,223 - rustbpe - [32m[1mINFO[0m - Progress: [1m70%[0m (22753/32503 merges) - Last merge: (270, 12737) -> 23008 (frequency: 1768)
+2026-04-18 06:21:41,242 - rustbpe - [32m[1mINFO[0m - Progress: [1m71%[0m (23078/32503 merges) - Last merge: (440, 6764) -> 23333 (frequency: 1724)
+2026-04-18 06:21:41,268 - rustbpe - [32m[1mINFO[0m - Progress: [1m72%[0m (23403/32503 merges) - Last merge: (1942, 99) -> 23658 (frequency: 1683)
+2026-04-18 06:21:41,292 - rustbpe - [32m[1mINFO[0m - Progress: [1m73%[0m (23728/32503 merges) - Last merge: (5931, 263) -> 23983 (frequency: 1645)
+2026-04-18 06:21:41,312 - rustbpe - [32m[1mINFO[0m - Progress: [1m74%[0m (24053/32503 merges) - Last merge: (287, 508) -> 24308 (frequency: 1605)
+2026-04-18 06:21:41,329 - rustbpe - [32m[1mINFO[0m - Progress: [1m75%[0m (24378/32503 merges) - Last merge: (2745, 833) -> 24633 (frequency: 1570)
+2026-04-18 06:21:41,361 - rustbpe - [32m[1mINFO[0m - Progress: [1m76%[0m (24703/32503 merges) - Last merge: (319, 2622) -> 24958 (frequency: 1532)
+2026-04-18 06:21:41,388 - rustbpe - [32m[1mINFO[0m - Progress: [1m77%[0m (25028/32503 merges) - Last merge: (5001, 14668) -> 25283 (frequency: 1498)
+2026-04-18 06:21:41,412 - rustbpe - [32m[1mINFO[0m - Progress: [1m78%[0m (25353/32503 merges) - Last merge: (431, 6784) -> 25608 (frequency: 1464)
+2026-04-18 06:21:41,433 - rustbpe - [32m[1mINFO[0m - Progress: [1m79%[0m (25678/32503 merges) - Last merge: (3395, 24564) -> 25933 (frequency: 1434)
+2026-04-18 06:21:41,453 - rustbpe - [32m[1mINFO[0m - Progress: [1m80%[0m (26003/32503 merges) - Last merge: (6605, 70) -> 26258 (frequency: 1404)
+2026-04-18 06:21:41,478 - rustbpe - [32m[1mINFO[0m - Progress: [1m81%[0m (26328/32503 merges) - Last merge: (87, 1206) -> 26583 (frequency: 1374)
+2026-04-18 06:21:41,499 - rustbpe - [32m[1mINFO[0m - Progress: [1m82%[0m (26653/32503 merges) - Last merge: (2409, 350) -> 26908 (frequency: 1345)
+2026-04-18 06:21:41,516 - rustbpe - [32m[1mINFO[0m - Progress: [1m83%[0m (26978/32503 merges) - Last merge: (1053, 471) -> 27233 (frequency: 1315)
+2026-04-18 06:21:41,540 - rustbpe - [32m[1mINFO[0m - Progress: [1m84%[0m (27303/32503 merges) - Last merge: (1817, 263) -> 27558 (frequency: 1287)
+2026-04-18 06:21:41,557 - rustbpe - [32m[1mINFO[0m - Progress: [1m85%[0m (27628/32503 merges) - Last merge: (18797, 810) -> 27883 (frequency: 1261)
+2026-04-18 06:21:41,570 - rustbpe - [32m[1mINFO[0m - Progress: [1m86%[0m (27953/32503 merges) - Last merge: (3527, 6961) -> 28208 (frequency: 1235)
+2026-04-18 06:21:41,627 - rustbpe - [32m[1mINFO[0m - Progress: [1m87%[0m (28278/32503 merges) - Last merge: (296, 335) -> 28533 (frequency: 1209)
+2026-04-18 06:21:41,654 - rustbpe - [32m[1mINFO[0m - Progress: [1m88%[0m (28603/32503 merges) - Last merge: (121, 10596) -> 28858 (frequency: 1183)
+2026-04-18 06:21:41,687 - rustbpe - [32m[1mINFO[0m - Progress: [1m89%[0m (28928/32503 merges) - Last merge: (20347, 1521) -> 29183 (frequency: 1157)
+2026-04-18 06:21:41,713 - rustbpe - [32m[1mINFO[0m - Progress: [1m90%[0m (29253/32503 merges) - Last merge: (899, 4515) -> 29508 (frequency: 1133)
+2026-04-18 06:21:41,749 - rustbpe - [32m[1mINFO[0m - Progress: [1m91%[0m (29578/32503 merges) - Last merge: (16090, 97) -> 29833 (frequency: 1114)
+2026-04-18 06:21:41,768 - rustbpe - [32m[1mINFO[0m - Progress: [1m92%[0m (29903/32503 merges) - Last merge: (6697, 277) -> 30158 (frequency: 1092)
+2026-04-18 06:21:41,798 - rustbpe - [32m[1mINFO[0m - Progress: [1m93%[0m (30228/32503 merges) - Last merge: (23443, 4199) -> 30483 (frequency: 1073)
+2026-04-18 06:21:41,835 - rustbpe - [32m[1mINFO[0m - Progress: [1m94%[0m (30553/32503 merges) - Last merge: (6650, 2154) -> 30808 (frequency: 1052)
+2026-04-18 06:21:41,882 - rustbpe - [32m[1mINFO[0m - Progress: [1m95%[0m (30878/32503 merges) - Last merge: (1689, 111) -> 31133 (frequency: 1031)
+2026-04-18 06:21:41,904 - rustbpe - [32m[1mINFO[0m - Progress: [1m96%[0m (31203/32503 merges) - Last merge: (1666, 284) -> 31458 (frequency: 1011)
+2026-04-18 06:21:41,930 - rustbpe - [32m[1mINFO[0m - Progress: [1m97%[0m (31528/32503 merges) - Last merge: (807, 1568) -> 31783 (frequency: 992)
+2026-04-18 06:21:41,970 - rustbpe - [32m[1mINFO[0m - Progress: [1m98%[0m (31853/32503 merges) - Last merge: (348, 5350) -> 32108 (frequency: 976)
+2026-04-18 06:21:41,995 - rustbpe - [32m[1mINFO[0m - Progress: [1m99%[0m (32178/32503 merges) - Last merge: (725, 29355) -> 32433 (frequency: 959)
+2026-04-18 06:21:42,017 - rustbpe - [32m[1mINFO[0m - Progress: [1m100%[0m (32503/32503 merges) - Last merge: (3896, 542) -> 32758 (frequency: 942)
+2026-04-18 06:21:42,017 - rustbpe - [32m[1mINFO[0m - Finished training: 32503 merges completed
+max_chars: 2,000,000,000
+doc_cap: 10,000
+vocab_size: 32,768
+Training time: 85.35s
+Saved tokenizer encoding to tokenizer/tokenizer.pkl
+Saved token_bytes to tokenizer/token_bytes.pt
+
+Vocab sizes:
+GPT-2: 50257
+GPT-4: 100277
+Ours: 32768
+
+Comparison with GPT-2:
+===============================================================================================
+Text Type  Bytes    GPT-2           Ours            Relative     Better    
+                    Tokens  Ratio   Tokens  Ratio   Diff %      
+-----------------------------------------------------------------------------------------------
+news       1819     [92m404    [0m [92m4.50   [0m [91m405    [0m [91m4.49   [0m [91m   -0.2%[0m     GPT-2     
+korean     893      [92m745    [0m [92m1.20   [0m [91m749    [0m [91m1.19   [0m [91m   -0.5%[0m     GPT-2     
+code       1259     [91m576    [0m [91m2.19   [0m [92m397    [0m [92m3.17   [0m [92m  +31.1%[0m     Ours      
+math       1834     [91m936    [0m [91m1.96   [0m [92m911    [0m [92m2.01   [0m [92m   +2.7%[0m     Ours      
+science    1112     [91m260    [0m [91m4.28   [0m [92m247    [0m [92m4.50   [0m [92m   +5.0%[0m     Ours      
+fwe-train  2948778  [91m631304 [0m [91m4.67   [0m [92m622480 [0m [92m4.74   [0m [92m   +1.4%[0m     Ours      
+fwe-val    3024593  [91m653067 [0m [91m4.63   [0m [92m644914 [0m [92m4.69   [0m [92m   +1.2%[0m     Ours      
+
+Comparison with GPT-4:
+===============================================================================================
+Text Type  Bytes    GPT-4           Ours            Relative     Better    
+                    Tokens  Ratio   Tokens  Ratio   Diff %      
+-----------------------------------------------------------------------------------------------
+news       1819     [92m387    [0m [92m4.70   [0m [91m405    [0m [91m4.49   [0m [91m   -4.7%[0m     GPT-4     
+korean     893      [92m364    [0m [92m2.45   [0m [91m749    [0m [91m1.19   [0m [91m -105.8%[0m     GPT-4     
+code       1259     [92m309    [0m [92m4.07   [0m [91m397    [0m [91m3.17   [0m [91m  -28.5%[0m     GPT-4     
+math       1834     [92m832    [0m [92m2.20   [0m [91m911    [0m [91m2.01   [0m [91m   -9.5%[0m     GPT-4     
+science    1112     [91m249    [0m [91m4.47   [0m [92m247    [0m [92m4.50   [0m [92m   +0.8%[0m     Ours      
+fwe-train  2948778  [92m611619 [0m [92m4.82   [0m [91m622480 [0m [91m4.74   [0m [91m   -1.8%[0m     GPT-4     
+fwe-val    3024593  [92m631183 [0m [92m4.79   [0m [91m644914 [0m [91m4.69   [0m [91m   -2.2%[0m     GPT-4     
 ================================================================
 Processing Depth: 4
 ================================================================
@@ -50,7 +194,7 @@ Calculated Target Tokens: 121,111,872
   Overriding default target_dim (128) with full model_dim 256
 
 --- Training remixed-linear ---
-Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 8 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream selective --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective boundary --cclblock-aux-lambda 0.2 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 1 --p23-n-experts 8 --p23-topk 1 --p23-learned-route 1 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 1 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --no-compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /home/seqaeon/Downloads/nanochat/out/research_sweep_20260417_221245/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 8 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream selective --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective boundary --cclblock-aux-lambda 0.2 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 1 --p23-n-experts 8 --p23-topk 1 --p23-learned-route 1 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 1 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --no-compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /home/seqaeon/Downloads/nanochat/out/research_sweep_20260418_062012/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
 
                                                        █████                █████
                                                       ░░███                ░░███
@@ -62,8 +206,8 @@ Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --npro
     ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
     
 Autodetected device type: cuda
-2026-04-17 22:13:07,559 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
-2026-04-17 22:13:07,560 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
+2026-04-18 06:21:59,864 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-18 06:21:59,865 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
 GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU | Peak FLOPS (BF16): inf
 COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 86 (bf16 supported))
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -72,20 +216,248 @@ WARNING: Training will be less efficient without FA3
 WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
 WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 8,
+    "template_routing_learned": true,
+    "tiny_expert": true,
+    "tiny_expert_topk": 1,
+    "lokr_expert": false,
+    "lokr_n_experts": 8,
+    "lokr_topk": 1,
+    "lokr_rank": 4,
+    "lokr_learned": true,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "selective",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "boundary",
+  "cclblock_aux_lambda": 0.2,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 1,
+  "p23_n_experts": 8,
+  "p23_topk": 1,
+  "p23_learned_route": 1,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 1,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /home/seqaeon/Downloads/nanochat/out/research_sweep_20260418_062012/depth_4/ckpt_remixed-linear/remixed-linear
+Warning: FP8 training requires compute capability >= 8.9 (e.g. H100, L4, 4090), but detected 8.6. Disabling FP8.
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 37,891,608
+research                : 257
+scalars                 : 8
+total                   : 71,446,305
+Estimated FLOPs per token (total):  2.863336e+08
+Estimated FLOPs per token (active): 1.211829e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 1.496591 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 2.62
+Total training FLOPs estimate: 3.467801e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 8 x 2048 = 16,384
+Tokens / micro-batch: 16,384
+Total batch size 262,144 => gradient accumulation steps: 16
 [rank0]: Traceback (most recent call last):
 [rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
 [rank0]:     return _run_code(code, main_globals, None,
 [rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
 [rank0]:     exec(code, run_globals)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 340, in <module>
-[rank0]:     tokenizer = get_tokenizer(tokenizer_dir=args.tokenizer_dir)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/tokenizer.py", line 396, in get_tokenizer
-[rank0]:     return RustBPETokenizer.from_directory(tokenizer_dir)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/tokenizer.py", line 196, in from_directory
-[rank0]:     enc = pickle.load(f)
-[rank0]: EOFError: Ran out of input
-[rank0]:[W417 22:13:08.269565083 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-E0417 22:13:10.057000 1786442 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1786498) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 1028, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 7015, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4392, in forward
+[rank0]:     attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4003, in forward
+[rank0]:     q = self.c_q(x, context_state, route_weights=rw['c_q']      if rw else None).view(B, T, self.n_head, self.head_dim)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 1668, in forward
+[rank0]:     all_up  = torch.einsum('btb,khb->btkh',
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/functional.py", line 373, in einsum
+[rank0]:     return _VF.einsum(equation, operands)  # type: ignore[attr-defined]
+[rank0]: RuntimeError: einsum(): subscript b is repeated for operand 0 but the sizes don't match, 256 != 8
+[rank0]:[W418 06:22:01.329909721 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0418 06:22:02.771000 1959203 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1959247) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
 Traceback (most recent call last):
   File "/home/seqaeon/Downloads/nanochat/.venv/bin/torchrun", line 10, in <module>
     sys.exit(main())
@@ -108,37 +480,34 @@ Failures:
 ------------------------------------------------------------
 Root Cause (first observed failure):
 [0]:
-  time      : 2026-04-17_22:13:10
+  time      : 2026-04-18_06:22:02
   host      : Seqaeon
   rank      : 0 (local_rank: 0)
-  exitcode  : 1 (pid: 1786498)
+  exitcode  : 1 (pid: 1959247)
   error_file: <N/A>
   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
 ============================================================
 Error training remixed-linear. Exiting to preserve resume capability.
-ed for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
-GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU | Peak FLOPS (BF16): inf
-COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 86 (bf16 supported))
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
-WARNING: Training will be less efficient without FA3
-WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
-WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-[rank0]: Traceback (most recent call last):
-[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
-[rank0]:     return _run_code(code, main_globals, None,
-[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
-[rank0]:     exec(code, run_globals)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 340, in <module>
-[rank0]:     tokenizer = get_tokenizer(tokenizer_dir=args.tokenizer_dir)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/tokenizer.py", line 396, in get_tokenizer
-[rank0]:     return RustBPETokenizer.from_directory(tokenizer_dir)
-[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/tokenizer.py", line 196, in from_directory
-[rank0]:     enc = pickle.load(f)
-[rank0]: EOFError: Ran out of input
-[rank0]:[W417 22:13:08.269565083 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-E0417 22:13:10.057000 1786442 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1786498) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
+forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4392, in forward
+[rank0]:     attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4003, in forward
+[rank0]:     q = self.c_q(x, context_state, route_weights=rw['c_q']      if rw else None).view(B, T, self.n_head, self.head_dim)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 1668, in forward
+[rank0]:     all_up  = torch.einsum('btb,khb->btkh',
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/functional.py", line 373, in einsum
+[rank0]:     return _VF.einsum(equation, operands)  # type: ignore[attr-defined]
+[rank0]: RuntimeError: einsum(): subscript b is repeated for operand 0 but the sizes don't match, 256 != 8
+[rank0]:[W418 06:22:01.329909721 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0418 06:22:02.771000 1959203 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1959247) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
 Traceback (most recent call last):
   File "/home/seqaeon/Downloads/nanochat/.venv/bin/torchrun", line 10, in <module>
     sys.exit(main())
@@ -161,10 +530,10 @@ Failures:
 ------------------------------------------------------------
 Root Cause (first observed failure):
 [0]:
-  time      : 2026-04-17_22:13:10
+  time      : 2026-04-18_06:22:02
   host      : Seqaeon
   rank      : 0 (local_rank: 0)
-  exitcode  : 1 (pid: 1786498)
+  exitcode  : 1 (pid: 1959247)
   error_file: <N/A>
   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
 ============================================================

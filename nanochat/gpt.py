@@ -6813,6 +6813,10 @@ class GPT(nn.Module):
                             struct_adamw_params.append(ffwd.srp_proj.sigma)
                         if hasattr(ffwd, 'srp_fc') and ffwd.srp_fc is not None:
                             struct_adamw_params.append(ffwd.srp_fc.sigma)
+                    # Phase 23: SharedBlockRouter routing projections → gate group
+                    if hasattr(block, '_shared_router') and block._shared_router is not None:
+                        for p in block._shared_router.gate_parameters():
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                     # 19J: no params (noise epsilon is a config float, not learned)
         else:
             # Regular Block: split standard struct parameters from MoE router parameters
