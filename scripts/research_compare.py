@@ -363,9 +363,15 @@ def run_training_sweep(args):
         except Exception as e:
             print(f"Exception during {model_name}: {e}")
             
+    # --- Fail fast if any model errored ---
+    failed_models = [n for n, v in results.items() if v == "FAILED"]
+
     # --- Generate Report and Plot ---
     if not results:
         print("No results collected to plot.")
+        if failed_models:
+            print(f"Failed models: {failed_models}")
+            sys.exit(1)
         return
         
     print("\n--- Generating Report ---")
@@ -402,8 +408,15 @@ def run_training_sweep(args):
     with open(tsv_path, "w") as f:
         f.write("model_name\tval_bpb\n")
         for name, data in results.items():
-            f.write(f"{name}\t{data['val_bpb']}\n")
+            if isinstance(data, dict):
+                f.write(f"{name}\t{data['val_bpb']}\n")
+            else:
+                f.write(f"{name}\tFAILED\n")
     print(f"Saved TSV data to {tsv_path}")
+
+    if failed_models:
+        print(f"\n[ERROR] The following models FAILED: {failed_models}")
+        sys.exit(1)
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

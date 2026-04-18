@@ -38,7 +38,6 @@
 #   bash scripts/p23_sweep.sh --force   # re-run everything
 #   SWEEP_LOG=p23.log bash scripts/p23_sweep.sh
 
-set -e
 set -o pipefail  # pipefail: pipeline exit code = first failing command, not tee's
 
 LOGFILE="${SWEEP_LOG:-sweep.log}"
@@ -98,12 +97,6 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --research-dim -1 \
   --remix-use-context 0"
 
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║      Phase 23: No-Context TinyExpert Sweep (3 experiments) ║"
-echo "║  depth=$DEPTH  | log=$LOGFILE                               ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
-echo ""
-
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference
 # ══════════════════════════════════════════════════════
@@ -112,133 +105,127 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-    bash scripts/research_sweep.sh $BASE_COMMON \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 2: TinyExpert K=8, top-1 — max specialization
-#    expert_dim = basis_size // 1 = basis_size (full-rank per expert)
+# 2: TinyExpert K=8, top-1
 # ══════════════════════════════════════════════════════
 TAG="23_TINY_K8_TOP1"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "2" "$TAG" "TinyExpert K=8, top-1, no context, compile enabled"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-tiny-expert 1 \
       --p23-use-shared-block-router 1 \
       --p23-n-experts 8 \
       --p23-topk 1 \
       --p23-learned-route 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 3: TinyExpert K=64, top-16 — compute parity, sparse routing
-#    expert_dim = basis_size // 16  (e.g. 256//16 = 16 per expert)
+# 3: TinyExpert K=64, top-16
 # ══════════════════════════════════════════════════════
 TAG="23_TINY_K64_TOP16"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "3" "$TAG" "TinyExpert K=64, top-16, no context, compile enabled"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-tiny-expert 1 \
       --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-learned-route 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════
-# ARCHIVED EXPERIMENTS (context-modulation dependent — disabled)
-# Restore by uncommenting if context conditioning is re-enabled.
-# ══════════════════════════════════════════════════════
-#
-# 23_REMIX_WEIGHT      — weight mod, K=8, top-1
-# 23_REMIX_HOUSE       — householder mod, K=8, top-1
-# 23_REMIX_CKR         — CKR mod, K=8, top-1
-# 23_STD_MOE_TOP1      — StandardMoE K=8, top-1
-# 23_STD_MOE_TOP_OPT   — StandardMoE K=8, optimal topk
-# 23_LINEAR_MOE_TOP1   — LinearMoE K=8, top-1 blending
-# 23_TINY_WEIGHT_4T_FROZEN/LEARNED
-# 23_TINY_WEIGHT_TOP1_FROZEN/LEARNED
-# 23_TINY_HOUSE_4T_FROZEN/LEARNED
-# 23_TINY_CKR_4T_FROZEN/LEARNED
-# 23_LOKR_WEIGHT_4T_LEARNED
-# 23_LOKR_HOUSE_4T_LEARNED
-# 23_LOKR_CKR_4T_LEARNED
-
-echo ""
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 23 Sweep Complete (3 experiments)           ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
-echo "Check $LOGFILE for results."
-
-
-# ══════════════════════════════════════════════════════
-# 4: LoKR K=64, rank=4, top-16 — iso-parameter low-rank MoE, no context
-#    b_shrunk = basis_size - K*rank  (shared base dim)
+# 4: LoKR K=64, rank=4, top-16
 # ══════════════════════════════════════════════════════
 TAG="23_LOKR_K64_TOP16"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "4" "$TAG" "LoKR K=64, top-16, rank=4, no context, compile enabled"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-lokr 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-lokr-rank 4 \
       --p23-learned-route 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 5: LinearMoE K=8, top-1 — sparse weight-matrix blending, no context
+# 5: LinearMoE K=8, top-1
 # ══════════════════════════════════════════════════════
 TAG="23_LINEAR_MOE_K8_TOP1"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "5" "$TAG" "LinearMoE K=8 weight matrices, top-1, no context, compile enabled"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
+    print_header "5" "$TAG" "LinearMoE K=8, top-1, no context, compile enabled"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 6: LinearMoE K=8, top-16 — soft weight-matrix blending, no context
+# 6: LinearMoE K=8, top-16
 # ══════════════════════════════════════════════════════
 TAG="23_LINEAR_MOE_K8_TOP16"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "6" "$TAG" "LinearMoE K=8 weight matrices, top-16 (soft), no context, compile enabled"
-    bash scripts/research_sweep.sh $REMIX_COMMON \
+    print_header "6" "$TAG" "LinearMoE K=8, top-16, no context, compile enabled"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 16 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"
-    echo "════════════════ $TAG COMPLETE ════════════════"
-    mark_completed "$TAG"
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
 fi
+
+# ══════════════════════════════════════════════════════
+# ARCHIVED (context-modulation dependent)
+# ══════════════════════════════════════════════════════
+# 23_REMIX_WEIGHT/HOUSE/CKR, 23_STD_MOE_TOP1/TOP_OPT
+# 23_TINY_WEIGHT/HOUSE/CKR variants, 23_LOKR_WEIGHT/HOUSE/CKR
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║          Phase 23 Sweep Complete (6 experiments)           ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."
-

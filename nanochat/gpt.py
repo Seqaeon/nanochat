@@ -1282,21 +1282,21 @@ class RemixedLinear(nn.Module):
             # Ensures (B_shrunk + K*rank)*(in+out) = basis_size*(in+out)
             K, R = self.lokr_n_experts, self.lokr_rank
             b_shrunk = basis_size - K * R
-            assert b_shrunk > 0, (
-                f"LoKR: basis_size ({basis_size}) too small for "
-                f"{K} experts × rank {R} = {K*R} dims. "
-                f"Increase basis_size or reduce n_experts/rank."
-            )
             if b_shrunk <= 0:
                 # Auto-clamp: reduce rank so at least 1 dim remains for shared base
+                import warnings
+                R_old = R
                 R = max(1, (basis_size - 1) // K)
                 b_shrunk = basis_size - K * R
                 self.lokr_rank = R
-                import warnings
                 warnings.warn(
-                    f"LoKR: auto-clamped rank from {self.lokr_rank} to {R} "
+                    f"LoKR: auto-clamped rank {R_old}→{R} "
                     f"(basis={basis_size}, K={K})"
                 )
+            assert b_shrunk > 0, (
+                f"LoKR: basis_size ({basis_size}) too small even after rank clamp "
+                f"(K={K}, rank={R}). Reduce n_experts or increase basis_size."
+            )
             # Override basis_size for the shared-base path
             basis_size = b_shrunk
 
