@@ -285,6 +285,7 @@ class GPTConfig:
     p23_use_shared_block_router: int = 0      # 23: block-level single pass router for all RemixedLinear inner experts
     p23_linear_moe_experts: int = 0           # 23: enable weight-space LinearMoE with K experts (0=off)
     p23_linear_moe_topk: int = 0              # 23: top-k selected experts in LinearMoE (0=soft all-expert blend)
+    p23_quantile_route: int = 0               # 23: use EMA quantile-balanced routing without aux loss
     remix_shared_context_gates: int = 0       # 23: batch all 6 per-RL context gate computations into 3 block-level matmuls
 
 
@@ -1327,7 +1328,7 @@ class RemixedLinear(nn.Module):
             topk = self.tiny_expert_topk
             assert topk > 0, "tiny_expert_topk must be > 0"
             raw_expert_dim = basis_size // topk
-            self.expert_dim = max(raw_expert_dim, 32)  # minimum viable hidden dimension
+            self.expert_dim = raw_expert_dim
             K = self.n_templates
             self.expert_up_w   = nn.Parameter(torch.empty(K, self.expert_dim, basis_size))
             self.expert_down_w = nn.Parameter(torch.empty(K, out_features, self.expert_dim))
