@@ -3682,7 +3682,7 @@ class LinearMoE(nn.Module):
         if self.bias is not None:
             yield self.bias
 
-    def forward(self, x, context_state=None, route_weights=None):
+    def forward(self, x, context_state=None, route_weights=None, **kwargs):
         """x: (B, T, in_features) → (B, T, out_features)."""
         B, T, _ = x.shape
         logits = F.linear(x, self.router.weight.to(x.dtype))                    # (B, T, K)
