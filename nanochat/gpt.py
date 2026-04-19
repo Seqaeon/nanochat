@@ -4264,7 +4264,7 @@ class SharedBlockRouter(nn.Module):
         """
         B, T, _ = x.shape
         K       = self.n_experts
-        # Token routing (now sequence-level pooled as well): mean-pool → one matmul → expand
+        dtype   = x.dtype
         x_pool      = x.float().mean(dim=1, keepdim=True)                                 # (B, 1, D)
         tok_logits  = x_pool @ self.token_proj.float()                                    # (B, 1, K*2)
         tok_weights = F.softmax(
