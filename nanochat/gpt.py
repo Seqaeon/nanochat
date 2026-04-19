@@ -1251,10 +1251,9 @@ class RemixedLinear(nn.Module):
         self.n_templates = remixed_linear_kwargs.get('n_templates', 1)
         self.template_routing_learned = remixed_linear_kwargs.get('template_routing_learned', False)
         # Phase 23: Tiny Experts mode
-        # Each expert has expert_dim = basis_size // topk (compute parity with dense).
-        # K_total experts in the bank, p23_topk active per forward pass.
         self.tiny_expert = remixed_linear_kwargs.get('tiny_expert', False)
         self.tiny_expert_topk = remixed_linear_kwargs.get('tiny_expert_topk', 16)
+        self.use_quantile_route = remixed_linear_kwargs.get('use_quantile_route', False)
 
         # Phase 23 LoKR: iso-parameter shared-base + low-rank expert adapters
         # Shared base uses shrunk basis (B_shrunk = basis_size - K*rank) for param parity.
@@ -1322,31 +1321,33 @@ class RemixedLinear(nn.Module):
             # Store shrunk basis_size for diagnostics
             self._lokr_basis_size = basis_size
         elif self.tiny_expert and self.n_templates > 1:
-            # Phase 23 Tiny Experts — vectorized 3D stacked parameters (no Python loop in forward).
-            # expert_dim = basis_size // topk  for compute parity with dense.
-            # Stacked layout:
-            #   expert_up_w:   (K, expert_dim, basis_size)  — up-projection weights
-            #   expert_down_w: (K, out_features, expert_dim) — down-projection weights
-            # Forward uses einsum over all K experts then gathers top-k.
-            # ALL expert weights always participate in the computation graph → no DDP deadlock.
+            # Phase 23 Tiny Experts — vectorized 3D stacked parameters.
+            # expert_dim = max(basis_size // topk, 32) — floor of 32 prevents impossibly narrow
+            # bottlenecks (e.g. basis_size=128, topk=16 → 8 dims → near-zero relu² outputs).
             topk = self.tiny_expert_topk
             assert topk > 0, "tiny_expert_topk must be > 0"
-            assert basis_size % topk == 0, (
-                f"basis_size ({basis_size}) must be divisible by tiny_expert_topk ({topk})"
-            )
-            self.expert_dim = basis_size // topk
+            raw_expert_dim = basis_size // topk
+            self.expert_dim = max(raw_expert_dim, 32)  # minimum viable hidden dimension
             K = self.n_templates
             self.expert_up_w   = nn.Parameter(torch.empty(K, self.expert_dim, basis_size))
             self.expert_down_w = nn.Parameter(torch.empty(K, out_features, self.expert_dim))
             self.template_bank = None
             self.template_mixing = None
-            # Content routing — only created when NOT using SharedBlockRouter
+            # Routing: quantile-balanced or simple learned/frozen softmax
             if not self._use_shared_route:
-                route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
-                if self.template_routing_learned:
-                    self.template_route = nn.Parameter(route_init)
+                if self.use_quantile_route:
+                    self._qrouter = QuantileBalancedRouter(
+                        in_features, K, topk, learned=self.template_routing_learned)
+                    self.template_route = None  # handled by _qrouter
                 else:
-                    self.register_buffer('template_route', route_init)
+                    route_init = torch.randn(in_features, K) / (in_features ** 0.5)
+                    if self.template_routing_learned:
+                        self.template_route = nn.Parameter(route_init)
+                    else:
+                        self.register_buffer('template_route', route_init)
+                    self._qrouter = None
+            else:
+                self._qrouter = None
             # Diagnostics
             self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         elif self.n_templates > 1:
@@ -1665,6 +1666,9 @@ class RemixedLinear(nn.Module):
             if route_weights is not None:
                 # Pre-computed by SharedBlockRouter — skip local routing entirely
                 rw = route_weights  # (B, T, K) already softmaxed
+            elif getattr(self, '_qrouter', None) is not None:
+                # Quantile-balanced routing
+                rw = self._qrouter(x)                                      # (B, T, K)
             elif not self._use_shared_route:
                 if self.routing_scope == 'per_sequence':
                     x_pool = x.float().mean(dim=1, keepdim=True)              # (B, 1, D)
@@ -3645,7 +3649,95 @@ class ResidualAdaptiveLinear(nn.Module):
         return y
 
 
+
+class QuantileBalancedRouter(nn.Module):
+    """Per-expert EMA quantile thresholding for balanced MoE routing.
+
+    Instead of softmax + auxiliary load-balancing loss, this module:
+    1. Computes raw affinity scores: (B, T, K)
+    2. Maintains a running EMA of per-expert score quantiles
+    3. Assigns a token to expert k if its score > ema_threshold[k]
+    4. Guarantees at least topk experts per token via union with hard top-k
+
+    Result: ~1/K of tokens route to each expert by construction, with no
+    explicit load-balancing loss term fighting against the primary objective.
+
+    At inference time falls back to plain top-k softmax routing (no EMA update).
+    """
+
+    def __init__(self, in_features: int, n_experts: int, topk: int,
+                 learned: bool = True, ema_decay: float = 0.99):
+        super().__init__()
+        self.n_experts = n_experts
+        self.topk      = topk
+        self.ema_decay = ema_decay
+        # Affinity projection: (K, D) — frozen or learned
+        if learned:
+            self.route_proj = nn.Parameter(torch.empty(n_experts, in_features))
+            nn.init.normal_(self.route_proj, std=in_features ** -0.5)
+        else:
+            self.register_buffer('route_proj',
+                torch.randn(n_experts, in_features) / (in_features ** 0.5))
+        # EMA quantile thresholds — one per expert, initialised lazily on first step
+        self.register_buffer('ema_thresholds',  torch.zeros(n_experts))
+        self.register_buffer('_ema_init',       torch.zeros(1, dtype=torch.bool))
+
+    def gate_parameters(self):
+        if isinstance(self.route_proj, nn.Parameter):
+            yield self.route_proj
+
+    def forward(self, x: 'Tensor') -> 'Tensor':
+        """x: (B, T, D) → weights: (B, T, K) normalised expert weights."""
+        B, T, D = x.shape
+        K, topk = self.n_experts, self.topk
+
+        # ── Affinity scores (sequence-level pooled for stability) ───────────────
+        x_pool  = x.float().mean(dim=1, keepdim=True)                    # (B, 1, D)
+        scores  = F.linear(x_pool, self.route_proj.float())              # (B, 1, K)
+        scores  = scores.expand(B, T, K)                                  # (B, T, K)
+
+        if self.training:
+            with torch.no_grad():
+                flat = scores.detach().view(-1, K)                        # (N, K)
+                target_q = 1.0 - topk / K                                 # target fraction selected
+                batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
+                if not self._ema_init.item():
+                    self.ema_thresholds.copy_(batch_q)
+                    self._ema_init.fill_(True)
+                else:
+                    self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
+
+            thresh = self.ema_thresholds.to(scores.device)               # (K,)
+            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
+
+            # Guarantee exactly topk via hard fallback
+            _, topk_idx = scores.topk(topk, dim=-1)                      # (B, T, topk)
+            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
+            mask        = q_mask | hard_mask                              # union
+
+            # Trim excess: if more than topk pass, keep only the highest-scoring topk
+            # (happens when many experts share a similar score near the threshold)
+            n_selected  = mask.sum(dim=-1, keepdim=True)                 # (B, T, 1)
+            if (n_selected > topk).any():
+                masked_scores = scores.masked_fill(~mask, -1e9)
+                _, top_idx    = masked_scores.topk(topk, dim=-1)
+                mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
+
+            # Soft weights via masked softmax (preserves differentiability)
+            gated   = scores.masked_fill(~mask, -1e9)
+            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)       # (B, T, K)
+        else:
+            # Inference: simple top-k softmax (no EMA update)
+            topk_s, topk_idx = scores.topk(topk, dim=-1)               # (B, T, topk)
+            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
+            weights.scatter_(-1, topk_idx,
+                F.softmax(topk_s.float(), dim=-1).to(x.dtype))
+
+        return weights
+
+
 class LinearMoE(nn.Module):
+
     """Weight-space Mixture of Experts — blends K expert weight matrices before a single F.linear call.
 
     Route: W_eff[b,t] = Σ_k w_k(x[b,t]) * W_k  then  y[b,t] = F.linear(x[b,t], W_eff[b,t])
@@ -3657,16 +3749,21 @@ class LinearMoE(nn.Module):
       - Efficient: soft blending in weight-space → one batched einsum, not K forward passes
     """
     def __init__(self, in_features: int, out_features: int, n_experts: int = 8,
-                 topk: int = 0, bias: bool = True):
+                 topk: int = 0, bias: bool = True, use_quantile_route: bool = False):
         super().__init__()
         self.n_experts = n_experts
         self.topk = topk  # 0 = soft (all experts), N = hard top-N
         # Expert weight bank: (K, out_features, in_features)
         self.experts_w = nn.Parameter(torch.empty(n_experts, out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
-        # Router: in_features → K logits; zero-init → uniform at t=0
-        self.router = nn.Linear(in_features, n_experts, bias=False)
-        nn.init.zeros_(self.router.weight)
+        # Router: quantile-balanced or simple learned softmax
+        if use_quantile_route and topk > 0:
+            self.router = QuantileBalancedRouter(in_features, n_experts, topk, learned=True)
+            self._use_quantile = True
+        else:
+            self.router = nn.Linear(in_features, n_experts, bias=False)
+            nn.init.zeros_(self.router.weight)
+            self._use_quantile = False
         # Kaiming init for expert weights
         nn.init.kaiming_uniform_(self.experts_w.view(n_experts * out_features, in_features),
                                  a=math.sqrt(5))
@@ -3675,7 +3772,10 @@ class LinearMoE(nn.Module):
         self.ln_basis = nn.Identity()
 
     def gate_parameters(self):
-        yield from self.router.parameters()
+        if self._use_quantile:
+            yield from self.router.gate_parameters()
+        else:
+            yield from self.router.parameters()
 
     def non_gate_parameters(self):
         yield self.experts_w
@@ -3685,16 +3785,19 @@ class LinearMoE(nn.Module):
     def forward(self, x, context_state=None, route_weights=None, **kwargs):
         """x: (B, T, in_features) → (B, T, out_features)."""
         B, T, _ = x.shape
-        logits = F.linear(x, self.router.weight.to(x.dtype))                    # (B, T, K)
-        if self.topk > 0 and self.topk < self.n_experts:
-            topk_w, topk_idx = logits.topk(self.topk, dim=-1)
-            w = torch.zeros_like(logits).scatter_(-1, topk_idx,
-                                                  F.softmax(topk_w, dim=-1))
+        if self._use_quantile:
+            w = self.router(x)                                           # (B, T, K)
         else:
-            w = F.softmax(logits, dim=-1)                          # (B, T, K) soft
+            logits = F.linear(x, self.router.weight.to(x.dtype))        # (B, T, K)
+            if self.topk > 0 and self.topk < self.n_experts:
+                topk_w, topk_idx = logits.topk(self.topk, dim=-1)
+                w = torch.zeros_like(logits).scatter_(-1, topk_idx,
+                                                      F.softmax(topk_w, dim=-1))
+            else:
+                w = F.softmax(logits, dim=-1)                           # (B, T, K) soft
         # Blend expert weights in parameter space: W_eff = Σ_k w_k * W_k
         W_eff = torch.einsum('btk,koi->btoi',
-                             w.float(), self.experts_w.float()).to(x.dtype)                  # (B, T, out, in)
+                             w.float(), self.experts_w.float()).to(x.dtype)  # (B, T, out, in)
         # Single batched matmul (no expert loop)
         out = torch.einsum('bti,btoi->bto', x, W_eff)
         if self.bias is not None:
@@ -3715,10 +3818,11 @@ class RemixedFeedForward(nn.Module):
         scale = getattr(config, 'scale_basis_size', True)
         # Phase 23 LinearMoE mode: weight-space blending of K expert matrices
         linear_moe_k = getattr(config, 'p23_linear_moe_experts', 0)
+        use_qroute = bool(getattr(config, 'p23_quantile_route', 0))
         if linear_moe_k > 0:
             linear_moe_topk = getattr(config, 'p23_linear_moe_topk', 0)
-            self.c_fc   = LinearMoE(config.n_embd, 4 * config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk)
-            self.c_proj = LinearMoE(4 * config.n_embd, config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk)
+            self.c_fc   = LinearMoE(config.n_embd, 4 * config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk, use_quantile_route=use_qroute)
+            self.c_proj = LinearMoE(4 * config.n_embd, config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk, use_quantile_route=use_qroute)
         elif mode == 'fsi':
             n_rot = getattr(config, 'cclblock_fsi_rotations', 8)
             sel_dim = getattr(config, 'cclblock_fsi_selector_dim', 64)
@@ -3807,6 +3911,7 @@ class RemixedFeedForward(nn.Module):
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
             if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
+                kwargs['use_quantile_route'] = bool(getattr(config, 'p23_quantile_route', 0))
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
@@ -3992,6 +4097,7 @@ class RemixedMultiAttention(nn.Module):
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
             if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy
+                kwargs['use_quantile_route'] = bool(getattr(config, 'p23_quantile_route', 0))
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)

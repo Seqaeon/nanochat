@@ -93,6 +93,7 @@ parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank b
 parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1], help="23: block-level single pass router for all RemixedLinear inner experts")
 parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
 parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
+parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1], help="23: use EMA quantile-balanced routing without aux loss")
 parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch all 6 per-RL context gate computations into 3 block-level matmuls (~6x fewer gate kernel launches)")
 # CCL block modulation (only active when --use-remix-linear is set)
 
@@ -540,6 +541,7 @@ def build_model_meta(depth):
         p23_use_shared_block_router=getattr(args, 'p23_use_shared_block_router', 0),
         p23_linear_moe_experts=getattr(args, 'p23_linear_moe_experts', 0),
         p23_linear_moe_topk=getattr(args, 'p23_linear_moe_topk', 0),
+        p23_quantile_route=getattr(args, 'p23_quantile_route', 0),
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
     )
 
