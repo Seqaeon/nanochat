@@ -1221,7 +1221,7 @@ class CCLBlock(nn.Module):
 
 
 class RemixedLinear(nn.Module):
-    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False, routing_scope='per_token'):
+    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False, routing_scope='per_sequence'):
         super().__init__()
         self._film_gate_flag = film_gate
         # routing_scope: 'per_token' (FFN layers) or 'per_sequence' (attention layers)
@@ -3816,8 +3816,8 @@ class RemixedFeedForward(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
-            self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_token')
-            self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_token')
+            self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
         # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
