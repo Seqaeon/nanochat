@@ -216,6 +216,19 @@ def run_training_sweep(args):
         "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', 'per_layer')),
         "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', 'sigmoid')),
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
+        "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
+        "--p24-sliced-weight-reduction-scale", str(getattr(args, 'p24_sliced_weight_reduction_scale', 8)),
+        "--p24-sliced-weight-min-select", str(getattr(args, 'p24_sliced_weight_min_select', 128)),
+        "--p24-sliced-weight-scope", str(getattr(args, 'p24_sliced_weight_scope', "global")),
+        "--p24-sliced-weight-balance-coeff", str(getattr(args, 'p24_sliced_weight_balance_coeff', 0.01)),
+        "--p24-quantile-route", str(getattr(args, 'p24_quantile_route', 0)),
+        "--p24-use-folded-mod", str(getattr(args, 'p24_use_folded_mod', 0)),
+        "--p24-folded-mod-reduction-scale", str(getattr(args, 'p24_folded_mod_reduction_scale', 8)),
+        "--p24-folded-mod-scope", str(getattr(args, 'p24_folded_mod_scope', "global")),
+        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', "sigmoid")),
+        "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
+        "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', "global")),
+        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', "sigmoid")),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -634,6 +647,21 @@ if __name__ == "__main__":
     _add_unique("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
     _add_unique("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
+    parser.add_argument("--p24-use-sliced-weight", type=int, default=0, help="24: Phase 24 LinearMoE2 sliced weight constraint")
+    parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8)
+    parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128)
+    parser.add_argument("--p24-sliced-weight-scope", type=str, default="global")
+    parser.add_argument("--p24-sliced-weight-balance-coeff", type=float, default=0.01)
+    parser.add_argument("--p24-quantile-route", type=int, default=0)
+
+    parser.add_argument("--p24-use-folded-mod", type=int, default=0, help="24: Phase 24 LinearMoE3 folded mod constraint")
+    parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8)
+    parser.add_argument("--p24-folded-mod-scope", type=str, default="global")
+    parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid")
+
+    parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, help="24: Phase 24 Sequence-Gated Linear mode")
+    parser.add_argument("--p24-sequence-gated-scope", type=str, default="global")
+    parser.add_argument("--p24-sequence-gated-act", type=str, default="sigmoid")
     args = parser.parse_args()
     
     run_training_sweep(args)
