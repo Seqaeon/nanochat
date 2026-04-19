@@ -126,6 +126,8 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation weight \
       --p22-n-templates 1 \
+      --remix-use-context 0 \
+      --remix-shared-context-gates 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
