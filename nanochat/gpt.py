@@ -3694,7 +3694,8 @@ class QuantileBalancedRouter(nn.Module):
     def forward(self, x: 'Tensor') -> 'Tensor':
         """x: (B, T, D) → weights: (B, T, K) normalised expert weights."""
         B, T, D = x.shape
-        K, topk = self.n_experts, self.topk
+        K = self.n_experts
+        topk = max(1, min(self.topk, K))
 
         # ── Affinity scores (sequence-level pooled for stability) ───────────────
         x_pool  = x.float().mean(dim=1, keepdim=True)                    # (B, 1, D)
@@ -3785,7 +3786,7 @@ class QuantileCrossAttentionRouter(nn.Module):
     def forward(self, x: torch.Tensor, kv_state: dict = None) -> torch.Tensor:
         B, T, D = x.shape
         K, D_h = self.n_experts, self.head_dim
-        topk = self.topk
+        topk = max(1, min(self.topk, K))
         
         k = self.k_proj(x)       # (B, T, D_h)
         v = self.v_proj(x)       # (B, T, D_h)
