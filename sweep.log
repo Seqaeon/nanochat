@@ -2425,3 +2425,1360 @@ Error training remixed-linear. Marking as failed and continuing to next model.
 No successful runs to plot.
 
 [ERROR] The following models FAILED: ['remixed-linear']
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sun Apr 19 13:58:56 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3050 ...    Off |   00000000:01:00.0 Off |                  N/A |
+| N/A   87C    P5             20W /   20W |      15MiB /   4096MiB |     18%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1680      G   /usr/lib/xorg/Xorg                        4MiB |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260419_135856
+Resolved 142 packages in 2ms
+Audited 129 packages in 2ms
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 1 --p23-n-experts 8 --p23-topk 1 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 1 --remix-shared-context-gates 1 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /home/seqaeon/Downloads/nanochat/out/research_sweep_20260419_135856/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-19 13:59:32,862 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-19 13:59:32,865 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
+GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU | Peak FLOPS (BF16): inf
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 86 (bf16 supported))
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
+WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 8,
+    "template_routing_learned": false,
+    "tiny_expert": true,
+    "tiny_expert_topk": 1,
+    "lokr_expert": false,
+    "lokr_n_experts": 8,
+    "lokr_topk": 1,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 1,
+  "p23_n_experts": 8,
+  "p23_topk": 1,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 1,
+  "remix_shared_context_gates": 1
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /home/seqaeon/Downloads/nanochat/out/research_sweep_20260419_135856/depth_4/ckpt_remixed-linear/remixed-linear
+Warning: FP8 training requires compute capability >= 8.9 (e.g. H100, L4, 4090), but detected 8.6. Disabling FP8.
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 38,327,960
+research                : 0
+scalars                 : 8
+total                   : 71,882,400
+Estimated FLOPs per token (total):  2.889502e+08
+Estimated FLOPs per token (active): 1.237994e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 1.512641 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 2.59
+Total training FLOPs estimate: 3.499491e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0419 13:59:37.111000 2852239 .venv/lib/python3.10/site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+[rank0]:     return _run_code(code, main_globals, None,
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
+[rank0]:     exec(code, run_globals)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 1032, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1869, in __call__
+[rank0]:     return hijacked_callback(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1625, in __call__
+[rank0]:     result = self._inner_convert(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 688, in __call__
+[rank0]:     result = _compile(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1434, in _compile
+[rank0]:     guarded_code, tracer_output = compile_inner(code, one_graph, hooks)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_utils_internal.py", line 92, in wrapper_function
+[rank0]:     return function(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1117, in compile_inner
+[rank0]:     return _compile_inner(code, one_graph, hooks)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1151, in _compile_inner
+[rank0]:     dynamo_output = compile_frame(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1032, in compile_frame
+[rank0]:     bytecode, tracer_output = transform_code_object(code, transform)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/bytecode_transformation.py", line 1592, in transform_code_object
+[rank0]:     tracer_output = transformations(instructions, code_options)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1004, in transform
+[rank0]:     tracer_output = trace_frame(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 312, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 815, in trace_frame
+[rank0]:     run_tracer()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 797, in run_tracer
+[rank0]:     tracer.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2396, in CALL_FUNCTION_KW
+[rank0]:     self.call_function(fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2396, in CALL_FUNCTION_KW
+[rank0]:     self.call_function(fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/misc.py", line 1115, in call_function
+[rank0]:     return self.obj.call_method(tx, self.name, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py", line 713, in call_method
+[rank0]:     return wrap_fx_proxy(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2645, in wrap_fx_proxy
+[rank0]:     return wrap_fx_proxy_cls(target_cls=TensorVariable, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2711, in wrap_fx_proxy_cls
+[rank0]:     return _wrap_fx_proxy(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2809, in _wrap_fx_proxy
+[rank0]:     example_value = get_fake_value(proxy.node, tx, allow_non_graph_fake=True)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3478, in get_fake_value
+[rank0]:     raise TorchRuntimeError(str(e)).with_traceback(e.__traceback__) from None
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3376, in get_fake_value
+[rank0]:     ret_val = wrap_fake_exception(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 2864, in wrap_fake_exception
+[rank0]:     return fn()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3377, in <lambda>
+[rank0]:     lambda: run_node(tx.output, node, args, kwargs, nnmodule)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3587, in run_node
+[rank0]:     raise RuntimeError(make_error_message(e)).with_traceback(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3557, in run_node
+[rank0]:     return getattr(args[0], node.target)(*args[1:], **kwargs)  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/utils/_stats.py", line 28, in wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 1376, in __torch_dispatch__
+[rank0]:     return self.dispatch(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 2096, in dispatch
+[rank0]:     return self._cached_dispatch_impl(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 1511, in _cached_dispatch_impl
+[rank0]:     output = self._dispatch_impl(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 2725, in _dispatch_impl
+[rank0]:     op_impl_out = op_impl(self, func, *args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_impls.py", line 169, in dispatch_to_op_implementations_dict
+[rank0]:     return op_implementations_dict[func](fake_mode, func, *args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_impls.py", line 603, in _view_meta
+[rank0]:     return torch._refs._reshape_view_helper(a, *shape, allow_copy=False)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_refs/__init__.py", line 3924, in _reshape_view_helper
+[rank0]:     return _reshape_view_helper_core_alg(a, shape, allow_copy)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_refs/__init__.py", line 3849, in _reshape_view_helper_core_alg
+[rank0]:     raise ValueError(msg)
+[rank0]: torch._dynamo.exc.TorchRuntimeError: Dynamo failed to run FX node with fake tensors: call_method view(*(FakeTensor(..., device='cuda:0', size=(2, 2048, 8)), -1, 8), **{}): got ValueError('Cannot view a tensor with shape torch.Size([2, 2048, 8]) and strides (8, 0, 1) as a tensor with shape (4096, 8)!')
+
+[rank0]: from user code:
+[rank0]:    File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 7273, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4627, in forward
+[rank0]:     attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4131, in forward
+[rank0]:     q = self.c_q(x, context_state, route_weights=rw['c_q']      if rw else None).view(B, T, self.n_head, self.head_dim)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 1672, in forward
+[rank0]:     rw = self._qrouter(x)                                      # (B, T, K)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 3702, in forward
+[rank0]:     flat = scores.detach().view(-1, K)                        # (N, K)
+
+[rank0]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank0]:[W419 13:59:40.412099336 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0419 13:59:43.265000 2852194 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 2852239) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
+Traceback (most recent call last):
+  File "/home/seqaeon/Downloads/nanochat/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-19_13:59:43
+  host      : Seqaeon
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2852239)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sun Apr 19 13:59:46 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3050 ...    Off |   00000000:01:00.0 Off |                  N/A |
+| N/A   86C    P8             15W /   20W |      15MiB /   4096MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1680      G   /usr/lib/xorg/Xorg                        4MiB |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260419_135946
+Resolved 142 packages in 1ms
+Audited 129 packages in 2ms
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 1 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 1 --remix-shared-context-gates 1 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /home/seqaeon/Downloads/nanochat/out/research_sweep_20260419_135946/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-19 14:00:12,068 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-19 14:00:12,069 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
+GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU | Peak FLOPS (BF16): inf
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 86 (bf16 supported))
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
+WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 64,
+    "template_routing_learned": false,
+    "tiny_expert": true,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 1,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 1,
+  "remix_shared_context_gates": 1
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /home/seqaeon/Downloads/nanochat/out/research_sweep_20260419_135946/depth_4/ckpt_remixed-linear/remixed-linear
+Warning: FP8 training requires compute capability >= 8.9 (e.g. H100, L4, 4090), but detected 8.6. Disabling FP8.
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 22,599,320
+research                : 0
+scalars                 : 8
+total                   : 56,153,760
+Estimated FLOPs per token (total):  1.945783e+08
+Estimated FLOPs per token (active): 1.237994e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.934106 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 3.91
+Total training FLOPs estimate: 2.356548e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0419 14:00:14.260000 2852856 .venv/lib/python3.10/site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+[rank0]:     return _run_code(code, main_globals, None,
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
+[rank0]:     exec(code, run_globals)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 1032, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1869, in __call__
+[rank0]:     return hijacked_callback(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1625, in __call__
+[rank0]:     result = self._inner_convert(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 688, in __call__
+[rank0]:     result = _compile(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1434, in _compile
+[rank0]:     guarded_code, tracer_output = compile_inner(code, one_graph, hooks)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_utils_internal.py", line 92, in wrapper_function
+[rank0]:     return function(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1117, in compile_inner
+[rank0]:     return _compile_inner(code, one_graph, hooks)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1151, in _compile_inner
+[rank0]:     dynamo_output = compile_frame(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1032, in compile_frame
+[rank0]:     bytecode, tracer_output = transform_code_object(code, transform)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/bytecode_transformation.py", line 1592, in transform_code_object
+[rank0]:     tracer_output = transformations(instructions, code_options)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1004, in transform
+[rank0]:     tracer_output = trace_frame(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 312, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 815, in trace_frame
+[rank0]:     run_tracer()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 797, in run_tracer
+[rank0]:     tracer.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2396, in CALL_FUNCTION_KW
+[rank0]:     self.call_function(fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2396, in CALL_FUNCTION_KW
+[rank0]:     self.call_function(fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/lazy.py", line 212, in realize_and_forward
+[rank0]:     return getattr(self.realize(), name)(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/nn_module.py", line 1010, in call_function
+[rank0]:     return variables.UserFunctionVariable(fn, source=source).call_function(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 598, in call_function
+[rank0]:     return super().call_function(tx, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/functions.py", line 342, in call_function
+[rank0]:     return tx.inline_user_function_return(self, [*self.self_args(), *args], kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1288, in inline_user_function_return
+[rank0]:     return InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4129, in inline_call
+[rank0]:     return tracer.inline_call_()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 4332, in inline_call_
+[rank0]:     self.run()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1500, in run
+[rank0]:     while self.step():
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1348, in step
+[rank0]:     self.dispatch_table[inst.opcode](self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 904, in wrapper
+[rank0]:     return inner_fn(self, inst)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 2333, in CALL_FUNCTION
+[rank0]:     self.call_function(fn, args, {})
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/symbolic_convert.py", line 1266, in call_function
+[rank0]:     self.push(fn.call_function(self, args, kwargs))  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/misc.py", line 1115, in call_function
+[rank0]:     return self.obj.call_method(tx, self.name, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/tensor.py", line 713, in call_method
+[rank0]:     return wrap_fx_proxy(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2645, in wrap_fx_proxy
+[rank0]:     return wrap_fx_proxy_cls(target_cls=TensorVariable, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2711, in wrap_fx_proxy_cls
+[rank0]:     return _wrap_fx_proxy(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/variables/builder.py", line 2809, in _wrap_fx_proxy
+[rank0]:     example_value = get_fake_value(proxy.node, tx, allow_non_graph_fake=True)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3478, in get_fake_value
+[rank0]:     raise TorchRuntimeError(str(e)).with_traceback(e.__traceback__) from None
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3376, in get_fake_value
+[rank0]:     ret_val = wrap_fake_exception(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 2864, in wrap_fake_exception
+[rank0]:     return fn()
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3377, in <lambda>
+[rank0]:     lambda: run_node(tx.output, node, args, kwargs, nnmodule)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3587, in run_node
+[rank0]:     raise RuntimeError(make_error_message(e)).with_traceback(
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_dynamo/utils.py", line 3557, in run_node
+[rank0]:     return getattr(args[0], node.target)(*args[1:], **kwargs)  # type: ignore[arg-type]
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/utils/_stats.py", line 28, in wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 1376, in __torch_dispatch__
+[rank0]:     return self.dispatch(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 2096, in dispatch
+[rank0]:     return self._cached_dispatch_impl(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 1511, in _cached_dispatch_impl
+[rank0]:     output = self._dispatch_impl(func, types, args, kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_tensor.py", line 2725, in _dispatch_impl
+[rank0]:     op_impl_out = op_impl(self, func, *args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_impls.py", line 169, in dispatch_to_op_implementations_dict
+[rank0]:     return op_implementations_dict[func](fake_mode, func, *args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_subclasses/fake_impls.py", line 603, in _view_meta
+[rank0]:     return torch._refs._reshape_view_helper(a, *shape, allow_copy=False)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_refs/__init__.py", line 3924, in _reshape_view_helper
+[rank0]:     return _reshape_view_helper_core_alg(a, shape, allow_copy)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/_refs/__init__.py", line 3849, in _reshape_view_helper_core_alg
+[rank0]:     raise ValueError(msg)
+[rank0]: torch._dynamo.exc.TorchRuntimeError: Dynamo failed to run FX node with fake tensors: call_method view(*(FakeTensor(..., device='cuda:0', size=(2, 2048, 64)), -1, 64), **{}): got ValueError('Cannot view a tensor with shape torch.Size([2, 2048, 64]) and strides (64, 0, 1) as a tensor with shape (4096, 64)!')
+
+[rank0]: from user code:
+[rank0]:    File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 7273, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4627, in forward
+[rank0]:     attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 4131, in forward
+[rank0]:     q = self.c_q(x, context_state, route_weights=rw['c_q']      if rw else None).view(B, T, self.n_head, self.head_dim)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 1672, in forward
+[rank0]:     rw = self._qrouter(x)                                      # (B, T, K)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 3702, in forward
+[rank0]:     flat = scores.detach().view(-1, K)                        # (N, K)
+
+[rank0]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank0]:[W419 14:00:15.233859470 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0419 14:00:17.755000 2852793 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 2852856) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
+Traceback (most recent call last):
+  File "/home/seqaeon/Downloads/nanochat/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-19_14:00:17
+  host      : Seqaeon
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2852856)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sun Apr 19 14:00:21 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3050 ...    Off |   00000000:01:00.0 Off |                  N/A |
+| N/A   86C    P8             15W /   20W |      15MiB /   4096MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1680      G   /usr/lib/xorg/Xorg                        4MiB |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260419_140021
+Resolved 142 packages in 2ms
+Audited 129 packages in 2ms
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /home/seqaeon/Downloads/nanochat/.venv/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 8 --p23-linear-moe-topk 1 --p23-quantile-route 1 --remix-shared-context-gates 1 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /home/seqaeon/Downloads/nanochat/out/research_sweep_20260419_140021/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-19 14:00:49,156 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-19 14:00:49,157 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce RTX 3050 Ti Laptop GPU, MFU will show as 0%
+GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU | Peak FLOPS (BF16): inf
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 86 (bf16 supported))
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
+WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 8,
+  "p23_linear_moe_topk": 1,
+  "p23_quantile_route": 1,
+  "remix_shared_context_gates": 1
+}
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+[rank0]:     return _run_code(code, main_globals, None,
+[rank0]:   File "/home/seqaeon/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
+[rank0]:     exec(code, run_globals)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/scripts/base_train.py", line 558, in <module>
+[rank0]:     model.init_weights() # 3) All tensors get initialized
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 6584, in init_weights
+[rank0]:     _init_research_module(block)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/nanochat/gpt.py", line 6458, in _init_research_module
+[rank0]:     torch.nn.init.zeros_(sub.router.weight)
+[rank0]:   File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1964, in __getattr__
+[rank0]:     raise AttributeError(
+[rank0]: AttributeError: 'QuantileBalancedRouter' object has no attribute 'weight'
+[rank0]:[W419 14:00:50.515943743 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0419 14:00:52.773000 2853335 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 2853385) of binary: /home/seqaeon/Downloads/nanochat/.venv/bin/python3
+Traceback (most recent call last):
+  File "/home/seqaeon/Downloads/nanochat/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/seqaeon/Downloads/nanochat/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-19_14:00:52
+  host      : Seqaeon
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2853385)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sun Apr 19 14:00:56 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3050 ...    Off |   00000000:01:00.0 Off |                  N/A |
+| N/A   86C    P8             15W /   20W |      15MiB /   4096MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1680      G   /usr/lib/xorg/Xorg                        4MiB |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260419_140056
+Resolved 142 packages in 2ms
+Audited 129 packages in 2ms
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
