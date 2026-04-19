@@ -4264,15 +4264,14 @@ class SharedBlockRouter(nn.Module):
         """
         B, T, _ = x.shape
         K       = self.n_experts
-        dtype   = x.dtype
-        # Token routing: one matmul → (B, T, N_tok * K) → softmax over last K
-        tok_logits  = x.float() @ self.token_proj.float()                               # (B, T, K*2)
-        tok_weights = F.softmax(
-            tok_logits.view(B, T, self.N_TOKEN_LAYERS, K), dim=-1
-        ).to(dtype)                                                                          # (B, T, 2, K)
-        # Sequence routing: mean-pool → one matmul → expand
+        # Token routing (now sequence-level pooled as well): mean-pool → one matmul → expand
         x_pool      = x.float().mean(dim=1, keepdim=True)                                 # (B, 1, D)
-        seq_logits  = x_pool @ self.seq_proj.float()                            # (B, 1, K*4)
+        tok_logits  = x_pool @ self.token_proj.float()                                    # (B, 1, K*2)
+        tok_weights = F.softmax(
+            tok_logits.view(B, 1, self.N_TOKEN_LAYERS, K), dim=-1
+        ).to(dtype).expand(B, T, self.N_TOKEN_LAYERS, K).contiguous()                     # (B, T, 2, K)
+        # Sequence routing: mean-pool → one matmul → expand
+        seq_logits  = x_pool @ self.seq_proj.float()                                      # (B, 1, K*4)
         seq_weights = F.softmax(
             seq_logits.view(B, 1, self.N_SEQ_LAYERS, K), dim=-1
         ).to(dtype).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()                         # (B, T, 4, K)
