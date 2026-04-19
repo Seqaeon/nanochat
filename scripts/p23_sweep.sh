@@ -148,7 +148,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #      --p23-tiny-expert 1 \
 #      --p23-n-experts 8 \
 #      --p23-topk 1 \
-#      --p23-quantile-route 1 \
+#      --p23-quantile-route 2 \
 #      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
 #        echo "════════════════ $TAG COMPLETE ════════════════"
 #        mark_completed "$TAG"
@@ -169,7 +169,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #      --p23-tiny-expert 1 \
 #      --p23-n-experts 64 \
 #      --p23-topk 16 \
-#      --p23-quantile-route 1 \
+#      --p23-quantile-route 2 \
 #      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
 #        echo "════════════════ $TAG COMPLETE ════════════════"
 #        mark_completed "$TAG"
@@ -211,7 +211,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 1 \
-      --p23-quantile-route 1 \
+      --p23-quantile-route 2 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -231,7 +231,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 16 \
-      --p23-quantile-route 1 \
+      --p23-quantile-route 2 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"

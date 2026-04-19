@@ -600,7 +600,7 @@ if __name__ == "__main__":
     parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
     parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
-    parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1], help="23: use EMA quantile-balanced routing without aux loss")
+    parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
     args = parser.parse_args()
     
