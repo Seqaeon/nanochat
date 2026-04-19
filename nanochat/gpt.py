@@ -4191,10 +4191,17 @@ class SharedContextGates(nn.Module):
         N, K, r = self.N_LAYERS, self.basis_size, self.gate_rank
         gate_out = 2 * K if self.film_gate else K
 
-        # 3 matmuls total for all gates
-        hidden  = F.gelu(self.hidden_proj(context_state))             # (B, T, hidden)
-        bg_all  = self.basis_gate_proj(hidden)                        # (B, T, N * gate_out)
-        oc_all  = self.output_coeff_proj(context_state)               # (B, T, N * r)
+        # 3 matmuls total for all gates — explicit dtype cast avoids BFloat16/float32 mismatch
+        # under FP8 training where SharedContextGates is not converted by the FP8 converter.
+        hp_w = self.hidden_proj.weight.to(dtype)
+        hp_b = self.hidden_proj.bias.to(dtype) if self.hidden_proj.bias is not None else None
+        hidden  = F.gelu(F.linear(context_state, hp_w, hp_b))         # (B, T, hidden)
+        bg_w = self.basis_gate_proj.weight.to(dtype)
+        bg_b = self.basis_gate_proj.bias.to(dtype) if self.basis_gate_proj.bias is not None else None
+        bg_all  = F.linear(hidden, bg_w, bg_b)                         # (B, T, N * gate_out)
+        oc_w = self.output_coeff_proj.weight.to(dtype)
+        oc_b = self.output_coeff_proj.bias.to(dtype) if self.output_coeff_proj.bias is not None else None
+        oc_all  = F.linear(context_state, oc_w, oc_b)                 # (B, T, N * r)
 
         bg_all  = bg_all.view(*bg_all.shape[:-1], N, gate_out)        # (B, T, N, gate_out)
         oc_all  = oc_all.view(*oc_all.shape[:-1], N, r)               # (B, T, N, r)
@@ -4330,15 +4337,27 @@ class RemixedBlock(nn.Module):
         self._ctx_gates = None
         use_context_flag = (config.remixed_linear_kwargs or {}).get('use_context', True)
         if getattr(config, 'remix_shared_context_gates', 0) and use_context_flag:
-            _basis_size = config.remix_basis_size if config.remix_basis_size > 0 else config.n_embd
-            _gate_rank  = getattr(config, 'remix_output_gate_rank', 8)
-            _film_gate  = getattr(config, 'cclblock_film_gate', False)
-            self._ctx_gates = SharedContextGates(
-                ctx_dim=ctx_dim,
-                basis_size=_basis_size,
-                gate_rank=_gate_rank,
-                film_gate=_film_gate,
+            # Read basis_size from the ACTUAL first RemixedLinear layer (self.attn is already built).
+            # This correctly captures Fix-1B auto-scaling (max(default,min(in,out)//4)) without
+            # re-implementing the formula here. Disable for LoKR since b_shrunk varies per-layer
+            # making a single shared basis_size impossible — those blocks fall back to per-RL gates.
+            _first_rl = next(
+                (m for m in [self.attn.c_q, self.attn.c_k, self.attn.c_v,
+                              getattr(self.attn, 'c_proj', None),
+                              self.ffwd.c_fc, self.ffwd.c_proj]
+                 if isinstance(m, RemixedLinear)),
+                None
             )
+            if _first_rl is not None and not getattr(_first_rl, 'lokr_expert', False):
+                _basis_size = _first_rl.basis_size
+                _gate_rank  = getattr(config, 'remix_output_gate_rank', 8)
+                _film_gate  = getattr(config, 'cclblock_film_gate', False)
+                self._ctx_gates = SharedContextGates(
+                    ctx_dim=ctx_dim,
+                    basis_size=_basis_size,
+                    gate_rank=_gate_rank,
+                    film_gate=_film_gate,
+                )
 
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
