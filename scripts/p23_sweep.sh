@@ -162,24 +162,24 @@ fi
 # ══════════════════════════════════════════════════════
 # 4: LoKR K=64, rank=4, top-16
 # ══════════════════════════════════════════════════════
-TAG="23_LOKR_K64_TOP16"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "4" "$TAG" "LoKR K=64, top-16, rank=4, no context, compile enabled"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p23-lokr 1 \
-      --p23-n-experts 64 \
-      --p23-topk 16 \
-      --p23-lokr-rank 4 \
-      --p23-learned-route 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="23_LOKR_K64_TOP16"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "4" "$TAG" "LoKR K=64, top-16, rank=4, no context, compile enabled"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --p23-lokr 1 \
+#      --p23-n-experts 64 \
+#      --p23-topk 16 \
+#      --p23-lokr-rank 4 \
+#      --p23-learned-route 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 5: LinearMoE K=8, top-1
