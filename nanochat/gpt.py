@@ -6838,6 +6838,15 @@ class GPT(nn.Module):
                         expert_params = submod.lokr_down_w.numel() + submod.lokr_up_w.numel()
                         inactive_frac = 1.0 - (topk / K)
                         inactive_expert_params += int(expert_params * inactive_frac)
+                elif isinstance(submod, LinearMoE):
+                    # LinearMoE blends weights, so only 1 dense matmul is actually done per token
+                    # regardless of topk. The blending is an overhead but it's not token-wise dense matmul.
+                    # Thus: active fraction is effectively 1 / K.
+                    K = submod.n_experts
+                    if K > 1:
+                        expert_params = submod.experts_w.numel()
+                        inactive_frac = 1.0 - (1.0 / K)
+                        inactive_expert_params += int(expert_params * inactive_frac)
 
         active_flops = total_flops - 6 * inactive_expert_params
         return total_flops, active_flops
