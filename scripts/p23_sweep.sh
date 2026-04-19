@@ -125,7 +125,6 @@ else
     print_header "2" "$TAG" "TinyExpert K=8, top-1, no context, compile enabled"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-tiny-expert 1 \
-      --p23-use-shared-block-router 1 \
       --p23-n-experts 8 \
       --p23-topk 1 \
       --p23-learned-route 1 \
@@ -147,7 +146,6 @@ else
     print_header "3" "$TAG" "TinyExpert K=64, top-16, no context, compile enabled"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-tiny-expert 1 \
-      --p23-use-shared-block-router 1 \
       --p23-n-experts 64 \
       --p23-topk 16 \
       --p23-learned-route 1 \
