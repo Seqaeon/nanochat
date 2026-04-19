@@ -1254,7 +1254,7 @@ class RemixedLinear(nn.Module):
         # Phase 23: Tiny Experts mode
         self.tiny_expert = remixed_linear_kwargs.get('tiny_expert', False)
         self.tiny_expert_topk = remixed_linear_kwargs.get('tiny_expert_topk', 16)
-        self.use_quantile_route = remixed_linear_kwargs.get('use_quantile_route', False)
+        self.use_quantile_route = int(remixed_linear_kwargs.get('use_quantile_route', 0))
 
         # Phase 23 LoKR: iso-parameter shared-base + low-rank expert adapters
         # Shared base uses shrunk basis (B_shrunk = basis_size - K*rank) for param parity.
@@ -1336,7 +1336,11 @@ class RemixedLinear(nn.Module):
             self.template_mixing = None
             # Routing: quantile-balanced or simple learned/frozen softmax
             if not self._use_shared_route:
-                if self.use_quantile_route:
+                if self.use_quantile_route == 2:
+                    self._qrouter = QuantileCrossAttentionRouter(
+                        in_features, K, topk)
+                    self.template_route = None
+                elif self.use_quantile_route == 1:
                     self._qrouter = QuantileBalancedRouter(
                         in_features, K, topk, learned=self.template_routing_learned)
                     self.template_route = None  # handled by _qrouter
@@ -3737,6 +3741,120 @@ class QuantileBalancedRouter(nn.Module):
         return weights
 
 
+class QuantileCrossAttentionRouter(nn.Module):
+    """Linear Causal Cross-Attention routing for MoE.
+    
+    Experts act as static Queries. Tokens project to Keys and Values.
+    We maintain a causal running sum of expert interactions (Linear Attention):
+        N_{k,t} = sum_{i=1}^t elu(Q_k * K_i + 1) * V_i
+        Z_{k,t} = sum_{i=1}^t elu(Q_k * K_i + 1)
+        C_{k,t} = N_{k,t} / Z_{k,t}
+    
+    Tokens cast their own Query (Q_tok) against the Expert's continuous Context (C_k):
+        Score_{t, k} = C_{k, t} \\cdot Q_{tok, t}
+        
+    These continuous causal scores are then passed into the Quantile EMA threshold logic.
+    """
+    def __init__(self, in_features: int, n_experts: int, topk: int,
+                 head_dim: int = 64, ema_decay: float = 0.99):
+        super().__init__()
+        self.n_experts = n_experts
+        self.topk = topk
+        self.head_dim = head_dim
+        self.ema_decay = ema_decay
+        
+        # Expert Queries
+        self.q_exp = nn.Parameter(torch.empty(n_experts, head_dim))
+        nn.init.normal_(self.q_exp, std=head_dim ** -0.5)
+        
+        # Token Projections
+        self.k_proj = nn.Linear(in_features, head_dim, bias=False)
+        self.v_proj = nn.Linear(in_features, head_dim, bias=False)
+        self.q_tok_proj = nn.Linear(in_features, head_dim, bias=False)
+        
+        # EMA quantile thresholds
+        self.register_buffer('ema_thresholds',  torch.zeros(n_experts))
+        self.register_buffer('_ema_init',       torch.zeros(1, dtype=torch.bool))
+
+    def gate_parameters(self):
+        yield self.q_exp
+        yield self.k_proj.weight
+        yield self.v_proj.weight
+        yield self.q_tok_proj.weight
+
+    def forward(self, x: torch.Tensor, kv_state: dict = None) -> torch.Tensor:
+        B, T, D = x.shape
+        K, D_h = self.n_experts, self.head_dim
+        topk = self.topk
+        
+        k = self.k_proj(x)       # (B, T, D_h)
+        v = self.v_proj(x)       # (B, T, D_h)
+        q_tok = self.q_tok_proj(x) # (B, T, D_h)
+        
+        # Activation: elu(q * k^T) + 1  => always positive
+        qk = torch.einsum('bth,kh->btk', k, self.q_exp)
+        S = F.elu(qk) + 1.0     # (B, T, K)
+        
+        if kv_state is not None:
+            prev_N = kv_state.get('qca_N', torch.zeros(B, K, D_h, dtype=x.dtype, device=x.device))
+            prev_Z = kv_state.get('qca_Z', torch.zeros(B, K, dtype=x.dtype, device=x.device))
+            
+            # Since generation proceeds 1 token at a time:
+            N = prev_N + torch.einsum('btk,bth->bkh', S, v)  # (B, K, D_h)
+            Z = prev_Z + S.squeeze(1)                        # (B, K)
+            
+            kv_state['qca_N'] = N.clone()
+            kv_state['qca_Z'] = Z.clone()
+            
+            # Expand to (B, T, K, D_h) for generalized calculation below
+            N = N.unsqueeze(1)
+            Z = Z.unsqueeze(1)
+        else:
+            # Training mode: cumulative sum over sequence
+            terms_N = S.unsqueeze(-1) * v.unsqueeze(2)
+            N = torch.cumsum(terms_N.float(), dim=1).to(x.dtype) # (B, T, K, D_h)
+            Z = torch.cumsum(S.float(), dim=1).to(x.dtype)       # (B, T, K)
+            
+        # Context vectors C_{b, t, k, h} = N / Z
+        C = N / (Z.unsqueeze(-1) + 1e-6)  # (B, T, K, D_h)
+        
+        # Final scores = C * q_tok => (B, T, K)
+        scores = torch.einsum('btkh,bth->btk', C, q_tok)
+        
+        if self.training:
+            with torch.no_grad():
+                flat = scores.detach().reshape(-1, K)
+                target_q = 1.0 - topk / K
+                batch_q  = torch.quantile(flat, float(target_q), dim=0)
+                if not self._ema_init.item():
+                    self.ema_thresholds.copy_(batch_q)
+                    self._ema_init.fill_(True)
+                else:
+                    self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
+            
+            thresh = self.ema_thresholds.to(scores.device)
+            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)
+            
+            _, topk_idx = scores.topk(topk, dim=-1)
+            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
+            mask        = q_mask | hard_mask
+            
+            n_selected  = mask.sum(dim=-1, keepdim=True)
+            if (n_selected > topk).any():
+                masked_scores = scores.masked_fill(~mask, -1e9)
+                _, top_idx    = masked_scores.topk(topk, dim=-1)
+                mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
+            
+            gated   = scores.masked_fill(~mask, -1e9)
+            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)
+        else:
+            topk_s, topk_idx = scores.topk(topk, dim=-1)
+            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
+            weights.scatter_(-1, topk_idx, F.softmax(topk_s.float(), dim=-1).to(x.dtype))
+            
+        return weights
+
+
 class LinearMoE(nn.Module):
 
     """Weight-space Mixture of Experts — blends K expert weight matrices before a single F.linear call.
@@ -3750,7 +3868,7 @@ class LinearMoE(nn.Module):
       - Efficient: soft blending in weight-space → one batched einsum, not K forward passes
     """
     def __init__(self, in_features: int, out_features: int, n_experts: int = 8,
-                 topk: int = 0, bias: bool = True, use_quantile_route: bool = False):
+                 topk: int = 0, bias: bool = True, use_quantile_route: int = 0):
         super().__init__()
         self.n_experts = n_experts
         self.topk = topk  # 0 = soft (all experts), N = hard top-N
@@ -3758,7 +3876,10 @@ class LinearMoE(nn.Module):
         self.experts_w = nn.Parameter(torch.empty(n_experts, out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
         # Router: quantile-balanced or simple learned softmax
-        if use_quantile_route and topk > 0:
+        if use_quantile_route == 2 and topk > 0:
+            self.router = QuantileCrossAttentionRouter(in_features, n_experts, topk)
+            self._use_quantile = True
+        elif use_quantile_route == 1 and topk > 0:
             self.router = QuantileBalancedRouter(in_features, n_experts, topk, learned=True)
             self._use_quantile = True
         else:
@@ -3912,7 +4033,7 @@ class RemixedFeedForward(nn.Module):
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
             if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
-                kwargs['use_quantile_route'] = bool(getattr(config, 'p23_quantile_route', 0))
+                kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
@@ -4098,7 +4219,7 @@ class RemixedMultiAttention(nn.Module):
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
             if lokr_expert or tiny_expert:
                 kwargs = dict(kwargs)  # shallow copy
-                kwargs['use_quantile_route'] = bool(getattr(config, 'p23_quantile_route', 0))
+                kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
