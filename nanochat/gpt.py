@@ -289,8 +289,20 @@ class GPTConfig:
     remix_shared_context_gates: int = 0       # 23: batch all 6 per-RL context gate computations into 3 block-level matmuls
     # Phase 24: Sequence-Gated Linear and Folded LinearMoE
     p24_use_sliced_weight: int = 0
+    p24_sliced_weight_reduction_scale: int = 8
+    p24_sliced_weight_min_select: int = 128
+    p24_sliced_weight_scope: str = "global"
+    p24_sliced_weight_balance_coeff: float = 0.01
+    p24_quantile_route: int = 0
+
     p24_use_folded_mod: int = 0
+    p24_folded_mod_reduction_scale: int = 8
+    p24_folded_mod_scope: str = "global"
+    p24_folded_mod_gate_act: str = "sigmoid"
+
     p24_use_sequence_gated_linear: int = 0
+    p24_sequence_gated_scope: str = "global"
+    p24_sequence_gated_act: str = "sigmoid"
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
