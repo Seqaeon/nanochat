@@ -6455,7 +6455,17 @@ class GPT(nn.Module):
                     torch.nn.init.kaiming_uniform_(sub.experts_w.view(K * O, I), a=math.sqrt(5))
                     if sub.bias is not None:
                         torch.nn.init.zeros_(sub.bias)
-                    torch.nn.init.zeros_(sub.router.weight)
+                    # LinearMoE supports two router types:
+                    # 1) nn.Linear router with .weight
+                    # 2) QuantileBalancedRouter with .route_proj
+                    if hasattr(sub.router, "weight"):
+                        torch.nn.init.zeros_(sub.router.weight)
+                    elif hasattr(sub.router, "route_proj"):
+                        torch.nn.init.normal_(sub.router.route_proj, std=I ** -0.5)
+                        if hasattr(sub.router, "ema_thresholds"):
+                            sub.router.ema_thresholds.zero_()
+                        if hasattr(sub.router, "_ema_init"):
+                            sub.router._ema_init.zero_()
                     continue
 
                 if isinstance(sub, SharedBlockRouter):
