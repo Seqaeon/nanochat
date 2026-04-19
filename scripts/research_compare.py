@@ -203,6 +203,9 @@ def run_training_sweep(args):
         "--p23-linear-moe-topk", str(getattr(args, 'p23_linear_moe_topk', 0)),
         "--p23-quantile-route", str(getattr(args, 'p23_quantile_route', 0)),
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
+        "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
+        "--p24-use-folded-mod", str(getattr(args, 'p24_use_folded_mod', 0)),
+        "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -602,6 +605,9 @@ if __name__ == "__main__":
     parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
     parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
+    parser.add_argument("--p24-use-sliced-weight", type=int, default=0, help="24: Phase 24 LinearMoE2 sliced weight constraint")
+    parser.add_argument("--p24-use-folded-mod", type=int, default=0, help="24: Phase 24 LinearMoE3 folded mod constraint")
+    parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, help="24: Phase 24 Sequence-Gated Linear mode")
     args = parser.parse_args()
     
     run_training_sweep(args)

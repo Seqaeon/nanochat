@@ -287,6 +287,10 @@ class GPTConfig:
     p23_linear_moe_topk: int = 0              # 23: top-k selected experts in LinearMoE (0=soft all-expert blend)
     p23_quantile_route: int = 0               # 23: use EMA quantile-balanced routing without aux loss
     remix_shared_context_gates: int = 0       # 23: batch all 6 per-RL context gate computations into 3 block-level matmuls
+    # Phase 24: Sequence-Gated Linear and Folded LinearMoE
+    p24_use_sliced_weight: int = 0
+    p24_use_folded_mod: int = 0
+    p24_use_sequence_gated_linear: int = 0
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.

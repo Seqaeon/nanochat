@@ -95,6 +95,9 @@ parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: e
 parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
 parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
 parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch all 6 per-RL context gate computations into 3 block-level matmuls (~6x fewer gate kernel launches)")
+parser.add_argument("--p24-use-sliced-weight", type=int, default=0, help="24: Phase 24 LinearMoE2 sliced weight constraint")
+parser.add_argument("--p24-use-folded-mod", type=int, default=0, help="24: Phase 24 LinearMoE3 folded mod constraint")
+parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, help="24: Phase 24 Sequence-Gated Linear mode")
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
