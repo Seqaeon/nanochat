@@ -202,6 +202,19 @@ def run_training_sweep(args):
         "--p23-linear-moe-experts", str(getattr(args, 'p23_linear_moe_experts', 0)),
         "--p23-linear-moe-topk", str(getattr(args, 'p23_linear_moe_topk', 0)),
         "--p23-quantile-route", str(getattr(args, 'p23_quantile_route', 0)),
+        "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
+        "--p24-sliced-weight-reduction-scale", str(getattr(args, 'p24_sliced_weight_reduction_scale', 8)),
+        "--p24-sliced-weight-min-select", str(getattr(args, 'p24_sliced_weight_min_select', 128)),
+        "--p24-sliced-weight-scope", str(getattr(args, 'p24_sliced_weight_scope', 'per_token')),
+        "--p24-sliced-weight-balance-coeff", str(getattr(args, 'p24_sliced_weight_balance_coeff', 0.01)),
+        "--p24-quantile-route", str(getattr(args, 'p24_quantile_route', 0)),
+        "--p24-use-folded-mod", str(getattr(args, 'p24_use_folded_mod', 0)),
+        "--p24-folded-mod-reduction-scale", str(getattr(args, 'p24_folded_mod_reduction_scale', 8)),
+        "--p24-folded-mod-scope", str(getattr(args, 'p24_folded_mod_scope', 'per_layer')),
+        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', 'sigmoid')),
+        "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
+        "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', 'per_layer')),
+        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', 'sigmoid')),
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
     ]
     if args.compile:
@@ -601,6 +614,19 @@ if __name__ == "__main__":
     parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
     parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
     parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
+    parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8)
+    parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128)
+    parser.add_argument("--p24-sliced-weight-scope", type=str, default="per_token", choices=["per_token", "per_block", "global"])
+    parser.add_argument("--p24-sliced-weight-balance-coeff", type=float, default=0.01)
+    parser.add_argument("--p24-quantile-route", type=int, default=0, choices=[0, 1, 2])
+    parser.add_argument("--p24-use-folded-mod", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8)
+    parser.add_argument("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
+    parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
+    parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
+    parser.add_argument("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
     args = parser.parse_args()
     
