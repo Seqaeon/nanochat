@@ -137,51 +137,49 @@ else
 fi
 
 # ══════════════════════════════════════════════════════
-# 2: TinyExpert K=8, top-1
+# 2: TinyExpert K=8, top-1, Quantile Routing
 # ══════════════════════════════════════════════════════
-#TAG="23_TINY_K8_TOP1"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "2" "$TAG" "TinyExpert K=8, top-1, no context, compile enabled"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-tiny-expert 1 \
-#      --p23-use-shared-block-router 1 \
-#      --p23-n-experts 8 \
-#      --p23-topk 1 \
-#      --p23-learned-route 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
+TAG="23_QROUTE_TINY_K8_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "2" "$TAG" "TinyExpert K=8, top-1, quantile routing, no context"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 8 \
+      --p23-topk 1 \
+      --p23-quantile-route 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
 # ══════════════════════════════════════════════════════
-# 3: TinyExpert K=64, top-16
+# 3: TinyExpert K=64, top-16, Quantile Routing
 # ══════════════════════════════════════════════════════
-#TAG="23_TINY_K64_TOP16"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "3" "$TAG" "TinyExpert K=64, top-16, no context, compile enabled"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-tiny-expert 1 \
-#      --p23-use-shared-block-router 1 \
-#      --p23-n-experts 64 \
-#      --p23-topk 16 \
-#      --p23-learned-route 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
+TAG="23_QROUTE_TINY_K64_TOP16"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "3" "$TAG" "TinyExpert K=64, top-16, quantile routing, no context"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 64 \
+      --p23-topk 16 \
+      --p23-quantile-route 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
 # ══════════════════════════════════════════════════════
-# 4: LoKR K=64, rank=4, top-16
+# 4: LoKR K=64, rank=4, top-16 (SKIP - Quantile not tested yet)
 # ══════════════════════════════════════════════════════
 #TAG="23_LOKR_K64_TOP16"
 #if check_completed "$TAG"; then
@@ -203,16 +201,17 @@ fi
 #fi
 
 # ══════════════════════════════════════════════════════
-# 5: LinearMoE K=8, top-1
+# 5: LinearMoE K=8, top-1, Quantile Routing
 # ══════════════════════════════════════════════════════
-TAG="23_LINEAR_MOE_K8_TOP1"
+TAG="23_QROUTE_LINEAR_MOE_K8_TOP1"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "5" "$TAG" "LinearMoE K=8, top-1, no context, compile enabled"
+    print_header "5" "$TAG" "LinearMoE K=8, top-1, quantile routing, no context"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 1 \
+      --p23-quantile-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -222,16 +221,17 @@ else
 fi
 
 # ══════════════════════════════════════════════════════
-# 6: LinearMoE K=8, top-16
+# 6: LinearMoE K=8, top-16, Quantile Routing
 # ══════════════════════════════════════════════════════
-TAG="23_LINEAR_MOE_K8_TOP16"
+TAG="23_QROUTE_LINEAR_MOE_K8_TOP16"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "6" "$TAG" "LinearMoE K=8, top-16, no context, compile enabled"
+    print_header "6" "$TAG" "LinearMoE K=8, top-16, quantile routing, no context"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p23-linear-moe-experts 8 \
       --p23-linear-moe-topk 16 \
+      --p23-quantile-route 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
