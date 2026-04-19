@@ -86,8 +86,8 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --warmup-ratio 0.15 \
   --research-dim -1"
 
-# RemixedLinear flags — no context conditioning (--remix-use-context 0),
-# compile enabled (context modulation was the blocker for compile).
+# RemixedLinear flags — context conditioning ENABLED with SharedContextGates
+# (batches all 6 per-RL gate MLPs into 3 matmuls per block, ~6x overhead reduction).
 # Half the device-batch-size vs dense to give MoE layers VRAM headroom.
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --device-batch-size 4 --use-onecycle 0 --log-every 200 --skip-core \
@@ -95,7 +95,8 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
   --research-dim -1 \
-  --remix-use-context 0"
+  --remix-use-context 1 \
+  --remix-shared-context-gates 1"
 
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference

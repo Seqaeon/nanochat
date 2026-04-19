@@ -201,6 +201,7 @@ def run_training_sweep(args):
         "--p23-use-shared-block-router", str(getattr(args, 'p23_use_shared_block_router', 0)),
         "--p23-linear-moe-experts", str(getattr(args, 'p23_linear_moe_experts', 0)),
         "--p23-linear-moe-topk", str(getattr(args, 'p23_linear_moe_topk', 0)),
+        "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -598,6 +599,7 @@ if __name__ == "__main__":
     parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p23-linear-moe-experts", type=int, default=0)
     parser.add_argument("--p23-linear-moe-topk", type=int, default=0)
+    parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     
     run_training_sweep(args)

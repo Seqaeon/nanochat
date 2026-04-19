@@ -1,0 +1,621 @@
+
+╔══════════════════════════════════════════════════════════════╗
+║  [1]  23_BASE_DENSE
+║  Dense baseline (plain transformer, no MoE)
+╚══════════════════════════════════════════════════════════════╝
+
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sat Apr 18 20:27:09 2026       
+Sat Apr 18 20:27:09 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H100 80GB HBM3          On  |   00000000:05:00.0 Off |                    0 |
+| N/A   29C    P0             70W /  700W |       0MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   0  NVIDIA H100 80GB HBM3          On  |   00000000:05:00.0 Off |                    0 |
+| N/A   29C    P0             70W /  700W |       0MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260418_202709
+Starting Research Sweep. Output directory: out/research_sweep_20260418_202709
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Validating system environment dependencies via uv...
+[2m[2mUsing Python 3.12.6 environment at: /usr/local[0m
+Using Python 3.12.6 environment at: /usr/local[0m
+[1m[1m[33mwarning[39m[0m[1m:[0m [1mMissing version constraint (e.g., a lower bound) for `cmaes`[0m
+[33mwarning[39m[0m[1m:[0m [1mMissing version constraint (e.g., a lower bound) for `cmaes`[0m
+[2m[2mResolved [1m130 packages[0m [2min 511ms[0m[0m
+Resolved [1m130 packages[0m [2min 511ms[0m[0m
+[2m[2mPrepared [1m1 package[0m [2min 1.36s[0m[0m
+Prepared [1m1 package[0m [2min 1.36s[0m[0m
+[2m[2mInstalled [1m1 package[0m [2min 2ms[0m[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from Installed [1m1 package[0m [2min 2ms[0m[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6)[0m
+file:///__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6)[0m
+Reset report and wrote header to out/report/header.md
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-18 20:27:26,700 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-18 20:27:26,700 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-18 20:27:26,721 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,721 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,744 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,744 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,778 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/_C.abi3.so "HTTP/1.1 302 Found"
+2026-04-18 20:27:26,778 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/_C.abi3.so "HTTP/1.1 302 Found"
+2026-04-18 20:27:26,971 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/__init__.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,971 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/__init__.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,972 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_interface.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,972 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_interface.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,972 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_config.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,972 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_config.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-18 20:27:26,984 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,984 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,984 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,984 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,985 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,985 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,995 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,995 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,995 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,995 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,996 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:26,996 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-18 20:27:27,001 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/xet-read-token/de87b9b5af06dd9984df595bef90b2eba44b181a "HTTP/1.1 200 OK"
+2026-04-18 20:27:27,001 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/xet-read-token/de87b9b5af06dd9984df595bef90b2eba44b181a "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+
+================================================================================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 8 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base --model-tag baseRunning: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 8 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every -1 --warmup-ratio 0.15 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base --model-tag base
+
+2026-04-18 20:27:39,180 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-18 20:27:39,180 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-18 20:27:39,181 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-18 20:27:39,181 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-18 20:27:39,199 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-18 20:27:39,199 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-18 20:27:39,221 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-04-18 20:27:39,221 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+Autodetected device type: cuda
+2026-04-18 20:27:40,702 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-18 20:27:40,702 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H100 80GB HBM3 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+GPU: NVIDIA H100 80GB HBM3 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+Vocab size: 32,768
+Model config:
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0
+}
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0
+}
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base
+✓ FP8 training enabled (tensorwise scaling) - converted 25/27 linear layers, skipped 2 (too small)
+✓ FP8 training enabled (tensorwise scaling) - converted 25/27 linear layers, skipped 2 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 36,700,296
+Estimated FLOPs per token (total):  7.785754e+07
+Estimated FLOPs per token (active): 7.785754e+07
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 36,700,296
+Estimated FLOPs per token (total):  7.785754e+07
+Estimated FLOPs per token (active): 7.785754e+07
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.218563 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Scaling weight decay from 0.200000 to 0.218563 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 9.429367e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 8 x 2048 = 16,384
+Tokens / micro-batch: 16,384
+Total batch size 262,144 => gradient accumulation steps: 16
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 9.429367e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 8 x 2048 = 16,384
+Tokens / micro-batch: 16,384
+Total batch size 262,144 => gradient accumulation steps: 16
+[rank0]:W0418 20:27:41.436000 590 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0418 20:27:41.436000 590 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:[W418 20:28:05.927839865 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+[rank0]:[W418 20:28:05.927839865 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+step 00000/00462 (0.00%) | loss: 10.396912 | lrm: 0.01 | lr(adamw:7.986e-03, muon:2.050e-04) | dt: 43810.85ms | tok/sec: 5,983 | bf16_mfu: 0.05 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+step 00000/00462 (0.00%) | loss: 10.396912 | lrm: 0.01 | lr(adamw:7.986e-03, muon:2.050e-04) | dt: 43810.85ms | tok/sec: 5,983 | bf16_mfu: 0.05 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+step 00200/00462 (43.29%) | loss: 4.306113 | lrm: 0.81 | lr(adamw:4.470e-01, muon:1.147e-02) | dt: 307.01ms | tok/sec: 853,858 | bf16_mfu: 6.72 | epoch: 1 pq: 1 rg: 16 | total time: 1.06m | eta: 1.5m
+step 00200/00462 (43.29%) | loss: 4.306113 | lrm: 0.81 | lr(adamw:4.470e-01, muon:1.147e-02) | dt: 307.01ms | tok/sec: 853,858 | bf16_mfu: 6.72 | epoch: 1 pq: 1 rg: 16 | total time: 1.06m | eta: 1.5m
+step 00400/00462 (86.58%) | loss: 3.877224 | lrm: 0.19 | lr(adamw:1.058e-01, muon:2.715e-03) | dt: 359.25ms | tok/sec: 729,691 | bf16_mfu: 5.74 | epoch: 1 pq: 2 rg: 29 | total time: 2.21m | eta: 0.4m
+step 00400/00462 (86.58%) | loss: 3.877224 | lrm: 0.19 | lr(adamw:1.058e-01, muon:2.715e-03) | dt: 359.25ms | tok/sec: 729,691 | bf16_mfu: 5.74 | epoch: 1 pq: 2 rg: 29 | total time: 2.21m | eta: 0.4m
+step 00461/00462 (99.78%) | loss: 3.821565 | lrm: 0.00 | lr(adamw:1.706e-03, muon:4.378e-05) | dt: 321.07ms | tok/sec: 816,467 | bf16_mfu: 6.43 | epoch: 1 pq: 2 rg: 59 | total time: 2.55m | eta: 0.0m
+step 00461/00462 (99.78%) | loss: 3.821565 | lrm: 0.00 | lr(adamw:1.706e-03, muon:4.378e-05) | dt: 321.07ms | tok/sec: 816,467 | bf16_mfu: 6.43 | epoch: 1 pq: 2 rg: 59 | total time: 2.55m | eta: 0.0m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00462 | Validation bpb: 1.170801
+Step 00462 | Validation bpb: 1.170801
+<|bos|>The capital of France is a major city in the city of France. The capital of France is a city
+<|bos|>The capital of France is a major city in the city of France. The capital of France is a city
+<|bos|>The chemical symbol of gold is a symbol of gold, and it is a symbol of gold, and it is
+<|bos|>The chemical symbol of gold is a symbol of gold, and it is a symbol of gold, and it is
+<|bos|>If yesterday was Friday, then tomorrow will be the next day. The next day is the next day. The next day is
+<|bos|>If yesterday was Friday, then tomorrow will be the next day. The next day is the next day. The next day is
+<|bos|>The opposite of hot is the hot, cold, cold, cold, cold, cold, cold, cold
+<|bos|>The opposite of hot is the hot, cold, cold, cold, cold, cold, cold, cold
+<|bos|>The planets of the solar system are: the planets of the solar system, the planets of the solar system, and the
+<|bos|>The planets of the solar system are: the planets of the solar system, the planets of the solar system, and the
+<|bos|>My favorite color is the "black" color. I have a color palette that I have a color
+<|bos|>My favorite color is the "black" color. I have a color palette that I have a color
+<|bos|>If 5*x + 3 = 13, then x is the 5*x + 3*x + 3*x +
+<|bos|>If 5*x + 3 = 13, then x is the 5*x + 3*x + 3*x +
+2026-04-18 20:31:44,940 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/model_000462.pt
+2026-04-18 20:31:44,940 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/model_000462.pt
+2026-04-18 20:31:44,943 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/meta_000462.json
+2026-04-18 20:31:44,943 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/meta_000462.json
+2026-04-18 20:31:45,304 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/optim_000462_rank0.pt
+2026-04-18 20:31:45,304 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 3.821565 | early_stop: 0
+step 00462/00462 (final) | loss: 3.821565 | early_stop: 0
+Peak memory usage: 5269.73MiB
+Peak memory usage: 5269.73MiB
+Total training time: 2.55m
+Minimum validation bpb: 1.170801
+Total training time: 2.55m
+Minimum validation bpb: 1.170801
+Checkpoint directory /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/model does not exist.Checkpoint directory /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260418_202709/depth_4/ckpt_base/model does not exist.
+No results collected to plot.
+
+No results collected to plot.
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+================================================================
+Sweep Complete! Results saved to out/research_sweep_20260418_202709
+================================================================
+Sweep Complete! Results saved to out/research_sweep_20260418_202709
+================================================================
+════════════════ 23_BASE_DENSE COMPLETE ════════════════

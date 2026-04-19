@@ -285,6 +285,7 @@ class GPTConfig:
     p23_use_shared_block_router: int = 0      # 23: block-level single pass router for all RemixedLinear inner experts
     p23_linear_moe_experts: int = 0           # 23: enable weight-space LinearMoE with K experts (0=off)
     p23_linear_moe_topk: int = 0              # 23: top-k selected experts in LinearMoE (0=soft all-expert blend)
+    remix_shared_context_gates: int = 0       # 23: batch all 6 per-RL context gate computations into 3 block-level matmuls
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -292,6 +293,7 @@ RESEARCH_ALLOWED_KEYS = {
     "use_moe", "use_perm",
     "moe_num_experts", "moe_router_dim", "moe_embed_dim", "dropout",
     "use_remix_linear", "remix_context_dim", "remix_context_dim_ratio", "remix_basis_size", "remix_output_gate_rank", "remixed_linear_kwargs",
+    "remix_shared_context_gates",
     "use_pos_embed", "moe_use_abs_pos_embed",
     "router_context_window", "router_causal", "router_num_heads",
     "router_num_queries", "router_n_layers", "router_use_vocab_prior",
@@ -1512,10 +1514,13 @@ class RemixedLinear(nn.Module):
         if hasattr(self, "grassmann_bank"):
             yield self.grassmann_bank
 
-    def forward(self, x, context_state, route_weights=None):
+    def forward(self, x, context_state, route_weights=None, context_gates=None):
         """
-        route_weights: optional (B, T, K) pre-computed routing tensor from SharedBlockRouter.
-            When provided, local template_route computation is skipped entirely.
+        route_weights:   optional (B, T, K) pre-computed routing tensor from SharedBlockRouter.
+        context_gates:   optional dict from SharedContextGates with keys:
+                           'basis_gate'     → (B, T, basis_size) raw gate logits (before sigmoid)
+                           'output_coeffs'  → (B, T, gate_rank) raw output gate coefficients
+                         When provided, local basis_modulator/output_gate_coeffs are skipped.
         """
         dtype = x.dtype
         h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
@@ -1552,19 +1557,17 @@ class RemixedLinear(nn.Module):
 
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
-                gate_logits = self.basis_modulator(ctx)
+                if context_gates is not None and 'basis_gate' in context_gates:
+                    # Use shared pre-computed logits from SharedContextGates (no local MLP call)
+                    gate_logits = context_gates['basis_gate'].to(dtype=dtype)
+                else:
+                    gate_logits = self.basis_modulator(ctx)
                 if self._film_gate_flag:
-                    # Proposal C: FiLM affine conditioning — scale + shift
-                    # basis_modulator outputs 2*basis_size; split into (scale, shift)
                     scale_logits, shift = gate_logits.chunk(2, dim=-1)
-                    # 1 + tanh(0.1 * scale_logits) → range [0,2], starts at 1.0 (identity)
                     gate_basis = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
                     h_basis = h_basis * gate_basis + shift.to(dtype=dtype)
-                    gate_basis = None  # already applied
+                    gate_basis = None
                 elif self.sparse_gate_k > 0:
-                    # Design 3: Straight-through sparse top-k gate.
-                    # Forward: activate top-k basis functions via soft distribution.
-                    # Backward: gradients flow through the continuous sigmoid path.
                     k = min(self.sparse_gate_k, self.basis_size)
                     topk_vals, topk_idx = torch.topk(gate_logits, k=k, dim=-1)
                     sparse = torch.zeros_like(gate_logits).scatter_(-1, topk_idx, F.softmax(topk_vals, dim=-1))
@@ -1578,8 +1581,11 @@ class RemixedLinear(nn.Module):
             # Output gate: LOW-RANK + CENTERED ACTIVATION
             # gate = 1 + tanh(scale * coeffs @ gate_basis_vectors)
             if self.use_output_gate:
-                coeffs = self.output_gate_coeffs(ctx)                           # (B, T, r)
-                gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out_features)
+                if context_gates is not None and 'output_coeffs' in context_gates:
+                    coeffs = context_gates['output_coeffs'].to(dtype=dtype)
+                else:
+                    coeffs = self.output_gate_coeffs(ctx)                       # (B, T, r)
+                gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out)
                 gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits)
             else:
                 gate_out = None
@@ -3686,7 +3692,7 @@ class LinearMoE(nn.Module):
             w = F.softmax(logits, dim=-1)                          # (B, T, K) soft
         # Blend expert weights in parameter space: W_eff = Σ_k w_k * W_k
         W_eff = torch.einsum('btk,koi->btoi',
-                             w.float(), self.experts_w.float()).to(x.dtype)  # (B, T, out, in)
+                             w, self.experts_w.to(x.dtype))                  # (B, T, out, in)
         # Single batched matmul (no expert loop)
         out = torch.einsum('bti,btoi->bto', x, W_eff)
         if self.bias is not None:
@@ -3816,16 +3822,19 @@ class RemixedFeedForward(nn.Module):
         # 18F: Per-Channel Scale after projection
         self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
 
-    def forward(self, x, context_state, route_weights=None):
-        """route_weights: optional dict from SharedBlockRouter with 'c_fc' and 'c_proj_ffn' keys."""
+    def forward(self, x, context_state, route_weights=None, context_gates=None):
+        """route_weights:  optional dict from SharedBlockRouter with 'c_fc'/'c_proj_ffn' keys.
+        context_gates:  optional dict from SharedContextGates with layer-key sub-dicts."""
         rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   RemixedLinear)) else None
         rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, RemixedLinear)) else None
-        x = self.c_fc(x, context_state, route_weights=rw_fc)
+        cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   RemixedLinear)) else None
+        cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, RemixedLinear)) else None
+        x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc)
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:
             x = F.relu(x).square()
-        x = self.c_proj(x, context_state, route_weights=rw_proj)
+        x = self.c_proj(x, context_state, route_weights=rw_proj, context_gates=cg_proj)
         if self.channel_scale is not None:
             x = self.channel_scale(x)
         return x
@@ -4132,6 +4141,79 @@ class RemixedMultiAttention(nn.Module):
         return self.c_proj(y, context_state), q_stats
 
 
+class SharedContextGates(nn.Module):
+    """Batches all 6 per-RemixedLinear gate computations into 3 shared matmuls per block.
+
+    Without this: each of the 6 RemixedLinear modules independently calls:
+      - basis_modulator(ctx): 2 matmuls (Linear+GELU+Linear) = 12 per block
+      - output_gate_coeffs(ctx): 1 matmul = 6 per block  → 18 total.
+
+    With SharedContextGates:
+      - hidden_proj(ctx): 1 matmul + GELU
+      - basis_gate_proj(hidden): 1 matmul → all 6 basis gates at once
+      - output_coeff_proj(ctx): 1 matmul → all 6 output gate coefficients at once
+      → 3 total. ~6× fewer kernel launches for the gating overhead.
+
+    Per-layer personalisation is preserved:
+      - basis gates share the MLP but each RL applies sigmoid with its own gate_temperature
+      - output gates share the ctx→coeff projection but each RL multiplies by its own
+        output_gate_basis (r × out_features), whose shape differs across layers.
+    """
+    N_LAYERS  = 6
+    LAYER_KEYS = ('c_q', 'c_k', 'c_v', 'c_proj_attn', 'c_fc', 'c_proj_ffn')
+
+    def __init__(self, ctx_dim: int, basis_size: int, gate_rank: int = 8,
+                 film_gate: bool = False):
+        super().__init__()
+        self.basis_size = basis_size
+        self.gate_rank  = gate_rank
+        self.film_gate  = film_gate
+        N = self.N_LAYERS
+        gate_out_size = 2 * basis_size if film_gate else basis_size
+
+        # Shared hidden for basis gate MLP
+        hidden = max(ctx_dim // 2, min(basis_size, ctx_dim * 2))
+        self.hidden_proj     = nn.Linear(ctx_dim, hidden, bias=True)
+        self.basis_gate_proj = nn.Linear(hidden, N * gate_out_size, bias=True)
+        # Output gate coefficients (ctx → N*r, no hidden needed — small projection)
+        self.output_coeff_proj = nn.Linear(ctx_dim, N * gate_rank, bias=True)
+
+        # Zero-init so gates start at identity at t=0
+        nn.init.zeros_(self.hidden_proj.weight);     nn.init.zeros_(self.hidden_proj.bias)
+        nn.init.zeros_(self.basis_gate_proj.weight); nn.init.zeros_(self.basis_gate_proj.bias)
+        nn.init.zeros_(self.output_coeff_proj.weight); nn.init.zeros_(self.output_coeff_proj.bias)
+
+    def forward(self, context_state: 'Tensor') -> dict:
+        """context_state: (B, T, ctx_dim)
+        Returns dict: layer_key → {'basis_gate': (B,T,basis_size), 'output_coeffs': (B,T,r)}
+        """
+        dtype = context_state.dtype
+        N, K, r = self.N_LAYERS, self.basis_size, self.gate_rank
+        gate_out = 2 * K if self.film_gate else K
+
+        # 3 matmuls total for all gates
+        hidden  = F.gelu(self.hidden_proj(context_state))             # (B, T, hidden)
+        bg_all  = self.basis_gate_proj(hidden)                        # (B, T, N * gate_out)
+        oc_all  = self.output_coeff_proj(context_state)               # (B, T, N * r)
+
+        bg_all  = bg_all.view(*bg_all.shape[:-1], N, gate_out)        # (B, T, N, gate_out)
+        oc_all  = oc_all.view(*oc_all.shape[:-1], N, r)               # (B, T, N, r)
+
+        return {
+            key: {
+                'basis_gate':    bg_all[..., i, :].to(dtype),         # (B, T, gate_out)
+                'output_coeffs': oc_all[..., i, :].to(dtype),         # (B, T, r)
+            }
+            for i, key in enumerate(self.LAYER_KEYS)
+        }
+
+    def gate_parameters(self):
+        """All SharedContextGates params go to the gate LR group."""
+        yield from self.hidden_proj.parameters()
+        yield from self.basis_gate_proj.parameters()
+        yield from self.output_coeff_proj.parameters()
+
+
 class SharedBlockRouter(nn.Module):
     """Pre-computes routing weights for ALL RemixedLinear layers in a block in two matmuls.
 
@@ -4240,6 +4322,22 @@ class RemixedBlock(nn.Module):
                 n_embd=config.n_embd,
                 n_experts=getattr(config, 'p23_n_experts', 8),
                 learned=bool(getattr(config, 'p23_learned_route', 0)),
+            )
+
+        # Phase 23: Block-level shared context gates.
+        # Batches all 6 per-RL gate computations (basis_modulator + output_gate_coeffs)
+        # into 3 shared matmuls, cutting gate overhead ~6×.
+        self._ctx_gates = None
+        use_context_flag = (config.remixed_linear_kwargs or {}).get('use_context', True)
+        if getattr(config, 'remix_shared_context_gates', 0) and use_context_flag:
+            _basis_size = config.remix_basis_size if config.remix_basis_size > 0 else config.n_embd
+            _gate_rank  = getattr(config, 'remix_output_gate_rank', 8)
+            _film_gate  = getattr(config, 'cclblock_film_gate', False)
+            self._ctx_gates = SharedContextGates(
+                ctx_dim=ctx_dim,
+                basis_size=_basis_size,
+                gate_rank=_gate_rank,
+                film_gate=_film_gate,
             )
 
         self.is_shifted   = (stream_type == 'shifted')
@@ -4389,25 +4487,25 @@ class RemixedBlock(nn.Module):
             stream = self.ctx_stream
             local = self._is_local(stream)
             is_dacs = isinstance(stream, (DetachedAttnContextStream, DACSEMAContextStream))
-            
+
             if is_dacs:
-                # Attention runs WITHOUT context
                 attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
                                      context_state=None, route_weights=block_route)
                 x = x + attn_out
-                # Compute context FROM attn_out
                 ctx = stream(attn_out, None if local else prev_ctx)
             else:
-                # Attention runs WITH context (unless local/shifted)
                 attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
                                      None if (local or self.is_shifted) else prev_ctx,
                                      route_weights=block_route)
                 x = x + attn_out
-                # Context source: 'shifted' reads from x_entry (prev layer), others from post-attn norm(x)
                 ctx_src = norm(x_entry if self.is_shifted else x)
                 ctx = stream(ctx_src, None if local else prev_ctx)
 
-            x = x + self.ffwd(norm(x), ctx, route_weights=block_route)
+            # Phase 23: shared context gates — 3 matmuls for all 6 RL gate decisions
+            block_ctx_gates = self._ctx_gates(ctx) if self._ctx_gates is not None else None
+
+            x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+                               context_gates=block_ctx_gates)
             out_ctx = ctx.detach() if (local or self.is_shifted or is_dacs) else ctx
             self._last_ctx = out_ctx
             return x, out_ctx
@@ -6826,6 +6924,10 @@ class GPT(nn.Module):
                     # Phase 23: SharedBlockRouter routing projections → gate group
                     if hasattr(block, '_shared_router') and block._shared_router is not None:
                         for p in block._shared_router.gate_parameters():
+                            (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                    # Phase 23: SharedContextGates → gate group (batched basis + output gate projections)
+                    if hasattr(block, '_ctx_gates') and block._ctx_gates is not None:
+                        for p in block._ctx_gates.gate_parameters():
                             (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                     # 19J: no params (noise epsilon is a config float, not learned)
         else:
