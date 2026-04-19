@@ -116,6 +116,25 @@ else
 fi
 
 # ══════════════════════════════════════════════════════
+# 1B: Dense RemixedLinear, weight mod (no template bank)
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_WEIGHT"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1B" "$TAG" "Dense RemixedLinear, weight mod (no template bank)"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p22-n-templates 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
 # 2: TinyExpert K=8, top-1
 # ══════════════════════════════════════════════════════
 TAG="23_TINY_K8_TOP1"
