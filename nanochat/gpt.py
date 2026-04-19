@@ -3699,7 +3699,7 @@ class QuantileBalancedRouter(nn.Module):
 
         if self.training:
             with torch.no_grad():
-                flat = scores.detach().view(-1, K)                        # (N, K)
+                flat = scores.detach().reshape(-1, K)                     # (N, K)
                 target_q = 1.0 - topk / K                                 # target fraction selected
                 batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
                 if not self._ema_init.item():
