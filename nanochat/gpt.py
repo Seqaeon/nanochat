@@ -4037,12 +4037,12 @@ class RemixedMultiAttention(nn.Module):
         q, k = norm(q), norm(k)
 
         if kv_cache is None:
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), causal=True, window_size=window_size)
         else:
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y = flash_attn.flash_attn_with_kvcache(
-                q, k_cache, v_cache,
-                k=k, v=v,
+                q.to(torch.bfloat16), k_cache, v_cache,
+                k=k.to(torch.bfloat16), v=v.to(torch.bfloat16),
                 cache_seqlens=kv_cache.cache_seqlens,
                 causal=True,
                 window_size=window_size,
@@ -4078,12 +4078,12 @@ class RemixedMultiAttention(nn.Module):
         q, k = norm(q), norm(k)
 
         if kv_cache is None:
-            y_full = flash_attn.flash_attn_func(q, k, v_full, causal=True, window_size=window_size)
+            y_full = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v_full.to(torch.bfloat16), causal=True, window_size=window_size)
         else:
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y_full = flash_attn.flash_attn_with_kvcache(
-                q, k_cache, v_cache,
-                k=k, v=v_full,
+                q.to(torch.bfloat16), k_cache, v_cache,
+                k=k.to(torch.bfloat16), v=v_full.to(torch.bfloat16),
                 cache_seqlens=kv_cache.cache_seqlens,
                 causal=True,
                 window_size=window_size,
@@ -4126,12 +4126,12 @@ class RemixedMultiAttention(nn.Module):
         q_stats = q.mean(dim=2).detach()  # detach: no gradient through ctx into Q/K weights
 
         if kv_cache is None:
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), causal=True, window_size=window_size)
         else:
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y = flash_attn.flash_attn_with_kvcache(
-                q, k_cache, v_cache,
-                k=k, v=v,
+                q.to(torch.bfloat16), k_cache, v_cache,
+                k=k.to(torch.bfloat16), v=v.to(torch.bfloat16),
                 cache_seqlens=kv_cache.cache_seqlens,
                 causal=True,
                 window_size=window_size,
@@ -4675,13 +4675,13 @@ class CausalSelfAttention(nn.Module):
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
             # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), causal=True, window_size=window_size)
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y = flash_attn.flash_attn_with_kvcache(
-                q, k_cache, v_cache,
-                k=k, v=v,
+                q.to(torch.bfloat16), k_cache, v_cache,
+                k=k.to(torch.bfloat16), v=v.to(torch.bfloat16),
                 cache_seqlens=kv_cache.cache_seqlens,
                 causal=True,
                 window_size=window_size,
