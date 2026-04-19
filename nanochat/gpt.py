@@ -1235,7 +1235,7 @@ class RemixedLinear(nn.Module):
         # than dense: e.g. c_proj 3072->768 would get basis_size=768 = full-rank output).
         if scale_basis:
             basis_size = max(basis_size, min(in_features, out_features) // 4)
-        self.basis_size = basis_size
+        self.basis_size = basis_size  # may be updated below for LoKR after b_shrunk calc
         self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
         self.use_context = remixed_linear_kwargs.get('use_context', True)
@@ -1301,6 +1301,7 @@ class RemixedLinear(nn.Module):
             )
             # Override basis_size for the shared-base path
             basis_size = b_shrunk
+            self.basis_size = b_shrunk   # keep self.basis_size consistent with actual self.basis output
 
         self.basis = Linear(in_features, basis_size, bias=False)
         if self.lokr_expert:
@@ -4159,8 +4160,10 @@ class SharedContextGates(nn.Module):
       - output gates share the ctx→coeff projection but each RL multiplies by its own
         output_gate_basis (r × out_features), whose shape differs across layers.
     """
-    N_LAYERS  = 6
-    LAYER_KEYS = ('c_q', 'c_k', 'c_v', 'c_proj_attn', 'c_fc', 'c_proj_ffn')
+    # SCG only serves the 2 FFN layers — attention layers always use their local basis_modulator
+    # because block_ctx_gates is only passed to ffwd(), not attn().
+    N_LAYERS  = 2
+    LAYER_KEYS = ('c_fc', 'c_proj_ffn')
 
     def __init__(self, ctx_dim: int, basis_size: int, gate_rank: int = 8,
                  film_gate: bool = False):
@@ -4171,14 +4174,14 @@ class SharedContextGates(nn.Module):
         N = self.N_LAYERS
         gate_out_size = 2 * basis_size if film_gate else basis_size
 
-        # Shared hidden for basis gate MLP
+        # Shared hidden for basis gate MLP (serves 2 FFN layers)
         hidden = max(ctx_dim // 2, min(basis_size, ctx_dim * 2))
         self.hidden_proj     = nn.Linear(ctx_dim, hidden, bias=True)
         self.basis_gate_proj = nn.Linear(hidden, N * gate_out_size, bias=True)
         # Output gate coefficients (ctx → N*r, no hidden needed — small projection)
         self.output_coeff_proj = nn.Linear(ctx_dim, N * gate_rank, bias=True)
 
-        # Zero-init so gates start at identity at t=0
+        # Zero-init so gates start as identity (sigmoid(0)=0.5, matching local basis_modulator init)
         nn.init.zeros_(self.hidden_proj.weight);     nn.init.zeros_(self.hidden_proj.bias)
         nn.init.zeros_(self.basis_gate_proj.weight); nn.init.zeros_(self.basis_gate_proj.bias)
         nn.init.zeros_(self.output_coeff_proj.weight); nn.init.zeros_(self.output_coeff_proj.bias)
@@ -4186,12 +4189,13 @@ class SharedContextGates(nn.Module):
     def forward(self, context_state: 'Tensor') -> dict:
         """context_state: (B, T, ctx_dim)
         Returns dict: layer_key → {'basis_gate': (B,T,basis_size), 'output_coeffs': (B,T,r)}
+        Only keys 'c_fc' and 'c_proj_ffn' are emitted (attn layers use local basis_modulator).
         """
         dtype = context_state.dtype
         N, K, r = self.N_LAYERS, self.basis_size, self.gate_rank
         gate_out = 2 * K if self.film_gate else K
 
-        # 3 matmuls total for all gates — explicit dtype cast avoids BFloat16/float32 mismatch
+        # 3 matmuls total for both FFN gates — explicit dtype cast avoids BFloat16/float32 mismatch
         # under FP8 training where SharedContextGates is not converted by the FP8 converter.
         hp_w = self.hidden_proj.weight.to(dtype)
         hp_b = self.hidden_proj.bias.to(dtype) if self.hidden_proj.bias is not None else None

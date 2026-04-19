@@ -87,10 +87,10 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --research-dim -1"
 
 # RemixedLinear flags — context conditioning ENABLED with SharedContextGates
-# (batches all 6 per-RL gate MLPs into 3 matmuls per block, ~6x overhead reduction).
+# (batches both FFN layer gate MLPs into 3 shared matmuls per block; attn layers use local gates).
 # Half the device-batch-size vs dense to give MoE layers VRAM headroom.
-REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 4 --use-onecycle 0 --log-every 1 --skip-core \
+REMIX_COMMON="--fp8 --no-compile --max-shards 170 --models remixed-linear \
+  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.15 \
