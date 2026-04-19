@@ -1605,11 +1605,11 @@ class RemixedLinear(nn.Module):
 
             # 2. Router: per-token (FFN) or per-sequence (attn)
             if self.routing_scope == 'per_sequence':
-                route_input = x.mean(dim=1, keepdim=True)                  # (B, 1, in)
+                route_input = x.float().mean(dim=1, keepdim=True)                  # (B, 1, in)
             else:
-                route_input = x                                            # (B, T, in)
-            # route_proj: (K, in) — frozen or learned; cast to x.dtype to stay in bf16
-            route_logits = F.linear(route_input, self.lokr_route_proj.to(dtype))  # (B, *, K)
+                route_input = x.float()                                            # (B, T, in)
+            # route_proj: (K, in) — frozen or learned; performed in float32 for stability
+            route_logits = F.linear(route_input, self.lokr_route_proj.float())  # (B, *, K)
             if self.routing_scope == 'per_sequence':
                 route_logits = route_logits.expand(-1, h_gated.shape[1], -1)  # (B, T, K)
 
@@ -1681,11 +1681,12 @@ class RemixedLinear(nn.Module):
                 self._template_entropy_buf.copy_(ent.detach())
 
             # ── Fully vectorized expert computation (single pair of einsums) ────────
+            # Accumulated in float32 to avoid instability with relu.square() and massive reductions
             # up:  h_gated (B,T,S) × expert_up_w (K,H,S) → (B,T,K,H)
-            all_up  = torch.einsum('bts,khs->btkh', h_gated, self.expert_up_w.to(dtype))
+            all_up  = torch.einsum('bts,khs->btkh', h_gated.float(), self.expert_up_w.float())
             all_up  = F.relu(all_up).square()
             # down: (B,T,K,H) × expert_down_w (K,O,H) → (B,T,K,O)
-            all_out = torch.einsum('btkh,koh->btko', all_up, self.expert_down_w.to(dtype))
+            all_out = torch.einsum('btkh,koh->btko', all_up, self.expert_down_w.float()).to(dtype)
 
             topk_val = self.tiny_expert_topk
             if 0 < topk_val < K:
@@ -3693,7 +3694,7 @@ class LinearMoE(nn.Module):
             w = F.softmax(logits, dim=-1)                          # (B, T, K) soft
         # Blend expert weights in parameter space: W_eff = Σ_k w_k * W_k
         W_eff = torch.einsum('btk,koi->btoi',
-                             w, self.experts_w.to(x.dtype))                  # (B, T, out, in)
+                             w.float(), self.experts_w.float()).to(x.dtype)                  # (B, T, out, in)
         # Single batched matmul (no expert loop)
         out = torch.einsum('bti,btoi->bto', x, W_eff)
         if self.bias is not None:
@@ -4265,16 +4266,16 @@ class SharedBlockRouter(nn.Module):
         K       = self.n_experts
         dtype   = x.dtype
         # Token routing: one matmul → (B, T, N_tok * K) → softmax over last K
-        tok_logits  = x @ self.token_proj.to(dtype)                               # (B, T, K*2)
+        tok_logits  = x.float() @ self.token_proj.float()                               # (B, T, K*2)
         tok_weights = F.softmax(
             tok_logits.view(B, T, self.N_TOKEN_LAYERS, K), dim=-1
-        )                                                                          # (B, T, 2, K)
+        ).to(dtype)                                                                          # (B, T, 2, K)
         # Sequence routing: mean-pool → one matmul → expand
-        x_pool      = x.mean(dim=1, keepdim=True)                                 # (B, 1, D)
-        seq_logits  = x_pool @ self.seq_proj.to(dtype)                            # (B, 1, K*4)
+        x_pool      = x.float().mean(dim=1, keepdim=True)                                 # (B, 1, D)
+        seq_logits  = x_pool @ self.seq_proj.float()                            # (B, 1, K*4)
         seq_weights = F.softmax(
             seq_logits.view(B, 1, self.N_SEQ_LAYERS, K), dim=-1
-        ).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()                         # (B, T, 4, K)
+        ).to(dtype).expand(B, T, self.N_SEQ_LAYERS, K).contiguous()                         # (B, T, 4, K)
         return {
             'c_fc':         tok_weights[:, :, 0, :],   # (B, T, K)
             'c_proj_ffn':   tok_weights[:, :, 1, :],
