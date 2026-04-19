@@ -95,21 +95,20 @@ parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: e
 parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
 parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
 parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch all 6 per-RL context gate computations into 3 block-level matmuls (~6x fewer gate kernel launches)")
-parser.add_argument("--p24-use-sliced-weight", type=int, default=0, help="24: Phase 24 LinearMoE2 sliced weight constraint")
-parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8)
-parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128)
-parser.add_argument("--p24-sliced-weight-scope", type=str, default="global")
-parser.add_argument("--p24-sliced-weight-balance-coeff", type=float, default=0.01)
-parser.add_argument("--p24-quantile-route", type=int, default=0, help="24: Quantile routing for LinearMoE2")
-
-parser.add_argument("--p24-use-folded-mod", type=int, default=0, help="24: Phase 24 LinearMoE3 folded mod constraint")
-parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8)
-parser.add_argument("--p24-folded-mod-scope", type=str, default="global")
-parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid")
-
-parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, help="24: Phase 24 Sequence-Gated Linear mode")
-parser.add_argument("--p24-sequence-gated-scope", type=str, default="global")
-parser.add_argument("--p24-sequence-gated-act", type=str, default="sigmoid")
+# Phase 24: Linear layer variants
+parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
+parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
+parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
+parser.add_argument("--p24-sliced-weight-scope", type=str, default="per_token", choices=["per_token", "per_block", "global"], help="24: routing scope for sliced weight")
+parser.add_argument("--p24-sliced-weight-balance-coeff", type=float, default=0.01, help="24: aux loss coeff for sliced router usage balance")
+parser.add_argument("--p24-quantile-route", type=int, default=0, choices=[0, 1, 2], help="24: reserved routing mode selector")
+parser.add_argument("--p24-use-folded-mod", type=int, default=0, choices=[0, 1], help="24: enable FoldedModulationLinear (LinearMoE3-style)")
+parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8, help="24: fold R consecutive dims by summation")
+parser.add_argument("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"], help="24: gate sharing scope for folded modulation")
+parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"], help="24: gate activation for folded modulation")
+parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1], help="24: enable SequenceGatedLinear (dense + sequence gate)")
+parser.add_argument("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"], help="24: gate sharing scope for dense sequence gating")
+parser.add_argument("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"], help="24: gate activation for dense sequence gating")
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
@@ -558,6 +557,20 @@ def build_model_meta(depth):
         p23_linear_moe_topk=getattr(args, 'p23_linear_moe_topk', 0),
         p23_quantile_route=getattr(args, 'p23_quantile_route', 0),
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
+        # Phase 24
+        p24_use_sliced_weight=getattr(args, 'p24_use_sliced_weight', 0),
+        p24_sliced_weight_reduction_scale=getattr(args, 'p24_sliced_weight_reduction_scale', 8),
+        p24_sliced_weight_min_select=getattr(args, 'p24_sliced_weight_min_select', 128),
+        p24_sliced_weight_scope=getattr(args, 'p24_sliced_weight_scope', 'per_token'),
+        p24_sliced_weight_balance_coeff=getattr(args, 'p24_sliced_weight_balance_coeff', 0.01),
+        p24_quantile_route=getattr(args, 'p24_quantile_route', 0),
+        p24_use_folded_mod=getattr(args, 'p24_use_folded_mod', 0),
+        p24_folded_mod_reduction_scale=getattr(args, 'p24_folded_mod_reduction_scale', 8),
+        p24_folded_mod_scope=getattr(args, 'p24_folded_mod_scope', 'per_layer'),
+        p24_folded_mod_gate_act=getattr(args, 'p24_folded_mod_gate_act', 'sigmoid'),
+        p24_use_sequence_gated_linear=getattr(args, 'p24_use_sequence_gated_linear', 0),
+        p24_sequence_gated_scope=getattr(args, 'p24_sequence_gated_scope', 'per_layer'),
+        p24_sequence_gated_act=getattr(args, 'p24_sequence_gated_act', 'sigmoid'),
     )
 
     with torch.device("meta"):

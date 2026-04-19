@@ -236,7 +236,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p23-tiny-expert|--p23-n-experts|--p23-topk|--p23-learned-route|--p23-std-moe-experts|--p23-std-moe-topk|--p23-std-moe-aux-weight|--p23-lokr|--p23-lokr-rank|--p23-use-shared-block-router|--p23-linear-moe-experts|--p23-linear-moe-topk)
+        --p23-tiny-expert|--p23-n-experts|--p23-topk|--p23-learned-route|--p23-std-moe-experts|--p23-std-moe-topk|--p23-std-moe-aux-weight|--p23-lokr|--p23-lokr-rank|--p23-use-shared-block-router|--p23-linear-moe-experts|--p23-linear-moe-topk|--p24-use-sliced-weight|--p24-sliced-weight-reduction-scale|--p24-sliced-weight-min-select|--p24-sliced-weight-scope|--p24-sliced-weight-balance-coeff|--p24-quantile-route|--p24-use-folded-mod|--p24-folded-mod-reduction-scale|--p24-folded-mod-scope|--p24-folded-mod-gate-act|--p24-use-sequence-gated-linear|--p24-sequence-gated-scope|--p24-sequence-gated-act)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

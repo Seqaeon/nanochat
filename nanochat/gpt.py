@@ -287,21 +287,19 @@ class GPTConfig:
     p23_linear_moe_topk: int = 0              # 23: top-k selected experts in LinearMoE (0=soft all-expert blend)
     p23_quantile_route: int = 0               # 23: use EMA quantile-balanced routing without aux loss
     remix_shared_context_gates: int = 0       # 23: batch all 6 per-RL context gate computations into 3 block-level matmuls
-    # Phase 24: Sequence-Gated Linear and Folded LinearMoE
+    # Phase 24: Linear-layer variant experiments
     p24_use_sliced_weight: int = 0
     p24_sliced_weight_reduction_scale: int = 8
     p24_sliced_weight_min_select: int = 128
-    p24_sliced_weight_scope: str = "global"
+    p24_sliced_weight_scope: str = "per_token"         # per_token|per_block|global
     p24_sliced_weight_balance_coeff: float = 0.01
     p24_quantile_route: int = 0
-
     p24_use_folded_mod: int = 0
     p24_folded_mod_reduction_scale: int = 8
-    p24_folded_mod_scope: str = "global"
+    p24_folded_mod_scope: str = "per_layer"            # per_layer|per_block|global
     p24_folded_mod_gate_act: str = "sigmoid"
-
     p24_use_sequence_gated_linear: int = 0
-    p24_sequence_gated_scope: str = "global"
+    p24_sequence_gated_scope: str = "per_layer"        # per_layer|per_block|global
     p24_sequence_gated_act: str = "sigmoid"
 
 
@@ -375,6 +373,12 @@ RESEARCH_ALLOWED_KEYS = {
     "p23_std_moe_experts", "p23_std_moe_topk", "p23_std_moe_aux_weight",
     "p23_lokr", "p23_lokr_rank",
     "p23_use_shared_block_router", "p23_linear_moe_experts", "p23_linear_moe_topk",
+    # Phase 24
+    "p24_use_sliced_weight", "p24_sliced_weight_reduction_scale", "p24_sliced_weight_min_select",
+    "p24_sliced_weight_scope", "p24_sliced_weight_balance_coeff", "p24_quantile_route",
+    "p24_use_folded_mod", "p24_folded_mod_reduction_scale", "p24_folded_mod_scope",
+    "p24_folded_mod_gate_act", "p24_use_sequence_gated_linear", "p24_sequence_gated_scope",
+    "p24_sequence_gated_act",
 }
 
 
@@ -3944,6 +3948,151 @@ class LinearMoE(nn.Module):
         return out
 
 
+class SlicedWeightLinear(nn.Module):
+    """LinearMoE2-style single weight bank + routed column slicing."""
+    def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
+                 min_select: int = 128, scope: str = "per_token",
+                 balance_coeff: float = 0.01, bias: bool = True, use_quantile_route: int = 0):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.reduction_scale = max(1, int(reduction_scale))
+        self.min_select = max(1, int(min_select))
+        self.scope = scope
+        self.balance_coeff = float(balance_coeff)
+        self.use_quantile_route = int(use_quantile_route)
+        self.big_dim = in_features * self.reduction_scale
+        self.n_selected = max(self.min_select, self.big_dim // self.reduction_scale)
+        self.weight_bank = nn.Parameter(torch.empty(out_features, self.big_dim))
+        self.in_adapter = Linear(in_features, self.n_selected, bias=False) if self.n_selected != in_features else None
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        n_keys = int(math.isqrt(self.big_dim))
+        if n_keys * n_keys < self.big_dim:
+            n_keys += 1
+        self.n_keys = n_keys
+        self.router_a = Linear(in_features, n_keys, bias=False)
+        self.router_b = Linear(in_features, n_keys, bias=False)
+        nn.init.zeros_(self.router_a.weight)
+        nn.init.zeros_(self.router_b.weight)
+        nn.init.kaiming_uniform_(self.weight_bank, a=math.sqrt(5))
+        self.register_buffer("usage_a", torch.full((n_keys,), 1.0 / n_keys))
+        self.register_buffer("usage_b", torch.full((n_keys,), 1.0 / n_keys))
+        self._last_balance_loss = None
+        self.ln_basis = nn.Identity()
+
+    def _compute_balance_loss(self, logits_a: torch.Tensor, logits_b: torch.Tensor, dtype: torch.dtype):
+        probs_a = F.softmax(logits_a.float(), dim=-1)
+        probs_b = F.softmax(logits_b.float(), dim=-1)
+        with torch.no_grad():
+            self.usage_a.mul_(0.99).add_(0.01 * probs_a.mean(dim=(0, 1)))
+            self.usage_b.mul_(0.99).add_(0.01 * probs_b.mean(dim=(0, 1)))
+        target = 1.0 / self.n_keys
+        loss_a = ((self.usage_a - target) ** 2).mean()
+        loss_b = ((self.usage_b - target) ** 2).mean()
+        self._last_balance_loss = (loss_a + loss_b).to(dtype=dtype)
+
+    def forward(self, x, context_state=None, route_weights=None, p24_route_input=None, **kwargs):
+        B, T, _ = x.shape
+        route_input = x if p24_route_input is None else p24_route_input
+        if route_input.ndim == 2:
+            route_input = route_input.unsqueeze(1)
+        if route_input.size(1) == 1 and T > 1:
+            route_input = route_input.expand(-1, T, -1)
+        logits_a = self.router_a(route_input)
+        logits_b = self.router_b(route_input)
+        self._compute_balance_loss(logits_a, logits_b, x.dtype)
+        topk_a = max(1, int(math.isqrt(self.n_selected)))
+        topk_b = max(1, int(math.ceil(self.n_selected / max(1, topk_a))))
+        idx_a = logits_a.topk(min(topk_a, self.n_keys), dim=-1).indices
+        idx_b = logits_b.topk(min(topk_b, self.n_keys), dim=-1).indices
+        pair_idx = (idx_a.unsqueeze(-1) * self.n_keys + idx_b.unsqueeze(-2)).reshape(B, T, -1)
+        pair_idx = pair_idx % self.big_dim
+        if pair_idx.size(-1) < self.n_selected:
+            pad = pair_idx[..., :1].expand(-1, -1, self.n_selected - pair_idx.size(-1))
+            pair_idx = torch.cat([pair_idx, pad], dim=-1)
+        sel_idx = pair_idx[..., :self.n_selected]
+        x_in = self.in_adapter(x) if self.in_adapter is not None else x
+        bank_t = self.weight_bank.t()
+        gathered = bank_t[sel_idx.reshape(-1, self.n_selected)].reshape(B, T, self.n_selected, self.out_features)
+        out = torch.einsum('btn,btno->bto', x_in, gathered)
+        if self.bias is not None:
+            out = out + self.bias
+        return out
+
+
+class FoldedModulationLinear(nn.Module):
+    """LinearMoE3-style fold-by-sum + modulation on folded channels."""
+    def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
+                 scope: str = "per_layer", gate_act: str = "sigmoid", bias: bool = True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.reduction_scale = max(1, int(reduction_scale))
+        self.scope = scope
+        self.gate_act = gate_act
+        self.folded_dim = max(1, in_features // self.reduction_scale)
+        self.used_in = self.folded_dim * self.reduction_scale
+        self.weight = nn.Parameter(torch.empty(out_features, self.folded_dim))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        self.gate_proj = Linear(self.folded_dim, self.folded_dim, bias=True)
+        self.ext_gate_proj = Linear(in_features, self.folded_dim, bias=True)
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.zeros_(self.gate_proj.bias)
+        nn.init.zeros_(self.ext_gate_proj.weight)
+        nn.init.zeros_(self.ext_gate_proj.bias)
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        self.ln_basis = nn.Identity()
+
+    def _act(self, g: torch.Tensor) -> torch.Tensor:
+        if self.gate_act == "tanh_centered":
+            return 1.0 + torch.tanh(g)
+        return torch.sigmoid(g)
+
+    def forward(self, x, context_state=None, route_weights=None, p24_gate_input=None, **kwargs):
+        B, T, C = x.shape
+        x_use = x[..., :self.used_in]
+        x_fold = x_use.view(B, T, self.folded_dim, self.reduction_scale).sum(dim=-1)
+        if p24_gate_input is None:
+            gate_logits = self.gate_proj(x_fold.mean(dim=1))
+        else:
+            ext = p24_gate_input
+            if ext.ndim == 3:
+                ext = ext.mean(dim=1)
+            gate_logits = self.ext_gate_proj(ext)
+        gate = self._act(gate_logits).unsqueeze(1)
+        x_mod = x_fold * gate
+        return F.linear(x_mod, self.weight.to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
+
+
+class SequenceGatedLinear(nn.Module):
+    """Dense linear with sequence-pooled content gate."""
+    def __init__(self, in_features: int, out_features: int, gate_act: str = "sigmoid", bias: bool = True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.gate_act = gate_act
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        self.gate_proj = Linear(in_features, in_features, bias=True)
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.zeros_(self.gate_proj.bias)
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        self.ln_basis = nn.Identity()
+
+    def _act(self, g: torch.Tensor) -> torch.Tensor:
+        if self.gate_act == "tanh_centered":
+            return 1.0 + torch.tanh(g)
+        return torch.sigmoid(g)
+
+    def forward(self, x, context_state=None, route_weights=None, p24_gate_input=None, **kwargs):
+        if p24_gate_input is None:
+            pooled = x.mean(dim=1)
+        else:
+            pooled = p24_gate_input.mean(dim=1) if p24_gate_input.ndim == 3 else p24_gate_input
+        gate = self._act(self.gate_proj(pooled)).unsqueeze(1)
+        return F.linear(x * gate, self.weight.to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
+
+
 class RemixedFeedForward(nn.Module):
     """Feedforward path using RemixedLinear (or RAL) in the base MLP framework."""
     def __init__(self, config):
@@ -3955,10 +4104,52 @@ class RemixedFeedForward(nn.Module):
         film_gate = getattr(config, 'cclblock_film_gate', False)
         kwargs = config.remixed_linear_kwargs if config.remixed_linear_kwargs is not None else dict(use_basis_gate=True, use_output_gate=True, use_context=True)
         scale = getattr(config, 'scale_basis_size', True)
+        use_p24_sliced = bool(getattr(config, 'p24_use_sliced_weight', 0))
+        use_p24_folded = bool(getattr(config, 'p24_use_folded_mod', 0))
+        use_p24_seqgate = bool(getattr(config, 'p24_use_sequence_gated_linear', 0))
         # Phase 23 LinearMoE mode: weight-space blending of K expert matrices
         linear_moe_k = getattr(config, 'p23_linear_moe_experts', 0)
         use_qroute = bool(getattr(config, 'p23_quantile_route', 0))
-        if linear_moe_k > 0:
+        if use_p24_sliced:
+            self.c_fc = SlicedWeightLinear(
+                config.n_embd, 4 * config.n_embd,
+                reduction_scale=getattr(config, 'p24_sliced_weight_reduction_scale', 8),
+                min_select=getattr(config, 'p24_sliced_weight_min_select', 128),
+                scope=getattr(config, 'p24_sliced_weight_scope', 'per_token'),
+                balance_coeff=getattr(config, 'p24_sliced_weight_balance_coeff', 0.01),
+                use_quantile_route=getattr(config, 'p24_quantile_route', 0),
+            )
+            self.c_proj = SlicedWeightLinear(
+                4 * config.n_embd, config.n_embd,
+                reduction_scale=getattr(config, 'p24_sliced_weight_reduction_scale', 8),
+                min_select=getattr(config, 'p24_sliced_weight_min_select', 128),
+                scope=getattr(config, 'p24_sliced_weight_scope', 'per_token'),
+                balance_coeff=getattr(config, 'p24_sliced_weight_balance_coeff', 0.01),
+                use_quantile_route=getattr(config, 'p24_quantile_route', 0),
+            )
+        elif use_p24_folded:
+            self.c_fc = FoldedModulationLinear(
+                config.n_embd, 4 * config.n_embd,
+                reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
+                scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
+                gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
+            )
+            self.c_proj = FoldedModulationLinear(
+                4 * config.n_embd, config.n_embd,
+                reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
+                scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
+                gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
+            )
+        elif use_p24_seqgate:
+            self.c_fc = SequenceGatedLinear(
+                config.n_embd, 4 * config.n_embd,
+                gate_act=getattr(config, 'p24_sequence_gated_act', 'sigmoid'),
+            )
+            self.c_proj = SequenceGatedLinear(
+                4 * config.n_embd, config.n_embd,
+                gate_act=getattr(config, 'p24_sequence_gated_act', 'sigmoid'),
+            )
+        elif linear_moe_k > 0:
             linear_moe_topk = getattr(config, 'p23_linear_moe_topk', 0)
             self.c_fc   = LinearMoE(config.n_embd, 4 * config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk, use_quantile_route=use_qroute)
             self.c_proj = LinearMoE(4 * config.n_embd, config.n_embd, n_experts=linear_moe_k, topk=linear_moe_topk, use_quantile_route=use_qroute)
@@ -4068,19 +4259,21 @@ class RemixedFeedForward(nn.Module):
         # 18F: Per-Channel Scale after projection
         self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
 
-    def forward(self, x, context_state, route_weights=None, context_gates=None):
+    def forward(self, x, context_state, route_weights=None, context_gates=None, p24_shared=None):
         """route_weights:  optional dict from SharedBlockRouter with 'c_fc'/'c_proj_ffn' keys.
         context_gates:  optional dict from SharedContextGates with layer-key sub-dicts."""
         rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   RemixedLinear)) else None
         rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, RemixedLinear)) else None
         cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   RemixedLinear)) else None
         cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, RemixedLinear)) else None
-        x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc)
+        route_in = p24_shared.get('route_input') if p24_shared is not None else None
+        gate_in = p24_shared.get('gate_input') if p24_shared is not None else None
+        x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:
             x = F.relu(x).square()
-        x = self.c_proj(x, context_state, route_weights=rw_proj, context_gates=cg_proj)
+        x = self.c_proj(x, context_state, route_weights=rw_proj, context_gates=cg_proj, p24_route_input=route_in, p24_gate_input=gate_in)
         if self.channel_scale is not None:
             x = self.channel_scale(x)
         return x
@@ -4551,6 +4744,12 @@ class RemixedBlock(nn.Module):
         super().__init__()
         self.attn = RemixedMultiAttention(config, layer_idx)
         self.ffwd = RemixedFeedForward(config)
+        self._p24_sliced_scope = getattr(config, 'p24_sliced_weight_scope', 'per_token')
+        self._p24_folded_scope = getattr(config, 'p24_folded_mod_scope', 'per_layer')
+        self._p24_seq_scope = getattr(config, 'p24_sequence_gated_scope', 'per_layer')
+        self._p24_any = bool(getattr(config, 'p24_use_sliced_weight', 0) or
+                             getattr(config, 'p24_use_folded_mod', 0) or
+                             getattr(config, 'p24_use_sequence_gated_linear', 0))
         ctx_dim = config.remix_context_dim
         stream_type = getattr(config, 'cclblock_context_stream', 'local')
         bank_size  = getattr(config, 'cclblock_context_bank_size', 0)
@@ -4681,8 +4880,20 @@ class RemixedBlock(nn.Module):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
         return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, PredictiveChunkContextStream, EvidenceAccumulationContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None, p24_global_signal=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
+        p24_shared = None
+        if self._p24_any:
+            block_signal = norm(x_entry).mean(dim=1)
+            use_global = ((self._p24_sliced_scope == 'global') or
+                          (self._p24_folded_scope == 'global') or
+                          (self._p24_seq_scope == 'global'))
+            use_block = ((self._p24_sliced_scope == 'per_block') or
+                         (self._p24_folded_scope == 'per_block') or
+                         (self._p24_seq_scope == 'per_block'))
+            shared_signal = p24_global_signal if (use_global and p24_global_signal is not None) else (block_signal if use_block else None)
+            if shared_signal is not None:
+                p24_shared = {'route_input': shared_signal, 'gate_input': shared_signal}
 
         # Phase 23 shared routing: compute all K*N_layers routing decisions in 2 matmuls
         # from norm(x) before any transformation.  Each sub-module receives its slice.
@@ -4703,7 +4914,7 @@ class RemixedBlock(nn.Module):
                 pass  # Skip FFN
             else:
                 scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
-                x = x + scale * self.ffwd(norm_fn_mlp(x), ctx_signal)
+                x = x + scale * self.ffwd(norm_fn_mlp(x), ctx_signal, p24_shared=p24_shared)
             self._last_ctx = ctx_signal
             return x, ctx_signal
 
@@ -4713,7 +4924,7 @@ class RemixedBlock(nn.Module):
             )
             x = x + attn_out
             ctx = self.shadow_ctx_proj(shadow_ctx)
-            x = x + self.ffwd(norm(x), ctx)
+            x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
 
@@ -4735,7 +4946,7 @@ class RemixedBlock(nn.Module):
                 q_peak = q_stats.abs().amax(dim=-1, keepdim=True)
                 geom = torch.cat([q_norm, q_mean, q_std, q_peak], dim=-1)
                 ctx = self.ctx_proj_geom(geom)
-            x = x + self.ffwd(norm(x), ctx)
+            x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
 
@@ -4748,7 +4959,7 @@ class RemixedBlock(nn.Module):
             x = x + attn_out
             ctx_src_ffn = norm(x_entry if self.is_shifted else x)  # shifted=prev, else post-attn
             ctx_ffn = self.ctx_stream_ffn(ctx_src_ffn)   # (B, T, ctx_dim)
-            x = x + self.ffwd(norm(x), ctx_ffn)
+            x = x + self.ffwd(norm(x), ctx_ffn, p24_shared=p24_shared)
             self._last_ctx = ctx_ffn.detach()
             return x, self._last_ctx
         else:
@@ -4773,7 +4984,7 @@ class RemixedBlock(nn.Module):
             block_ctx_gates = self._ctx_gates(ctx) if self._ctx_gates is not None else None
 
             x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
-                               context_gates=block_ctx_gates)
+                               context_gates=block_ctx_gates, p24_shared=p24_shared)
             out_ctx = ctx.detach() if (local or self.is_shifted or is_dacs) else ctx
             self._last_ctx = out_ctx
             return x, out_ctx
@@ -7395,6 +7606,19 @@ class GPT(nn.Module):
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
+        p24_global_signal = None
+        if self.use_remix_linear:
+            use_global = (
+                getattr(self.config, 'p24_sliced_weight_scope', 'per_token') == 'global' or
+                getattr(self.config, 'p24_folded_mod_scope', 'per_layer') == 'global' or
+                getattr(self.config, 'p24_sequence_gated_scope', 'per_layer') == 'global'
+            )
+            if use_global and (
+                getattr(self.config, 'p24_use_sliced_weight', 0) or
+                getattr(self.config, 'p24_use_folded_mod', 0) or
+                getattr(self.config, 'p24_use_sequence_gated_linear', 0)
+            ):
+                p24_global_signal = x.mean(dim=1)
         # CCL context threading: context flows block-to-block, starting as None at block 0.
         # RemixedBlock and CCLBlock both return (x, ctx) and accept prev_ctx.
         # Design C (cclblock_stale_ctx_lag > 0): block i receives context from block i-k
@@ -7407,7 +7631,7 @@ class GPT(nn.Module):
                 x  = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
                 ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
                 stale_ctx = ctx_history[i - lag].detach() if i >= lag else None
-                x, new_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, stale_ctx)
+                x, new_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, stale_ctx, p24_global_signal=p24_global_signal)
                 ctx_history.append(new_ctx)
         else:
             prev_ctx = None
@@ -7427,7 +7651,7 @@ class GPT(nn.Module):
                 x = self.resid_lambdas[i] * x + x0_w * x0
                 ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
                 if self.use_remix_linear:
-                    x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx)
+                    x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
                 else:
                     x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
                 # 19C: Residual stream mixing after block output
@@ -7488,6 +7712,16 @@ class GPT(nn.Module):
                         orth_terms.append(mod._last_orth_loss.to(dtype=loss.dtype))
                 if orth_terms:
                     loss = loss + orth_lambda * torch.stack(orth_terms).mean()
+
+            # Phase 24: sliced-weight routing balance loss
+            p24_balance_coeff = float(getattr(self.config, 'p24_sliced_weight_balance_coeff', 0.0))
+            if p24_balance_coeff > 0.0 and loss_reduction == 'mean':
+                bal_terms = []
+                for mod in self.modules():
+                    if isinstance(mod, SlicedWeightLinear) and mod._last_balance_loss is not None:
+                        bal_terms.append(mod._last_balance_loss.to(dtype=loss.dtype))
+                if bal_terms:
+                    loss = loss + p24_balance_coeff * torch.stack(bal_terms).mean()
 
             # 18G: Auxiliary representation similarity loss
             # Penalize high cosine similarity between adjacent layers

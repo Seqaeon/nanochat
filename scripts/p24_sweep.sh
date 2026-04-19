@@ -62,8 +62,8 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 
 # -----------------------------------------------------------------------------
 # NOTE:
-# This script assumes p24 flags are/will be wired in scripts/base_train.py and
-# plumbed into nanochat/gpt.py. It is intentionally a sweep scaffold.
+# p24 flags are wired through research_sweep -> research_compare -> base_train.
+# This script runs concrete p24 variant implementations.
 # -----------------------------------------------------------------------------
 
 # ══════════════════════════════════════════════════════
