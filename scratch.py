@@ -1,22 +1,21 @@
 import torch
-from nanochat.flash_attention import flash_attn_with_kvcache, flash_attn_func
-q = torch.randn(1, 1, 2, 64, dtype=torch.bfloat16, device='cuda')
-k = torch.randn(1, 1, 2, 64, dtype=torch.bfloat16, device='cuda')
-v = torch.randn(1, 1, 2, 72, dtype=torch.bfloat16, device='cuda')
-k_cache = torch.randn(1, 128, 2, 64, dtype=torch.bfloat16, device='cuda')
-v_cache = torch.randn(1, 128, 2, 72, dtype=torch.bfloat16, device='cuda')
-seqlens = torch.tensor([0], dtype=torch.int32, device='cuda')
+from nanochat.gpt import QuantileCrossAttentionRouter
 
-print("Testing FA3 training...")
-try:
-    flash_attn_func(q, k, v, causal=True)
-    print("Success training")
-except Exception as e:
-    print("Error training:", e)
+router = QuantileCrossAttentionRouter(in_features=256, n_experts=8, topk=2)
+x = torch.randn(2, 64, 256)
+w = router(x)
+print(f"Train output shape: {w.shape}")
 
-print("Testing FA3 kvcache...")
-try:
-    flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, cache_seqlens=seqlens, causal=True)
-    print("Success kvcache")
-except Exception as e:
-    print("Error kvcache:", e)
+router.eval()
+w_eval = router(x)
+print(f"Eval output shape: {w_eval.shape}")
+
+kv_state = {}
+w_kv = router(x[:, :1, :], kv_state)
+print(f"Eval KV step 1 shape: {w_kv.shape}")
+print(f"KV keys: {kv_state.keys()}")
+
+# Test compile
+compiled_router = torch.compile(router)
+w_comp = compiled_router(x)
+print(f"Compiled output shape: {w_comp.shape}")
