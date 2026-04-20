@@ -1569,7 +1569,7 @@ class RemixedLinear(nn.Module):
         if hasattr(self, "grassmann_bank"):
             yield self.grassmann_bank
 
-    def forward(self, x, context_state, route_weights=None, context_gates=None):
+    def forward(self, x, context_state, route_weights=None, context_gates=None, **kwargs):
         """
         route_weights:   optional (B, T, K) pre-computed routing tensor from SharedBlockRouter.
         context_gates:   optional dict from SharedContextGates with keys:

@@ -1,0 +1,2004 @@
+╔══════════════════════════════════════════════════════════════╗
+║  [1]  25_NO_CONTEXT
+║  No context, no gates — pure basis+mixing structure (cheapest)
+╚══════════════════════════════════════════════════════════════╝
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 20 16:05:33 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:86:00.0 Off |                    0 |
+| N/A   35C    P0             76W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260420_160533
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.6 environment at: /usr/local[0m
+[1m[33mwarning[39m[0m[1m:[0m [1mMissing version constraint (e.g., a lower bound) for `cmaes`[0m
+[2mResolved [1m130 packages[0m [2min 824ms[0m[0m
+[2mPrepared [1m1 package[0m [2min 2.02s[0m[0m
+[2mInstalled [1m1 package[0m [2min 3ms[0m[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6)[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-20 16:05:57,276 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:05:57,372 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,473 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,589 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/__init__.py "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:05:57,591 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_interface.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-20 16:05:57,590 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:05:57,592 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/_C.abi3.so "HTTP/1.1 302 Found"
+2026-04-20 16:05:57,599 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,601 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,604 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_config.py "HTTP/1.1 307 Temporary Redirect"
+2026-04-20 16:05:57,662 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,663 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,668 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,679 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-04-20 16:05:57,765 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/xet-read-token/de87b9b5af06dd9984df595bef90b2eba44b181a "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --warmdown-ratio 0.5 --final-lr-frac 0.1 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160533/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+2026-04-20 16:06:14,595 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:06:14,596 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:06:14,694 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:06:14,792 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-20 16:06:16,427 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160533/depth_4/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 77/103 linear layers, skipped 26 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 8,407,576
+research                : 0
+scalars                 : 8
+total                   : 41,962,016
+Estimated FLOPs per token (total):  1.094279e+08
+Estimated FLOPs per token (active): 1.094279e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.412101 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 7.21
+Total training FLOPs estimate: 1.325287e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0420 16:06:18.087000 675 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/scripts/base_train.py", line 1066, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:            ^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 7808, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 5131, in forward
+[rank0]:     x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 4416, in forward
+[rank0]:     x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: RemixedLinear.forward() got an unexpected keyword argument 'p24_route_input'
+[rank0]:[W420 16:06:43.000929771 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0420 16:06:45.897000 670 site-packages/torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 675) of binary: /usr/local/bin/python
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:06:45
+  host      : localhost
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 675)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+
+════════════════ 25_NO_CONTEXT FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [2]  25_OUTPUT_ONLY
+║  Output gate only — low-rank context gate on output, no basis gate
+╚══════════════════════════════════════════════════════════════╝
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 20 16:06:48 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:86:00.0 Off |                    0 |
+| N/A   36C    P0            100W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260420_160648
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.6 environment at: /usr/local[0m
+[2mAudited [1m1 package[0m [2min 38ms[0m[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-20 16:07:03,511 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:07:03,642 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:07:03,768 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --warmdown-ratio 0.5 --final-lr-frac 0.1 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160648/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+2026-04-20 16:07:16,114 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:07:16,116 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:07:16,242 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:07:16,371 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-20 16:07:18,058 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160648/depth_4/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 77/103 linear layers, skipped 26 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 8,407,576
+research                : 0
+scalars                 : 8
+total                   : 41,962,016
+Estimated FLOPs per token (total):  1.094279e+08
+Estimated FLOPs per token (active): 1.094279e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.412101 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 7.21
+Total training FLOPs estimate: 1.325287e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0420 16:07:19.388000 1496 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/scripts/base_train.py", line 1066, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:            ^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 7808, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 5131, in forward
+[rank0]:     x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 4416, in forward
+[rank0]:     x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: RemixedLinear.forward() got an unexpected keyword argument 'p24_route_input'
+[rank0]:[W420 16:07:37.523779994 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0420 16:07:38.850000 1491 site-packages/torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1496) of binary: /usr/local/bin/python
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:07:38
+  host      : localhost
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 1496)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+════════════════ 25_OUTPUT_ONLY FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [3]  25_LINEAR_GATE
+║  Linear basis gate — single projection C→B, no MLP hidden layer
+╚══════════════════════════════════════════════════════════════╝
+
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 20 16:07:41 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:86:00.0 Off |                    0 |
+| N/A   36C    P0             76W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260420_160741
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.6 environment at: /usr/local[0m
+[2mAudited [1m1 package[0m [2min 37ms[0m[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-20 16:07:57,946 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:07:58,059 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:07:58,165 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --warmdown-ratio 0.5 --final-lr-frac 0.1 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160741/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+
+2026-04-20 16:08:12,319 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:08:12,319 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 16:08:12,414 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:08:12,521 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-20 16:08:14,179 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160741/depth_4/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 77/103 linear layers, skipped 26 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 8,407,576
+research                : 0
+scalars                 : 8
+total                   : 41,962,016
+Estimated FLOPs per token (total):  1.094279e+08
+Estimated FLOPs per token (active): 1.094279e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.412101 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 7.21
+Total training FLOPs estimate: 1.325287e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0420 16:08:15.347000 1672 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/scripts/base_train.py", line 1066, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:            ^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 7808, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 5131, in forward
+[rank0]:     x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 4416, in forward
+[rank0]:     x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: RemixedLinear.forward() got an unexpected keyword argument 'p24_route_input'
+[rank0]:[W420 16:08:31.506764338 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0420 16:08:32.982000 1667 site-packages/torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1672) of binary: /usr/local/bin/python
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:08:32
+  host      : localhost
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 1672)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+════════════════ 25_LINEAR_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [4]  25_ATTN_GATE
+║  Attention (bilinear) gate — content × context joint gating
+╚══════════════════════════════════════════════════════════════╝
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 20 16:08:35 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:86:00.0 Off |                    0 |
+| N/A   36C    P0            107W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260420_160835
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.6 environment at: /usr/local[0m
+[2mAudited [1m1 package[0m [2min 51ms[0m[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-20 16:08:49,682 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:08:49,779 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:08:49,879 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --warmdown-ratio 0.5 --final-lr-frac 0.1 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160835/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+2026-04-20 16:09:01,841 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:09:01,953 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:09:02,061 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-20 16:09:03,568 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160835/depth_4/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 77/103 linear layers, skipped 26 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 8,407,576
+research                : 0
+scalars                 : 8
+total                   : 41,962,016
+Estimated FLOPs per token (total):  1.094279e+08
+Estimated FLOPs per token (active): 1.094279e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.412101 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 7.21
+Total training FLOPs estimate: 1.325287e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0420 16:09:04.771000 1848 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/scripts/base_train.py", line 1066, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:            ^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 7808, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 5131, in forward
+[rank0]:     x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 4416, in forward
+[rank0]:     x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: RemixedLinear.forward() got an unexpected keyword argument 'p24_route_input'
+[rank0]:[W420 16:09:21.326838894 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0420 16:09:23.351000 1843 site-packages/torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 1848) of binary: /usr/local/bin/python
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:09:23
+  host      : localhost
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 1848)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+════════════════ 25_ATTN_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [5]  25_MLP_GATE
+║  MLP basis gate — 2-layer C→C/2→B (current default, most expensive)
+╚══════════════════════════════════════════════════════════════╝
+
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 20 16:09:25 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:86:00.0 Off |                    0 |
+| N/A   36C    P0             76W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260420_160926
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.6 environment at: /usr/local[0m
+[2mAudited [1m1 package[0m [2min 35ms[0m[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-04-20 16:09:46,195 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:09:46,290 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:09:46,390 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Calculated Target Tokens: 121,111,872
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training remixed-linear ---
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 2 --total-batch-size 262144 --target-tokens 121111872 --eval-every -1 --log-every 1 --core-metric-every 0 --save-every -1 --warmup-ratio 0.05 --warmdown-ratio 0.5 --final-lr-frac 0.1 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --p22-n-templates 1 --p22-template-routing-learned 0 --p22-attn-moe-route none --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 256 --moe-router-dim 256 --remix-context-dim 256 --remix-basis-size 256 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160926/depth_4/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.7320508075688774
+2026-04-20 16:09:56,780 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-04-20 16:09:56,877 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-04-20 16:09:56,975 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-04-20 16:09:58,187 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 256,
+  "moe_embed_dim": 256,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 256,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 256,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260420_160926/depth_4/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 77/103 linear layers, skipped 26 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 8,407,576
+research                : 0
+scalars                 : 8
+total                   : 41,962,016
+Estimated FLOPs per token (total):  1.094279e+08
+Estimated FLOPs per token (active): 1.094279e+08
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.412101 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 7.21
+Total training FLOPs estimate: 1.325287e+16
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 2 x 2048 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 262,144 => gradient accumulation steps: 64
+[rank0]:W0420 16:09:59.126000 2024 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "<frozen runpy>", line 198, in _run_module_as_main
+[rank0]:   File "<frozen runpy>", line 88, in _run_code
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/scripts/base_train.py", line 1066, in <module>
+[rank0]:     loss = model(x, y)
+[rank0]:            ^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 414, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 832, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/_dynamo/external_utils.py", line 68, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1661, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1487, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 7808, in forward
+[rank0]:     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 5131, in forward
+[rank0]:     x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/nanochat/gpt.py", line 4416, in forward
+[rank0]:     x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: RemixedLinear.forward() got an unexpected keyword argument 'p24_route_input'
+[rank0]:[W420 16:10:12.197982500 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0420 16:10:13.445000 2019 site-packages/torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 2024) of binary: /usr/local/bin/python
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+scripts.base_train FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:10:13
+  host      : localhost
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2024)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Error training remixed-linear. Marking as failed and continuing to next model.
+
+--- Generating Report ---
+No successful runs to plot.
+
+[ERROR] The following models FAILED: ['remixed-linear']
+════════════════ 25_MLP_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║         Phase 25 Ablation Sweep Complete (5 runs)           ║
+╚══════════════════════════════════════════════════════════════╝
+Check sweep_p25.log for results.
+
+Reading order (fastest to slowest, best wins):
+  25_NO_CONTEXT   → 25_OUTPUT_ONLY → 25_LINEAR_GATE → 25_ATTN_GATE → 25_MLP_GATE
