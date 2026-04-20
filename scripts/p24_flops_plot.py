@@ -35,6 +35,12 @@ MARKERS = {
     "FoldedMod":     "^",
     "SequenceGated": "D",
 }
+LINESTYLES = {
+    "Dense":         "-",
+    "SlicedWeight":  "-",
+    "FoldedMod":     "--",
+    "SequenceGated": "--",
+}
 
 # ── FLOPs helpers ──────────────────────────────────────────────────────────────
 
@@ -151,14 +157,17 @@ def main():
     # — top panel: absolute FLOPs ———————————————————————————————————————————
     for variant, flops_list in data.items():
         fl = np.array(flops_list, dtype=float)
+        is_dashed = LINESTYLES[variant] == "--"
         ax_main.plot(
             x, fl,
             marker=MARKERS[variant],
+            linestyle=LINESTYLES[variant],
             color=PALETTE[variant],
             linewidth=2.5,
             markersize=8,
-            markeredgecolor="white",
-            markeredgewidth=0.8,
+            markerfacecolor="none" if is_dashed else PALETTE[variant],
+            markeredgecolor=PALETTE[variant] if is_dashed else "white",
+            markeredgewidth=1.2 if is_dashed else 0.8,
             label=variant,
             zorder=3,
         )
@@ -212,14 +221,17 @@ def main():
         if variant == "Dense":
             continue
         pct = 100 * np.array(flops_list) / dense_arr
+        is_dashed = LINESTYLES[variant] == "--"
         ax_pct.plot(
             x, pct,
             marker=MARKERS[variant],
+            linestyle=LINESTYLES[variant],
             color=PALETTE[variant],
             linewidth=2,
             markersize=6,
-            markeredgecolor="white",
-            markeredgewidth=0.6,
+            markerfacecolor="none" if is_dashed else PALETTE[variant],
+            markeredgecolor=PALETTE[variant] if is_dashed else "white",
+            markeredgewidth=1.0 if is_dashed else 0.6,
             label=variant,
             zorder=3,
         )
