@@ -3957,7 +3957,8 @@ class SlicedWeightLinear(nn.Module):
     """
     def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
                  min_select: int = 128, scope: str = "per_token",
-                 balance_coeff: float = 0.01, bias: bool = True, use_quantile_route: int = 0):
+                 balance_coeff: float = 0.01, bias: bool = True, use_quantile_route: int = 0,
+                 signal_dim: int = 0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -3981,6 +3982,12 @@ class SlicedWeightLinear(nn.Module):
         self.router_b = Linear(in_features, n_keys, bias=False)
         nn.init.zeros_(self.router_a.weight)
         nn.init.zeros_(self.router_b.weight)
+        # External routers for per_block/global scope: input is signal_dim (n_embd), not in_features
+        self.signal_dim = signal_dim if signal_dim > 0 else in_features
+        self.ext_router_a = Linear(self.signal_dim, n_keys, bias=False)
+        self.ext_router_b = Linear(self.signal_dim, n_keys, bias=False)
+        nn.init.zeros_(self.ext_router_a.weight)
+        nn.init.zeros_(self.ext_router_b.weight)
         nn.init.kaiming_uniform_(self.weight_bank, a=math.sqrt(5))
         self.register_buffer("usage_a", torch.full((n_keys,), 1.0 / n_keys))
         self.register_buffer("usage_b", torch.full((n_keys,), 1.0 / n_keys))
@@ -4003,13 +4010,18 @@ class SlicedWeightLinear(nn.Module):
 
     def forward(self, x, context_state=None, route_weights=None, p24_route_input=None, **kwargs):
         B, T, C = x.shape
-        route_input = x if p24_route_input is None else p24_route_input
+        use_external = p24_route_input is not None
+        route_input = x if not use_external else p24_route_input
         if route_input.ndim == 2:
             route_input = route_input.unsqueeze(1)
         if route_input.size(1) == 1 and T > 1:
             route_input = route_input.expand(-1, T, -1)
-        logits_a = self.router_a(route_input)    # (B, T, n_keys)
-        logits_b = self.router_b(route_input)    # (B, T, n_keys)
+        # Use external routers when route_input comes from the shared block signal (dim=signal_dim)
+        # rather than the layer's own input (dim=in_features).
+        router_a = self.ext_router_a if use_external else self.router_a
+        router_b = self.ext_router_b if use_external else self.router_b
+        logits_a = router_a(route_input)    # (B, T, n_keys)
+        logits_b = router_b(route_input)    # (B, T, n_keys)
         self._compute_balance_loss(logits_a, logits_b, x.dtype)
 
         # Product-Key: topk_a × topk_b ≈ n_selected column indices from big_dim
@@ -4063,7 +4075,8 @@ class FoldedModulationLinear(nn.Module):
     For per_block / global scope, p24_gate_input injects the pre-computed gate logits.
     """
     def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
-                 scope: str = "per_layer", gate_act: str = "sigmoid", bias: bool = True):
+                 scope: str = "per_layer", gate_act: str = "sigmoid", bias: bool = True,
+                 signal_dim: int = 0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -4077,8 +4090,9 @@ class FoldedModulationLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
         # Local gate: folded_dim → folded_dim (used for per_layer scope)
         self.gate_proj = Linear(self.folded_dim, self.folded_dim, bias=True)
-        # External gate: full in_features → folded_dim (used for per_block / global injection)
-        self.ext_gate_proj = Linear(in_features, self.folded_dim, bias=True)
+        # External gate: signal_dim → folded_dim (per_block/global; signal is always n_embd, not in_features)
+        self.signal_dim = signal_dim if signal_dim > 0 else in_features
+        self.ext_gate_proj = Linear(self.signal_dim, self.folded_dim, bias=True)
         nn.init.zeros_(self.gate_proj.weight)
         nn.init.zeros_(self.gate_proj.bias)
         nn.init.zeros_(self.ext_gate_proj.weight)
@@ -4121,16 +4135,23 @@ class FoldedModulationLinear(nn.Module):
 
 class SequenceGatedLinear(nn.Module):
     """Dense linear with sequence-pooled content gate."""
-    def __init__(self, in_features: int, out_features: int, gate_act: str = "sigmoid", bias: bool = True):
+    def __init__(self, in_features: int, out_features: int, gate_act: str = "sigmoid", bias: bool = True,
+                 signal_dim: int = 0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.gate_act = gate_act
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        # Local gate (per_layer): in_features → in_features
         self.gate_proj = Linear(in_features, in_features, bias=True)
+        # External gate (per_block/global): signal_dim (n_embd) → in_features
+        self.signal_dim = signal_dim if signal_dim > 0 else in_features
+        self.ext_gate_proj = Linear(self.signal_dim, in_features, bias=True)
         nn.init.zeros_(self.gate_proj.weight)
         nn.init.zeros_(self.gate_proj.bias)
+        nn.init.zeros_(self.ext_gate_proj.weight)
+        nn.init.zeros_(self.ext_gate_proj.bias)
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         self.ln_basis = nn.Identity()
 
@@ -4141,15 +4162,18 @@ class SequenceGatedLinear(nn.Module):
 
     def forward(self, x, context_state=None, route_weights=None, p24_gate_input=None, **kwargs):
         if p24_gate_input is None:
-            pooled = x.mean(dim=1)                                    # (B, C)
+            pooled = x.mean(dim=1)                                    # (B, in_features)
+            proj_w = self.gate_proj.weight.float()
+            proj_b = self.gate_proj.bias.float()
         else:
-            pooled = p24_gate_input.mean(dim=1) if p24_gate_input.ndim == 3 else p24_gate_input  # (B, C)
+            ext = p24_gate_input
+            pooled = ext.mean(dim=1) if ext.ndim == 3 else ext       # (B, signal_dim)
+            proj_w = self.ext_gate_proj.weight.float()
+            proj_b = self.ext_gate_proj.bias.float()
         # Use F.linear directly to bypass Float8Linear wrapper (FP8 needs row-dim % 16)
         gate = self._act(
-            F.linear(pooled.float(),
-                     self.gate_proj.weight.float(),
-                     self.gate_proj.bias.float())
-        ).to(x.dtype).unsqueeze(1)                                    # (B, 1, C)
+            F.linear(pooled.float(), proj_w, proj_b)
+        ).to(x.dtype).unsqueeze(1)                                    # (B, 1, in_features)
         return F.linear(x * gate, self.weight.to(x.dtype),
                         self.bias.to(x.dtype) if self.bias is not None else None)
 
@@ -4179,6 +4203,7 @@ class RemixedFeedForward(nn.Module):
                 scope=getattr(config, 'p24_sliced_weight_scope', 'per_token'),
                 balance_coeff=getattr(config, 'p24_sliced_weight_balance_coeff', 0.01),
                 use_quantile_route=getattr(config, 'p24_quantile_route', 0),
+                signal_dim=config.n_embd,
             )
             self.c_proj = SlicedWeightLinear(
                 4 * config.n_embd, config.n_embd,
@@ -4187,6 +4212,7 @@ class RemixedFeedForward(nn.Module):
                 scope=getattr(config, 'p24_sliced_weight_scope', 'per_token'),
                 balance_coeff=getattr(config, 'p24_sliced_weight_balance_coeff', 0.01),
                 use_quantile_route=getattr(config, 'p24_quantile_route', 0),
+                signal_dim=config.n_embd,
             )
         elif use_p24_folded:
             self.c_fc = FoldedModulationLinear(
@@ -4194,21 +4220,25 @@ class RemixedFeedForward(nn.Module):
                 reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
                 scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
                 gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
+                signal_dim=config.n_embd,
             )
             self.c_proj = FoldedModulationLinear(
                 4 * config.n_embd, config.n_embd,
                 reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
                 scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
                 gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
+                signal_dim=config.n_embd,
             )
         elif use_p24_seqgate:
             self.c_fc = SequenceGatedLinear(
                 config.n_embd, 4 * config.n_embd,
                 gate_act=getattr(config, 'p24_sequence_gated_act', 'sigmoid'),
+                signal_dim=config.n_embd,
             )
             self.c_proj = SequenceGatedLinear(
                 4 * config.n_embd, config.n_embd,
                 gate_act=getattr(config, 'p24_sequence_gated_act', 'sigmoid'),
+                signal_dim=config.n_embd,
             )
         elif linear_moe_k > 0:
             linear_moe_topk = getattr(config, 'p23_linear_moe_topk', 0)
