@@ -104,6 +104,7 @@ parser.add_argument("--p24-sliced-weight-balance-coeff", type=float, default=0.0
 parser.add_argument("--p24-quantile-route", type=int, default=0, choices=[0, 1, 2], help="24: reserved routing mode selector")
 parser.add_argument("--p24-use-folded-mod", type=int, default=0, choices=[0, 1], help="24: enable FoldedModulationLinear (LinearMoE3-style)")
 parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8, help="24: fold R consecutive dims by summation")
+parser.add_argument("--p24-folded-mod-min-dim", type=int, default=128, help="24: floor on folded_dim")
 parser.add_argument("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"], help="24: gate sharing scope for folded modulation")
 parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"], help="24: gate activation for folded modulation")
 parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1], help="24: enable SequenceGatedLinear (dense + sequence gate)")
