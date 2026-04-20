@@ -296,6 +296,7 @@ class GPTConfig:
     p24_quantile_route: int = 0
     p24_use_folded_mod: int = 0
     p24_folded_mod_reduction_scale: int = 8
+    p24_folded_mod_min_dim: int = 128                      # floor on folded_dim (0 = no floor)
     p24_folded_mod_scope: str = "per_layer"            # per_layer|per_block|global
     p24_folded_mod_gate_act: str = "sigmoid"
     p24_use_sequence_gated_linear: int = 0
@@ -376,7 +377,8 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 24
     "p24_use_sliced_weight", "p24_sliced_weight_reduction_scale", "p24_sliced_weight_min_select",
     "p24_sliced_weight_scope", "p24_sliced_weight_balance_coeff", "p24_quantile_route",
-    "p24_use_folded_mod", "p24_folded_mod_reduction_scale", "p24_folded_mod_scope",
+    "p24_use_folded_mod", "p24_folded_mod_reduction_scale", "p24_folded_mod_min_dim",
+    "p24_folded_mod_scope",
     "p24_folded_mod_gate_act", "p24_use_sequence_gated_linear", "p24_sequence_gated_scope",
     "p24_sequence_gated_act",
 }
@@ -3947,13 +3949,19 @@ class LinearMoE(nn.Module):
             out = out + self.bias
         return out
 
-
 class SlicedWeightLinear(nn.Module):
-    """LinearMoE2-style single weight bank + routed column slicing.
+    """Weight-bank column slicing with Product-Key routing.
 
-    Weight bank: (out_features, big_dim) where big_dim = in_features * reduction_scale.
-    A Product-Key router selects n_selected columns per token to form the effective weight
-    slice. n_selected = max(min_select, in_features) so x and W_slice dims match.
+    The weight bank is the same shape as a dense linear: (out_features, in_features).
+    A Product-Key router selects n_selected column indices per routing decision:
+        n_selected = max(min_select, in_features // reduction_scale)
+    Only those (input_dim, weight_column) pairs are computed, giving a compute reduction
+    of n_selected / in_features vs dense while keeping parameter count identical.
+
+    Scope:
+        per_token  — each token selects its own columns (T independent routing decisions)
+        per_block  — one column set per sequence, shared across all T tokens
+        global     — one column set shared across all layers in the forward pass
     """
     def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
                  min_select: int = 128, scope: str = "per_token",
@@ -3967,22 +3975,23 @@ class SlicedWeightLinear(nn.Module):
         self.scope = scope
         self.balance_coeff = float(balance_coeff)
         self.use_quantile_route = int(use_quantile_route)
-        self.big_dim = in_features * self.reduction_scale
-        # n_selected must equal in_features for x @ W_slice.T to work.
-        # The plan states: n_selected = max(min_select, big_dim // reduction_scale) = max(min_select, in_features)
-        self.n_selected = max(self.min_select, in_features)
-        self.weight_bank = nn.Parameter(torch.empty(out_features, self.big_dim))
+        # Weight bank: same shape as a dense linear — no parameter bloat
+        self.weight_bank = nn.Parameter(torch.empty(out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
-        # Product-Key router: two sub-routers each over n_keys = ceil(sqrt(big_dim))
-        n_keys = int(math.isqrt(self.big_dim))
-        if n_keys * n_keys < self.big_dim:
+        # n_selected: columns (and matching input dims) active per routing decision
+        # = max(min_select_floor, in_features // reduction_scale)
+        self.n_selected = min(in_features, max(self.min_select, in_features // self.reduction_scale))
+        # Product-Key router: n_keys = ceil(sqrt(in_features))
+        n_keys = int(math.isqrt(in_features))
+        if n_keys * n_keys < in_features:
             n_keys += 1
         self.n_keys = n_keys
+        # Local routers (per_token): input dim = in_features
         self.router_a = Linear(in_features, n_keys, bias=False)
         self.router_b = Linear(in_features, n_keys, bias=False)
         nn.init.zeros_(self.router_a.weight)
         nn.init.zeros_(self.router_b.weight)
-        # External routers for per_block/global scope: input is signal_dim (n_embd), not in_features
+        # External routers (per_block/global): input dim = signal_dim (n_embd)
         self.signal_dim = signal_dim if signal_dim > 0 else in_features
         self.ext_router_a = Linear(self.signal_dim, n_keys, bias=False)
         self.ext_router_b = Linear(self.signal_dim, n_keys, bias=False)
@@ -4011,51 +4020,51 @@ class SlicedWeightLinear(nn.Module):
     def forward(self, x, context_state=None, route_weights=None, p24_route_input=None, **kwargs):
         B, T, C = x.shape
         use_external = p24_route_input is not None
-        route_input = x if not use_external else p24_route_input
-        if route_input.ndim == 2:
-            route_input = route_input.unsqueeze(1)
-        if route_input.size(1) == 1 and T > 1:
-            route_input = route_input.expand(-1, T, -1)
-        # Use external routers when route_input comes from the shared block signal (dim=signal_dim)
-        # rather than the layer's own input (dim=in_features).
-        router_a = self.ext_router_a if use_external else self.router_a
-        router_b = self.ext_router_b if use_external else self.router_b
-        logits_a = router_a(route_input)    # (B, T, n_keys)
-        logits_b = router_b(route_input)    # (B, T, n_keys)
+
+        if use_external:
+            # per_block / global: route once from pooled signal, share column selection across T
+            ri = p24_route_input
+            if ri.ndim == 3:
+                ri = ri.mean(dim=1)          # (B, signal_dim)
+            route_input = ri.unsqueeze(1)    # (B, 1, signal_dim)
+            router_a, router_b = self.ext_router_a, self.ext_router_b
+        else:
+            # per_token: each token selects its own columns
+            route_input = x                  # (B, T, in_features)
+            router_a, router_b = self.router_a, self.router_b
+
+        logits_a = router_a(route_input)     # (B, T_r, n_keys)  T_r=T or 1
+        logits_b = router_b(route_input)
         self._compute_balance_loss(logits_a, logits_b, x.dtype)
 
-        # Product-Key: topk_a × topk_b ≈ n_selected column indices from big_dim
+        # Product-Key: top-k_a × top-k_b → column indices in [0, in_features)
         topk_a = max(1, int(math.isqrt(self.n_selected)))
         topk_b = max(1, self.n_selected // topk_a)
         topk_a_c = min(topk_a, self.n_keys)
         topk_b_c = min(topk_b, self.n_keys)
-        idx_a = logits_a.topk(topk_a_c, dim=-1).indices   # (B, T, topk_a)
-        idx_b = logits_b.topk(topk_b_c, dim=-1).indices   # (B, T, topk_b)
-        # Cartesian product → flat column indices in [0, big_dim)
-        pair_idx = (idx_a.unsqueeze(-1) * self.n_keys + idx_b.unsqueeze(-2))  # (B, T, topk_a, topk_b)
-        pair_idx = pair_idx.reshape(B, T, -1) % self.big_dim                   # (B, T, n_pairs)
+        idx_a = logits_a.topk(topk_a_c, dim=-1).indices   # (B, T_r, topk_a)
+        idx_b = logits_b.topk(topk_b_c, dim=-1).indices   # (B, T_r, topk_b)
+        T_r = idx_a.size(1)
+        pair_idx = (idx_a.unsqueeze(-1) * self.n_keys + idx_b.unsqueeze(-2))  # (B, T_r, topk_a, topk_b)
+        pair_idx = pair_idx.reshape(B, T_r, -1) % self.in_features            # (B, T_r, n_pairs)
         n_pairs = pair_idx.size(-1)
         if n_pairs < self.n_selected:
             rep = pair_idx[..., :1].expand(-1, -1, self.n_selected - n_pairs)
             pair_idx = torch.cat([pair_idx, rep], dim=-1)
-        pair_idx = pair_idx[..., :self.n_selected]    # (B, T, n_selected)
+        pair_idx = pair_idx[..., :self.n_selected]         # (B, T_r, n_selected)
 
-        # Gather weight slices: weight_bank is (out, big_dim), bank.T is (big_dim, out)
+        # Expand shared column selection to all T tokens (per_block / global)
+        if T_r == 1 and T > 1:
+            pair_idx = pair_idx.expand(-1, T, -1)          # (B, T, n_selected)
+
+        # Gather matching input dims from x (same indices as weight columns)
+        x_sel = torch.gather(x, 2, pair_idx)               # (B, T, n_selected)
+
+        # Gather weight columns from bank: weight_bank is (out, in_features)
         flat_idx = pair_idx.reshape(B * T, self.n_selected)           # (B*T, n_selected)
-        bank_t = self.weight_bank.t()                                  # (big_dim, out)
-        W_slice = bank_t[flat_idx].to(x.dtype)                        # (B*T, n_selected, out)
+        W_slice = self.weight_bank.t()[flat_idx].to(x.dtype)          # (B*T, n_selected, out)
 
-        # x must match n_selected in the contraction dimension.
-        # n_selected = max(min_select, in_features); when min_select <= in_features: n_selected == C
-        if self.n_selected == C:
-            x_in = x
-        elif self.n_selected > C:
-            repeat_times = (self.n_selected + C - 1) // C
-            x_in = x.repeat(1, 1, repeat_times)[..., :self.n_selected]
-        else:
-            x_in = x[..., :self.n_selected]
-
-        x_flat = x_in.reshape(B * T, 1, self.n_selected)              # (B*T, 1, n_selected)
+        x_flat = x_sel.reshape(B * T, 1, self.n_selected)             # (B*T, 1, n_selected)
         out = torch.bmm(x_flat, W_slice).squeeze(1)                   # (B*T, out)
         out = out.reshape(B, T, self.out_features)
         if self.bias is not None:
@@ -4076,15 +4085,23 @@ class FoldedModulationLinear(nn.Module):
     """
     def __init__(self, in_features: int, out_features: int, reduction_scale: int = 8,
                  scope: str = "per_layer", gate_act: str = "sigmoid", bias: bool = True,
-                 signal_dim: int = 0):
+                 signal_dim: int = 0, min_folded_dim: int = 0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.reduction_scale = max(1, int(reduction_scale))
         self.scope = scope
         self.gate_act = gate_act
-        self.folded_dim = max(1, in_features // self.reduction_scale)
-        self.used_in = self.folded_dim * self.reduction_scale  # may be < in_features if not divisible
+        # Compute folded_dim with optional minimum floor.
+        # If folded_dim_raw < min_folded_dim, reduce effective_R so folded_dim >= min_folded_dim.
+        folded_dim_raw = max(1, in_features // self.reduction_scale)
+        if min_folded_dim > 0 and folded_dim_raw < min_folded_dim:
+            effective_R = max(1, in_features // min_folded_dim)
+        else:
+            effective_R = self.reduction_scale
+        self.effective_R = effective_R
+        self.folded_dim = max(1, in_features // self.effective_R)
+        self.used_in = self.folded_dim * self.effective_R  # may be < in_features if not divisible
         # Weight operates on folded (compressed) input: genuine param reduction vs dense
         self.weight = nn.Parameter(torch.empty(out_features, self.folded_dim))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
@@ -4107,9 +4124,9 @@ class FoldedModulationLinear(nn.Module):
 
     def forward(self, x, context_state=None, route_weights=None, p24_gate_input=None, **kwargs):
         B, T, C = x.shape
-        # Step 1: fold by summing consecutive groups of reduction_scale dims
+        # Step 1: fold by summing consecutive groups of effective_R dims
         x_use = x[..., :self.used_in]                                             # (B, T, used_in)
-        x_fold = x_use.view(B, T, self.folded_dim, self.reduction_scale).sum(-1)  # (B, T, folded_dim)
+        x_fold = x_use.view(B, T, self.folded_dim, self.effective_R).sum(-1)      # (B, T, folded_dim)
         # Step 2: compute gate
         if p24_gate_input is None:
             # per_layer: pool x_fold over T, project to gate
@@ -4218,6 +4235,7 @@ class RemixedFeedForward(nn.Module):
             self.c_fc = FoldedModulationLinear(
                 config.n_embd, 4 * config.n_embd,
                 reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
+                min_folded_dim=getattr(config, 'p24_folded_mod_min_dim', 128),
                 scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
                 gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
                 signal_dim=config.n_embd,
@@ -4225,6 +4243,7 @@ class RemixedFeedForward(nn.Module):
             self.c_proj = FoldedModulationLinear(
                 4 * config.n_embd, config.n_embd,
                 reduction_scale=getattr(config, 'p24_folded_mod_reduction_scale', 8),
+                min_folded_dim=getattr(config, 'p24_folded_mod_min_dim', 128),
                 scope=getattr(config, 'p24_folded_mod_scope', 'per_layer'),
                 gate_act=getattr(config, 'p24_folded_mod_gate_act', 'sigmoid'),
                 signal_dim=config.n_embd,
@@ -7287,10 +7306,11 @@ class GPT(nn.Module):
                     inactive_frac = 1.0 - (1.0 / K)
                     inactive_expert_params += int(expert_params * inactive_frac)
             elif isinstance(submod, SlicedWeightLinear):
-                # Selects n_selected columns out of big_dim per token.
-                if submod.big_dim > submod.n_selected:
+                # Selects n_selected columns out of in_features per token.
+                # weight_bank is (out, in_features); active fraction = n_selected / in_features.
+                if submod.n_selected < submod.in_features:
                     expert_params = submod.weight_bank.numel()
-                    inactive_frac = 1.0 - (submod.n_selected / submod.big_dim)
+                    inactive_frac = 1.0 - (submod.n_selected / submod.in_features)
                     inactive_expert_params += int(expert_params * inactive_frac)
             # FoldedModulationLinear: weight is already (out, folded_dim) = the true active size.
             # No inactive params — total and active are equal by construction. No adjustment needed.
