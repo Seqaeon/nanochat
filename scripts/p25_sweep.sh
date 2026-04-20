@@ -78,7 +78,7 @@ if check_completed "$TAG"; then
 else
     print_header "1" "$TAG" "No context, no gates — pure basis+mixing structure (cheapest)"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        --depth $DEPTH \
+        $DEPTH \
         --remix-use-context 0 \
         --remix-use-basis-gate 0 \
         --remix-use-output-gate 0 \
@@ -103,7 +103,7 @@ if check_completed "$TAG"; then
 else
     print_header "2" "$TAG" "Output gate only — low-rank context gate on output, no basis gate"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        --depth $DEPTH \
+        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 0 \
         --remix-use-output-gate 1 \
@@ -127,7 +127,7 @@ if check_completed "$TAG"; then
 else
     print_header "3" "$TAG" "Linear basis gate — single projection C→B, no MLP hidden layer"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        --depth $DEPTH \
+        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
@@ -151,7 +151,7 @@ if check_completed "$TAG"; then
 else
     print_header "4" "$TAG" "Attention (bilinear) gate — content × context joint gating"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        --depth $DEPTH \
+        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
@@ -175,7 +175,7 @@ if check_completed "$TAG"; then
 else
     print_header "5" "$TAG" "MLP basis gate — 2-layer C→C/2→B (current default, most expensive)"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        --depth $DEPTH \
+        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
