@@ -128,6 +128,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--remix-use-context" "$2")
             shift 2
             ;;
+        --remix-basis-gate-mode)
+            EXTRA_ARGS+=("--remix-basis-gate-mode" "$2")
+            shift 2
+            ;;
         --remix-shared-context-gates)
             EXTRA_ARGS+=("--remix-shared-context-gates" "$2")
             shift 2

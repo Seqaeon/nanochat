@@ -76,6 +76,9 @@ parser.add_argument("--moe-use-abs-pos-embed", type=int, default=0, choices=[0, 
 parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
+parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp",
+                    choices=["mlp", "linear", "attn", "none"],
+                    help="Gate architecture: mlp=2-layer (default), linear=single layer, attn=bilinear, none=no basis gate")
 # Phase 22: MoE-style overparameterized template mixing in RemixedLinear
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
@@ -408,6 +411,7 @@ def build_model_meta(depth):
             use_basis_gate=bool(args.remix_use_basis_gate),
             use_output_gate=bool(args.remix_use_output_gate),
             use_context=bool(args.remix_use_context),
+            basis_gate_mode=getattr(args, 'remix_basis_gate_mode', 'mlp'),
             sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
             gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
             # n_templates = K_total (total experts in the bank):

@@ -1427,17 +1427,38 @@ class RemixedLinear(nn.Module):
             # amplification. Gradient at init = sech²(0) = 1.0 vs sigmoid'(2.0) ≈ 0.10.
             # 10× better gradient flow for the output gate at initialization.
             basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
-            film_gate = getattr(self, '_film_gate_flag', False)  # set by caller after init if needed
-            # FiLM gate (Proposal C): output 2*basis_size so we can produce (scale, shift)
+            film_gate = getattr(self, '_film_gate_flag', False)
             _gate_out_size = 2 * basis_size if self.use_basis_gate and film_gate else basis_size
-            self.basis_modulator = nn.Sequential(
-                Linear(context_dim, basis_hidden, bias=True),
-                nn.GELU(),
-                Linear(basis_hidden, _gate_out_size, bias=True),
-            )
-            nn.init.zeros_(self.basis_modulator[-1].weight)
-            if self.basis_modulator[-1].bias is not None:
-                nn.init.zeros_(self.basis_modulator[-1].bias)
+            self.basis_gate_mode = remixed_linear_kwargs.get('basis_gate_mode', 'mlp')
+            # Initialise all gate module attrs so non_gate_parameters/gate_parameters can use
+            # `is not None` checks unconditionally on every code path.
+            self.basis_modulator = None
+            self.basis_gate_content = None
+            self.basis_gate_context = None
+            if self.use_basis_gate:
+                if self.basis_gate_mode == 'mlp':
+                    self.basis_modulator = nn.Sequential(
+                        Linear(context_dim, basis_hidden, bias=True),
+                        nn.GELU(),
+                        Linear(basis_hidden, _gate_out_size, bias=True),
+                    )
+                    nn.init.zeros_(self.basis_modulator[-1].weight)
+                    if self.basis_modulator[-1].bias is not None:
+                        nn.init.zeros_(self.basis_modulator[-1].bias)
+                elif self.basis_gate_mode == 'linear':
+                    # Single linear gate: half the cost of MLP gate
+                    self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
+                    nn.init.zeros_(self.basis_modulator.weight)
+                    nn.init.zeros_(self.basis_modulator.bias)
+                elif self.basis_gate_mode == 'attn':
+                    # Bilinear attention gate: gate = σ(W_content·h ⊙ W_context·ctx)
+                    # Jointly conditioned on input content AND context; cheaper than MLP.
+                    self.basis_gate_content = Linear(basis_size, _gate_out_size, bias=False)
+                    self.basis_gate_context = Linear(context_dim, _gate_out_size, bias=True)
+                    nn.init.normal_(self.basis_gate_content.weight, std=0.02)
+                    nn.init.zeros_(self.basis_gate_context.weight)
+                    nn.init.zeros_(self.basis_gate_context.bias)
+                # else 'none': gate_basis = ones in forward, no module
             # Low-rank output gate: ctx_dim → r coefficients, r basis vectors → out_features
             # r is a small constant (default 8), making this O(ctx_dim*r + r*out_features)
             # rather than O(ctx_dim*out_features).
@@ -1488,7 +1509,12 @@ class RemixedLinear(nn.Module):
         """Yield context-gate-specific parameters (basis_modulator, output_gate_*).
         These are routed to a lower-LR optimizer group to reduce gradient noise at long T."""
         if self.use_context:
-            yield from self.basis_modulator.parameters()
+            if self.basis_modulator is not None:
+                yield from self.basis_modulator.parameters()
+            if self.basis_gate_content is not None:
+                yield from self.basis_gate_content.parameters()
+            if self.basis_gate_context is not None:
+                yield from self.basis_gate_context.parameters()
             yield self.output_gate_coeffs.weight
             if self.output_gate_coeffs.bias is not None:
                 yield self.output_gate_coeffs.bias
@@ -1587,11 +1613,18 @@ class RemixedLinear(nn.Module):
             # Basis gate: sparse or dense sigmoid with configurable temperature
             if self.use_basis_gate:
                 if context_gates is not None and 'basis_gate' in context_gates:
-                    # Use shared pre-computed logits from SharedContextGates (no local MLP call)
                     gate_logits = context_gates['basis_gate'].to(dtype=dtype)
-                else:
+                elif self.basis_gate_mode == 'attn':
+                    # Bilinear: content (from h_basis) ⊙ context projection → gate logits
+                    gate_logits = (self.basis_gate_content(h_basis) *
+                                   self.basis_gate_context(ctx))
+                elif self.basis_gate_mode == 'none':
+                    gate_logits = None
+                else:  # 'mlp' or 'linear'
                     gate_logits = self.basis_modulator(ctx)
-                if self._film_gate_flag:
+                if gate_logits is None:
+                    gate_basis = torch.ones_like(h_basis)
+                elif self._film_gate_flag:
                     scale_logits, shift = gate_logits.chunk(2, dim=-1)
                     gate_basis = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
                     h_basis = h_basis * gate_basis + shift.to(dtype=dtype)
