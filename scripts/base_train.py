@@ -106,10 +106,10 @@ parser.add_argument("--p24-use-folded-mod", type=int, default=0, choices=[0, 1],
 parser.add_argument("--p24-folded-mod-reduction-scale", type=int, default=8, help="24: fold R consecutive dims by summation")
 parser.add_argument("--p24-folded-mod-min-dim", type=int, default=128, help="24: floor on folded_dim")
 parser.add_argument("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"], help="24: gate sharing scope for folded modulation")
-parser.add_argument("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"], help="24: gate activation for folded modulation")
+parser.add_argument("--p24-folded-mod-gate-act", type=str, default="tanh_centered", choices=["sigmoid", "tanh_centered"], help="24: gate activation for folded modulation")
 parser.add_argument("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1], help="24: enable SequenceGatedLinear (dense + sequence gate)")
 parser.add_argument("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"], help="24: gate sharing scope for dense sequence gating")
-parser.add_argument("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"], help="24: gate activation for dense sequence gating")
+parser.add_argument("--p24-sequence-gated-act", type=str, default="tanh_centered", choices=["sigmoid", "tanh_centered"], help="24: gate activation for dense sequence gating")
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
@@ -569,10 +569,10 @@ def build_model_meta(depth):
         p24_folded_mod_reduction_scale=getattr(args, 'p24_folded_mod_reduction_scale', 8),
         p24_folded_mod_min_dim=getattr(args, 'p24_folded_mod_min_dim', 128),
         p24_folded_mod_scope=getattr(args, 'p24_folded_mod_scope', 'per_layer'),
-        p24_folded_mod_gate_act=getattr(args, 'p24_folded_mod_gate_act', 'sigmoid'),
+        p24_folded_mod_gate_act=getattr(args, 'p24_folded_mod_gate_act', 'tanh_centered'),
         p24_use_sequence_gated_linear=getattr(args, 'p24_use_sequence_gated_linear', 0),
         p24_sequence_gated_scope=getattr(args, 'p24_sequence_gated_scope', 'per_layer'),
-        p24_sequence_gated_act=getattr(args, 'p24_sequence_gated_act', 'sigmoid'),
+        p24_sequence_gated_act=getattr(args, 'p24_sequence_gated_act', 'tanh_centered'),
     )
 
     with torch.device("meta"):

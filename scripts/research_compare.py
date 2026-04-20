@@ -213,10 +213,10 @@ def run_training_sweep(args):
         "--p24-use-folded-mod", str(getattr(args, 'p24_use_folded_mod', 0)),
         "--p24-folded-mod-reduction-scale", str(getattr(args, 'p24_folded_mod_reduction_scale', 8)),
         "--p24-folded-mod-scope", str(getattr(args, 'p24_folded_mod_scope', 'per_layer')),
-        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', 'sigmoid')),
+        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', 'tanh_centered')),
         "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
         "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', 'per_layer')),
-        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', 'sigmoid')),
+        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', 'tanh_centered')),
         "--p24-folded-mod-min-dim", str(getattr(args, 'p24_folded_mod_min_dim', 128)),
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
         "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
@@ -228,10 +228,10 @@ def run_training_sweep(args):
         "--p24-use-folded-mod", str(getattr(args, 'p24_use_folded_mod', 0)),
         "--p24-folded-mod-reduction-scale", str(getattr(args, 'p24_folded_mod_reduction_scale', 8)),
         "--p24-folded-mod-scope", str(getattr(args, 'p24_folded_mod_scope', "global")),
-        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', "sigmoid")),
+        "--p24-folded-mod-gate-act", str(getattr(args, 'p24_folded_mod_gate_act', "tanh_centered")),
         "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
         "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', "global")),
-        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', "sigmoid")),
+        "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', "tanh_centered")),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -647,11 +647,11 @@ if __name__ == "__main__":
     _add_unique("--p24-use-folded-mod", type=int, default=0, choices=[0, 1])
     _add_unique("--p24-folded-mod-reduction-scale", type=int, default=8)
     _add_unique("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
-    _add_unique("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
+    _add_unique("--p24-folded-mod-gate-act", type=str, default="tanh_centered", choices=["sigmoid", "tanh_centered"])
     _add_unique("--p24-folded-mod-min-dim", type=int, default=128, help="floor on folded_dim (0=no floor, 128=match min_select default)")
     _add_unique("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1])
     _add_unique("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
-    _add_unique("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
+    _add_unique("--p24-sequence-gated-act", type=str, default="tanh_centered", choices=["sigmoid", "tanh_centered"])
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
 
     args = parser.parse_args()

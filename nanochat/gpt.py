@@ -3989,14 +3989,16 @@ class SlicedWeightLinear(nn.Module):
         # Local routers (per_token): input dim = in_features
         self.router_a = Linear(in_features, n_keys, bias=False)
         self.router_b = Linear(in_features, n_keys, bias=False)
-        nn.init.zeros_(self.router_a.weight)
-        nn.init.zeros_(self.router_b.weight)
+        # Small random init so EMA balance loss is non-zero from step 1.
+        # Zero init → uniform probs → imbalance=log(1)=0 → zero gradient → router never trains.
+        nn.init.normal_(self.router_a.weight, std=0.02)
+        nn.init.normal_(self.router_b.weight, std=0.02)
         # External routers (per_block/global): input dim = signal_dim (n_embd)
         self.signal_dim = signal_dim if signal_dim > 0 else in_features
         self.ext_router_a = Linear(self.signal_dim, n_keys, bias=False)
         self.ext_router_b = Linear(self.signal_dim, n_keys, bias=False)
-        nn.init.zeros_(self.ext_router_a.weight)
-        nn.init.zeros_(self.ext_router_b.weight)
+        nn.init.normal_(self.ext_router_a.weight, std=0.02)
+        nn.init.normal_(self.ext_router_b.weight, std=0.02)
         nn.init.kaiming_uniform_(self.weight_bank, a=math.sqrt(5))
         self.register_buffer("usage_a", torch.full((n_keys,), 1.0 / n_keys))
         self.register_buffer("usage_b", torch.full((n_keys,), 1.0 / n_keys))

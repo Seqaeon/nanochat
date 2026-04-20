@@ -145,7 +145,7 @@ else
       --p24-use-folded-mod 1 \
       --p24-folded-mod-reduction-scale 8 \
       --p24-folded-mod-scope global \
-      --p24-folded-mod-gate-act sigmoid \
+      --p24-folded-mod-gate-act tanh_centered \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -163,7 +163,7 @@ fi
 #      --p24-use-folded-mod 1 \
 #      --p24-folded-mod-reduction-scale 8 \
 #      --p24-folded-mod-scope per_block \
-#      --p24-folded-mod-gate-act sigmoid \
+#      --p24-folded-mod-gate-act tanh_centered \
 #      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
 #        echo "════════════════ $TAG COMPLETE ════════════════"
 #        mark_completed "$TAG"
@@ -183,7 +183,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p24-use-sequence-gated-linear 1 \
       --p24-sequence-gated-scope global \
-      --p24-sequence-gated-act sigmoid \
+      --p24-sequence-gated-act tanh_centered \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -200,7 +200,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p24-use-sequence-gated-linear 1 \
       --p24-sequence-gated-scope per_block \
-      --p24-sequence-gated-act sigmoid \
+      --p24-sequence-gated-act tanh_centered \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
