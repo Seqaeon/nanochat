@@ -566,6 +566,7 @@ def build_model_meta(depth):
         p24_quantile_route=getattr(args, 'p24_quantile_route', 0),
         p24_use_folded_mod=getattr(args, 'p24_use_folded_mod', 0),
         p24_folded_mod_reduction_scale=getattr(args, 'p24_folded_mod_reduction_scale', 8),
+        p24_folded_mod_min_dim=getattr(args, 'p24_folded_mod_min_dim', 128),
         p24_folded_mod_scope=getattr(args, 'p24_folded_mod_scope', 'per_layer'),
         p24_folded_mod_gate_act=getattr(args, 'p24_folded_mod_gate_act', 'sigmoid'),
         p24_use_sequence_gated_linear=getattr(args, 'p24_use_sequence_gated_linear', 0),

@@ -66,7 +66,9 @@ def run_training_sweep(args):
         "--log-every", str(log_every),
         "--core-metric-every", "0" if args.skip_core else str(args.core_metric_every),
         "--save-every", str(args.save_every),
-        "--warmup-ratio", str(warm_up_ratio),    # Safer for research models
+        "--warmup-ratio", str(warm_up_ratio),
+        "--warmdown-ratio", str(getattr(args, 'warmdown_ratio', 0.5)),
+        "--final-lr-frac", str(getattr(args, 'final_lr_frac', 0.0)),    # Safer for research models
         "--adam-beta2", str(adam_beta2),     # Matches notebook
         "--research-warmup-ratio", str(args.research_warmup_ratio),
         "--use-onecycle", str(args.use_onecycle),
@@ -215,6 +217,7 @@ def run_training_sweep(args):
         "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
         "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', 'per_layer')),
         "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', 'sigmoid')),
+        "--p24-folded-mod-min-dim", str(getattr(args, 'p24_folded_mod_min_dim', 128)),
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
         "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
         "--p24-sliced-weight-reduction-scale", str(getattr(args, 'p24_sliced_weight_reduction_scale', 8)),
@@ -461,6 +464,8 @@ if __name__ == "__main__":
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="base warmup ratio passed to all runs")
+    parser.add_argument("--warmdown-ratio", type=float, default=0.7, help="ratio of iterations for LR warmdown (rest is constant LR)")
+    parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of peak LR (eta_min)")
     parser.add_argument("--models", type=str, default="all", help="Comma-separated list of models to run (e.g. 'base,remixed-linear'), or 'all'")
     parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="research-branch warmup ratio for OneCycle")
     parser.add_argument("--use-onecycle", type=int, default=1, choices=[0, 1], help="research branches: 1=OneCycle, 0=use base schedule")
@@ -643,6 +648,7 @@ if __name__ == "__main__":
     _add_unique("--p24-folded-mod-reduction-scale", type=int, default=8)
     _add_unique("--p24-folded-mod-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
     _add_unique("--p24-folded-mod-gate-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])
+    _add_unique("--p24-folded-mod-min-dim", type=int, default=128, help="floor on folded_dim (0=no floor, 128=match min_select default)")
     _add_unique("--p24-use-sequence-gated-linear", type=int, default=0, choices=[0, 1])
     _add_unique("--p24-sequence-gated-scope", type=str, default="per_layer", choices=["per_layer", "per_block", "global"])
     _add_unique("--p24-sequence-gated-act", type=str, default="sigmoid", choices=["sigmoid", "tanh_centered"])

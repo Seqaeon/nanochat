@@ -55,7 +55,9 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --device-batch-size 2 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
-  --warmup-ratio 0.150 \
+  --warmup-ratio 0.05 \
+  --warmdown-ratio 0.50 \
+  --final-lr-frac 0.10 \
   --research-dim -1 \
   --remix-use-context 1 \
   --remix-shared-context-gates 1"
