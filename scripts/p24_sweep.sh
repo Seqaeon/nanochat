@@ -192,22 +192,22 @@ else
     fi
 fi
 
-TAG="24_SEQUENCE_GATED_DENSE_BLOCK"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "7" "$TAG" "SequenceGatedLinear (per-block): dense dims gated once per block"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p24-use-sequence-gated-linear 1 \
-      --p24-sequence-gated-scope per_block \
-      --p24-sequence-gated-act tanh_centered \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="24_SEQUENCE_GATED_DENSE_BLOCK"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "7" "$TAG" "SequenceGatedLinear (per-block): dense dims gated once per block"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --p24-use-sequence-gated-linear 1 \
+#      --p24-sequence-gated-scope per_block \
+#      --p24-sequence-gated-act tanh_centered \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
