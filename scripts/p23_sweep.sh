@@ -76,7 +76,7 @@ print_header() {
 # ─────────────────────────────────────────
 # Shared settings
 # ─────────────────────────────────────────
-DEPTH=4
+DEPTH=8
 
 # Dense base-model flags
 BASE_COMMON="--fp8 --max-shards 170 --models base \
