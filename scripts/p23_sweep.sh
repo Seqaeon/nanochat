@@ -101,40 +101,40 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference
 # ══════════════════════════════════════════════════════
-#TAG="23_BASE_DENSE"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-#    if bash scripts/research_sweep.sh $BASE_COMMON \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
+TAG="23_BASE_DENSE"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 
 # ══════════════════════════════════════════════════════
 # 1B: Dense RemixedLinear, weight mod (no template bank)
 # ══════════════════════════════════════════════════════
-#TAG="23_REMIX_WEIGHT"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "1B" "$TAG" "Dense RemixedLinear, weight mod (no template bank)"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --cclblock-modulation weight \
-#      --p22-n-templates 1 \
-#      --remix-use-context 1 \
-#      --remix-shared-context-gates 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
+TAG="23_REMIX_WEIGHT"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1B" "$TAG" "Dense RemixedLinear, weight mod (no template bank)"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 
 # ══════════════════════════════════════════════════════
 # 2: TinyExpert K=8, top-1, Quantile Routing
@@ -203,42 +203,42 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # ══════════════════════════════════════════════════════
 # 5: LinearMoE K=8, top-1, Quantile Routing
 # ══════════════════════════════════════════════════════
-TAG="23_QROUTE_LINEAR_MOE_K8_TOP1"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "5" "$TAG" "LinearMoE K=8, top-1, quantile routing, no context"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p23-linear-moe-experts 8 \
-      --p23-linear-moe-topk 1 \
-      --p23-quantile-route 2 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
-
+#TAG="23_QROUTE_LINEAR_MOE_K8_TOP1"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "5" "$TAG" "LinearMoE K=8, top-1, quantile routing, no context"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --p23-linear-moe-experts 8 \
+#      --p23-linear-moe-topk 1 \
+#      --p23-quantile-route 2 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
+#
 # ══════════════════════════════════════════════════════
 # 6: LinearMoE K=8, top-16, Quantile Routing
 # ══════════════════════════════════════════════════════
-TAG="23_QROUTE_LINEAR_MOE_K8_TOP16"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "6" "$TAG" "LinearMoE K=8, top-16, quantile routing, no context"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p23-linear-moe-experts 8 \
-      --p23-linear-moe-topk 16 \
-      --p23-quantile-route 2 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="23_QROUTE_LINEAR_MOE_K8_TOP16"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "6" "$TAG" "LinearMoE K=8, top-16, quantile routing, no context"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --p23-linear-moe-experts 8 \
+#      --p23-linear-moe-topk 16 \
+#      --p23-quantile-route 2 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARCHIVED (context-modulation dependent)
