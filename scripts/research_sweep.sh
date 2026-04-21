@@ -136,6 +136,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--remix-shared-context-gates" "$2")
             shift 2
             ;;
+        --remix-use-dual-gate)
+            EXTRA_ARGS+=("--remix-use-dual-gate" "$2")
+            shift 2
+            ;;
         --research-dim)
             EXTRA_ARGS+=("--research-dim" "$2")
             shift 2

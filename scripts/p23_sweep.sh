@@ -123,7 +123,7 @@ fi
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
-TAG="23_REMIX_${CCL_MOD^^}_LinearGate"
+TAG="23_REMIX_${CCL_MOD^^}_LinearGate_BetterTemp"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
