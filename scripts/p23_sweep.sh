@@ -80,7 +80,7 @@ DEPTH=4
 
 # Dense base-model flags
 BASE_COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 8 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 8 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --mu-p-mode base_only \
   --warmup-ratio 0.15 \
