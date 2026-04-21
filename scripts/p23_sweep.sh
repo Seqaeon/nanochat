@@ -76,7 +76,7 @@ print_header() {
 # ─────────────────────────────────────────
 # Shared settings
 # ─────────────────────────────────────────
-DEPTH=8
+DEPTH=12
 
 # Dense base-model flags
 BASE_COMMON="--fp8 --max-shards 170 --models base \
@@ -118,7 +118,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 1B: Dense RemixedLinear, weight mod (no template bank)
 # ══════════════════════════════════════════════════════
-TAG="23_REMIX_WEIGHT"
+TAG="23_REMIX_WEIGHT_LinearGate"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -127,7 +127,10 @@ else
       --cclblock-modulation weight \
       --p22-n-templates 1 \
       --remix-use-context 1 \
-      --remix-shared-context-gates 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode linear \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -135,7 +138,29 @@ else
         echo "════════════════ $TAG FAILED — will retry next run ════════════════"
     fi
 fi
-
+# ══════════════════════════════════════════════════════
+# 1C: Dense RemixedLinear, weight mod (no template bank)
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_WEIGHT_MLPGate"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1B" "$TAG" "Dense RemixedLinear, weight mod (no template bank)"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation weight \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode mlp \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 # ══════════════════════════════════════════════════════
 # 2: TinyExpert K=8, top-1, Quantile Routing
 # ══════════════════════════════════════════════════════
