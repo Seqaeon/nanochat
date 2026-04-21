@@ -1,0 +1,43 @@
+
+╔══════════════════════════════════════════════════════════════╗
+║  [1]  25_NO_CONTEXT
+║  No context, no gates — pure basis+mixing structure (cheapest)
+╚══════════════════════════════════════════════════════════════╝
+
+════════════════ 25_NO_CONTEXT FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [2]  25_OUTPUT_ONLY
+║  Output gate only — low-rank context gate on output, no basis gate
+╚══════════════════════════════════════════════════════════════╝
+
+════════════════ 25_OUTPUT_ONLY FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [3]  25_LINEAR_GATE
+║  Linear basis gate — single projection C→B, no MLP hidden layer
+╚══════════════════════════════════════════════════════════════╝
+
+════════════════ 25_LINEAR_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [4]  25_ATTN_GATE
+║  Attention (bilinear) gate — content × context joint gating
+╚══════════════════════════════════════════════════════════════╝
+
+════════════════ 25_ATTN_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║  [5]  25_MLP_GATE
+║  MLP basis gate — 2-layer C→C/2→B (current default, most expensive)
+╚══════════════════════════════════════════════════════════════╝
+
+════════════════ 25_MLP_GATE FAILED — will retry next run ════════════════
+
+╔══════════════════════════════════════════════════════════════╗
+║         Phase 25 Ablation Sweep Complete (5 runs)           ║
+╚══════════════════════════════════════════════════════════════╝
+Check sweep_p25.log for results.
+
+Reading order (fastest to slowest, best wins):
+  25_NO_CONTEXT   → 25_OUTPUT_ONLY → 25_LINEAR_GATE → 25_ATTN_GATE → 25_MLP_GATE

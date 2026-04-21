@@ -11,9 +11,13 @@
 # Variants:
 #   1. NO_CONTEXT   — pure structure (basis + mixing, no gates at all)
 #   2. OUTPUT_ONLY  — only low-rank output gate from context (cheapest gated)
-#   3. LINEAR_GATE  — single-linear basis gate + output gate  (75% of dense)
-#   4. ATTN_GATE    — bilinear attention gate + output gate   (81% of dense)
-#   5. MLP_GATE     — full MLP basis gate + output gate (current, 162% of dense)
+#   3. LINEAR_GATE  — single-linear basis gate + output gate  (cheaper than MLP)
+#   4. ATTN_GATE    — bilinear attention gate + output gate
+#   5. MLP_GATE     — full MLP basis gate + output gate (current, most expensive)
+#
+# IMPORTANT: $DEPTH must be the LAST positional arg to research_sweep.sh.
+#   research_sweep.sh stops flag-parsing at the first numeric arg, so any
+#   flags placed after $DEPTH are silently treated as extra depth values.
 #
 # Usage:
 #   bash scripts/p25_sweep.sh
@@ -53,6 +57,7 @@ print_header() {
 }
 
 # Shared settings — apples-to-apples with p23/p24 for fair comparison.
+# $DEPTH must be the last arg in every research_sweep.sh call.
 DEPTH=4
 
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
@@ -64,13 +69,10 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --final-lr-frac 0.10 \
   --research-dim -1 \
   --remix-shared-context-gates 0"
-# NOTE: shared-context-gates disabled here — we want each variant to use its own
-# gate modules so the ablation cleanly isolates basis_gate_mode.
 
 # ══════════════════════════════════════════════════════
 # 1) NO_CONTEXT — pure structure: y = W_m · LN(W_b · x)
-#    No context, no gates. Measures what the basis+mixing structure gives alone.
-#    Expected FLOPs: ~1.0C² (50% of dense)
+#    No context, no gates. Measures what basis+mixing structure gives alone.
 # ══════════════════════════════════════════════════════
 TAG="25_NO_CONTEXT"
 if check_completed "$TAG"; then
@@ -78,12 +80,11 @@ if check_completed "$TAG"; then
 else
     print_header "1" "$TAG" "No context, no gates — pure basis+mixing structure (cheapest)"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        $DEPTH \
         --remix-use-context 0 \
         --remix-use-basis-gate 0 \
         --remix-use-output-gate 0 \
         --remix-basis-gate-mode none \
-        >> "$LOGFILE" 2>&1; then
+        $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
         echo "════════════════ $TAG DONE ════════════════"
     else
@@ -94,8 +95,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 2) OUTPUT_ONLY — low-rank output gate, no basis gate
 #    gate_out = 1 + tanh(s · (W_oc·ctx) @ G)
-#    Context enabled but basis gate disabled.
-#    Expected FLOPs: ~1.02C² (51% of dense, output gate is negligible cost)
+#    Context enabled but basis gate disabled (mode=none).
 # ══════════════════════════════════════════════════════
 TAG="25_OUTPUT_ONLY"
 if check_completed "$TAG"; then
@@ -103,12 +103,11 @@ if check_completed "$TAG"; then
 else
     print_header "2" "$TAG" "Output gate only — low-rank context gate on output, no basis gate"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 0 \
         --remix-use-output-gate 1 \
         --remix-basis-gate-mode none \
-        >> "$LOGFILE" 2>&1; then
+        $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
         echo "════════════════ $TAG DONE ════════════════"
     else
@@ -119,7 +118,6 @@ fi
 # ══════════════════════════════════════════════════════
 # 3) LINEAR_GATE — single linear basis gate + output gate
 #    gate = σ(W_g · ctx) elementwise on basis; W_g: C → B (no hidden layer)
-#    Expected FLOPs: ~1.27C² (63% of dense) vs MLP gate at 1.625C²
 # ══════════════════════════════════════════════════════
 TAG="25_LINEAR_GATE"
 if check_completed "$TAG"; then
@@ -127,12 +125,11 @@ if check_completed "$TAG"; then
 else
     print_header "3" "$TAG" "Linear basis gate — single projection C→B, no MLP hidden layer"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
         --remix-basis-gate-mode linear \
-        >> "$LOGFILE" 2>&1; then
+        $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
         echo "════════════════ $TAG DONE ════════════════"
     else
@@ -142,8 +139,7 @@ fi
 
 # ══════════════════════════════════════════════════════
 # 4) ATTN_GATE — bilinear attention gate + output gate
-#    gate = σ(W_content·h ⊙ W_context·ctx); jointly conditioned on content + context
-#    Expected FLOPs: ~1.33C² (67% of dense)
+#    gate = σ(W_content·h ⊙ W_context·ctx); jointly content + context conditioned
 # ══════════════════════════════════════════════════════
 TAG="25_ATTN_GATE"
 if check_completed "$TAG"; then
@@ -151,12 +147,11 @@ if check_completed "$TAG"; then
 else
     print_header "4" "$TAG" "Attention (bilinear) gate — content × context joint gating"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
         --remix-basis-gate-mode attn \
-        >> "$LOGFILE" 2>&1; then
+        $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
         echo "════════════════ $TAG DONE ════════════════"
     else
@@ -166,8 +161,7 @@ fi
 
 # ══════════════════════════════════════════════════════
 # 5) MLP_GATE — full 2-layer MLP basis gate (current default)
-#    gate = σ(MLP(ctx))  MLP: C → C/2 → B (most expensive, the baseline)
-#    Expected FLOPs: ~1.625C² (81% of dense) — upper bound for this study
+#    gate = σ(MLP(ctx))  MLP: C → C/2 → B (most expensive, upper bound)
 # ══════════════════════════════════════════════════════
 TAG="25_MLP_GATE"
 if check_completed "$TAG"; then
@@ -175,12 +169,11 @@ if check_completed "$TAG"; then
 else
     print_header "5" "$TAG" "MLP basis gate — 2-layer C→C/2→B (current default, most expensive)"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
-        $DEPTH \
         --remix-use-context 1 \
         --remix-use-basis-gate 1 \
         --remix-use-output-gate 1 \
         --remix-basis-gate-mode mlp \
-        >> "$LOGFILE" 2>&1; then
+        $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
         echo "════════════════ $TAG DONE ════════════════"
     else
@@ -194,5 +187,5 @@ echo "║         Phase 25 Ablation Sweep Complete (5 runs)           ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."
 echo ""
-echo "Reading order (fastest to slowest, best wins):"
-echo "  25_NO_CONTEXT   → 25_OUTPUT_ONLY → 25_LINEAR_GATE → 25_ATTN_GATE → 25_MLP_GATE"
+echo "Reading order (cheapest to most expensive):"
+echo "  25_NO_CONTEXT → 25_OUTPUT_ONLY → 25_LINEAR_GATE → 25_ATTN_GATE → 25_MLP_GATE"
