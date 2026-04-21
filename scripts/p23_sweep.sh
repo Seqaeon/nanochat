@@ -120,7 +120,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 1B: Dense RemixedLinear, weight mod (no template bank)
 # ══════════════════════════════════════════════════════
-CCL_MOD="${CCL_MOD:-ckr}"
+CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
 TAG="23_REMIX_${CCL_MOD^^}_LinearGate"
@@ -145,7 +145,33 @@ else
     fi
 fi
 # ══════════════════════════════════════════════════════
-# 1C: Dense RemixedLinear, weight mod (no template bank)
+# 1D: DualGateLinear — single dense W + dual D-dim gate
+#     Direct ablation vs RemixedLinear(Linear gate):
+#     same context stream & gating structure, no basis
+#     compression bottleneck (gate in output space, not B-space)
+# ══════════════════════════════════════════════════════
+TAG="23_DUAL_GATE_${CCL_MOD^^}_Linear"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1D" "$TAG" "DualGateLinear, ${CCL_MOD} mod, ${CCL_STREAM} stream"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode linear \
+      --remix-use-dual-gate 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 # ══════════════════════════════════════════════════════
 #TAG="23_REMIX_${CCL_MOD^^}_MLPGate"
 #if check_completed "$TAG"; then

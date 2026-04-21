@@ -67,6 +67,8 @@ class GPTConfig:
     use_layer_context: bool = True
     # Fix 1B: auto-scale basis_size to max(remix_basis_size, in_features // 4) to prevent rank bottleneck
     scale_basis_size: bool = True
+    # Use DualGateLinear instead of RemixedLinear (single dense + dual D-dim gate, no basis compression)
+    remix_use_dual_gate: bool = False
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -1809,6 +1811,151 @@ class RemixedLinear(nn.Module):
             pre_output = pre_output * gate_out
 
         return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype) if self.bias is not None else pre_output.to(dtype=dtype)
+
+
+class DualGateLinear(nn.Module):
+    """DualGateLinear: single dense projection + dual multiplicative context gate.
+
+    Forward computation:
+        h = LayerNorm(W · x)                        # standard dense projection, LN in output space
+        y = h ⊙ σ(W_basis_gate · ctx / T)          # Stage-1: D-dim sigmoid gate from causal context
+        y = y ⊙ (1 + tanh(s · U · ctx))            # Stage-2: low-rank output gate (same as RemixedLinear)
+
+    Key structural differences vs RemixedLinear (basis_size < D):
+    - No factorized W_b × W_m — single W ∈ ℝ^{D×C} (standard dense matmul)
+    - LayerNorm applied to the FULL output space (D-dim), not a compressed basis
+    - Stage-1 gate is D-dimensional (vs B-dim in RemixedLinear where B << D)
+    - Equivalent FLOPs to dense + gate overhead; no basis compression savings
+
+    This makes it a fair structural ablation: same causal context conditioning
+    and dual gating as RemixedLinear, but without the basis-space bottleneck.
+
+    Compatible with the same gate_parameters/non_gate_parameters interface as
+    RemixedLinear so it can be dropped in anywhere RemixedLinear is used.
+    """
+
+    def __init__(self, in_features, out_features, context_dim,
+                 basis_size=None,          # ignored — kept for API compat with RemixedLinear
+                 remixed_linear_kwargs=None,
+                 scale_basis=None,         # ignored — no basis to scale
+                 film_gate=False,          # if True: FiLM-style (scale+shift) instead of sigmoid
+                 routing_scope='per_sequence',
+                 **_ignored):
+        super().__init__()
+        if remixed_linear_kwargs is None:
+            remixed_linear_kwargs = {}
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.context_dim = context_dim
+        self.use_context = remixed_linear_kwargs.get('use_context', True)
+        self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
+        self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
+        self.gate_temperature = float(remixed_linear_kwargs.get('gate_temperature', 1.0))
+        self.basis_gate_mode = remixed_linear_kwargs.get('basis_gate_mode', 'linear')
+        self._film_gate_flag = film_gate
+        # stage-1 gate output size: 2×D for FiLM (scale+shift), D for sigmoid
+        _gate_out = out_features * 2 if film_gate else out_features
+
+        # ── Dense projection (single matmul — no W_b × W_m factorization) ────
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        nn.init.normal_(self.weight, std=0.02)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        # LayerNorm in OUTPUT space (D-dim)
+        self.ln_out = nn.LayerNorm(out_features)
+        # compat alias used by setup_optimizer's ln_basis probe
+        self.ln_basis = self.ln_out
+
+        # ── Stage-1: basis gate (D-dim sigmoid/FiLM gate from ctx) ───────────
+        if self.use_context and self.use_basis_gate:
+            if self.basis_gate_mode == 'mlp':
+                self.basis_gate = nn.Sequential(
+                    Linear(context_dim, context_dim // 2, bias=False),
+                    nn.SiLU(),
+                    Linear(context_dim // 2, _gate_out, bias=True),
+                )
+                nn.init.zeros_(self.basis_gate[-1].weight)
+                nn.init.zeros_(self.basis_gate[-1].bias)
+            else:  # 'linear' (default)
+                self.basis_gate = Linear(context_dim, _gate_out, bias=True)
+                nn.init.zeros_(self.basis_gate.weight)
+                nn.init.zeros_(self.basis_gate.bias)
+        else:
+            self.basis_gate = None
+
+        # ── Stage-2: low-rank output gate (rank-r from ctx) ──────────────────
+        if self.use_context and self.use_output_gate:
+            r = int(remixed_linear_kwargs.get('output_gate_rank', 8))
+            self.output_gate_coeffs = Linear(context_dim, r, bias=True)
+            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)
+            nn.init.zeros_(self.output_gate_coeffs.weight)
+            nn.init.zeros_(self.output_gate_coeffs.bias)
+        else:
+            self.output_gate_coeffs = None
+            self.output_gate_basis  = None
+            self.output_gate_scale  = None
+
+    # ── Optimizer parameter grouping ──────────────────────────────────────────
+    def gate_parameters(self):
+        """Gate-side params → lower LR optimizer group."""
+        if self.use_context:
+            if self.basis_gate is not None:
+                yield from self.basis_gate.parameters()
+            if self.output_gate_coeffs is not None:
+                yield self.output_gate_coeffs.weight
+                if self.output_gate_coeffs.bias is not None:
+                    yield self.output_gate_coeffs.bias
+                yield self.output_gate_basis
+                yield self.output_gate_scale
+
+    def non_gate_parameters(self):
+        """Structural params → Muon / normal-LR group."""
+        yield self.weight
+        yield self.bias
+
+    # ── Forward ───────────────────────────────────────────────────────────────
+    def forward(self, x, context_state, route_weights=None, context_gates=None, **_ignored):
+        """
+        x:             (B, T, in_features)
+        context_state: (B, T, context_dim)  — causal context from CCLBlock
+        """
+        dtype = x.dtype
+
+        # ── Step 1: Standard dense projection + LN in output space ───────────
+        h = self.ln_out(
+            F.linear(x, self.weight.to(dtype=dtype), self.bias.to(dtype=dtype))
+            .to(dtype=self.ln_out.weight.dtype)
+        ).to(dtype=dtype)
+
+        if self.use_context and context_state is not None:
+            ctx = context_state.to(dtype=dtype)
+
+            # ── Step 2: Stage-1 gate (D-dim, in output space) ────────────────
+            if self.use_basis_gate and self.basis_gate is not None:
+                if context_gates is not None and 'basis_gate' in context_gates:
+                    gate_logits = context_gates['basis_gate'].to(dtype=dtype)
+                else:
+                    gate_logits = self.basis_gate(ctx)
+
+                if self._film_gate_flag:
+                    scale_logits, shift = gate_logits.chunk(2, dim=-1)
+                    gate1 = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
+                    h = h * gate1 + shift.to(dtype=dtype)
+                else:
+                    h = h * torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+
+            # ── Step 3: Stage-2 low-rank output gate ─────────────────────────
+            if self.use_output_gate and self.output_gate_coeffs is not None:
+                if context_gates is not None and 'output_coeffs' in context_gates:
+                    coeffs = context_gates['output_coeffs'].to(dtype=dtype)
+                else:
+                    coeffs = self.output_gate_coeffs(ctx)
+                gate_logits2 = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
+                gate2 = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits2)
+                h = h * gate2
+
+        return h
 
 
 class DecoupledAdaptiveLinear(nn.Module):
@@ -4396,8 +4543,9 @@ class RemixedFeedForward(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
-            self.c_fc   = RemixedLinear(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_proj = RemixedLinear(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            _linear_cls = DualGateLinear if getattr(config, 'remix_use_dual_gate', False) else RemixedLinear
+            self.c_fc   = _linear_cls(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_proj = _linear_cls(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
         # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
@@ -4585,10 +4733,11 @@ class RemixedMultiAttention(nn.Module):
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
             # Attention layers use per-sequence routing (one routing decision per sequence)
-            self.c_q    = RemixedLinear(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_k    = RemixedLinear(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_v    = RemixedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_proj = RemixedLinear(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            _linear_cls = DualGateLinear if getattr(config, 'remix_use_dual_gate', False) else RemixedLinear
+            self.c_q    = _linear_cls(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_k    = _linear_cls(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_v    = _linear_cls(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_proj = _linear_cls(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
         self._attn_mode = mode  # store for forward dispatch
