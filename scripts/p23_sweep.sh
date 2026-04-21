@@ -101,19 +101,19 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference
 # ══════════════════════════════════════════════════════
-TAG="23_BASE_DENSE"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="23_BASE_DENSE"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 1B: Dense RemixedLinear, weight mod (no template bank)
