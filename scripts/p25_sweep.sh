@@ -65,8 +65,8 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.05 \
-  --warmdown-ratio 0.50 \
-  --final-lr-frac 0.10 \
+  --warmdown-ratio 0.70 \
+  --final-lr-frac 0.00 \
   --research-dim -1 \
   --remix-shared-context-gates 0"
 
