@@ -140,6 +140,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--remix-use-dual-gate" "$2")
             shift 2
             ;;
+        --remix-basis-scale-factor)
+            EXTRA_ARGS+=("--remix-basis-scale-factor" "$2")
+            shift 2
+            ;;
         --research-dim)
             EXTRA_ARGS+=("--research-dim" "$2")
             shift 2

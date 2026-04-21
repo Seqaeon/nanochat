@@ -103,31 +103,32 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference
 # ══════════════════════════════════════════════════════
-TAG="23_BASE_DENSE"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="23_BASE_DENSE"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
-# 1B: Dense RemixedLinear, weight mod (no template bank)
+# 1B: RemixedLinear, Linear gate, COMPRESSED basis B=C//4
+#     (basis_scale_factor=4, the default)
 # ══════════════════════════════════════════════════════
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
-TAG="23_REMIX_${CCL_MOD^^}_LinearGate_BetterTemp"
+TAG="23_REMIX_${CCL_MOD^^}_LinearGate_C4"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "1B" "$TAG" "Dense RemixedLinear, ${CCL_MOD} mod, ${CCL_STREAM} stream"
+    print_header "1B" "$TAG" "RemixedLinear, linear gate, B=C//4, temp=2.0"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
@@ -137,6 +138,7 @@ else
       --remix-use-basis-gate 1 \
       --remix-use-output-gate 1 \
       --remix-basis-gate-mode linear \
+      --remix-basis-scale-factor 4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -145,16 +147,15 @@ else
     fi
 fi
 # ══════════════════════════════════════════════════════
-# 1D: DualGateLinear — single dense W + dual D-dim gate
-#     Direct ablation vs RemixedLinear(Linear gate):
-#     same context stream & gating structure, no basis
-#     compression bottleneck (gate in output space, not B-space)
+# 1E: RemixedLinear, Linear gate, FULL RANK basis B=C
+#     Directly mirrors the depth-12 run in sweep_p23.log
+#     (basis_scale_factor=1 → min(in,out)//1 = min(in,out))
 # ══════════════════════════════════════════════════════
-TAG="23_DUAL_GATE_${CCL_MOD^^}_Linear"
+TAG="23_REMIX_${CCL_MOD^^}_LinearGate_FullRank"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "1D" "$TAG" "DualGateLinear, ${CCL_MOD} mod, ${CCL_STREAM} stream"
+    print_header "1E" "$TAG" "RemixedLinear, linear gate, B=C (full rank), temp=2.0"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
@@ -164,7 +165,7 @@ else
       --remix-use-basis-gate 1 \
       --remix-use-output-gate 1 \
       --remix-basis-gate-mode linear \
-      --remix-use-dual-gate 1 \
+      --remix-basis-scale-factor 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
@@ -172,6 +173,61 @@ else
         echo "════════════════ $TAG FAILED — will retry next run ════════════════"
     fi
 fi
+# ══════════════════════════════════════════════════════
+# 1F: RemixedLinear, CENTERED gate, full rank B=C
+#     Fix for the 277x gradient disparity:
+#     1+tanh(s*logits) starts at 1.0 (passthrough) not 0.5.
+#     W_b & W_m train like dense for first ~100 steps, then
+#     gate gradually learns to amplify/suppress symmetrically.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_CenteredGate_FullRank"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1F" "$TAG" "RemixedLinear, centered gate, B=C (full rank), temp=2.0"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+# ══════════════════════════════════════════════════════
+# 1D: DualGateLinear — commented out (worse than dense, see sweep_p23 (27).log)
+# ══════════════════════════════════════════════════════
+#TAG="23_DUAL_GATE_${CCL_MOD^^}_Linear"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "1D" "$TAG" "DualGateLinear, ${CCL_MOD} mod, ${CCL_STREAM} stream"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --cclblock-modulation $CCL_MOD \
+#      --cclblock-context-stream $CCL_STREAM \
+#      --p22-n-templates 1 \
+#      --remix-use-context 1 \
+#      --remix-shared-context-gates 0 \
+#      --remix-use-basis-gate 1 \
+#      --remix-use-output-gate 1 \
+#      --remix-basis-gate-mode linear \
+#      --remix-use-dual-gate 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
+
 # ══════════════════════════════════════════════════════
 #TAG="23_REMIX_${CCL_MOD^^}_MLPGate"
 #if check_completed "$TAG"; then

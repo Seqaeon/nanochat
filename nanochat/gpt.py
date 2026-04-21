@@ -1258,9 +1258,11 @@ class RemixedLinear(nn.Module):
         # the *smaller* of in/out (template_mixing is out_features x basis_size, so using
         # in_features // 4 when in_features >> out_features makes the layer *more* expensive
         # than dense: e.g. c_proj 3072->768 would get basis_size=768 = full-rank output).
+        _bsf = int(remixed_linear_kwargs.get('basis_scale_factor', 4)) if remixed_linear_kwargs else 4
         if scale_basis:
-            basis_size = max(basis_size, min(in_features, out_features) // 4)
-        self.basis_size = basis_size  # may be updated below for LoKR after b_shrunk calc
+            basis_size = max(basis_size, min(in_features, out_features) // max(1, _bsf))
+        self.basis_size      = basis_size  # may be updated below for LoKR after b_shrunk calc
+        self._gate_stats     = {}          # populated during forward() when self.training
         self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
         self.use_context = remixed_linear_kwargs.get('use_context', True)
@@ -1452,6 +1454,16 @@ class RemixedLinear(nn.Module):
                     self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
                     nn.init.zeros_(self.basis_modulator.weight)
                     nn.init.zeros_(self.basis_modulator.bias)
+                elif self.basis_gate_mode == 'centered':
+                    # Centered gate: 1 + tanh(s * W_gate * ctx)
+                    # Starts at 1.0 (full passthrough) instead of sigmoid's 0.5.
+                    # Structural weights (W_b, W_m) see clean gradients from step 0;
+                    # gate learns to symmetrically amplify (>1) or suppress (<1) channels.
+                    self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
+                    nn.init.zeros_(self.basis_modulator.weight)
+                    nn.init.zeros_(self.basis_modulator.bias)
+                    # Learnable scale — init small so gate stays near 1.0 early in training
+                    self.centered_gate_scale = nn.Parameter(torch.ones(1) * 0.1)
                 elif self.basis_gate_mode == 'attn':
                     # Bilinear attention gate: gate = σ(W_content·h ⊙ W_context·ctx)
                     # Jointly conditioned on input content AND context; cheaper than MLP.
@@ -1522,6 +1534,8 @@ class RemixedLinear(nn.Module):
                 yield self.output_gate_coeffs.bias
             yield self.output_gate_basis
             yield self.output_gate_scale
+            if hasattr(self, 'centered_gate_scale'):
+                yield self.centered_gate_scale
             if hasattr(self, "operator_householder"):
                 yield from self.operator_householder.parameters()
             if hasattr(self, "operator_spectral"):
@@ -1637,8 +1651,27 @@ class RemixedLinear(nn.Module):
                     sparse = torch.zeros_like(gate_logits).scatter_(-1, topk_idx, F.softmax(topk_vals, dim=-1))
                     soft = torch.sigmoid(gate_logits / self.gate_temperature)
                     gate_basis = (sparse + (soft - soft.detach())).to(dtype=dtype)
+                elif self.basis_gate_mode == 'centered':
+                    # Centered gate: passthrough at init, symmetric amplify/suppress
+                    s = self.centered_gate_scale.to(dtype=dtype)
+                    gate_basis = (1.0 + torch.tanh(s * gate_logits)).to(dtype=dtype)
+                    if self.training:
+                        with torch.no_grad():
+                            gb = gate_basis.float()
+                            self._gate_stats['basis_mean'] = gb.mean().item()
+                            self._gate_stats['basis_std']  = gb.std().item()
+                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
+                            self._gate_stats['basis_sat']  = (gb > 1.90).float().mean().item()
                 else:
                     gate_basis = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+                # Track basis gate stats (zero overhead when not training)
+                if self.training and gate_basis is not None:
+                    with torch.no_grad():
+                        gb = gate_basis.float()
+                        self._gate_stats['basis_mean'] = gb.mean().item()
+                        self._gate_stats['basis_std']  = gb.std().item()
+                        self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
+                        self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().item()
             else:
                 gate_basis = torch.ones_like(h_basis)
 
@@ -1651,6 +1684,12 @@ class RemixedLinear(nn.Module):
                     coeffs = self.output_gate_coeffs(ctx)                       # (B, T, r)
                 gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out)
                 gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits)
+                # Track output gate stats
+                if self.training:
+                    with torch.no_grad():
+                        go = gate_out.float()
+                        self._gate_stats['out_mean'] = go.mean().item()
+                        self._gate_stats['out_std']  = go.std().item()
             else:
                 gate_out = None
         else:
@@ -1895,6 +1934,7 @@ class DualGateLinear(nn.Module):
             self.output_gate_coeffs = None
             self.output_gate_basis  = None
             self.output_gate_scale  = None
+        self._gate_stats = {}  # populated during forward() when self.training
 
     # ── Optimizer parameter grouping ──────────────────────────────────────────
     def gate_parameters(self):
@@ -1943,7 +1983,15 @@ class DualGateLinear(nn.Module):
                     gate1 = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
                     h = h * gate1 + shift.to(dtype=dtype)
                 else:
-                    h = h * torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+                    gb_sig = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+                    if self.training:
+                        with torch.no_grad():
+                            gb = gb_sig.float()
+                            self._gate_stats['basis_mean'] = gb.mean().item()
+                            self._gate_stats['basis_std']  = gb.std().item()
+                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
+                            self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().item()
+                    h = h * gb_sig
 
             # ── Step 3: Stage-2 low-rank output gate ─────────────────────────
             if self.use_output_gate and self.output_gate_coeffs is not None:
@@ -1953,6 +2001,11 @@ class DualGateLinear(nn.Module):
                     coeffs = self.output_gate_coeffs(ctx)
                 gate_logits2 = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
                 gate2 = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits2)
+                if self.training:
+                    with torch.no_grad():
+                        go = gate2.float()
+                        self._gate_stats['out_mean'] = go.mean().item()
+                        self._gate_stats['out_std']  = go.std().item()
                 h = h * gate2
 
         return h

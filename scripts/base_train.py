@@ -77,8 +77,8 @@ parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp",
-                    choices=["mlp", "linear", "attn", "none"],
-                    help="Gate architecture: mlp=2-layer (default), linear=single layer, attn=bilinear, none=no basis gate")
+                    choices=["mlp", "linear", "centered", "attn", "none"],
+                    help="Gate architecture: mlp=2-layer, linear=single layer, centered=1+tanh(s*logits) passthrough init, attn=bilinear, none=no basis gate")
 # Phase 22: MoE-style overparameterized template mixing in RemixedLinear
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
@@ -99,6 +99,8 @@ parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-
 parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
 parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch all 6 per-RL context gate computations into 3 block-level matmuls (~6x fewer gate kernel launches)")
 parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1], help="25: use DualGateLinear instead of RemixedLinear (single dense W + dual D-dim gate, no basis compression)")
+parser.add_argument("--gate-stats-every", type=int, default=50, help="log gate activation/gradient stats every N steps to gate_stats.log (0=off); only active when --use-remix-linear")
+parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression ratio: factor=4 → C//4 (default), factor=1 → full rank C. Depth-adaptive via min(in,out)//factor")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
@@ -415,6 +417,7 @@ def build_model_meta(depth):
             basis_gate_mode=getattr(args, 'remix_basis_gate_mode', 'mlp'),
             sparse_gate_k=getattr(args, 'cclblock_sparse_gate_k', 0),
             gate_temperature=getattr(args, 'cclblock_gate_temperature', 1.0),
+            basis_scale_factor=getattr(args, 'remix_basis_scale_factor', 4),
             # n_templates = K_total (total experts in the bank):
             # When p23_tiny_expert=1, p23_n_experts sets K_total.
             # Otherwise falls back to p22_n_templates (legacy template bank).
@@ -606,6 +609,55 @@ if args.use_remix_linear:
         print0(f"Modulation diagnostics: no position-conditioned layers found (mode={args.cclblock_modulation})")
         mod_diag = None
 
+# ── Gate stats collector ──────────────────────────────────────────────────────
+def collect_gate_stats(model, step):
+    """Walk all RemixedLinear / DualGateLinear layers and aggregate gate stats.
+
+    Returns a dict with:
+      basis_mean / basis_std / basis_dead / basis_sat   — sigmoid(gate_logits) stats
+      out_mean   / out_std                              — 1+tanh(output_gate) stats
+      gate_grad_norm   — L2 norm of all gate param gradients (0 if not yet computed)
+      struct_grad_norm — L2 norm of all structural param gradients
+    Each value is the mean across all tracked layers that have that stat.
+    """
+    from nanochat.gpt import RemixedLinear, DualGateLinear
+    accum = {}
+    counts = {}
+    layers_seen = 0
+
+    raw = model.module if hasattr(model, 'module') else model
+    for mod in raw.modules():
+        if not isinstance(mod, (RemixedLinear, DualGateLinear)):
+            continue
+        gs = getattr(mod, '_gate_stats', {})
+        if not gs:
+            continue
+        layers_seen += 1
+        for k, v in gs.items():
+            accum[k]  = accum.get(k, 0.0) + v
+            counts[k] = counts.get(k, 0) + 1
+
+    result = {'step': step, 'layers': layers_seen}
+    for k in accum:
+        result[k] = accum[k] / counts[k]
+
+    # Gradient norms (only meaningful after loss.backward())
+    gate_sq, gate_n, struct_sq, struct_n = 0.0, 0, 0.0, 0
+    for mod in raw.modules():
+        if not isinstance(mod, (RemixedLinear, DualGateLinear)):
+            continue
+        for p in mod.gate_parameters():
+            if p.grad is not None:
+                gate_sq += p.grad.float().norm().item() ** 2
+                gate_n  += 1
+        for p in mod.non_gate_parameters():
+            if p.grad is not None:
+                struct_sq += p.grad.float().norm().item() ** 2
+                struct_n  += 1
+    result['gate_grad_norm']   = (gate_sq   ** 0.5) if gate_n   > 0 else 0.0
+    result['struct_grad_norm'] = (struct_sq ** 0.5) if struct_n > 0 else 0.0
+    return result
+
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
 if args.checkpoints_dir:
@@ -616,6 +668,13 @@ else:
 
 checkpoint_dir = os.path.abspath(os.path.join(checkpoints_root, output_dirname))
 print0(f"Checkpoints directory: {checkpoint_dir}")
+# Gate stats log (only written by master process when --use-remix-linear and gate-stats-every > 0)
+gate_stats_log = os.path.join(checkpoint_dir, "gate_stats.log") if (args.use_remix_linear and getattr(args, 'gate_stats_every', 0) > 0) else None
+if gate_stats_log and master_process:
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    with open(gate_stats_log, 'w') as _f:
+        _f.write('# gate_stats.log — one JSON line per logged step\n')
+        _f.write('# Keys: step, layers, basis_mean, basis_std, basis_dead, basis_sat, out_mean, out_std, gate_grad_norm, struct_grad_norm\n')
 if args.step_loss_file and master_process:
     step_loss_dir = os.path.dirname(os.path.abspath(args.step_loss_file))
     if step_loss_dir:
@@ -1221,6 +1280,23 @@ while True:
         else:
             p19_metrics = None
             p20_metrics = None
+        # ── Gate stats logging ────────────────────────────────────────────────
+        if gate_stats_log and args.gate_stats_every > 0 and (step % args.gate_stats_every == 0 or last_step):
+            gs = collect_gate_stats(model, step)
+            print0(
+                f"  gate_stats | layers={gs['layers']} "
+                f"| basis µ={gs.get('basis_mean',float('nan')):.3f} "
+                f"σ={gs.get('basis_std',float('nan')):.3f} "
+                f"dead={gs.get('basis_dead',float('nan')):.1%} "
+                f"sat={gs.get('basis_sat',float('nan')):.1%} "
+                f"| out µ={gs.get('out_mean',float('nan')):.3f} "
+                f"σ={gs.get('out_std',float('nan')):.3f} "
+                f"| ∇gate={gs['gate_grad_norm']:.3e} "
+                f"∇struct={gs['struct_grad_norm']:.3e}"
+            )
+            if master_process:
+                with open(gate_stats_log, 'a') as _gf:
+                    _gf.write(json.dumps(gs) + '\n')
     if step % 100 == 0:
         log_data = {
             "step": step,
