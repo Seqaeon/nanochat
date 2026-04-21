@@ -6915,24 +6915,30 @@ class GPT(nn.Module):
                         torch.nn.init.zeros_(sub.expert_down_w)
                     torch.nn.init.zeros_(sub.bias)
                     if sub.use_context:
-                        # basis_modulator: zero-init ALL linear weights so that at init
-                        # first_linear(ctx) = 0·ctx + 0 = 0 → GELU(0) = 0 → second_linear(0) = 0 + 2.0 = 2.0
-                        # → gate_basis = sigmoid(2.0) ≈ 0.88 for ALL positions, independent of context quality.
-                        # Fix 1 (Bug 1): previously xavier-init on first linear caused wildly varying gates
-                        # at early positions for long sequences where base_context is noisy.
-                        # GELU'(0) = 0.5 ≠ 0, so gradients flow and the first layer learns normally from step 1.
-                        linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
-                        for m in linears:
-                            torch.nn.init.xavier_uniform_(m.weight)  # original xavier init
-                            if m.bias is not None: torch.nn.init.zeros_(m.bias)
-                        if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
+                        # basis_modulator: may be None when basis_gate_mode='none' or 'linear'/'attn'
+                        # Guard against None before iterating modules.
+                        if sub.basis_modulator is not None:
+                            linears = [m for m in sub.basis_modulator.modules() if isinstance(m, (Linear, nn.Linear))]
+                            for m in linears:
+                                torch.nn.init.xavier_uniform_(m.weight)
+                                if m.bias is not None: torch.nn.init.zeros_(m.bias)
+                            if linears: torch.nn.init.constant_(linears[-1].bias, 2.0)
+                        # basis_gate_content / basis_gate_context (attn mode): xavier init
+                        if sub.basis_gate_content is not None:
+                            torch.nn.init.xavier_uniform_(sub.basis_gate_content.weight)
+                            if sub.basis_gate_content.bias is not None:
+                                torch.nn.init.zeros_(sub.basis_gate_content.bias)
+                        if sub.basis_gate_context is not None:
+                            torch.nn.init.xavier_uniform_(sub.basis_gate_context.weight)
+                            if sub.basis_gate_context.bias is not None:
+                                torch.nn.init.zeros_(sub.basis_gate_context.bias)
                         # Low-rank output gate: xavier for coeffs, zero for basis
                         # gate_basis zeros => gate_logits=0 => tanh(0)=0 => gate=1.0 at init
-                        # This guarantees identity behavior at initialization regardless of T
-                        torch.nn.init.xavier_uniform_(sub.output_gate_coeffs.weight)
-                        torch.nn.init.zeros_(sub.output_gate_coeffs.bias)
-                        torch.nn.init.zeros_(sub.output_gate_basis)
-                        torch.nn.init.constant_(sub.output_gate_scale, 0.1)
+                        if hasattr(sub, 'output_gate_coeffs'):
+                            torch.nn.init.xavier_uniform_(sub.output_gate_coeffs.weight)
+                            torch.nn.init.zeros_(sub.output_gate_coeffs.bias)
+                            torch.nn.init.zeros_(sub.output_gate_basis)
+                            torch.nn.init.constant_(sub.output_gate_scale, 0.1)
                     continue  # Skip further processing of this module's sub-components here
 
                 if isinstance(sub, StandardMoE_MLP):
