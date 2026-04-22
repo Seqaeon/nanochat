@@ -114,22 +114,22 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     If this beats dense: the W_b@W_m factorization is unnecessary.
 #     If not: the factorization (spectral bias / intermediate LN) is load-bearing.
 # ══════════════════════════════════════════════════════
-TAG="26_OUTPUT_GATED_${CCL_MOD^^}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "26B" "$TAG" "OutputGatedLinear: single W + low-rank output gate, ~1.01× FLOPs"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p26-output-gated-linear 1 \
-      --remix-use-basis-gate 0 \
-      --remix-use-output-gate 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="26_OUTPUT_GATED_${CCL_MOD^^}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "26B" "$TAG" "OutputGatedLinear: single W + low-rank output gate, ~1.01× FLOPs"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --p26-output-gated-linear 1 \
+#      --remix-use-basis-gate 0 \
+#      --remix-use-output-gate 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 
 # ══════════════════════════════════════════════════════
