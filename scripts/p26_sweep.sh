@@ -67,10 +67,10 @@ CCL_STREAM="${CCL_STREAM:-selective}"
 
 # Dense base-model flags
 BASE_COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 8 --use-onecycle 0 --log-every 1 --skip-core \
+  --device-batch-size 4 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --mu-p-mode base_only \
-  --warmup-ratio 0.15 \
+  --warmup-ratio 0.05 \
   --research-dim -1"
 
 # RemixedLinear / OutputGatedLinear shared flags
