@@ -1454,6 +1454,15 @@ class RemixedLinear(nn.Module):
                     self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
                     nn.init.zeros_(self.basis_modulator.weight)
                     nn.init.zeros_(self.basis_modulator.bias)
+                elif self.basis_gate_mode == 'random':
+                    # Random-init gate: same architecture as linear but weight/bias
+                    # are kept at their default normal init (std≈1/sqrt(context_dim)).
+                    # Gate values at step 0 are spread across (0,1) rather than
+                    # collapsing to 0.5 (linear zero-init) or 1.0 (centered).
+                    # Empirical test of whether random gate values at init are
+                    # beneficial or harmful vs stable initializations.
+                    self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
+                    # Do NOT zero-init — leave PyTorch default kaiming_uniform init
                 elif self.basis_gate_mode == 'centered':
                     # Centered gate: 1 + tanh(s * W_gate * ctx)
                     # Starts at 1.0 (full passthrough) instead of sigmoid's 0.5.
@@ -1658,20 +1667,20 @@ class RemixedLinear(nn.Module):
                     if self.training:
                         with torch.no_grad():
                             gb = gate_basis.float()
-                            self._gate_stats['basis_mean'] = gb.mean().item()
-                            self._gate_stats['basis_std']  = gb.std().item()
-                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
-                            self._gate_stats['basis_sat']  = (gb > 1.90).float().mean().item()
+                            self._gate_stats['basis_mean'] = gb.mean().detach()
+                            self._gate_stats['basis_std']  = gb.std().detach()
+                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().detach()
+                            self._gate_stats['basis_sat']  = (gb > 1.90).float().mean().detach()
                 else:
                     gate_basis = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
                 # Track basis gate stats (zero overhead when not training)
                 if self.training and gate_basis is not None:
                     with torch.no_grad():
                         gb = gate_basis.float()
-                        self._gate_stats['basis_mean'] = gb.mean().item()
-                        self._gate_stats['basis_std']  = gb.std().item()
-                        self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
-                        self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().item()
+                        self._gate_stats['basis_mean'] = gb.mean().detach()
+                        self._gate_stats['basis_std']  = gb.std().detach()
+                        self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().detach()
+                        self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().detach()
             else:
                 gate_basis = torch.ones_like(h_basis)
 
@@ -1688,8 +1697,8 @@ class RemixedLinear(nn.Module):
                 if self.training:
                     with torch.no_grad():
                         go = gate_out.float()
-                        self._gate_stats['out_mean'] = go.mean().item()
-                        self._gate_stats['out_std']  = go.std().item()
+                        self._gate_stats['out_mean'] = go.mean().detach()
+                        self._gate_stats['out_std']  = go.std().detach()
             else:
                 gate_out = None
         else:
@@ -1987,10 +1996,10 @@ class DualGateLinear(nn.Module):
                     if self.training:
                         with torch.no_grad():
                             gb = gb_sig.float()
-                            self._gate_stats['basis_mean'] = gb.mean().item()
-                            self._gate_stats['basis_std']  = gb.std().item()
-                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().item()
-                            self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().item()
+                            self._gate_stats['basis_mean'] = gb.mean().detach()
+                            self._gate_stats['basis_std']  = gb.std().detach()
+                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().detach()
+                            self._gate_stats['basis_sat']  = (gb > 0.90).float().mean().detach()
                     h = h * gb_sig
 
             # ── Step 3: Stage-2 low-rank output gate ─────────────────────────
@@ -2004,8 +2013,8 @@ class DualGateLinear(nn.Module):
                 if self.training:
                     with torch.no_grad():
                         go = gate2.float()
-                        self._gate_stats['out_mean'] = go.mean().item()
-                        self._gate_stats['out_std']  = go.std().item()
+                        self._gate_stats['out_mean'] = go.mean().detach()
+                        self._gate_stats['out_std']  = go.std().detach()
                 h = h * gate2
 
         return h
@@ -7665,7 +7674,7 @@ class GPT(nn.Module):
         print(f"Phase 2 conversion: converted {converted} MLP modules")
         return converted
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0, gate_lr_scale=0.3):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -7908,8 +7917,8 @@ class GPT(nn.Module):
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
             ))
-        # Gate matrix params: 0.3× Muon LR (suggestion 5: reduce gradient noise for gate params)
-        gate_lr = matrix_lr * 0.3
+        # Gate matrix params: gate_lr_scale× Muon LR (default 0.3×, configurable)
+        gate_lr = matrix_lr * gate_lr_scale
         for shape in sorted({p.shape for p in gate_matrix_params}):
             group_params = [p for p in gate_matrix_params if p.shape == shape]
             param_groups.append(dict(

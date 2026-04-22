@@ -77,8 +77,8 @@ parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp",
-                    choices=["mlp", "linear", "centered", "attn", "none"],
-                    help="Gate architecture: mlp=2-layer, linear=single layer, centered=1+tanh(s*logits) passthrough init, attn=bilinear, none=no basis gate")
+                    choices=["mlp", "linear", "centered", "attn", "random", "none"],
+                    help="Gate architecture: mlp=2-layer, linear=single layer (zero-init), centered=1+tanh passthrough init, attn=bilinear, random=linear with random init (no zero-init), none=no basis gate")
 # Phase 22: MoE-style overparameterized template mixing in RemixedLinear
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
@@ -102,6 +102,7 @@ parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1]
 parser.add_argument("--gate-stats-every", type=int, default=50, help="log gate activation/gradient stats every N steps to gate_stats.log (0=off); only active when --use-remix-linear")
 parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression ratio: factor=4 → C//4 (default), factor=1 → full rank C. Depth-adaptive via min(in,out)//factor")
 parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="rank of the low-rank output gate in RemixedLinear (default 16)")
+parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="LR multiplier for gate params relative to structural matrix LR (default 0.3; lower = slower gate learning)")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
@@ -636,6 +637,8 @@ def collect_gate_stats(model, step):
             continue
         layers_seen += 1
         for k, v in gs.items():
+            if isinstance(v, torch.Tensor):
+                v = v.item()
             accum[k]  = accum.get(k, 0.0) + v
             counts[k] = counts.get(k, 0) + 1
 
@@ -868,6 +871,8 @@ optimizer = orig_model.setup_optimizer(
     # μP
     disable_mu_p=args.disable_mu_p,
     mu_p_scale_override=args.mu_p_scale_override,
+    # Gate LR scale (default 0.3×; lower values slow gate learning relative to structural weights)
+    gate_lr_scale=args.remix_gate_lr_scale,
 )
 
 if resuming:
