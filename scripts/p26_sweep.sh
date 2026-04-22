@@ -139,23 +139,23 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     If yes: factorization provides an inductive bias.
 #     If no: all quality comes from gating, not factorization.
 # ══════════════════════════════════════════════════════
-TAG="26_FACTORED_NO_CTX_${CCL_MOD^^}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "26C" "$TAG" "W_b@W_m + LN only, no context/gate — does factorization help?"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --remix-use-basis-gate 0 \
-      --remix-use-output-gate 0 \
-      --remix-use-context 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
-
+#TAG="26_FACTORED_NO_CTX_${CCL_MOD^^}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "26C" "$TAG" "W_b@W_m + LN only, no context/gate — does factorization help?"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --remix-use-basis-gate 0 \
+#      --remix-use-output-gate 0 \
+#      --remix-use-context 0 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
+#
 
 # ══════════════════════════════════════════════════════
 # 26D: Factored + Output Gate only — confirmation of P25 OUTPUT_ONLY
