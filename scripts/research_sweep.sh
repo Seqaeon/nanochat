@@ -256,6 +256,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --p26-output-gated-linear|--remix-basis-gate-rank|--remix-basis-gate-mode)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
 
         --warmup-ratio|--warmdown-ratio|--final-lr-frac)
             EXTRA_ARGS+=("$1" "$2")

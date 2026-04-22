@@ -69,6 +69,8 @@ class GPTConfig:
     scale_basis_size: bool = True
     # Use DualGateLinear instead of RemixedLinear (single dense + dual D-dim gate, no basis compression)
     remix_use_dual_gate: bool = False
+    # Phase 26: OutputGatedLinear — single W + low-rank output gate, no W_b/W_m factorization
+    p26_output_gated_linear: int = 0
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -1483,6 +1485,15 @@ class RemixedLinear(nn.Module):
                     nn.init.normal_(self.basis_gate_content.weight, std=0.02)
                     nn.init.zeros_(self.basis_gate_context.weight)
                     nn.init.zeros_(self.basis_gate_context.bias)
+                elif self.basis_gate_mode == 'lowrank':
+                    # Low-rank basis gate (symmetric to output gate, negligible FLOPs)
+                    # gate = 1 + tanh(scale * (W_g * ctx) @ gate_vecs)
+                    r_bg = int(remixed_linear_kwargs.get('basis_gate_rank', 8))
+                    self.basis_gate_coeffs  = Linear(context_dim, r_bg, bias=True)
+                    self.basis_gate_vectors = nn.Parameter(torch.zeros(r_bg, _gate_out_size))
+                    self.basis_gate_lr_scale = nn.Parameter(torch.ones(1) * 0.1)
+                    nn.init.zeros_(self.basis_gate_coeffs.weight)
+                    nn.init.zeros_(self.basis_gate_coeffs.bias)
                 # else 'none': gate_basis = ones in forward, no module
             # Low-rank output gate: ctx_dim → r coefficients, r basis vectors → out_features
             # r is a small constant (default 8), making this O(ctx_dim*r + r*out_features)
@@ -1645,6 +1656,11 @@ class RemixedLinear(nn.Module):
                     # Bilinear: content (from h_basis) ⊙ context projection → gate logits
                     gate_logits = (self.basis_gate_content(h_basis) *
                                    self.basis_gate_context(ctx))
+                elif self.basis_gate_mode == 'lowrank':
+                    coeffs_bg = self.basis_gate_coeffs(ctx)
+                    gate_logits = torch.matmul(
+                        coeffs_bg, self.basis_gate_vectors.to(dtype=dtype)
+                    )
                 elif self.basis_gate_mode == 'none':
                     gate_logits = None
                 else:  # 'mlp' or 'linear'
@@ -2037,6 +2053,80 @@ class DualGateLinear(nn.Module):
                 h = h * gate2
 
         return h
+
+
+class OutputGatedLinear(nn.Module):
+    """Minimal context-adaptive linear: single dense W + low-rank centered output gate.
+
+    Forward:
+        y = W x + bias                               # plain dense matmul (no factorization)
+        g = 1 + tanh(s (W_c ctx) @ G)               # low-rank centered output gate
+        return y * g
+
+    ~1.01x FLOPs vs dense baseline (gate overhead negligible at r=8).
+    Tests whether W_b@W_m factorization is needed for the quality gain seen in P25,
+    or if a single W with only the output gate suffices.
+    """
+
+    def __init__(
+        self,
+        in_features,
+        out_features,
+        context_dim,
+        basis_size=None,
+        remixed_linear_kwargs=None,
+        scale_basis=None,
+        film_gate=False,
+        routing_scope=None,
+        **_ignored,
+    ):
+        super().__init__()
+        if remixed_linear_kwargs is None:
+            remixed_linear_kwargs = {}
+        self.in_features  = in_features
+        self.out_features = out_features
+        self.use_context  = remixed_linear_kwargs.get('use_context', True)
+        self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        nn.init.normal_(self.weight, std=0.02)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        if self.use_context and self.use_output_gate:
+            r = int(remixed_linear_kwargs.get('output_gate_rank', 8))
+            self.output_gate_coeffs = Linear(context_dim, r, bias=True)
+            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)
+            nn.init.zeros_(self.output_gate_coeffs.weight)
+            nn.init.zeros_(self.output_gate_coeffs.bias)
+        else:
+            self.output_gate_coeffs = None
+            self.output_gate_basis  = None
+            self.output_gate_scale  = None
+        self.ln_basis = None  # compat alias for setup_optimizer probes
+
+    def gate_parameters(self):
+        if self.use_context and self.output_gate_coeffs is not None:
+            yield self.output_gate_coeffs.weight
+            if self.output_gate_coeffs.bias is not None:
+                yield self.output_gate_coeffs.bias
+            yield self.output_gate_basis
+            yield self.output_gate_scale
+
+    def non_gate_parameters(self):
+        yield self.weight
+        yield self.bias
+
+    def forward(self, x, context_state, route_weights=None, context_gates=None, **_ignored):
+        dtype = x.dtype
+        y = F.linear(x, self.weight.to(dtype=dtype), self.bias.to(dtype=dtype))
+        if self.use_context and context_state is not None and self.output_gate_coeffs is not None:
+            ctx = context_state.to(dtype=dtype)
+            coeffs = self.output_gate_coeffs(ctx)
+            gate = 1.0 + torch.tanh(
+                self.output_gate_scale.to(dtype=dtype)
+                * torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
+            )
+            y = y * gate
+        return y
 
 
 class DecoupledAdaptiveLinear(nn.Module):
@@ -4624,7 +4714,11 @@ class RemixedFeedForward(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
-            _linear_cls = DualGateLinear if getattr(config, 'remix_use_dual_gate', False) else RemixedLinear
+            _linear_cls = (
+                DualGateLinear if getattr(config, 'remix_use_dual_gate', False)
+                else OutputGatedLinear if getattr(config, 'p26_output_gated_linear', 0)
+                else RemixedLinear
+            )
             self.c_fc   = _linear_cls(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
             self.c_proj = _linear_cls(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
@@ -4636,10 +4730,10 @@ class RemixedFeedForward(nn.Module):
     def forward(self, x, context_state, route_weights=None, context_gates=None, p24_shared=None):
         """route_weights:  optional dict from SharedBlockRouter with 'c_fc'/'c_proj_ffn' keys.
         context_gates:  optional dict from SharedContextGates with layer-key sub-dicts."""
-        rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   RemixedLinear)) else None
-        rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, RemixedLinear)) else None
-        cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   RemixedLinear)) else None
-        cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, RemixedLinear)) else None
+        rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   (RemixedLinear, OutputGatedLinear))) else None
+        rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, (RemixedLinear, OutputGatedLinear))) else None
+        cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   (RemixedLinear, OutputGatedLinear))) else None
+        cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, (RemixedLinear, OutputGatedLinear))) else None
         route_in = p24_shared.get('route_input') if p24_shared is not None else None
         gate_in = p24_shared.get('gate_input') if p24_shared is not None else None
         x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
@@ -4814,7 +4908,11 @@ class RemixedMultiAttention(nn.Module):
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
             # Attention layers use per-sequence routing (one routing decision per sequence)
-            _linear_cls = DualGateLinear if getattr(config, 'remix_use_dual_gate', False) else RemixedLinear
+            _linear_cls = (
+                DualGateLinear if getattr(config, 'remix_use_dual_gate', False)
+                else OutputGatedLinear if getattr(config, 'p26_output_gated_linear', 0)
+                else RemixedLinear
+            )
             self.c_q    = _linear_cls(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
             self.c_k    = _linear_cls(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
             self.c_v    = _linear_cls(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
@@ -4825,7 +4923,7 @@ class RemixedMultiAttention(nn.Module):
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state, route_weights=None):
         """route_weights: optional dict from SharedBlockRouter with 'c_q','c_k','c_v','c_proj_attn'."""
-        is_rl = isinstance(self.c_q, RemixedLinear)  # True for weight-mod path
+        is_rl = isinstance(self.c_q, (RemixedLinear, OutputGatedLinear))  # True for weight-mod path
         rw = route_weights if (route_weights is not None and is_rl) else None
         B, T, C = x.size()
         if self._attn_mode == 'ckr_ffn':

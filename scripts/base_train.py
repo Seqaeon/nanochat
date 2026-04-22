@@ -93,6 +93,9 @@ parser.add_argument("--p23-std-moe-experts", type=int, default=0, help="23: enab
 parser.add_argument("--p23-std-moe-topk", type=int, default=-1, help="23: top-k active experts for StandardMoE_MLP (-1=optimal sparsity via E^(1-c), 0=all/soft, N=fixed)")
 parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="23: load-balance auxiliary loss weight for StandardMoE_MLP")
 parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1], help="23: enable LoKR mode in RemixedLinear")
+# Phase 26: Streamlined Full-Rank — OutputGatedLinear (single W + low-rank output gate)
+parser.add_argument("--p26-output-gated-linear", type=int, default=0, choices=[0, 1], help="26: replace RemixedLinear with single-W + low-rank output gate (no W_b/W_m factorization)")
+parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode (basis_gate_mode=lowrank)")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
 parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1], help="23: block-level single pass router for all RemixedLinear inner experts")
 parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
@@ -442,6 +445,7 @@ def build_model_meta(depth):
             lokr_topk=getattr(args, 'p23_topk', 16),
             lokr_rank=getattr(args, 'p23_lokr_rank', 4),
             lokr_learned=bool(getattr(args, 'p23_learned_route', 0)),
+            basis_gate_rank=getattr(args, 'remix_basis_gate_rank', 8),
         ),
 
         # Fix 1A
@@ -571,6 +575,7 @@ def build_model_meta(depth):
         p23_quantile_route=getattr(args, 'p23_quantile_route', 0),
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
         remix_use_dual_gate=bool(getattr(args, 'remix_use_dual_gate', 0)),
+        p26_output_gated_linear=getattr(args, 'p26_output_gated_linear', 0),
         # Phase 24
         p24_use_sliced_weight=getattr(args, 'p24_use_sliced_weight', 0),
         p24_sliced_weight_reduction_scale=getattr(args, 'p24_sliced_weight_reduction_scale', 8),

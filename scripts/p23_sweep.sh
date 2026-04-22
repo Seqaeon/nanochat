@@ -429,6 +429,7 @@ else
 fi
 
 
+
 # ══════════════════════════════════════════════════════
 # 1N: Random gate init — C4, kaiming_uniform init (NOT zero-init)
 #     Tests whether random gate values at step 0 hurt/help vs
@@ -463,20 +464,11 @@ fi
 #     Gate params already get 0.3× structural LR. Drop to 0.05×
 #     to further throttle gate learning vs W_b/W_m.
 # ══════════════════════════════════════════════════════
-
-# ══════════════════════════════════════════════════════
-# 1K: Gate LR reduction — C4, centered gate, gate params at
-#     0.05× structural LR (down from default 0.3×).
-#     Current gate params get 0.3× Muon LR vs structural weights.
-#     277× gradient disparity analysis suggests gate params still
-#     learn too fast relative to W_b/W_m in C4 context.
-#     0.05× forces the gate to move much more slowly, keeping
-#     structural weights in the "driver's seat" throughout training.
-# ══════════════════════════════════════════════════════
 TAG="23_REMIX_${CCL_MOD^^}_GateLR005_CenteredGate_C4"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
+    print_header "1O" "$TAG" "RemixedLinear, centered gate, B=C//4, gate LR = 0.05× structural LR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
@@ -497,7 +489,7 @@ else
 fi
 
 # ══════════════════════════════════════════════════════
-# 1D: DualGateLinear — commented out (worse than dense, see sweep_p23 (27).log)
+# ARCHIVED experiments (commented out)
 # ══════════════════════════════════════════════════════
 #TAG="23_DUAL_GATE_${CCL_MOD^^}_Linear"
 #if check_completed "$TAG"; then
@@ -523,132 +515,6 @@ fi
 #fi
 
 # ══════════════════════════════════════════════════════
-#TAG="23_REMIX_${CCL_MOD^^}_MLPGate"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "1C" "$TAG" "Dense RemixedLinear, ${CCL_MOD} mod, ${CCL_STREAM} stream"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --cclblock-modulation $CCL_MOD \
-#      --cclblock-context-stream $CCL_STREAM \
-#      --p22-n-templates 1 \
-#      --remix-use-context 1 \
-#      --remix-shared-context-gates 0 \
-#      --remix-use-basis-gate 1 \
-#      --remix-use-output-gate 1 \
-#      --remix-basis-gate-mode mlp \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-# ══════════════════════════════════════════════════════
-# 2: TinyExpert K=8, top-1, Quantile Routing
-# ══════════════════════════════════════════════════════
-#TAG="23_QROUTE_TINY_K8_TOP1"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "2" "$TAG" "TinyExpert K=8, top-1, quantile routing, no context"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-tiny-expert 1 \
-#      --p23-n-experts 8 \
-#      --p23-topk 1 \
-#      --p23-quantile-route 2 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
-# ══════════════════════════════════════════════════════
-# 3: TinyExpert K=64, top-16, Quantile Routing
-# ══════════════════════════════════════════════════════
-#TAG="23_QROUTE_TINY_K64_TOP16"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "3" "$TAG" "TinyExpert K=64, top-16, quantile routing, no context"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-tiny-expert 1 \
-#      --p23-n-experts 64 \
-#      --p23-topk 16 \
-#      --p23-quantile-route 2 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
-# ══════════════════════════════════════════════════════
-# 4: LoKR K=64, rank=4, top-16 (SKIP - Quantile not tested yet)
-# ══════════════════════════════════════════════════════
-#TAG="23_LOKR_K64_TOP16"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "4" "$TAG" "LoKR K=64, top-16, rank=4, no context, compile enabled"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-lokr 1 \
-#      --p23-n-experts 64 \
-#      --p23-topk 16 \
-#      --p23-lokr-rank 4 \
-#      --p23-learned-route 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-
-# ══════════════════════════════════════════════════════
-# 5: LinearMoE K=8, top-1, Quantile Routing
-# ══════════════════════════════════════════════════════
-#TAG="23_QROUTE_LINEAR_MOE_K8_TOP1"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "5" "$TAG" "LinearMoE K=8, top-1, quantile routing, no context"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-linear-moe-experts 8 \
-#      --p23-linear-moe-topk 1 \
-#      --p23-quantile-route 2 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
-# ══════════════════════════════════════════════════════
-# 6: LinearMoE K=8, top-16, Quantile Routing
-# ══════════════════════════════════════════════════════
-#TAG="23_QROUTE_LINEAR_MOE_K8_TOP16"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "6" "$TAG" "LinearMoE K=8, top-16, quantile routing, no context"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p23-linear-moe-experts 8 \
-#      --p23-linear-moe-topk 16 \
-#      --p23-quantile-route 2 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-
-# ══════════════════════════════════════════════════════
 # ARCHIVED (context-modulation dependent)
 # ══════════════════════════════════════════════════════
 # 23_REMIX_WEIGHT/HOUSE/CKR, 23_STD_MOE_TOP1/TOP_OPT
@@ -656,6 +522,6 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║          Phase 23 Sweep Complete (6 experiments)           ║"
+echo "║          Phase 23 Sweep Complete (7 experiments)            ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Check $LOGFILE for results."
