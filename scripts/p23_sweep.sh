@@ -266,6 +266,105 @@ else
     fi
 fi
 # ══════════════════════════════════════════════════════
+# 1I: Multi-basis C4 — 4 x C//4 templates, learned routing
+#     Each of 4 bases has rank C//4. Mixed together they can span
+#     up to full rank C. Active FLOPs per token ≈ C4 FLOPs (one
+#     template dominates). Total params ≈ FullRank params.
+#     Learned routing since it outperforms frozen in prior sweeps.
+#     Tests whether routing diversity closes the C4→FullRank gap.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_MultiBasis_C4_4T_Learned"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1I" "$TAG" "RemixedLinear, 4 C4 bases, learned routing — rank recovery via template diversity"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 4 \
+      --p22-template-routing-learned 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1J: Random gate init — C4, linear gate but kept at default
+#     kaiming_uniform init (NOT zero-init).
+#     All prior gate modes zero-init the projection so gate
+#     outputs start at exactly 0.5 or 1.0. Here gate values
+#     at step 0 are spread across (0,1) randomly.
+#     Tests if a random starting gate hurts, is neutral, or
+#     accidentally helps by breaking symmetry from init.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_RandomGateInit_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1J" "$TAG" "RemixedLinear, random gate init (kaiming), B=C//4"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode random \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1K: Gate LR reduction — C4, centered gate, gate params at
+#     0.05× structural LR (down from default 0.3×).
+#     Current gate params get 0.3× Muon LR vs structural weights.
+#     277× gradient disparity analysis suggests gate params still
+#     learn too fast relative to W_b/W_m in C4 context.
+#     0.05× forces the gate to move much more slowly, keeping
+#     structural weights in the "driver's seat" throughout training.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_GateLR005_CenteredGate_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1K" "$TAG" "RemixedLinear, centered gate, B=C//4, gate LR = 0.05× structural LR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      --remix-gate-lr-scale 0.05 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
 # 1D: DualGateLinear — commented out (worse than dense, see sweep_p23 (27).log)
 # ══════════════════════════════════════════════════════
 #TAG="23_DUAL_GATE_${CCL_MOD^^}_Linear"
