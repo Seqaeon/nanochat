@@ -8,27 +8,31 @@ Given input token `x ∈ ℝ^C` and causal context state `ctx ∈ ℝ^C`:
 # 1. Project to basis space (compression)
 h = LayerNorm( W_b · x )          h ∈ ℝ^B, B = basis_size (≈ C/4)
 
-# 2. Basis gate (context-modulates which basis dims are active)
+# 2. [Optional] Operator Modulation on h (before gating)
+#    householder: h = h - 2*(h·v / |v|²)·v   (context-adaptive reflection)
+#    ckr:         h = h ⊙ σ(W_ckr · ctx)      (content-kernel routing)
+#    spectral:    h = h ⊙ (1 + tanh(W_s · ctx))
+
+# 3. Basis gate (context-selects which basis dims are active)
 gate_basis = σ( MLP(ctx) )        gate_basis ∈ ℝ^B      [mode=mlp]
            = σ( W_g · ctx )       gate_basis ∈ ℝ^B      [mode=linear]
-           = σ( W_c·h ⊙ W_k·ctx )                       [mode=attn]
            = 1                                            [mode=none]
 
-# 3. Gated basis representation
+# 4. Gated basis representation
 h̃ = h ⊙ gate_basis               h̃ ∈ ℝ^B
 
-# 4. Mix back to output space (expansion)
+# 5. Mix back to output space (expansion)
 y_pre = W_m · h̃                   y_pre ∈ ℝ^D   (D = out_features)
 
-# 5. Output gate (low-rank context-adaptive scale)
+# 6. Output gate (low-rank context-adaptive scale)
 coeffs  = W_oc · ctx              coeffs ∈ ℝ^r   (r=8)
 gate_out = 1 + tanh( s · coeffs @ G )   G ∈ ℝ^{r×D}, s ∈ ℝ^1
 
-# 6. Final output
+# 7. Final output
 y = (y_pre ⊙ gate_out) + bias
 ```
 
-**FLOPs per token (dense vs RemixedLinear):**
+**FLOPs per token (dense vs RemixedLinear, basis B = C/4):**
 
 | Component | FLOPs | Notes |
 |---|---|---|
@@ -37,16 +41,16 @@ y = (y_pre ⊙ gate_out) + bias
 | LayerNorm | 5B | negligible |
 | Basis gate (MLP) | CB/2 + B²/2 ≈ 0.625C² | C→C/2→B for C=D=B*4 |
 | Basis gate (linear) | CB ≈ 0.25C² | C→B single proj |
-| Basis gate (attn) | 2CB ≈ 0.5C² | content + context proj |
 | Mix W_m | BD | B·D = C·C/4 = 0.25C² |
 | Output gate | Cr + rD ≈ 16C | tiny, r=8 |
 | **Total (MLP mode)** | **~1.625C²** | vs 2C² dense → **81%** |
 | **Total (linear mode)** | **~1.27C²** | vs 2C² dense → **63%** |
-| **Total (none mode)** | **~0.5C²** | vs 2C² dense → **25%** |
 
 ---
 
-## P25 Ablation Results (depth=4, dim=256, weight modulation)
+## P25 Ablation Results (depth=4, dim=256, full-rank basis B=C=256)
+
+> **Note:** P25 used `--research-dim -1` which sets `basis_size=0` → auto-expanded to `min(in,out)` = **full rank**. This is NOT the compressed B=C//4 variant.
 
 | Variant | ctx | basis gate | output gate | gate mode | **BPB** | Δ vs MLP |
 |---|---|---|---|---|---|---|
@@ -56,316 +60,300 @@ y = (y_pre ⊙ gate_out) + bias
 | `25_ATTN_GATE` | ✓ | ✓ | ✓ | attn | **1.1718** | +0.0114 ← **worse** |
 | `25_MLP_GATE` | ✓ | ✓ | ✓ | mlp | **1.1604** | baseline |
 
-### Interpretation
+Dense baseline (same depth/dim): **~1.167 BPB** (from P23 sweep below)
 
-**What these results tell us:**
-
-1. **MLP_GATE is best, but only marginally** — the full MLP gate achieves 1.1604 BPB vs 1.1683 for NO_CONTEXT, a 0.68% relative gap. At depth=4 this likely overestimates the gap vs deeper models (context has more signal to learn from at scale).
-
-2. **ATTN_GATE is WORSE than NO_CONTEXT** (1.1718 vs 1.1683) — the bilinear content×context gating adds instability at this scale. The content branch (h_basis) adds noise from the partially-learned basis early in training, making the gate harder to learn than a pure context gate. **Discard attn mode.**
-
-3. **LINEAR_GATE ≈ MLP_GATE − 0.0041 BPB** — dropping the MLP hidden layer (C→C/2→B becomes C→B) costs only 0.0041 BPB while saving ~0.375C² FLOPs per linear layer. At depth=12+ with 6 RemixedLinear per block this is a meaningful latency win.
-
-4. **OUTPUT_ONLY costs 0.0051 BPB** — the output gate alone (with no basis selection) accounts for ~65% of the total quality gain from MLP gating. The basis gate adds only 0.001 additional BPB gain over OUTPUT_ONLY.
-
-5. **Context itself (NO_CONTEXT→OUTPUT_ONLY) = 0.0028 BPB gain** — context information alone, even without basis gating, helps the model adapt its output scale to the token position.
-
-### Key Insight: What this ablation is NOT measuring
-
-The P25 ablation only probes **context modulation** (gate architecture). It does NOT ablate:
-- The basis projection itself (`W_b`, `W_m`)
-- The LayerNorm on the basis
-- The number of basis dimensions (basis_size)
-- Whether the basis+mixing structure itself helps vs dense
-
-These are the **structural** components. To know if the basis/mixing factorization pays off vs dense, you need a direct comparison against the p23 dense baseline.
+**P25 conclusion:** Full-rank RemixedLinear (B=C) beats the dense baseline. The output gate + context signal provides the quality gain. Attn gate is unstable.
 
 ---
 
-## Recommended Next Steps
+## P23 Sweep Results (depth=4, dim=256, compressed basis B=C//4=64)
 
-### Immediate: Make `linear` the new default gate mode
-- **Motivation**: LINEAR_GATE loses only 0.0041 BPB vs MLP_GATE but saves ~23% of total FLOPs.
-- **At depth=16**: 6 layers/block × 16 blocks = 96 RemixedLinear ops; each saves 0.375C² FLOPs.
-- Change default `basis_gate_mode` from `'mlp'` to `'linear'` in `base_train.py`.
+> Sweep log: `sweep_p23 (27).log`. CCL_MOD=weight, CCL_STREAM=selective.
 
-### Follow-up: Ablate the structural components
-The ablation scope was limited to gate architecture. The **remaining unknowns**:
+| Run | basis_size | gate_mode | gate_temp | warmup | warmdown | **BPB** | vs Dense |
+|---|---|---|---|---|---|---|---|
+| `23_BASE_DENSE` | — | — | — | 0.15 | — | **1.166914** | baseline |
+| `23_REMIX_WEIGHT_LinearGate` | 64 (C//4) | linear | 1.0 | 0.15 | 0.70 | **1.212796** | **+0.046** ❌ |
+| `23_REMIX_WEIGHT_LinearGate_BetterTemp` | 64 (C//4) | linear | 2.0 | 0.20 | 0.50 | **1.201986** | **+0.035** ❌ |
+| `23_DUAL_GATE_*` | — (full W) | linear | 2.0 | 0.20 | 0.50 | worse than Remix | ❌ |
 
-| Question | Experiment |
+### Key Finding: Basis compression (B=C//4) hurts at this scale
+
+At depth=4, C=256, `basis_size = max(64, 256//4) = 64`. This means **every layer** (Q/K/V/Proj/c_fc/c_proj) runs through a 64-dim bottleneck. The compression is too aggressive:
+
+- Q/K/V: 256→64 is 4× compression in the gate space
+- The gate oscillation (spike pattern visible in loss trajectory) shows the sigmoid gates are flipping channels on/off as LR decays
+- Raising temp to 2.0 softened oscillation: -0.011 BPB improvement, but still -0.035 below dense
+
+### Why P25 (full-rank) beat dense but P23 (compressed) didn't
+
+| Property | P25 (B=C, full-rank) | P23 (B=C//4, compressed) |
+|---|---|---|
+| Gate space | D-dim (full output) | 64-dim (bottleneck) |
+| What the gate selects | Full output channels | Compressed basis directions |
+| Params vs dense | +gate overhead (>100%) | -basis savings (<100%) |
+| Result | **beats dense** | **worse than dense** |
+
+The output gate (low-rank) is the dominant quality driver, not the basis compression. The compression saves params/FLOPs but hurts quality at small scales.
+
+### DualGateLinear result
+
+DualGateLinear (single dense W + dual D-dim gate, no compression) performs **worse than RemixedLinear** at this scale. Reason: it has 107.9% of dense parameters (vs RemixedLinear's 97.1%), so it's strictly dominated by dense on both params AND quality. The D-dim gate adds overhead without the capacity benefit.
+
+---
+
+## Interpretation and Next Steps
+
+### What is actually working
+
+1. **The output gate** is the most important component (explains ~65% of quality gain in P25)
+2. **Full-rank basis (B=C)** + output gate beats dense
+3. **Compressed basis (B=C//4)** hurts at small scale — too narrow a bottleneck
+
+### Open questions
+
+| Question | Status |
 |---|---|
-| Does basis_size matter? | Sweep B = C/8, C/4, C/2 |
-| Does the LayerNorm on basis help? | Remove `ln_basis` and compare |
-| Does W_b + W_m beat dense W at same params? | Iso-param comparison (see P23 dense baseline) |
-| Is `weight` modulation the right choice? | Compare vs householder/ckr at linear gate |
+| Does B=C//4 help at larger scale (depth=12, C=768)? | ❓ Untested |
+| Is there a sweet spot between C//4 and C//1? | ❓ Try B=C//2 |
+| Can DualGateLinear beat dense if trained with better schedule? | ❓ Possible — needs MLP gate not linear |
 
-### Deeper: Reduce basis_size
-If `linear` gate is adopted, the next largest cost is the `W_b: C→B` + `W_m: B→D` pair.
-Currently B=C/4=64 (for dim=256). FLOPs = CB + BD = 2CB = 0.5C² (both projections).
-- Halving B to C/8 saves ~0.25C² additional FLOPs → total ~1.0C² (50% of dense!)
-- This DOES reduce model capacity and would need loss comparison.
+### Recommended next experiment
+
+Run P23 with `--research-dim -1` (full-rank basis) or a larger fixed basis to see if the architecture advantage from P25 transfers to the P23 sweep setup. This isolates whether the P25 win was schedule-dependent or architecture-dependent.
 
 ---
 
-## Full RemixedLinear Class Source (gpt.py, lines 1246–1813)
+## RemixedLinear Class (current, cleaned — no MoE/LoKR/TinyExpert/QuantileRoute)
 
 ```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class Linear(nn.Linear):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True):
+        super().__init__(in_features, out_features, bias=bias)
+        nn.init.normal_(self.weight, std=0.02)
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+
 class RemixedLinear(nn.Module):
-    def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False, routing_scope='per_sequence'):
+    """
+    Factorized linear layer with basis compression, operator modulation,
+    context-conditioned basis gate, and low-rank output gate.
+
+    Forward:
+        h       = LayerNorm(W_b · x)               # basis projection
+        h       = operator_modulate(h, ctx)         # optional: householder/ckr/spectral
+        h_gated = h ⊙ σ(gate(ctx))                 # basis gate (selects active dims)
+        y_pre   = W_m · h_gated                    # expand to output space
+        gate_out= 1 + tanh(s · U · ctx)            # low-rank output gate
+        y       = (y_pre ⊙ gate_out) + bias
+    """
+
+    def __init__(
+        self,
+        in_features,
+        out_features,
+        context_dim,
+        basis_size=64,
+        remixed_linear_kwargs=None,
+        scale_basis=True,
+        film_gate=False,
+        **_ignored,
+    ):
         super().__init__()
-        self._film_gate_flag = film_gate
-        # routing_scope: 'per_token' (FFN layers) or 'per_sequence' (attention layers)
-        self.routing_scope = routing_scope
         if remixed_linear_kwargs is None:
-            remixed_linear_kwargs = dict(use_basis_gate=True, use_output_gate=True, use_context=True)
-        # Clamp basis_size to avoid rank bottleneck at asymmetric in/out dims
+            remixed_linear_kwargs = {}
+
+        # Auto-scale basis_size: compress relative to the *smaller* of in/out
+        # to avoid the bottleneck being wider than the narrower projection dimension.
         if scale_basis:
             basis_size = max(basis_size, min(in_features, out_features) // 4)
-        self.basis_size = basis_size
-        self.use_basis_gate = remixed_linear_kwargs.get('use_basis_gate', True)
+
+        self.in_features     = in_features
+        self.out_features    = out_features
+        self.basis_size      = basis_size
+        self.use_context     = remixed_linear_kwargs.get('use_context', True)
+        self.use_basis_gate  = remixed_linear_kwargs.get('use_basis_gate', True)
         self.use_output_gate = remixed_linear_kwargs.get('use_output_gate', True)
-        self.use_context = remixed_linear_kwargs.get('use_context', True)
-        self.sparse_gate_k = remixed_linear_kwargs.get('sparse_gate_k', 0)
-        self.gate_temperature = max(remixed_linear_kwargs.get('gate_temperature', 1.0), 1e-6)
+        self.gate_temperature = float(remixed_linear_kwargs.get('gate_temperature', 1.0))
+        self.basis_gate_mode = remixed_linear_kwargs.get('basis_gate_mode', 'linear')
         self.operator_modulation = remixed_linear_kwargs.get('operator_modulation', 'none')
-        self._last_orth_loss = None
-        self.n_templates = remixed_linear_kwargs.get('n_templates', 1)
-        self.template_routing_learned = remixed_linear_kwargs.get('template_routing_learned', False)
-        self.tiny_expert = remixed_linear_kwargs.get('tiny_expert', False)
-        self.tiny_expert_topk = remixed_linear_kwargs.get('tiny_expert_topk', 16)
-        self.use_quantile_route = int(remixed_linear_kwargs.get('use_quantile_route', 0))
-        self.lokr_expert = remixed_linear_kwargs.get('lokr_expert', False)
-        self.lokr_n_experts = remixed_linear_kwargs.get('lokr_n_experts', 64)
-        self.lokr_topk = remixed_linear_kwargs.get('lokr_topk', 16)
-        self.lokr_rank = remixed_linear_kwargs.get('lokr_rank', 4)
-        self.lokr_learned = remixed_linear_kwargs.get('lokr_learned', False)
-        self._use_shared_route = remixed_linear_kwargs.get('use_shared_route', False)
+        self._film_gate_flag = film_gate
 
-        # Initialise all optional attrs to None
-        self.template_bank = None
-        self.template_mixing = None
-        self.expert_up_w = None
-        self.expert_down_w = None
-        self.template_route = None
-        self.lokr_down_w = None
-        self.lokr_up_w = None
-        self.lokr_route_proj = None
+        # ── Structural Projections ────────────────────────────────────────────
+        self.basis           = Linear(in_features, basis_size, bias=False)
+        self.ln_basis        = nn.LayerNorm(basis_size)
+        self.template_mixing = nn.Parameter(torch.empty(out_features, basis_size))
+        nn.init.normal_(self.template_mixing, std=0.02)
+        self.bias            = nn.Parameter(torch.zeros(out_features))
 
-        if self.lokr_expert:
-            K, R = self.lokr_n_experts, self.lokr_rank
-            b_shrunk = basis_size - K * R
-            if b_shrunk <= 0:
-                import warnings
-                R_old = R
-                R = max(1, (basis_size - 1) // K)
-                b_shrunk = basis_size - K * R
-                self.lokr_rank = R
-                warnings.warn(f"LoKR: auto-clamped rank {R_old}→{R} (basis={basis_size}, K={K})")
-            assert b_shrunk > 0
-            basis_size = b_shrunk
-            self.basis_size = b_shrunk
-
-        self.basis = Linear(in_features, basis_size, bias=False)
-        if self.lokr_expert:
-            K, R = self.lokr_n_experts, self.lokr_rank
-            self.lokr_down_w = nn.Parameter(torch.empty(K, R, in_features))
-            self.lokr_up_w   = nn.Parameter(torch.zeros(K, out_features, R))
-            if self.lokr_learned:
-                self.lokr_route_proj = nn.Parameter(torch.empty(K, in_features))
-            else:
-                self.lokr_route_proj = nn.Parameter(torch.empty(K, in_features), requires_grad=False)
-            self.template_mixing = nn.Parameter(torch.empty(out_features, basis_size))
-            self._lokr_basis_size = basis_size
-        elif self.tiny_expert and self.n_templates > 1:
-            topk = self.tiny_expert_topk
-            assert topk > 0
-            raw_expert_dim = basis_size // topk
-            self.expert_dim = raw_expert_dim
-            K = self.n_templates
-            self.expert_up_w   = nn.Parameter(torch.empty(K, self.expert_dim, basis_size))
-            self.expert_down_w = nn.Parameter(torch.empty(K, out_features, self.expert_dim))
-            self.template_bank = None
-            self.template_mixing = None
-            if not self._use_shared_route:
-                if self.use_quantile_route == 2:
-                    self._qrouter = QuantileCrossAttentionRouter(in_features, K, topk)
-                    self.template_route = None
-                elif self.use_quantile_route == 1:
-                    self._qrouter = QuantileBalancedRouter(in_features, K, topk, learned=self.template_routing_learned)
-                    self.template_route = None
-                else:
-                    route_init = torch.randn(in_features, K) / (in_features ** 0.5)
-                    if self.template_routing_learned:
-                        self.template_route = nn.Parameter(route_init)
-                    else:
-                        self.register_buffer('template_route', route_init)
-                    self._qrouter = None
-            else:
-                self._qrouter = None
-            self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
-        elif self.n_templates > 1:
-            self.template_bank = nn.ParameterList([
-                nn.Parameter(torch.randn(out_features, basis_size)) for _ in range(self.n_templates)
-            ])
-            self.template_mixing = None
-            route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
-            if self.template_routing_learned:
-                self.template_route = nn.Parameter(route_init)
-            else:
-                self.register_buffer('template_route', route_init)
-            self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
-        else:
-            self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
-        self.ln_basis = nn.LayerNorm(basis_size)
-        self.bias = nn.Parameter(torch.zeros(out_features))
-
+        # ── Operator Modulation ───────────────────────────────────────────────
+        # Applied to h_basis in basis space before gating.
         if self.use_context:
-            basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
-            film_gate = getattr(self, '_film_gate_flag', False)
-            _gate_out_size = 2 * basis_size if self.use_basis_gate and film_gate else basis_size
-            self.basis_gate_mode = remixed_linear_kwargs.get('basis_gate_mode', 'mlp')
-            self.basis_modulator = None
-            self.basis_gate_content = None
-            self.basis_gate_context = None
-            if self.use_basis_gate:
-                if self.basis_gate_mode == 'mlp':
-                    self.basis_modulator = nn.Sequential(
-                        Linear(context_dim, basis_hidden, bias=True),
-                        nn.GELU(),
-                        Linear(basis_hidden, _gate_out_size, bias=True),
-                    )
-                    nn.init.zeros_(self.basis_modulator[-1].weight)
-                    if self.basis_modulator[-1].bias is not None:
-                        nn.init.zeros_(self.basis_modulator[-1].bias)
-                elif self.basis_gate_mode == 'linear':
-                    self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
-                    nn.init.zeros_(self.basis_modulator.weight)
-                    nn.init.zeros_(self.basis_modulator.bias)
-                elif self.basis_gate_mode == 'attn':
-                    # gate = σ(W_content·h ⊙ W_context·ctx)
-                    self.basis_gate_content = Linear(basis_size, _gate_out_size, bias=False)
-                    self.basis_gate_context = Linear(context_dim, _gate_out_size, bias=True)
-                    nn.init.normal_(self.basis_gate_content.weight, std=0.02)
-                    nn.init.zeros_(self.basis_gate_context.weight)
-                    nn.init.zeros_(self.basis_gate_context.bias)
-                # else 'none': gate_basis = ones in forward
-            r = remixed_linear_kwargs.get('output_gate_rank', 8)
+            if self.operator_modulation == 'householder':
+                # Context-adaptive Householder reflection in basis space
+                self.householder_v = Linear(context_dim, basis_size, bias=False)
+            elif self.operator_modulation == 'ckr':
+                # Causal kernel reparameterisation: sigmoid gate in basis space
+                self.ckr_gate = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.ckr_gate.weight)
+                nn.init.zeros_(self.ckr_gate.bias)
+            elif self.operator_modulation == 'spectral':
+                # Spectral steering: tanh scale in basis space
+                self.spectral_scale = Linear(context_dim, basis_size, bias=True)
+                nn.init.zeros_(self.spectral_scale.weight)
+                nn.init.zeros_(self.spectral_scale.bias)
+
+        # ── Basis Gate ────────────────────────────────────────────────────────
+        if self.use_context and self.use_basis_gate:
+            _gate_out_size = basis_size * 2 if film_gate else basis_size
+            if self.basis_gate_mode == 'mlp':
+                self.basis_modulator = nn.Sequential(
+                    Linear(context_dim, context_dim // 2, bias=False),
+                    nn.SiLU(),
+                    Linear(context_dim // 2, _gate_out_size, bias=True),
+                )
+                nn.init.zeros_(self.basis_modulator[-1].weight)
+                nn.init.zeros_(self.basis_modulator[-1].bias)
+            else:  # 'linear' (default)
+                self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
+                nn.init.zeros_(self.basis_modulator.weight)
+                nn.init.zeros_(self.basis_modulator.bias)
+
+        # ── Output Gate (Low-Rank) ────────────────────────────────────────────
+        if self.use_context and self.use_output_gate:
+            r = int(remixed_linear_kwargs.get('output_gate_rank', 8))
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
             self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)
-            # operator_modulation variants omitted for brevity (householder/spectral/ocd/lie/polynomial/grassmann)
+            nn.init.zeros_(self.output_gate_coeffs.weight)
+            nn.init.zeros_(self.output_gate_coeffs.bias)
+        else:
+            self.output_gate_coeffs = None
+            self.output_gate_basis  = None
+            self.output_gate_scale  = None
 
+    # ── Optimizer parameter grouping ──────────────────────────────────────────
     def gate_parameters(self):
-        """Yield gate-specific parameters for lower-LR optimizer group."""
-        if self.use_context:
-            if self.basis_modulator is not None:
-                yield from self.basis_modulator.parameters()
-            if self.basis_gate_content is not None:
-                yield from self.basis_gate_content.parameters()
-            if self.basis_gate_context is not None:
-                yield from self.basis_gate_context.parameters()
+        """Gate-side params → lower-LR optimizer group."""
+        if not self.use_context:
+            return
+        if self.use_basis_gate and hasattr(self, 'basis_modulator'):
+            yield from self.basis_modulator.parameters()
+        if self.output_gate_coeffs is not None:
             yield self.output_gate_coeffs.weight
             if self.output_gate_coeffs.bias is not None:
                 yield self.output_gate_coeffs.bias
             yield self.output_gate_basis
             yield self.output_gate_scale
-            # ... operator_modulation params ...
-            if self.template_route is not None and isinstance(self.template_route, nn.Parameter):
-                yield self.template_route
-            if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
-                yield self.lokr_route_proj
+        if self.operator_modulation == 'householder':
+            yield from self.householder_v.parameters()
+        elif self.operator_modulation == 'ckr':
+            yield from self.ckr_gate.parameters()
+        elif self.operator_modulation == 'spectral':
+            yield from self.spectral_scale.parameters()
 
     def non_gate_parameters(self):
-        """Yield structural parameters for Muon/normal-LR group."""
+        """Structural params → Muon / normal-LR group."""
         yield self.basis.weight
-        if self.template_mixing is not None: yield self.template_mixing
-        if self.template_bank is not None:
-            for t in self.template_bank: yield t
-        if self.expert_up_w is not None: yield self.expert_up_w
-        if self.expert_down_w is not None: yield self.expert_down_w
-        if self.lokr_down_w is not None: yield self.lokr_down_w
-        if self.lokr_up_w is not None: yield self.lokr_up_w
+        yield self.template_mixing
         yield self.bias
 
-    def forward(self, x, context_state, route_weights=None, context_gates=None, **kwargs):
+    # ── Forward ───────────────────────────────────────────────────────────────
+    def forward(self, x, context_state, context_gates=None, **_ignored):
         """
-        x:              (B, T, in_features)
-        context_state:  (B, T, context_dim) — causal context from CCLBlock
-        route_weights:  optional (B, T, K) pre-computed routing tensor
-        context_gates:  optional dict with 'basis_gate' and 'output_coeffs'
-                        from SharedContextGates (skips local gate MLP when provided)
+        x:             (B, T, in_features)
+        context_state: (B, T, context_dim)  — causal context from CCLBlock
+        context_gates: optional dict with pre-computed 'basis_gate' / 'output_coeffs'
+                       (from SharedContextGates, if enabled)
         """
         dtype = x.dtype
-        # ── Step 1: Project to basis + normalise ──────────────────────────────
-        h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
+
+        # Step 1: Project to basis space and normalise
+        h = self.ln_basis(
+            self.basis(x).to(dtype=self.ln_basis.weight.dtype)
+        ).to(dtype=dtype)
+
+        gate_out = None
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
-            # Optional operator modulation (householder/spectral/lie/polynomial/grassmann)
-            # ... (applies in-place transform to h_basis) ...
 
-            # ── Step 2: Basis gate ────────────────────────────────────────────
-            if self.use_basis_gate:
-                if context_gates is not None and 'basis_gate' in context_gates:
-                    gate_logits = context_gates['basis_gate'].to(dtype=dtype)
-                elif self.basis_gate_mode == 'attn':
-                    gate_logits = self.basis_gate_content(h_basis) * self.basis_gate_context(ctx)
-                elif self.basis_gate_mode == 'none':
-                    gate_logits = None
-                else:  # 'mlp' or 'linear'
-                    gate_logits = self.basis_modulator(ctx)
+            # Step 2: Operator Modulation (in basis space, before gating)
+            if self.operator_modulation == 'householder':
+                v       = self.householder_v(ctx)
+                v_sq    = torch.sum(v ** 2, dim=-1, keepdim=True) + 1e-6
+                h_dot_v = torch.sum(h * v, dim=-1, keepdim=True)
+                h       = h - 2 * (h_dot_v / v_sq) * v
+            elif self.operator_modulation == 'ckr':
+                h = h * torch.sigmoid(self.ckr_gate(ctx))
+            elif self.operator_modulation == 'spectral':
+                h = h * (1.0 + torch.tanh(self.spectral_scale(ctx)))
 
-                if gate_logits is None:
-                    gate_basis = torch.ones_like(h_basis)
-                elif self._film_gate_flag:
+            # Step 3: Basis Gate
+            if self.use_basis_gate and hasattr(self, 'basis_modulator'):
+                gate_logits = (
+                    context_gates['basis_gate'].to(dtype=dtype)
+                    if (context_gates and 'basis_gate' in context_gates)
+                    else self.basis_modulator(ctx)
+                )
+                if self._film_gate_flag:
                     scale_logits, shift = gate_logits.chunk(2, dim=-1)
-                    gate_basis = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
-                    h_basis = h_basis * gate_basis + shift.to(dtype=dtype)
-                    gate_basis = None
-                elif self.sparse_gate_k > 0:
-                    k = min(self.sparse_gate_k, self.basis_size)
-                    topk_vals, topk_idx = torch.topk(gate_logits, k=k, dim=-1)
-                    sparse = torch.zeros_like(gate_logits).scatter_(-1, topk_idx, F.softmax(topk_vals, dim=-1))
-                    soft = torch.sigmoid(gate_logits / self.gate_temperature)
-                    gate_basis = (sparse + (soft - soft.detach())).to(dtype=dtype)
+                    gate_b = (1.0 + torch.tanh(scale_logits * 0.1)).to(dtype=dtype)
+                    h = h * gate_b + shift.to(dtype=dtype)
                 else:
-                    gate_basis = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
-            else:
-                gate_basis = torch.ones_like(h_basis)
+                    h = h * torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
 
-            # ── Step 3: Output gate (low-rank) ────────────────────────────────
-            if self.use_output_gate:
-                if context_gates is not None and 'output_coeffs' in context_gates:
-                    coeffs = context_gates['output_coeffs'].to(dtype=dtype)
-                else:
-                    coeffs = self.output_gate_coeffs(ctx)              # (B, T, r)
-                gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
-                gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits)
-            else:
-                gate_out = None
-        else:
-            gate_basis = torch.ones_like(h_basis)
-            gate_out = None
+            # Step 4: Output Gate (low-rank)
+            if self.use_output_gate and self.output_gate_coeffs is not None:
+                coeffs = (
+                    context_gates['output_coeffs'].to(dtype=dtype)
+                    if (context_gates and 'output_coeffs' in context_gates)
+                    else self.output_gate_coeffs(ctx)
+                )
+                gate_logits2 = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
+                gate_out = 1.0 + torch.tanh(
+                    self.output_gate_scale.to(dtype=dtype) * gate_logits2
+                )
 
-        # ── Step 4: Apply basis gate ──────────────────────────────────────────
-        h_gated = (h_basis * gate_basis).to(dtype=dtype)
+        # Step 5: Expand to output space
+        y = F.linear(h, self.template_mixing.to(dtype=dtype))
 
-        # ── Step 5: Mix to output space ───────────────────────────────────────
-        # (single-template fast path; MoE/TinyExpert/LoKR paths omitted)
-        pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
-
-        # ── Step 6: Apply output gate + bias ─────────────────────────────────
+        # Step 6: Apply output gate + bias
         if gate_out is not None:
-            pre_output = pre_output * gate_out
-        return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype) \
-               if self.bias is not None else pre_output.to(dtype=dtype)
+            y = y * gate_out
+        return y + self.bias.to(dtype=dtype)
 ```
 
 ---
 
-## Design Notes / Known Issues
+## DualGateLinear Class (ablation — no basis compression)
 
-- **ATTN gate hurts**: bilinear content×context gating is unstable at this scale. The content projection from a partially-trained basis creates noisy gradients early in training.
-- **gate_parameters() / non_gate_parameters()**: Critical for the dual-LR optimizer setup. Gate params get a lower LR to reduce early-training noise.
-- **use_output_gate unconditionally creates output_gate_coeffs** when `use_context=True`, even when `use_output_gate=False` is passed. This was by design (always init for init_weights) but means `gate_parameters()` always yields them — potential optimization.
-- **SharedContextGates integration**: When enabled, the gate MLP is computed once per block (not per-layer), amortizing its cost across Q/K/V/Proj. Currently disabled in P25 sweep (`--remix-shared-context-gates 0`) for clean ablation.
+```python
+class DualGateLinear(nn.Module):
+    """
+    Single dense projection + dual D-dim multiplicative gate.
+    Ablation of RemixedLinear: gate operates in full output space (no bottleneck).
+
+        h = LayerNorm(W · x)                     # single dense matmul, LN in D-space
+        y = h ⊙ σ(W_gate · ctx / T)             # Stage-1: D-dim sigmoid gate
+        y = y ⊙ (1 + tanh(s · U · ctx))         # Stage-2: low-rank output gate
+
+    Result (depth=4, C=256): 107.9% of dense params, worse BPB than dense.
+    The gate overhead with no compression savings is strictly dominated.
+    """
+```
+
+---
+
+## Design Notes
+
+- **Compressed basis (B=C//4) hurts at small scale** (depth=4, C=256): oscillation + too-narrow bottleneck → worse than dense. Full-rank (B=C) beats dense.
+- **ATTN gate hurts**: bilinear content×context gating is unstable — noisy basis gradients early in training corrupt the gate signal. Discarded.
+- **gate_temperature=2.0** softens sigmoid oscillation in late warmdown; reduced the deficit vs dense from -0.046 to -0.035 BPB at B=C//4.
+- **gate_parameters() / non_gate_parameters()**: critical for the dual-LR optimizer setup (gate params get lower LR to reduce early-training noise).
+- **SharedContextGates**: batches all 6 per-block gate MLPs into 3 shared matmuls (~6× fewer kernel launches). Currently off in sweeps for clean ablation.
