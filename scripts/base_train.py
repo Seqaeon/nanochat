@@ -77,9 +77,9 @@ parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1
 parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
 parser.add_argument("--remix-use-context", type=int, default=1, choices=[0, 1], help="enable context modulation in remixed linear (1/0)")
 parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp",
-                    choices=["mlp", "linear", "centered", "attn", "random", "none"],
-                    help="Gate architecture: mlp=2-layer, linear=single layer (zero-init), centered=1+tanh passthrough init, attn=bilinear, random=linear with random init (no zero-init), none=no basis gate")
-# Phase 22: MoE-style overparameterized template mixing in RemixedLinear
+                    choices=["mlp", "linear", "centered", "attn", "random", "none", "lowrank"],
+                    help="Gate architecture: mlp=2-layer, linear=single layer (zero-init), centered=1+tanh passthrough init, attn=bilinear, random=linear with random init (no zero-init), none=no basis gate, lowrank=low rank centered output gate symmetry")
+
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
 parser.add_argument("--p22-template-topk", type=int, default=0, help="22: hard top-k for legacy template bank (0=soft over all K, N=top-N sparse routing)")
