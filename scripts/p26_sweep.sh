@@ -114,22 +114,22 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     If this beats dense: the W_b@W_m factorization is unnecessary.
 #     If not: the factorization (spectral bias / intermediate LN) is load-bearing.
 # ══════════════════════════════════════════════════════
-#TAG="26_OUTPUT_GATED_${CCL_MOD^^}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "26B" "$TAG" "OutputGatedLinear: single W + low-rank output gate, ~1.01× FLOPs"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --p26-output-gated-linear 1 \
-#      --remix-use-basis-gate 0 \
-#      --remix-use-output-gate 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
+TAG="26_OUTPUT_GATED_${CCL_MOD^^}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "26B" "$TAG" "OutputGatedLinear: single W + low-rank output gate, ~1.01× FLOPs"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p26-output-gated-linear 1 \
+      --remix-use-basis-gate 0 \
+      --remix-use-output-gate 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 
 
 # ══════════════════════════════════════════════════════
@@ -139,23 +139,23 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     If yes: factorization provides an inductive bias.
 #     If no: all quality comes from gating, not factorization.
 # ══════════════════════════════════════════════════════
-#TAG="26_FACTORED_NO_CTX_${CCL_MOD^^}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "26C" "$TAG" "W_b@W_m + LN only, no context/gate — does factorization help?"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --remix-use-basis-gate 0 \
-#      --remix-use-output-gate 0 \
-#      --remix-use-context 0 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
-#
+TAG="26_FACTORED_NO_CTX_${CCL_MOD^^}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "26C" "$TAG" "W_b@W_m + LN only, no context/gate — does factorization help?"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --remix-use-basis-gate 0 \
+      --remix-use-output-gate 0 \
+      --remix-use-context 0 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
 
 # ══════════════════════════════════════════════════════
 # 26D: Factored + Output Gate only — confirmation of P25 OUTPUT_ONLY
@@ -163,22 +163,22 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     P25 got 1.1655 BPB with this setup (beats dense ~1.167).
 #     Confirm that result here with the same schedule as the others.
 # ══════════════════════════════════════════════════════
-#TAG="26_FACTORED_OUT_GATE_${CCL_MOD^^}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "26D" "$TAG" "W_b@W_m + output gate only (≈ P25 OUTPUT_ONLY) — confirm 1.1655"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --remix-use-basis-gate 0 \
-#      --remix-use-output-gate 1 \
-#      --remix-basis-gate-mode none \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
+TAG="26_FACTORED_OUT_GATE_${CCL_MOD^^}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "26D" "$TAG" "W_b@W_m + output gate only (≈ P25 OUTPUT_ONLY) — confirm 1.1655"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --remix-use-basis-gate 0 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode none \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 
 
 # ══════════════════════════════════════════════════════
