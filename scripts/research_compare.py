@@ -79,7 +79,9 @@ def run_training_sweep(args):
         "--remix-basis-gate-mode", str(getattr(args, 'remix_basis_gate_mode', 'mlp')),
         "--p22-n-templates", str(getattr(args, 'p22_n_templates', 1)),
         "--p22-template-routing-learned", str(getattr(args, 'p22_template_routing_learned', 0)),
+        "--p22-template-topk", str(getattr(args, 'p22_template_topk', 0)),
         "--p22-attn-moe-route", str(getattr(args, 'p22_attn_moe_route', 'none')),
+        "--remix-gate-lr-scale", str(getattr(args, 'remix_gate_lr_scale', 0.3)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
@@ -499,7 +501,9 @@ if __name__ == "__main__":
     parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp", choices=["mlp", "linear", "centered", "attn", "none"], help="basis gate architecture")
     parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
     parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
+    parser.add_argument("--p22-template-topk", type=int, default=0, help="22: hard top-k for legacy template bank")
     parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj")
+    parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="remix: learning rate scale for gate parameters")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
                         choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
