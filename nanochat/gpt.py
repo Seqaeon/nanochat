@@ -7876,8 +7876,8 @@ class GPT(nn.Module):
                             # Plain Linear/Float8Linear — all params are structural
                             for p in rl.parameters():
                                 (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
-                        # ln_basis (LayerNorm) — only on research modules
-                        if hasattr(rl, 'ln_basis'):
+                        # ln_basis (LayerNorm) — only on research modules (None on OutputGatedLinear)
+                        if hasattr(rl, 'ln_basis') and rl.ln_basis is not None:
                             for p in rl.ln_basis.parameters():
                                 struct_adamw_params.append(p)
                     # ve_gate (if present) is structural
