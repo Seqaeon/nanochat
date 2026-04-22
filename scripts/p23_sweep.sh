@@ -194,6 +194,37 @@ else
       --remix-use-basis-gate 1 \
       --remix-use-output-gate 1 \
       --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1G: RemixedLinear, CENTERED gate,  COMPRESSED basis B=C//4
+#     Fix for the 277x gradient disparity:
+#     1+tanh(s*logits) starts at 1.0 (passthrough) not 0.5.
+#     W_b & W_m train like dense for first ~100 steps, then
+#     gate gradually learns to amplify/suppress symmetrically.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_CenteredGate_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1G" "$TAG" "RemixedLinear, centered gate, B=C//4, temp=2.0"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
       --remix-basis-scale-factor 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
