@@ -188,23 +188,23 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #     If this matches MLP gate quality: MLP gate is wasteful.
 #     If not: MLP gate's hidden dim provides something irreducible.
 # ══════════════════════════════════════════════════════
-TAG="26_LOWRANK_GATE_${CCL_MOD^^}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "26E" "$TAG" "W_b@W_m + lowrank basis gate (r=8) + output gate — gate at ~0 FLOPs"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --remix-use-basis-gate 1 \
-      --remix-use-output-gate 1 \
-      --remix-basis-gate-mode lowrank \
-      --remix-basis-gate-rank 8 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "════════════════ $TAG COMPLETE ════════════════"
-        mark_completed "$TAG"
-    else
-        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-    fi
-fi
+#TAG="26_LOWRANK_GATE_${CCL_MOD^^}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "26E" "$TAG" "W_b@W_m + lowrank basis gate (r=8) + output gate — gate at ~0 FLOPs"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --remix-use-basis-gate 1 \
+#      --remix-use-output-gate 1 \
+#      --remix-basis-gate-mode lowrank \
+#      --remix-basis-gate-rank 8 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "════════════════ $TAG COMPLETE ════════════════"
+#        mark_completed "$TAG"
+#    else
+#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+#    fi
+#fi
 
 
 # ══════════════════════════════════════════════════════
