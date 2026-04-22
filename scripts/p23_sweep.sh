@@ -225,7 +225,7 @@ else
       --remix-use-basis-gate 1 \
       --remix-use-output-gate 1 \
       --remix-basis-gate-mode centered \
-      --remix-basis-scale-factor 1 \
+      --remix-basis-scale-factor 4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"
