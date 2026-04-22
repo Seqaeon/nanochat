@@ -243,7 +243,7 @@ fi
 #     W_b & W_m train like dense for first ~100 steps, then
 #     gate gradually learns to amplify/suppress symmetrically.
 # ══════════════════════════════════════════════════════
-TAG="23_REMIX_${CCL_MOD^^}_CenteredGate_C4"
+TAG="23_REMIX_${CCL_MOD^^}_CenteredGate_C4__Rank_32"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
