@@ -1388,6 +1388,8 @@ class RemixedLinear(nn.Module):
                 for _ in range(self.n_templates)
             ])
             self.template_mixing = None  # use template_bank instead
+            # Hard top-k for sparse routing (0 = soft over all K)
+            self.template_topk = int(remixed_linear_kwargs.get('template_topk', 0))
             # Content routing for template selection
             route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
             if self.template_routing_learned:
@@ -1814,20 +1816,37 @@ class RemixedLinear(nn.Module):
                 # Soft routing: weighted sum over all K experts
                 pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
         elif self.n_templates > 1:
-            # Legacy Phase 22: MoE-style template routing (full-rank per-token)
+            # Legacy Phase 22: MoE-style template routing
             route_logits = x.float() @ self.template_route.float()  # (B, T, K)
-            route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
-            # Update diagnostics
             with torch.no_grad():
-                w_f = route_weights.float()
+                w_f = F.softmax(route_logits, dim=-1)
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
-            # Weighted sum of template outputs
-            pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
-                                     device=x.device, dtype=dtype)
-            for k in range(self.n_templates):
-                out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
-                pre_output = pre_output + route_weights[..., k:k+1] * out_k
+            topk = getattr(self, 'template_topk', 0)
+            if topk > 0 and topk < self.n_templates:
+                # Hard top-k sparse routing — stack all templates, matmul, gather
+                # Compile-safe: no Python conditionals inside the hot path.
+                topk_vals, topk_idx = route_logits.topk(topk, dim=-1)   # (B, T, topk)
+                topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype)  # (B, T, topk)
+                # Stack template_bank → (K, out, basis) and batch-matmul
+                T_stack = torch.stack(
+                    [t.to(dtype=dtype) for t in self.template_bank], dim=0
+                )  # (K, out, basis)
+                all_out = torch.einsum('bts,kos->btko', h_gated, T_stack)  # (B, T, K, out)
+                # Gather selected top-k outputs
+                idx_exp = topk_idx.unsqueeze(-1).expand(
+                    *topk_idx.shape, all_out.shape[-1]
+                )  # (B, T, topk, out)
+                topk_out = torch.gather(all_out, dim=-2, index=idx_exp)   # (B, T, topk, out)
+                pre_output = (topk_out * topk_weights.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
+            else:
+                # Soft routing: weighted sum over all K templates
+                route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
+                pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
+                                         device=x.device, dtype=dtype)
+                for k in range(self.n_templates):
+                    out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
+                    pre_output = pre_output + route_weights[..., k:k+1] * out_k
         else:
             pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
 
@@ -7542,6 +7561,17 @@ class GPT(nn.Module):
                         expert_params = submod.expert_up_w.numel() + submod.expert_down_w.numel()
                         inactive_frac = 1.0 - (topk / K)
                         inactive_expert_params += int(expert_params * inactive_frac)
+                elif (not getattr(submod, 'tiny_expert', False)
+                      and not getattr(submod, 'lokr_expert', False)
+                      and getattr(submod, 'n_templates', 1) > 1
+                      and submod.template_bank is not None):
+                    # Legacy template bank with hard top-k routing
+                    topk = getattr(submod, 'template_topk', 0)
+                    K = submod.n_templates
+                    if topk > 0 and topk < K:
+                        template_params = sum(t.numel() for t in submod.template_bank)
+                        inactive_frac = 1.0 - (topk / K)
+                        inactive_expert_params += int(template_params * inactive_frac)
                 elif getattr(submod, 'lokr_expert', False):
                     topk = submod.lokr_topk
                     K = submod.lokr_n_experts

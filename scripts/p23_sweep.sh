@@ -266,23 +266,23 @@ else
     fi
 fi
 # ══════════════════════════════════════════════════════
-# 1I: Multi-basis C4 — 4 x C//4 templates, learned routing
-#     Each of 4 bases has rank C//4. Mixed together they can span
-#     up to full rank C. Active FLOPs per token ≈ C4 FLOPs (one
-#     template dominates). Total params ≈ FullRank params.
-#     Learned routing since it outperforms frozen in prior sweeps.
-#     Tests whether routing diversity closes the C4→FullRank gap.
+# 1I: Top-1 of 4 C4 templates (hard sparse routing)
+#     4 templates each of rank C//4. Per token, only 1 is active.
+#     Active FLOPs ≈ 0.5× dense (basis C²/4 + 1 template C²/4).
+#     Total params ≈ 1.25× dense (4 templates vs 1 for FullRank).
+#     estimate_flops: subtracts 3/4 of template params as inactive.
 # ══════════════════════════════════════════════════════
-TAG="23_REMIX_${CCL_MOD^^}_MultiBasis_C4_4T_Learned"
+TAG="23_REMIX_${CCL_MOD^^}_4T_Top1_C4"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "1I" "$TAG" "RemixedLinear, 4 C4 bases, learned routing — rank recovery via template diversity"
+    print_header "1I" "$TAG" "4 C4 templates, hard top-1 routing — sparse, active FLOPs ≈ 0.5× dense"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
       --p22-n-templates 4 \
       --p22-template-routing-learned 1 \
+      --p22-template-topk 1 \
       --remix-use-context 1 \
       --remix-shared-context-gates 0 \
       --remix-use-basis-gate 1 \
@@ -299,19 +299,146 @@ fi
 
 
 # ══════════════════════════════════════════════════════
-# 1J: Random gate init — C4, linear gate but kept at default
-#     kaiming_uniform init (NOT zero-init).
-#     All prior gate modes zero-init the projection so gate
-#     outputs start at exactly 0.5 or 1.0. Here gate values
-#     at step 0 are spread across (0,1) randomly.
-#     Tests if a random starting gate hurts, is neutral, or
-#     accidentally helps by breaking symmetry from init.
+# 1J: Top-2 of 4 C4 templates (hard sparse routing)
+#     4 templates, 2 active per token.
+#     Active FLOPs ≈ 0.75× dense (basis + 2 templates).
+#     Midpoint between top-1 (cheap) and soft-4 (expensive).
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_4T_Top2_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1J" "$TAG" "4 C4 templates, hard top-2 routing — active FLOPs ≈ 0.75× dense"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 4 \
+      --p22-template-routing-learned 1 \
+      --p22-template-topk 2 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1K: 2 C4 templates, soft routing (K=2, all active)
+#     Both templates always active. FLOPs ≈ 0.75× dense.
+#     Params ≈ 0.75× dense. Cheapest multi-basis option.
+#     Tests if just 2 diverse modes is enough vs single C4.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_2T_Soft_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1K" "$TAG" "2 C4 templates, soft routing — FLOPs ≈ 0.75× dense, params ≈ 0.75× dense"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 2 \
+      --p22-template-routing-learned 1 \
+      --p22-template-topk 0 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1L: Tiny experts K=4, expert_dim = basis_size//4 = C//16
+#     All 4 tiny experts active per token (soft routing).
+#     Each expert is C//16-dim — very cheap per expert.
+#     Active FLOPs ≈ 0.56× dense. Params ≈ 0.5× dense.
+#     Tests tiny diverse experts vs one larger C4 basis.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_TinyK4_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1L" "$TAG" "Tiny experts K=4 (expert_dim=C//16), all active — FLOPs ≈ 0.56× dense"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 4 \
+      --p23-topk 4 \
+      --p23-learned-route 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1M: Tiny experts K=2, expert_dim = basis_size//2 = C//8
+#     Both tiny experts always active. FLOPs ≈ 0.56× dense.
+#     Same FLOPs as 1L but 2 larger experts vs 4 tiny ones.
+#     Tests the width-vs-depth trade-off in tiny experts.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_TinyK2_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1M" "$TAG" "Tiny experts K=2 (expert_dim=C//8), all active — FLOPs ≈ 0.56× dense"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p23-tiny-expert 1 \
+      --p23-n-experts 2 \
+      --p23-topk 2 \
+      --p23-learned-route 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1N: Random gate init — C4, kaiming_uniform init (NOT zero-init)
+#     Tests whether random gate values at step 0 hurt/help vs
+#     stable init (0.5 from linear-zero or 1.0 from centered).
 # ══════════════════════════════════════════════════════
 TAG="23_REMIX_${CCL_MOD^^}_RandomGateInit_C4"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "1J" "$TAG" "RemixedLinear, random gate init (kaiming), B=C//4"
+    print_header "1N" "$TAG" "RemixedLinear, random gate init (kaiming), B=C//4"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
@@ -330,6 +457,12 @@ else
     fi
 fi
 
+
+# ══════════════════════════════════════════════════════
+# 1O: Gate LR reduction — C4, centered gate, gate LR = 0.05×
+#     Gate params already get 0.3× structural LR. Drop to 0.05×
+#     to further throttle gate learning vs W_b/W_m.
+# ══════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════
 # 1K: Gate LR reduction — C4, centered gate, gate params at

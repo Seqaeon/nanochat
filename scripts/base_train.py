@@ -82,6 +82,7 @@ parser.add_argument("--remix-basis-gate-mode", type=str, default="mlp",
 # Phase 22: MoE-style overparameterized template mixing in RemixedLinear
 parser.add_argument("--p22-n-templates", type=int, default=1, help="22: number of template_mixing matrices (1=standard, K>1=MoE routing)")
 parser.add_argument("--p22-template-routing-learned", type=int, default=0, choices=[0, 1], help="22: learned template routing (0=frozen, 1=learned)")
+parser.add_argument("--p22-template-topk", type=int, default=0, help="22: hard top-k for legacy template bank (0=soft over all K, N=top-N sparse routing)")
 parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj ('none'=off, 'sequence'=per-seq, 'token'=per-tok)")
 # Phase 23: Tiny-Experts RemixedLinear + Standard MoE baseline
 parser.add_argument("--p23-tiny-expert", type=int, default=0, choices=[0, 1], help="23: enable Tiny Experts mode in RemixedLinear (each expert_dim=basis_size//topk for compute parity)")
@@ -433,6 +434,7 @@ def build_model_meta(depth):
                 if getattr(args, 'p23_tiny_expert', 0) or getattr(args, 'p23_lokr', 0)
                 else getattr(args, 'p22_template_routing_learned', 0)
             ),
+            template_topk=getattr(args, 'p22_template_topk', 0),
             tiny_expert=bool(getattr(args, 'p23_tiny_expert', 0)),
             tiny_expert_topk=getattr(args, 'p23_topk', 16),
             lokr_expert=bool(getattr(args, 'p23_lokr', 0)),
