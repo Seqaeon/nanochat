@@ -1576,6 +1576,11 @@ class RemixedLinear(nn.Module):
             # LoKR route projection (only when learned — i.e., requires_grad=True)
             if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
                 yield self.lokr_route_proj
+            # lowrank basis gate — basis_gate_coeffs (Linear) + basis_gate_vectors + basis_gate_lr_scale
+            if self.basis_gate_mode == 'lowrank' and hasattr(self, 'basis_gate_coeffs') and self.basis_gate_coeffs is not None:
+                yield from self.basis_gate_coeffs.parameters()
+                yield self.basis_gate_vectors
+                yield self.basis_gate_lr_scale
 
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing/experts, bias) — Muon/normal LR."""
@@ -8007,6 +8012,7 @@ class GPT(nn.Module):
                    f"params to struct groups: {orphan_names}")
             for p in orphan_params:
                 (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+            research_adamw_params = gate_adamw_params + struct_adamw_params  # recompute with new entries
             all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                           embedding_params + lm_head_params + value_embeds_params +
                           resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
