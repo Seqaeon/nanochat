@@ -27,11 +27,18 @@ def run_training_sweep(args):
     run_dir_path = Path(run_dir)
     run_dir_path.mkdir(parents=True, exist_ok=True)
     
-    target_tokens = args.target_tokens if args.target_tokens and args.target_tokens > 0 else estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
+    if args.target_tokens > 0:
+        target_tokens = args.target_tokens
+    elif args.target_tokens == 0:
+        target_tokens = estimate_tokens_from_base(depth, tokenizer_dir=args.tokenizer_dir)
+    else:
+        target_tokens = -1
+
     print("=" * 64)
     print(f"Starting Sweep for Depth {depth}")
-    print(f"Calculated Target Tokens: {target_tokens:,}")
+    print(f"Target Tokens: {'Auto (per-model param count)' if target_tokens == -1 else f'{target_tokens:,}'}")
     print("=" * 64)
+
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
     if args.research_dim > 0:
