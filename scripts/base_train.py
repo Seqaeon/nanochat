@@ -101,6 +101,7 @@ parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices
 parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1], help="25: use DualGateLinear instead of RemixedLinear (single dense W + dual D-dim gate, no basis compression)")
 parser.add_argument("--gate-stats-every", type=int, default=50, help="log gate activation/gradient stats every N steps to gate_stats.log (0=off); only active when --use-remix-linear")
 parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression ratio: factor=4 → C//4 (default), factor=1 → full rank C. Depth-adaptive via min(in,out)//factor")
+parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="rank of the low-rank output gate in RemixedLinear (default 16)")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
@@ -582,6 +583,7 @@ def build_model_meta(depth):
         p24_use_sequence_gated_linear=getattr(args, 'p24_use_sequence_gated_linear', 0),
         p24_sequence_gated_scope=getattr(args, 'p24_sequence_gated_scope', 'per_layer'),
         p24_sequence_gated_act=getattr(args, 'p24_sequence_gated_act', 'tanh_centered'),
+        remix_output_gate_rank=getattr(args, 'remix_output_gate_rank', 16),
     )
 
     with torch.device("meta"):

@@ -103,19 +103,19 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # ══════════════════════════════════════════════════════
 # 1: Dense baseline — anchor reference
 # ══════════════════════════════════════════════════════
-#TAG="23_BASE_DENSE"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
-#    if bash scripts/research_sweep.sh $BASE_COMMON \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "════════════════ $TAG COMPLETE ════════════════"
-#        mark_completed "$TAG"
-#    else
-#        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
-#    fi
-#fi
+TAG="23_BASE_DENSE"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1" "$TAG" "Dense baseline (plain transformer, no MoE)"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
 
 # ══════════════════════════════════════════════════════
 # 1B: RemixedLinear, Linear gate, COMPRESSED basis B=C//4
@@ -226,6 +226,40 @@ else
       --remix-use-output-gate 1 \
       --remix-basis-gate-mode centered \
       --remix-basis-scale-factor 4 \
+
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
+# ══════════════════════════════════════════════════════
+# 1H: RemixedLinear, CENTERED gate,  COMPRESSED basis B=C//4 Rank=32
+#     Fix for the 277x gradient disparity:
+#     1+tanh(s*logits) starts at 1.0 (passthrough) not 0.5.
+#     W_b & W_m train like dense for first ~100 steps, then
+#     gate gradually learns to amplify/suppress symmetrically.
+# ══════════════════════════════════════════════════════
+TAG="23_REMIX_${CCL_MOD^^}_CenteredGate_C4"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "1H" "$TAG" "RemixedLinear, centered gate, B=C//4, temp=2.0, Rank =32"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --cclblock-modulation $CCL_MOD \
+      --cclblock-context-stream $CCL_STREAM \
+      --p22-n-templates 1 \
+      --remix-use-context 1 \
+      --remix-shared-context-gates 0 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      --remix-basis-scale-factor 4 \
+      --remix-output-gate-rank 32 \
+
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
         mark_completed "$TAG"

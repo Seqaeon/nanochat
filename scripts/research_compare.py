@@ -222,6 +222,7 @@ def run_training_sweep(args):
         "--remix-shared-context-gates", str(getattr(args, 'remix_shared_context_gates', 0)),
         "--remix-use-dual-gate", str(getattr(args, 'remix_use_dual_gate', 0)),
         "--remix-basis-scale-factor", str(getattr(args, 'remix_basis_scale_factor', 4)),
+        "--remix-output-gate-rank", str(getattr(args, 'remix_output_gate_rank', 16)),
         "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
         "--p24-sliced-weight-reduction-scale", str(getattr(args, 'p24_sliced_weight_reduction_scale', 8)),
         "--p24-sliced-weight-min-select", str(getattr(args, 'p24_sliced_weight_min_select', 128)),
@@ -664,6 +665,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch context gates")
     parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1], help="25: use DualGateLinear instead of RemixedLinear")
     parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression: 4=C//4, 1=full rank")
+    parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="output gate rank")
 
     args = parser.parse_args()
     
