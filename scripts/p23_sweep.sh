@@ -477,7 +477,6 @@ TAG="23_REMIX_${CCL_MOD^^}_GateLR005_CenteredGate_C4"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "1K" "$TAG" "RemixedLinear, centered gate, B=C//4, gate LR = 0.05× structural LR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --cclblock-modulation $CCL_MOD \
       --cclblock-context-stream $CCL_STREAM \
