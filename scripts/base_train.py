@@ -95,6 +95,10 @@ parser.add_argument("--p23-std-moe-aux-weight", type=float, default=0.01, help="
 parser.add_argument("--p23-lokr", type=int, default=0, choices=[0, 1], help="23: enable LoKR mode in RemixedLinear")
 # Phase 26: Streamlined Full-Rank — OutputGatedLinear (single W + low-rank output gate)
 parser.add_argument("--p26-output-gated-linear", type=int, default=0, choices=[0, 1], help="26: replace RemixedLinear with single-W + low-rank output gate (no W_b/W_m factorization)")
+# Phase 28: FLOPs-efficient template routing
+parser.add_argument("--p28-shared-basis", type=int, default=0, choices=[0, 1], help="28C: share a single W_b projection across all attn Q/K/V/O RL layers per block (saves 3/4 of attn basis FLOPs)")
+parser.add_argument("--p28-chunk-routing-size", type=int, default=0, help="28D: amortize template routing over N-token chunks (0=per-token, 64/256=chunk-level)")
+parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode ('none'=off, 'ffn'=FFN only, 'all'=FFN+attn)")
 parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode (basis_gate_mode=lowrank)")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
 parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1], help="23: block-level single pass router for all RemixedLinear inner experts")
@@ -576,6 +580,10 @@ def build_model_meta(depth):
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
         remix_use_dual_gate=bool(getattr(args, 'remix_use_dual_gate', 0)),
         p26_output_gated_linear=getattr(args, 'p26_output_gated_linear', 0),
+        # Phase 28: FLOPs-efficient template routing
+        p28_shared_basis=getattr(args, 'p28_shared_basis', 0),
+        p28_chunk_routing_size=getattr(args, 'p28_chunk_routing_size', 0),
+        p28_global_template_bank=getattr(args, 'p28_global_template_bank', 'none'),
         # Phase 24
         p24_use_sliced_weight=getattr(args, 'p24_use_sliced_weight', 0),
         p24_sliced_weight_reduction_scale=getattr(args, 'p24_sliced_weight_reduction_scale', 8),

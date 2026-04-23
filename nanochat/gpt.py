@@ -71,6 +71,10 @@ class GPTConfig:
     remix_use_dual_gate: bool = False
     # Phase 26: OutputGatedLinear — single W + low-rank output gate, no W_b/W_m factorization
     p26_output_gated_linear: int = 0
+    # Phase 28: FLOPs-efficient template routing experiments
+    p28_shared_basis: int = 0               # 28C: share single W_b projection across all attn Q/K/V/O layers per block
+    p28_chunk_routing_size: int = 0         # 28D: amortize template routing over N-token chunks (0=per-token, 64/256=chunk)
+    p28_global_template_bank: str = 'none'  # 28E/F: 'none'|'ffn'|'all' — cross-layer global template bank
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -1296,6 +1300,21 @@ class RemixedLinear(nn.Module):
         # Whether routing is handled externally by SharedBlockRouter (injected via forward kwarg)
         self._use_shared_route = remixed_linear_kwargs.get('use_shared_route', False)
 
+        # Phase 28: FLOPs-efficient routing
+        # 28D: amortize template routing over N-token chunks (0 = per-token, N = chunk size)
+        self.chunk_routing_size = int(remixed_linear_kwargs.get('chunk_routing_size', 0))
+        # 28E/F: use global template bank (injected by GPT after construction) instead of per-layer template_bank
+        # When True AND self._global_bank is set, forward uses global bank and skips local template_bank.
+        _global_bank_mode = remixed_linear_kwargs.get('global_bank_mode', 'none')
+        _layer_role = remixed_linear_kwargs.get('layer_role', 'ffn')
+        self._use_global_bank = (
+            _global_bank_mode == 'all' or
+            (_global_bank_mode == 'ffn' and _layer_role == 'ffn')
+        )
+        self._global_bank = None          # injected by GPT.__init__ post-construction
+        self._global_bank_key = 'fc' if (out_features > in_features) else 'proj'
+        self._layer_idx_for_bank = 0      # injected by GPT.__init__ post-construction
+
         # Initialise all optional attrs to None so non_gate_parameters() /
         # gate_parameters() can always use `is not None` checks on every code path.
         self.template_bank = None
@@ -1384,22 +1403,30 @@ class RemixedLinear(nn.Module):
             # Diagnostics
             self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         elif self.n_templates > 1:
-            # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
-            self.template_bank = nn.ParameterList([
-                nn.Parameter(torch.randn(out_features, basis_size))
-                for _ in range(self.n_templates)
-            ])
-            self.template_mixing = None  # use template_bank instead
-            # Hard top-k for sparse routing (0 = soft over all K)
             self.template_topk = int(remixed_linear_kwargs.get('template_topk', 0))
-            # Content routing for template selection
-            route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
-            if self.template_routing_learned:
-                self.template_route = nn.Parameter(route_init)
+            if self._use_global_bank:
+                # Phase 28E/F: templates live in GlobalTemplateBank — no local allocation.
+                # _global_bank reference is injected by GPT.__init__ after construction.
+                # template_bank, template_route, and template_mixing stay None.
+                self.template_bank = None
+                self.template_mixing = None
+                self.template_route = None
+                self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
             else:
-                self.register_buffer('template_route', route_init)
-            # Diagnostics
-            self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+                # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
+                self.template_bank = nn.ParameterList([
+                    nn.Parameter(torch.randn(out_features, basis_size))
+                    for _ in range(self.n_templates)
+                ])
+                self.template_mixing = None  # use template_bank instead
+                # Content routing for template selection
+                route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+                if self.template_routing_learned:
+                    self.template_route = nn.Parameter(route_init)
+                else:
+                    self.register_buffer('template_route', route_init)
+                # Diagnostics
+                self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         else:
             self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
         self.ln_basis = nn.LayerNorm(basis_size)
@@ -1621,7 +1648,13 @@ class RemixedLinear(nn.Module):
                          When provided, local basis_modulator/output_gate_coeffs are skipped.
         """
         dtype = x.dtype
-        h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
+        # Phase 28C: shared basis injection — RemixedBlock pre-computes h_basis once
+        # for all Q/K/V/O attention projections and sets self._h_basis before calling forward.
+        _injected_h_basis = getattr(self, '_h_basis', None)
+        if _injected_h_basis is not None:
+            h_basis = _injected_h_basis.to(dtype=dtype)
+        else:
+            h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
@@ -1837,37 +1870,69 @@ class RemixedLinear(nn.Module):
                 # Soft routing: weighted sum over all K experts
                 pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
         elif self.n_templates > 1:
-            # Legacy Phase 22: MoE-style template routing
-            route_logits = x.float() @ self.template_route.float()  # (B, T, K)
-            with torch.no_grad():
-                w_f = F.softmax(route_logits, dim=-1)
-                ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
-                self._template_entropy_buf.copy_(ent.detach())
-            topk = getattr(self, 'template_topk', 0)
-            if topk > 0 and topk < self.n_templates:
-                # Hard top-k sparse routing — stack all templates, matmul, gather
-                # Compile-safe: no Python conditionals inside the hot path.
-                topk_vals, topk_idx = route_logits.topk(topk, dim=-1)   # (B, T, topk)
-                topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype)  # (B, T, topk)
-                # Stack template_bank → (K, out, basis) and batch-matmul
+            if self._global_bank is not None:
+                # Phase 28E/F: global template bank — compute W_eff once per forward, apply as bmm.
+                # Routing is done by the per-layer router inside GlobalTemplateBank.
+                W_eff = self._global_bank.get_effective_weight(
+                    self._global_bank_key, self._layer_idx_for_bank, x
+                ).to(dtype=dtype)  # (B, out_features, basis_size) — cast to h_gated dtype
+                pre_output = torch.bmm(h_gated, W_eff.transpose(1, 2))  # (B, T, out_features)
+                with torch.no_grad():
+                    self._template_entropy_buf.copy_(torch.zeros(1, device=x.device))
+            elif self.chunk_routing_size > 0:
+                # Phase 28D: amortized chunk routing — compute routing once per chunk,
+                # materialize W_eff, apply as a single bmm to all tokens in the chunk.
                 T_stack = torch.stack(
                     [t.to(dtype=dtype) for t in self.template_bank], dim=0
                 )  # (K, out, basis)
-                all_out = torch.einsum('bts,kos->btko', h_gated, T_stack)  # (B, T, K, out)
-                # Gather selected top-k outputs
-                idx_exp = topk_idx.unsqueeze(-1).expand(
-                    *topk_idx.shape, all_out.shape[-1]
-                )  # (B, T, topk, out)
-                topk_out = torch.gather(all_out, dim=-2, index=idx_exp)   # (B, T, topk, out)
-                pre_output = (topk_out * topk_weights.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
+                chunk = self.chunk_routing_size
+                T_len = x.shape[1]
+                chunks_out = []
+                for start in range(0, T_len, chunk):
+                    end = min(start + chunk, T_len)
+                    x_chunk = x[:, start:end]              # (B, chunk_T, C)
+                    h_chunk = h_gated[:, start:end]        # (B, chunk_T, basis)
+                    # Route from chunk mean (amortized over chunk_T tokens)
+                    logits_c = x_chunk.float().mean(dim=1) @ self.template_route.float()  # (B, K)
+                    weights_c = F.softmax(logits_c, dim=-1).to(dtype)                    # (B, K)
+                    # Materialize single effective weight for this chunk: (B, out, basis)
+                    W_eff_c = torch.einsum('bk,koc->boc', weights_c, T_stack)
+                    # Single bmm: (B, chunk_T, out)
+                    chunks_out.append(torch.bmm(h_chunk, W_eff_c.transpose(1, 2)))
+                pre_output = torch.cat(chunks_out, dim=1)
+                with torch.no_grad():
+                    w_f = F.softmax(x.float() @ self.template_route.float(), dim=-1)
+                    ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                    self._template_entropy_buf.copy_(ent.detach())
             else:
-                # Soft routing: weighted sum over all K templates
-                route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
-                pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
-                                         device=x.device, dtype=dtype)
-                for k in range(self.n_templates):
-                    out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
-                    pre_output = pre_output + route_weights[..., k:k+1] * out_k
+                # Legacy Phase 22: MoE-style per-token template routing
+                route_logits = x.float() @ self.template_route.float()  # (B, T, K)
+                with torch.no_grad():
+                    w_f = F.softmax(route_logits, dim=-1)
+                    ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                    self._template_entropy_buf.copy_(ent.detach())
+                topk = getattr(self, 'template_topk', 0)
+                if topk > 0 and topk < self.n_templates:
+                    # Hard top-k sparse routing — stack all templates, matmul, gather
+                    topk_vals, topk_idx = route_logits.topk(topk, dim=-1)   # (B, T, topk)
+                    topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype)  # (B, T, topk)
+                    T_stack = torch.stack(
+                        [t.to(dtype=dtype) for t in self.template_bank], dim=0
+                    )  # (K, out, basis)
+                    all_out = torch.einsum('bts,kos->btko', h_gated, T_stack)  # (B, T, K, out)
+                    idx_exp = topk_idx.unsqueeze(-1).expand(
+                        *topk_idx.shape, all_out.shape[-1]
+                    )  # (B, T, topk, out)
+                    topk_out = torch.gather(all_out, dim=-2, index=idx_exp)   # (B, T, topk, out)
+                    pre_output = (topk_out * topk_weights.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
+                else:
+                    # Soft routing: weighted sum over all K templates
+                    route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
+                    pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
+                                             device=x.device, dtype=dtype)
+                    for k in range(self.n_templates):
+                        out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
+                        pre_output = pre_output + route_weights[..., k:k+1] * out_k
         else:
             pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
 
@@ -4707,9 +4772,13 @@ class RemixedFeedForward(nn.Module):
             # Enrich kwargs with Phase 23 LoKR / Tiny Expert settings
             lokr_expert = bool(getattr(config, 'p23_lokr', 0))
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
-            if lokr_expert or tiny_expert:
+            if lokr_expert or tiny_expert or True:  # always copy to add p28 fields safely
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
+            # Phase 28: tag with layer_role and p28 routing settings
+            kwargs['layer_role'] = 'ffn'
+            kwargs['global_bank_mode'] = getattr(config, 'p28_global_template_bank', 'none')
+            kwargs['chunk_routing_size'] = getattr(config, 'p28_chunk_routing_size', 0)
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
@@ -4900,9 +4969,13 @@ class RemixedMultiAttention(nn.Module):
             # Enrich kwargs with Phase 23 LoKR / Tiny Expert settings
             lokr_expert = bool(getattr(config, 'p23_lokr', 0))
             tiny_expert = bool(getattr(config, 'p23_tiny_expert', 0))
-            if lokr_expert or tiny_expert:
+            if lokr_expert or tiny_expert or True:  # always copy to add p28 fields safely
                 kwargs = dict(kwargs)  # shallow copy
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
+            # Phase 28: tag with layer_role so global bank knows not to replace attn (mode='ffn')
+            kwargs['layer_role'] = 'attn'
+            kwargs['global_bank_mode'] = getattr(config, 'p28_global_template_bank', 'none')
+            kwargs['chunk_routing_size'] = getattr(config, 'p28_chunk_routing_size', 0)
             if lokr_expert:
                 kwargs['lokr_expert'] = True
                 kwargs['lokr_n_experts'] = getattr(config, 'p23_n_experts', 64)
@@ -5057,6 +5130,61 @@ class RemixedMultiAttention(nn.Module):
 
         y = y.contiguous().view(B, T, -1)
         return self.c_proj(y, context_state), q_stats
+
+
+class GlobalTemplateBank(nn.Module):
+    """Phase 28E: Cross-layer global template bank with per-layer tiny routers.
+
+    Instead of each RemixedLinear owning K templates (params scale with layers*K*D*B),
+    this module maintains a single shared set of K templates, and each layer selects
+    from them via a tiny Linear(n_embd, K) router.
+
+    Two sub-banks handle different output dimensions:
+      - fc_bank:   (K, 4*n_embd, basis_size)  — for FFN c_fc layers
+      - proj_bank: (K, n_embd,   basis_size)  — for FFN c_proj / attn Q,K,V,O
+
+    FLOPs-per-token: router(n_embd -> K) amortized, then single bmm(B, T, D).
+    Parameter savings: ~(n_layers-1)/(n_layers) of per-layer template params.
+    """
+    def __init__(self, n_templates, n_embd, basis_size, n_layers):
+        super().__init__()
+        self.n_templates = n_templates
+        self.n_embd = n_embd
+        self.basis_size = basis_size
+        self.n_layers = n_layers
+        # Two banks for the two output-dimension shapes present in RemixedLinear
+        self.fc_bank   = nn.Parameter(torch.empty(n_templates, 4 * n_embd, basis_size))
+        self.proj_bank = nn.Parameter(torch.empty(n_templates, n_embd, basis_size))
+        # Per-layer tiny routers: input pooled mean of residual stream -> template weights
+        self.layer_routers_fc       = nn.ModuleList([nn.Linear(n_embd, n_templates, bias=False) for _ in range(n_layers)])
+        self.layer_routers_ffn_proj = nn.ModuleList([nn.Linear(4 * n_embd, n_templates, bias=False) for _ in range(n_layers)])
+        self.layer_routers_proj     = nn.ModuleList([nn.Linear(n_embd, n_templates, bias=False) for _ in range(n_layers)])
+
+    def get_effective_weight(self, bank_key, layer_idx, x):
+        """Compute the blended effective weight matrix for this layer's forward pass.
+
+        Args:
+            bank_key:  'fc' for c_fc layers (out=4*n_embd), 'proj' for c_proj / attn layers
+            layer_idx: which layer's router to use
+            x:         (B, T, n_embd) residual stream input
+
+        Returns:
+            W_eff: (B, out_features, basis_size) — batch-specific effective weight matrix
+        """
+        ctx = x.float().mean(dim=1)  # (B, n_embd) — pool across sequence for per-sequence routing
+        if bank_key == 'fc':
+            logits = self.layer_routers_fc[layer_idx](ctx)     # (B, K)
+            bank   = self.fc_bank                               # (K, 4*n_embd, basis_size)
+        else:
+            if ctx.shape[-1] == self.n_embd * 4:
+                logits = self.layer_routers_ffn_proj[layer_idx](ctx) # (B, K)
+            else:
+                logits = self.layer_routers_proj[layer_idx](ctx)   # (B, K)
+            bank   = self.proj_bank                             # (K, n_embd, basis_size)
+        weights = F.softmax(logits, dim=-1).to(bank.dtype)     # (B, K)
+        # Weighted sum over templates: (B, out_features, basis_size)
+        W_eff = torch.einsum('bk,koc->boc', weights, bank)
+        return W_eff
 
 
 class SharedContextGates(nn.Module):
@@ -5285,6 +5413,25 @@ class RemixedBlock(nn.Module):
                     film_gate=_film_gate,
                 )
 
+        # Phase 28C: shared W_b across attn Q/K/V/O.
+        # Instead of 4 independent basis projections, compute h_basis ONCE per block
+        # and inject it into all attention RemixedLinear layers before forward.
+        # Saves ~3/4 of attention basis FLOPs with no quality cost (all layers see same input x).
+        self._shared_basis_proj = None
+        self._shared_ln_basis   = None
+        self._attn_rl_layers    = []
+        if getattr(config, 'p28_shared_basis', 0):
+            # Collect all RemixedLinear layers in attention (Q, K, V, O)
+            _attn_rl = [m for m in [
+                getattr(self.attn, 'c_q', None), getattr(self.attn, 'c_k', None),
+                getattr(self.attn, 'c_v', None), getattr(self.attn, 'c_proj', None),
+            ] if isinstance(m, RemixedLinear)]
+            if _attn_rl:
+                self._attn_rl_layers = _attn_rl
+                _bs = _attn_rl[0].basis_size  # basis_size may differ if auto-scaled
+                self._shared_basis_proj = nn.Linear(config.n_embd, _bs, bias=False)
+                self._shared_ln_basis   = nn.LayerNorm(_bs)
+
         self.is_shifted   = (stream_type == 'shifted')
         self.per_head_ctx = per_head
         self.ctx_source   = ctx_source  # 'norm_x' | 'attn_heads' | 'attn_geometry'
@@ -5358,6 +5505,20 @@ class RemixedBlock(nn.Module):
         """Returns True if stream doesn't need prev_ctx (local or bank or shifted)."""
         return isinstance(stream, (LocalContextStream, ContextBank, HardChunkContextStream, PredictiveChunkContextStream, EvidenceAccumulationContextStream, BoundaryGatedContextStream, DetachedAttnContextStream, CausalPrefixContextStream, DecayPrefixContextStream))
 
+    def _inject_shared_basis(self, norm_x):
+        """Phase 28C: pre-compute shared h_basis from norm_x and inject into all attn RL layers."""
+        if self._shared_basis_proj is not None:
+            # Cast to projection weight dtype (model may be in bfloat16 while Linear starts float32)
+            dtype = self._shared_basis_proj.weight.dtype
+            h = self._shared_ln_basis(self._shared_basis_proj(norm_x.to(dtype=dtype)))
+            for rl in self._attn_rl_layers:
+                rl._h_basis = h
+
+    def _clear_shared_basis(self):
+        """Phase 28C: clear injected _h_basis to avoid stale state across forward calls."""
+        for rl in self._attn_rl_layers:
+            rl._h_basis = None
+
     def forward(self, x, ve, cos_sin, window_size, kv_cache, prev_ctx=None, p24_global_signal=None):
         x_entry = x  # snapshot before attn: = previous layer output (used for 'shifted' mode)
         p24_shared = None
@@ -5384,7 +5545,9 @@ class RemixedBlock(nn.Module):
         if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb', 'arg', 'kfl'):
             norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
             norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
-            attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache, context_state=None)
+            _nx = norm_fn_attn(x); self._inject_shared_basis(_nx)
+            attn_out = self.attn(_nx, ve, cos_sin, window_size, kv_cache, context_state=None)
+            self._clear_shared_basis()
             x = x + attn_out
             ctx_signal = attn_out.detach()
             # 18E: Stochastic depth — randomly skip FFN during training
@@ -5397,9 +5560,11 @@ class RemixedBlock(nn.Module):
             return x, ctx_signal
 
         if self.attn_shadow_dim > 0:
+            _nx = norm(x); self._inject_shared_basis(_nx)
             attn_out, shadow_ctx = self.attn.forward_with_shadow(
-                norm(x), ve, cos_sin, window_size, kv_cache, None
+                _nx, ve, cos_sin, window_size, kv_cache, None
             )
+            self._clear_shared_basis()
             x = x + attn_out
             ctx = self.shadow_ctx_proj(shadow_ctx)
             x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
@@ -5408,16 +5573,14 @@ class RemixedBlock(nn.Module):
 
         if self.ctx_source in ('attn_heads', 'attn_geometry'):
             # Design 2: context derived from query vectors (post-RoPE+QKnorm, detached)
-            # - Attention runs with NO ctx conditioning (standard mode)
-            # - q_stats captures the 'search intent' of each position (B, T, head_dim)
-            # - FFN basis gate is conditioned on this query-derived signal
+            _nx = norm(x); self._inject_shared_basis(_nx)
             attn_out, q_stats = self.attn.forward_with_q_stats(
-                norm(x), ve, cos_sin, window_size, kv_cache, None)
+                _nx, ve, cos_sin, window_size, kv_cache, None)
+            self._clear_shared_basis()
             x = x + attn_out
             if self.ctx_source == 'attn_heads':
                 ctx = self.ctx_proj_q(q_stats)   # (B, T, ctx_dim)
             else:
-                # Attention-geometry router features from query geometry.
                 q_norm = q_stats.norm(dim=-1, keepdim=True)
                 q_mean = q_stats.mean(dim=-1, keepdim=True)
                 q_std = q_stats.std(dim=-1, keepdim=True)
@@ -5433,9 +5596,11 @@ class RemixedBlock(nn.Module):
             ctx_src_attn = norm(x_entry)                  # before attention
             ctx_attn = self.ctx_stream_attn(ctx_src_attn) # (B, T, ctx_dim)
             # Run attention with dedicated attn context
-            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache, ctx_attn)
+            _nx = norm(x); self._inject_shared_basis(_nx)
+            attn_out = self.attn(_nx, ve, cos_sin, window_size, kv_cache, ctx_attn)
+            self._clear_shared_basis()
             x = x + attn_out
-            ctx_src_ffn = norm(x_entry if self.is_shifted else x)  # shifted=prev, else post-attn
+            ctx_src_ffn = norm(x_entry if self.is_shifted else x)
             ctx_ffn = self.ctx_stream_ffn(ctx_src_ffn)   # (B, T, ctx_dim)
             x = x + self.ffwd(norm(x), ctx_ffn, p24_shared=p24_shared)
             self._last_ctx = ctx_ffn.detach()
@@ -5446,14 +5611,18 @@ class RemixedBlock(nn.Module):
             is_dacs = isinstance(stream, (DetachedAttnContextStream, DACSEMAContextStream))
 
             if is_dacs:
-                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+                _nx = norm(x); self._inject_shared_basis(_nx)
+                attn_out = self.attn(_nx, ve, cos_sin, window_size, kv_cache,
                                      context_state=None, route_weights=block_route)
+                self._clear_shared_basis()
                 x = x + attn_out
                 ctx = stream(attn_out, None if local else prev_ctx)
             else:
-                attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache,
+                _nx = norm(x); self._inject_shared_basis(_nx)
+                attn_out = self.attn(_nx, ve, cos_sin, window_size, kv_cache,
                                      None if (local or self.is_shifted) else prev_ctx,
                                      route_weights=block_route)
+                self._clear_shared_basis()
                 x = x + attn_out
                 ctx_src = norm(x_entry if self.is_shifted else x)
                 ctx = stream(ctx_src, None if local else prev_ctx)
@@ -7079,6 +7248,40 @@ class GPT(nn.Module):
         })
         if self.use_pos_embed:
             self.transformer["wpe"] = nn.Embedding(config.sequence_len, config.n_embd)
+
+        # Phase 28E/F: GlobalTemplateBank — cross-layer shared template pool.
+        # Must be created AFTER transformer blocks so we can inject references into RemixedLinear layers.
+        _bank_mode = getattr(config, 'p28_global_template_bank', 'none')
+        if config.use_remix_linear and _bank_mode != 'none':
+            _n_templates = config.remixed_linear_kwargs.get('n_templates', 1) if config.remixed_linear_kwargs else 1
+            self.p28_global_bank = GlobalTemplateBank(
+                n_templates=_n_templates,
+                n_embd=config.n_embd,
+                basis_size=config.remix_basis_size,
+                n_layers=config.n_layer,
+            )
+            # Inject bank reference into matching RemixedLinear layers
+            for layer_idx, block in enumerate(self.transformer['h']):
+                if not isinstance(block, RemixedBlock):
+                    continue
+                # FFN layers always get the bank
+                for sub in [getattr(block.ffwd, 'c_fc', None), getattr(block.ffwd, 'c_proj', None)]:
+                    if isinstance(sub, RemixedLinear) and sub._use_global_bank:
+                        sub._global_bank = self.p28_global_bank
+                        sub._layer_idx_for_bank = layer_idx
+                        # bank_key is already set in __init__ based on in/out dim ratio
+                # For 'all' mode, also inject into attention layers
+                if _bank_mode == 'all':
+                    for sub in [getattr(block.attn, 'c_q', None), getattr(block.attn, 'c_k', None),
+                                 getattr(block.attn, 'c_v', None), getattr(block.attn, 'c_proj', None)]:
+                        if isinstance(sub, RemixedLinear) and sub._use_global_bank:
+                            sub._global_bank = self.p28_global_bank
+                            sub._layer_idx_for_bank = layer_idx
+            print0(f"[P28] GlobalTemplateBank created: mode={_bank_mode}, K={_n_templates}, "
+                   f"n_layers={config.n_layer}, basis_size={config.remix_basis_size}")
+        else:
+            self.p28_global_bank = None
+
         self.embedding_model = None
         if self.use_moe:
             if self.use_perm:

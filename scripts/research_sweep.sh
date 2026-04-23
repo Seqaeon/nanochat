@@ -264,6 +264,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --p28-shared-basis|--p28-chunk-routing-size|--p28-global-template-bank)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
 
         --warmup-ratio|--warmdown-ratio|--final-lr-frac)
             EXTRA_ARGS+=("$1" "$2")

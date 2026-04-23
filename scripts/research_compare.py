@@ -90,6 +90,9 @@ def run_training_sweep(args):
         "--p22-template-topk", str(getattr(args, 'p22_template_topk', 0)),
         "--p22-attn-moe-route", str(getattr(args, 'p22_attn_moe_route', 'none')),
         "--p26-output-gated-linear", str(getattr(args, 'p26_output_gated_linear', 0)),
+        "--p28-shared-basis", str(getattr(args, 'p28_shared_basis', 0)),
+        "--p28-chunk-routing-size", str(getattr(args, 'p28_chunk_routing_size', 0)),
+        "--p28-global-template-bank", str(getattr(args, 'p28_global_template_bank', 'none')),
         "--remix-basis-gate-rank", str(getattr(args, 'remix_basis_gate_rank', 8)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
@@ -512,6 +515,9 @@ if __name__ == "__main__":
     parser.add_argument("--p22-attn-moe-route", type=str, default="none", choices=["none", "sequence", "token"], help="22: MoE routing for attention Q/K/V/Proj")
     parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="remix: learning rate scale for gate parameters")
     parser.add_argument("--p26-output-gated-linear", type=int, default=0, choices=[0, 1], help="26: use OutputGatedLinear (single W + low-rank output gate, no factorization)")
+    parser.add_argument("--p28-shared-basis", type=int, default=0, choices=[0, 1], help="28C: share single W_b projection across all attn Q/K/V/O per block")
+    parser.add_argument("--p28-chunk-routing-size", type=int, default=0, help="28D: amortize template routing over N-token chunks (0=per-token)")
+    parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode")
     parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
