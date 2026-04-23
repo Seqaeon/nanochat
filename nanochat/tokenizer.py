@@ -390,8 +390,13 @@ class RustBPETokenizer:
 def get_tokenizer(tokenizer_dir=None):
     from nanochat.common import get_base_dir
     if tokenizer_dir is None:
-        base_dir = get_base_dir()
-        tokenizer_dir = os.path.join(base_dir, "tokenizer")
+        # 1. Check current working directory
+        if os.path.exists("tokenizer/tokenizer.pkl") or os.path.exists("tokenizer/tokenizer.json"):
+            tokenizer_dir = "tokenizer"
+        else:
+            # 2. Fall back to global cache (~/.cache/nanochat)
+            base_dir = get_base_dir()
+            tokenizer_dir = os.path.join(base_dir, "tokenizer")
     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
@@ -399,8 +404,13 @@ def get_token_bytes(device="cpu", tokenizer_dir=None):
     import torch
     from nanochat.common import get_base_dir
     if tokenizer_dir is None:
-        base_dir = get_base_dir()
-        tokenizer_dir = os.path.join(base_dir, "tokenizer")
+        # 1. Check current working directory
+        if os.path.exists("tokenizer/token_bytes.pt"):
+            tokenizer_dir = "tokenizer"
+        else:
+            # 2. Fall back to global cache (~/.cache/nanochat)
+            base_dir = get_base_dir()
+            tokenizer_dir = os.path.join(base_dir, "tokenizer")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
     with open(token_bytes_path, "rb") as f:
