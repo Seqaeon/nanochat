@@ -109,6 +109,30 @@ else
     fi
 fi
 
+
+# ══════════════════════════════════════════════════════
+# 27C: 27_REMIX_WEIGHT_8T_LEARNED
+# ══════════════════════════════════════════════════════
+TAG="27_REMIX_WEIGHT_8T_LEARNED"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "27C" "$TAG" "Full-rank remixed linear with 8 learned templates"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p22-n-templates 8 \
+      --p22-template-routing-learned 1 \
+      --remix-use-basis-gate 1 \
+      --remix-use-output-gate 1 \
+      --remix-basis-gate-mode centered \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "════════════════ $TAG COMPLETE ════════════════"
+        mark_completed "$TAG"
+    else
+        echo "════════════════ $TAG FAILED — will retry next run ════════════════"
+    fi
+fi
+
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║          Phase 27 Sweep Complete                            ║"
