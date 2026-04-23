@@ -152,6 +152,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--research-dim" "$2")
             shift 2
             ;;
+        --remix-basis-size)
+            EXTRA_ARGS+=("--remix-basis-size" "$2")
+            shift 2
+            ;;
         --cclblock-modulation)
             EXTRA_ARGS+=("--cclblock-modulation" "$2")
             shift 2

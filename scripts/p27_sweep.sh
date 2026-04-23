@@ -37,23 +37,28 @@ print_header() {
     echo ""
 }
 
+
 DEPTH=4
+MODEL_DIM=256  # depth=4 → 4×64=256; must match explicitly for full-rank basis
 
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
-REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 2 --use-onecycle 0 --log-every 1 --skip-core \
-  --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
-  --sequence-len 2048 \
-  --warmup-ratio 0.20 \
-  --warmdown-ratio 0.50 \
-  --research-dim -1 \
-  --cclblock-modulation $CCL_MOD \
-  --cclblock-context-stream $CCL_STREAM \
-  --cclblock-gate-temperature 2.0 \
-  --remix-shared-context-gates 0 \
-  --remix-use-context 1 \
+# NOTE: --remix-basis-size $MODEL_DIM is required for true full-rank.
+# Without it, scale_basis_size computes max(64, 256//4)=64 — still compressed.
+REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \\
+  --device-batch-size 2 --use-onecycle 0 --log-every 1 --skip-core \\
+  --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \\
+  --sequence-len 2048 \\
+  --warmup-ratio 0.20 \\
+  --warmdown-ratio 0.50 \\
+  --research-dim -1 \\
+  --remix-basis-size $MODEL_DIM \\
+  --cclblock-modulation $CCL_MOD \\
+  --cclblock-context-stream $CCL_STREAM \\
+  --cclblock-gate-temperature 2.0 \\
+  --remix-shared-context-gates 0 \\
+  --remix-use-context 1 \\
   --target-tokens -1"
 
 # ══════════════════════════════════════════════════════
