@@ -189,7 +189,7 @@ else
       --p22-template-routing-learned 1 \
       --remix-use-basis-gate 0 \
       --remix-use-output-gate 1 \
-      --remix-basis-size $MODEL_DIM//2 \
+      --remix-basis-size $(( MODEL_DIM / 2 )) \
       --remix-basis-gate-mode centered \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "════════════════ $TAG COMPLETE ════════════════"
