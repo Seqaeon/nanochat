@@ -134,7 +134,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 27D: 27_REMIX_WEIGHT_4T_LEARNED_No_Basis_Gate
 # ══════════════════════════════════════════════════════
-TAG="27_REMIX_WEIGHT_4T_LEARNED"
+TAG="27_REMIX_WEIGHT_4T_LEARNED_No_Basis_Gate"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -157,7 +157,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 27E: 27_REMIX_WEIGHT_8T_LEARNED_No_Basis_Gate
 # ══════════════════════════════════════════════════════
-TAG="27_REMIX_WEIGHT_8T_LEARNED"
+TAG="27_REMIX_WEIGHT_8T_LEARNED_No_Basis_Gate"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -179,7 +179,7 @@ fi
 # ══════════════════════════════════════════════════════
 # 27F: 27_REMIX_WEIGHT_8T_LEARNED_No_Basis_Gate_C2
 # ══════════════════════════════════════════════════════
-TAG="27_REMIX_WEIGHT_8T_LEARNED"
+TAG="27_REMIX_WEIGHT_8T_LEARNED_No_Basis_Gate_C2"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
