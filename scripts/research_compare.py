@@ -308,13 +308,11 @@ def run_training_sweep(args):
             "--moe-embed-dim",    str(target_dim),
             "--moe-router-dim",   str(target_dim),
             "--remix-context-dim", str(target_dim),
-            # NOTE: do NOT pass --remix-basis-size here.
-            # scale_basis_size=True (the default) will compute
-            # max(default_basis=64, min(in, out) // 4) per layer,
-            # which correctly scales with model_dim (e.g., 192 at depth=12).
-            # Forcing basis_size=target_dim (=model_dim with --research-dim -1)
-            # makes the basis full-rank — no compression, 2× params vs dense.
-        ]
+            # When research_dim == -1 (full-rank mode), force basis_size = model_dim.
+            # Without this, scale_basis_size computes max(64, model_dim // 4), which
+            # stays at 64 at depth=4 (256//4=64). Setting it explicitly here makes
+            # --research-dim -1 truly full-rank at any depth.
+        ] + (["--remix-basis-size", str(model_dim)] if args.research_dim == -1 else [])
     }
 
     for name, flags in research_configs.items():
