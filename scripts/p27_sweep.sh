@@ -51,7 +51,7 @@ CCL_STREAM="${CCL_STREAM:-selective}"
 # other sweeps using --research-dim -1 for a different reason (C//4 basis)
 # are not affected.
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 16 --use-onecycle 0 --log-every 1 --skip-core \
+  --device-batch-size 32 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
