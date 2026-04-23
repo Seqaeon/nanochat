@@ -39,20 +39,25 @@ print_header() {
 
 
 DEPTH=4
+# Compute model_dim from depth using the same formula as model_dims():
+# model_dim = ceil(depth*64 / 128) * 128
+MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
 
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
-# --research-dim -1 tells research_compare.py to use model_dim as target_dim AND
-# automatically appends --remix-basis-size model_dim, ensuring truly full-rank
-# basis at any depth without hardcoding.
+# --remix-basis-size $MODEL_DIM forces full-rank (basis_size = model_dim).
+# This is passed explicitly rather than being tied to --research-dim so that
+# other sweeps using --research-dim -1 for a different reason (C//4 basis)
+# are not affected.
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 2 --use-onecycle 0 --log-every 1 --skip-core \
+  --device-batch-size 16 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
+  --remix-basis-size $MODEL_DIM \
   --cclblock-modulation $CCL_MOD \
   --cclblock-context-stream $CCL_STREAM \
   --cclblock-gate-temperature 2.0 \

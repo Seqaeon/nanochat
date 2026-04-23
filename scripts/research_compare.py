@@ -308,11 +308,10 @@ def run_training_sweep(args):
             "--moe-embed-dim",    str(target_dim),
             "--moe-router-dim",   str(target_dim),
             "--remix-context-dim", str(target_dim),
-            # When research_dim == -1 (full-rank mode), force basis_size = model_dim.
-            # Without this, scale_basis_size computes max(64, model_dim // 4), which
-            # stays at 64 at depth=4 (256//4=64). Setting it explicitly here makes
-            # --research-dim -1 truly full-rank at any depth.
-        ] + (["--remix-basis-size", str(model_dim)] if args.research_dim == -1 else [])
+            # NOTE: basis_size is NOT set here by default.
+            # scale_basis_size=True auto-computes max(64, min(in,out) // basis_scale_factor).
+            # To force full-rank, pass --remix-basis-size explicitly (e.g. = model_dim).
+        ] + (["--remix-basis-size", str(getattr(args, 'remix_basis_size', 0))] if getattr(args, 'remix_basis_size', 0) > 0 else [])
     }
 
     for name, flags in research_configs.items():
@@ -501,6 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--router-context-window", type=int, default=-1, help="override sliding window size for contextual router (-1 for full sequence)")
     # Research dimension override
     parser.add_argument("--research-dim", type=int, default=0, help="override default 1/8th model_dim for research branches (MoE/Remix)")
+    parser.add_argument("--remix-basis-size", type=int, default=0, help="explicit basis_size for remixed-linear (0 = auto via scale_basis_size; set to model_dim for full-rank)")
     # Remixed-linear components
     parser.add_argument("--remix-use-basis-gate", type=int, default=1, choices=[0, 1], help="enable basis gating in remixed linear (1/0)")
     parser.add_argument("--remix-use-output-gate", type=int, default=1, choices=[0, 1], help="enable output gating in remixed linear (1/0)")
