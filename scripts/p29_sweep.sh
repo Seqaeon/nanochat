@@ -34,6 +34,8 @@ print_header() {
 
 DEPTH=4
 MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
+MODEL_DIM_C4=$(( MODEL_DIM / 4 ))
+MODEL_DIM_C2=$(( MODEL_DIM / 2 ))
 
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
@@ -43,7 +45,7 @@ CCL_STREAM="${CCL_STREAM:-selective}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 256 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 256 --total-batch-size 524288 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
@@ -100,7 +102,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
       --p22-template-topk 1 \
-      --remix-basis-size $MODEL_DIM//4 \
+      --remix-basis-size $MODEL_DIM_C4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
@@ -146,7 +148,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
       --p28-chunk-routing-size 64 \
-      --remix-basis-size $MODEL_DIM//4 \
+      --remix-basis-size $MODEL_DIM_C4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
@@ -191,7 +193,7 @@ else
     print_header "29F" "$TAG" "8T Dense mixture with C//4 basis compression"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
-      --remix-basis-size $MODEL_DIM//4 \
+      --remix-basis-size $MODEL_DIM_C4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
@@ -213,7 +215,7 @@ else
     print_header "29G" "$TAG" "4T Dense mixture with C//4 basis compression"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 4 \
-      --remix-basis-size $MODEL_DIM//4 \
+      --remix-basis-size $MODEL_DIM_C4 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
@@ -234,7 +236,7 @@ else
     print_header "29H" "$TAG" "4T Dense mixture with C//2 basis compression"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 4 \
-      --remix-basis-size $MODEL_DIM//2 \
+      --remix-basis-size $MODEL_DIM_C2 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
