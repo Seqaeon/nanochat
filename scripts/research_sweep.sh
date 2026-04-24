@@ -264,7 +264,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p28-shared-basis|--p28-chunk-routing-size|--p28-global-template-bank)
+        --p28-shared-basis|--p28-chunk-routing-size|--p28-global-template-bank|--p28-attn-proj-templates|--p28-attn-qk-templates|--target-active-params)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

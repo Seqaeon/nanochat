@@ -99,6 +99,9 @@ parser.add_argument("--p26-output-gated-linear", type=int, default=0, choices=[0
 parser.add_argument("--p28-shared-basis", type=int, default=0, choices=[0, 1], help="28C: share a single W_b projection across all attn Q/K/V/O RL layers per block (saves 3/4 of attn basis FLOPs)")
 parser.add_argument("--p28-chunk-routing-size", type=int, default=0, help="28D: amortize template routing over N-token chunks (0=per-token, 64/256=chunk-level)")
 parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode ('none'=off, 'ffn'=FFN only, 'all'=FFN+attn)")
+parser.add_argument("--p28-attn-proj-templates", type=int, default=0, help="28C2: override n_templates for attn c_proj per-layer (0=use default from remixed_linear_kwargs)")
+parser.add_argument("--p28-attn-qk-templates",   type=int, default=0, help="28C3: override n_templates for attn c_q and c_k per-layer (0=use default)")
+parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active (topk/chunk-adjusted) params instead of total params when computing target_tokens")
 parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode (basis_gate_mode=lowrank)")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
 parser.add_argument("--p23-use-shared-block-router", type=int, default=0, choices=[0, 1], help="23: block-level single pass router for all RemixedLinear inner experts")
@@ -584,6 +587,8 @@ def build_model_meta(depth):
         p28_shared_basis=getattr(args, 'p28_shared_basis', 0),
         p28_chunk_routing_size=getattr(args, 'p28_chunk_routing_size', 0),
         p28_global_template_bank=getattr(args, 'p28_global_template_bank', 'none'),
+        p28_attn_proj_templates=getattr(args, 'p28_attn_proj_templates', 0),
+        p28_attn_qk_templates=getattr(args, 'p28_attn_qk_templates', 0),
         # Phase 24
         p24_use_sliced_weight=getattr(args, 'p24_use_sliced_weight', 0),
         p24_sliced_weight_reduction_scale=getattr(args, 'p24_sliced_weight_reduction_scale', 8),
@@ -809,9 +814,10 @@ print0(f"Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
 num_params = param_counts['total']
-num_flops_per_token, num_active_flops_per_token = orig_model.estimate_flops()
+num_flops_per_token, num_active_flops_per_token, num_active_params = orig_model.estimate_flops()
 print0(f"Estimated FLOPs per token (total):  {num_flops_per_token:e}")
 print0(f"Estimated FLOPs per token (active): {num_active_flops_per_token:e}")
+print0(f"Estimated active params:            {num_active_params:,}")
 
 
 # 1) Use scaling laws to determine the optimal training horizon in tokens
@@ -826,7 +832,15 @@ num_scaling_params = get_scaling_params(orig_model)
 if args.target_tokens > 0:
     target_tokens = args.target_tokens
 else:
-    target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
+    # When --target-active-params=1, adjust for inactive template/expert params so sparse models
+    # receive a Chinchilla-optimal token budget proportional to their *active* parameter count.
+    if getattr(args, 'target_active_params', 0) and num_active_params < num_params:
+        inactive_params = num_params - num_active_params
+        active_scaling_params = max(1, num_scaling_params - inactive_params)
+        print0(f"Active scaling params: {active_scaling_params:,}  (total: {num_scaling_params:,}, inactive: {inactive_params:,})")
+    else:
+        active_scaling_params = num_scaling_params
+    target_tokens = int(args.target_param_data_ratio * active_scaling_params)
 
 # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
 d12_ref = build_model_meta(12) # creates the model on meta device

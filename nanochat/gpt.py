@@ -75,6 +75,8 @@ class GPTConfig:
     p28_shared_basis: int = 0               # 28C: share single W_b projection across all attn Q/K/V/O layers per block
     p28_chunk_routing_size: int = 0         # 28D: amortize template routing over N-token chunks (0=per-token, 64/256=chunk)
     p28_global_template_bank: str = 'none'  # 28E/F: 'none'|'ffn'|'all' — cross-layer global template bank
+    p28_attn_proj_templates: int = 0        # 28C2: override n_templates for attn c_proj (0=use default from remixed_linear_kwargs)
+    p28_attn_qk_templates: int = 0          # 28C3: override n_templates for attn c_q and c_k (0=use default)
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -1892,8 +1894,8 @@ class RemixedLinear(nn.Module):
                     end = min(start + chunk, T_len)
                     x_chunk = x[:, start:end]              # (B, chunk_T, C)
                     h_chunk = h_gated[:, start:end]        # (B, chunk_T, basis)
-                    # Route from chunk mean (amortized over chunk_T tokens)
-                    logits_c = x_chunk.float().mean(dim=1) @ self.template_route.float()  # (B, K)
+                    # Route from first token of chunk only — causal: avoids look-ahead into future positions
+                    logits_c = x_chunk[:, 0, :].float() @ self.template_route.float()  # (B, K)
                     weights_c = F.softmax(logits_c, dim=-1).to(dtype)                    # (B, K)
                     # Materialize single effective weight for this chunk: (B, out, basis)
                     W_eff_c = torch.einsum('bk,koc->boc', weights_c, T_stack)
@@ -4985,16 +4987,26 @@ class RemixedMultiAttention(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
+            # Phase 28 per-module template count overrides (from similarity analysis)
+            # Build separate kwarg dicts so c_q/c_k, c_v, and c_proj can each have different K
+            attn_proj_K = int(getattr(config, 'p28_attn_proj_templates', 0))
+            attn_qk_K   = int(getattr(config, 'p28_attn_qk_templates', 0))
+            kwargs_proj = dict(kwargs)
+            kwargs_qk   = dict(kwargs)
+            if attn_proj_K > 0:
+                kwargs_proj['n_templates'] = attn_proj_K
+            if attn_qk_K > 0:
+                kwargs_qk['n_templates'] = attn_qk_K
             # Attention layers use per-sequence routing (one routing decision per sequence)
             _linear_cls = (
                 DualGateLinear if getattr(config, 'remix_use_dual_gate', False)
                 else OutputGatedLinear if getattr(config, 'p26_output_gated_linear', 0)
                 else RemixedLinear
             )
-            self.c_q    = _linear_cls(self.n_embd, self.n_head * self.head_dim,    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_k    = _linear_cls(self.n_embd, self.n_kv_head * self.head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_v    = _linear_cls(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_proj = _linear_cls(self.n_embd, self.n_embd,                    context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_q    = _linear_cls(self.n_embd, self.n_head * self.head_dim,      context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs_qk,   scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_k    = _linear_cls(self.n_embd, self.n_kv_head * self.head_dim,   context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs_qk,   scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_v    = _linear_cls(self.n_embd, self.n_kv_head * self.v_head_dim, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs,      scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            self.c_proj = _linear_cls(self.n_embd, self.n_embd,                      context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs_proj, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
         self._attn_mode = mode  # store for forward dispatch
@@ -7871,13 +7883,21 @@ class GPT(nn.Module):
                       and not getattr(submod, 'lokr_expert', False)
                       and getattr(submod, 'n_templates', 1) > 1
                       and submod.template_bank is not None):
-                    # Legacy template bank with hard top-k routing
-                    topk = getattr(submod, 'template_topk', 0)
-                    K = submod.n_templates
-                    if topk > 0 and topk < K:
+                    chunk = getattr(submod, 'chunk_routing_size', 0)
+                    if chunk > 0:
+                        # Chunk routing: routing + mixing ops amortized over chunk_size tokens
                         template_params = sum(t.numel() for t in submod.template_bank)
-                        inactive_frac = 1.0 - (topk / K)
-                        inactive_expert_params += int(template_params * inactive_frac)
+                        route_params = submod.template_route.numel() if submod.template_route is not None else 0
+                        savings_frac = 1.0 - (1.0 / chunk)
+                        inactive_expert_params += int((template_params + route_params) * savings_frac)
+                    else:
+                        # Legacy template bank with hard top-k routing
+                        topk = getattr(submod, 'template_topk', 0)
+                        K = submod.n_templates
+                        if topk > 0 and topk < K:
+                            template_params = sum(t.numel() for t in submod.template_bank)
+                            inactive_frac = 1.0 - (topk / K)
+                            inactive_expert_params += int(template_params * inactive_frac)
                 elif getattr(submod, 'lokr_expert', False):
                     topk = submod.lokr_topk
                     K = submod.lokr_n_experts
@@ -7905,7 +7925,8 @@ class GPT(nn.Module):
             # SequenceGatedLinear: weight is identical to dense baseline. total == active.
 
         active_flops = total_flops - 6 * inactive_expert_params
-        return total_flops, active_flops
+        active_params = nparams - inactive_expert_params
+        return total_flops, active_flops, active_params
 
 
     def num_scaling_params(self):

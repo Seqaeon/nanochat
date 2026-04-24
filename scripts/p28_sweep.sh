@@ -1,24 +1,29 @@
 #!/bin/bash
-# Phase 28: FLOPs-Efficient Template Routing
-# 7 experiments testing sparse routing, shared basis, chunk routing, and global template bank
+# Phase 28 Redux: Compute-Correct Template Routing Efficiency
+#
+# Fixes vs. original p28:
+#   - --target-active-params 1  → token budget based on active (not total) params
+#   - Causal chunk routing       → first token of chunk used for routing (no look-ahead)
+#   - Chunk FLOPs estimator fix  → active_flops correctly reflects chunk amortization
+#   - Per-module K overrides     → attn c_proj / c_q / c_k can have different n_templates
+#
+# Variants:
+#   28A  — 8T top-1 sparse routing           (active-params token budget)
+#   28C0 — shared W_b only                   (original 28C, no template reduction)
+#   28C2 — shared W_b + c_proj K=2           (redundant proj templates removed)
+#   28C3 — shared W_b + c_q/c_k K=2         (redundant Q/K templates removed)
+#   28C5 — shared W_b + c_proj K=2 + qk K=2 (combined)
+#   28D1 — chunk routing N=64  (causal-fixed, active-params token budget)
+#   28D2 — chunk routing N=256 (causal-fixed, active-params token budget)
 #
 # Usage (from nanochat root):
 #   bash scripts/p28_sweep.sh           # run all (resumes via .state file)
 #   bash scripts/p28_sweep.sh --force   # re-run everything
-#   SWEEP_LOG=p28.log bash scripts/p28_sweep.sh
-#
-# Experiment layout:
-#   28A  — Top-1 of 8 templates (max sparsity)
-#   28B  — Top-2 of 8 templates (balanced sparsity)
-#   28C  — Shared W_b across attn Q/K/V/O per block
-#   28D1 — Amortized chunk routing, chunk_size=64
-#   28D2 — Amortized chunk routing, chunk_size=256
-#   28E  — Global template bank, FFN-only
-#   28F  — Global template bank, FFN + Attn
+#   SWEEP_LOG=my.log bash scripts/p28_sweep.sh
 
 set -o pipefail
 
-LOGFILE="${SWEEP_LOG:-sweep_p28.log}"
+LOGFILE="${SWEEP_LOG:-sweep_p28r.log}"
 STATEFILE="${LOGFILE%.log}.state"
 FORCE=0
 if [[ "$1" == "--force" ]]; then
@@ -54,9 +59,12 @@ MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
 
-# Shared base flags: full-rank RemixedLinear with 8 templates + output gate (best P27 config)
+# Common flags shared by all variants.
+# Notes:
+#   --target-active-params 1  → sparse variants get token budget = ratio × active_params
+#   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 128 --use-onecycle 0 --log-every 1 --skip-core \
+  --device-batch-size 64 --use-onecycle 0 --log-every 1 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
@@ -68,148 +76,161 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --cclblock-gate-temperature 2.0 \
   --remix-shared-context-gates 0 \
   --remix-use-context 1 \
-  --remix-use-output-gate 1 \
-  --remix-use-basis-gate 0 \
   --p22-n-templates 8 \
   --p22-template-routing-learned 1 \
-  --target-tokens -1"
+  --remix-use-basis-gate 1 \
+  --remix-use-output-gate 1 \
+  --remix-basis-gate-mode centered \
+  --target-tokens -1 \
+  --target-active-params 1"
 
 # ══════════════════════════════════════════════════════
-# 28A: Top-1 of 8 learned templates (hard sparse routing)
-# FLOPs target: ~dense (1 template active = 1 matmul vs K weighted matmuls)
+# 28A: 8T top-1 sparse routing  [active-params token budget]
+#   - 8 templates, hard top-1 routing per token
+#   - token budget = ratio × active_params  (~39M, not 55M)
 # ══════════════════════════════════════════════════════
 TAG="28A_8T_TOP1"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "28A" "$TAG" "Top-1 sparse routing over 8 learned templates"
+    print_header "28A" "$TAG" "8T top-1 sparse routing with active-params token budget"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-template-topk 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
         echo "✅  $TAG done"
+        mark_completed "$TAG"
     else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
+        echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 28B: Top-2 of 8 learned templates (balanced sparsity)
-# FLOPs target: ~1.25× dense (2 active templates)
+# 28C0: Shared W_b only  (no template count reduction)
+#   - Shares single basis projection across all attn Q/K/V/O
+#   - Baseline for understanding C-series: shared W_b alone worth it?
 # ══════════════════════════════════════════════════════
-TAG="28B_8T_TOP2"
+TAG="28C0_SHARED_WB"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "28B" "$TAG" "Top-2 sparse routing over 8 learned templates"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p22-template-topk 2 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
-        echo "✅  $TAG done"
-    else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
-    fi
-fi
-
-# ══════════════════════════════════════════════════════
-# 28C: Shared W_b across attn Q/K/V/O per block
-# Computes h_basis once for all 4 attn projections → 3/4 basis FLOPs saved in attn
-# ══════════════════════════════════════════════════════
-TAG="28C_SHARED_WB_ATTN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "28C" "$TAG" "Single shared W_b projection across attn Q/K/V/O per block"
+    print_header "28C0" "$TAG" "Shared W_b across all attn layers (baseline for C variants)"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p28-shared-basis 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
         echo "✅  $TAG done"
+        mark_completed "$TAG"
     else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
+        echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 28D1: Amortized chunk routing, chunk_size=64
-# Route once per 64 tokens → 64× fewer routing FLOPs, materialize 1 W_eff per chunk
+# 28C2: Shared W_b + attn c_proj K=2
+#   - Motivated by similarity analysis: attn_c_proj mean sim 0.40–0.59
+#   - Reduces c_proj from K=8 to K=2 (saves 75% of proj template bank params)
+#   - All other sub-layers keep K=8
+# ══════════════════════════════════════════════════════
+TAG="28C2_SHARED_WB_PROJ_K2"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "28C2" "$TAG" "Shared W_b + c_proj reduced to K=2 templates"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p28-shared-basis 1 \
+      --p28-attn-proj-templates 2 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
+# 28C3: Shared W_b + attn c_q/c_k K=2
+#   - Motivated by: attn_c_q mean sim 0.30–0.51, attn_c_k mean sim 0.17–0.49
+#   - c_v and c_proj keep K=8 (c_v is diverse, max sim only 0.26–0.36)
+# ══════════════════════════════════════════════════════
+TAG="28C3_SHARED_WB_QK_K2"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "28C3" "$TAG" "Shared W_b + c_q/c_k reduced to K=2 templates"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p28-shared-basis 1 \
+      --p28-attn-qk-templates 2 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
+# 28C5: Shared W_b + c_proj K=2 + c_q/c_k K=2  (combined)
+#   - Maximum template reduction for attn based on similarity data
+#   - Only c_v keeps K=8 (genuinely diverse: max sim 0.26–0.36)
+# ══════════════════════════════════════════════════════
+TAG="28C5_SHARED_WB_PROJ_QK_K2"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "28C5" "$TAG" "Shared W_b + c_proj K=2 + c_q/c_k K=2 (combined max-reduction)"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --p28-shared-basis 1 \
+      --p28-attn-proj-templates 2 \
+      --p28-attn-qk-templates 2 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
+# 28D1: Chunk routing N=64  [causal-fixed + active-params budget]
+#   - Routing decision shared across each 64-token block
+#   - Causal: routes from chunk FIRST token only (no future look-ahead)
+#   - FLOPs estimator now correctly credits (1 - 1/64) savings
 # ══════════════════════════════════════════════════════
 TAG="28D1_CHUNK64"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "28D1" "$TAG" "Amortized template routing per 64-token chunk"
+    print_header "28D1" "$TAG" "Chunk routing N=64, causal fix + correct FLOPs"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p28-chunk-routing-size 64 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
         echo "✅  $TAG done"
+        mark_completed "$TAG"
     else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
+        echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
 
 # ══════════════════════════════════════════════════════
-# 28D2: Amortized chunk routing, chunk_size=256
-# Coarser amortization → even fewer routing FLOPs
+# 28D2: Chunk routing N=256  [causal-fixed + active-params budget]
+#   - Larger chunks → stronger amortization (saves 255/256 of routing ops)
+#   - But coarser routing: one weight blend per 256 tokens
 # ══════════════════════════════════════════════════════
 TAG="28D2_CHUNK256"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "28D2" "$TAG" "Amortized template routing per 256-token chunk"
+    print_header "28D2" "$TAG" "Chunk routing N=256, causal fix + correct FLOPs"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p28-chunk-routing-size 256 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
         echo "✅  $TAG done"
-    else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
-    fi
-fi
-
-# ══════════════════════════════════════════════════════
-# 28E: Global template bank, FFN only
-# Single shared K templates for all FFN layers with tiny per-layer router
-# Params: K×(4D+D)×B instead of n_layers×K×(4D+D)×B
-# ══════════════════════════════════════════════════════
-TAG="28E_GLOBAL_BANK_FFN"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "28E" "$TAG" "Global template bank: FFN-only (shared K templates across all layers)"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p28-global-template-bank ffn \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         mark_completed "$TAG"
-        echo "✅  $TAG done"
     else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
-    fi
-fi
-
-# ══════════════════════════════════════════════════════
-# 28F: Global template bank, FFN + Attention
-# Extends global bank to attn Q/K/V/O projections as well
-# Max parameter compression across all RemixedLinear layers
-# ══════════════════════════════════════════════════════
-TAG="28F_GLOBAL_BANK_ALL"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "28F" "$TAG" "Global template bank: FFN + Attn (all RemixedLinear layers)"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --p28-global-template-bank all \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        mark_completed "$TAG"
-        echo "✅  $TAG done"
-    else
-        echo "❌  $TAG FAILED" | tee -a "$LOGFILE"; exit 1
+        echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
 
 echo ""
-echo "════════════════════════════════════════"
-echo "  Phase 28 sweep complete ✅"
-echo "════════════════════════════════════════"
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║          Phase 28 Redux Sweep Complete                      ║"
+echo "╚══════════════════════════════════════════════════════════════╝"

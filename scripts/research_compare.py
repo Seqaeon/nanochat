@@ -93,6 +93,9 @@ def run_training_sweep(args):
         "--p28-shared-basis", str(getattr(args, 'p28_shared_basis', 0)),
         "--p28-chunk-routing-size", str(getattr(args, 'p28_chunk_routing_size', 0)),
         "--p28-global-template-bank", str(getattr(args, 'p28_global_template_bank', 'none')),
+        "--p28-attn-proj-templates", str(getattr(args, 'p28_attn_proj_templates', 0)),
+        "--p28-attn-qk-templates",   str(getattr(args, 'p28_attn_qk_templates', 0)),
+        "--target-active-params",     str(getattr(args, 'target_active_params', 0)),
         "--remix-basis-gate-rank", str(getattr(args, 'remix_basis_gate_rank', 8)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
@@ -518,6 +521,9 @@ if __name__ == "__main__":
     parser.add_argument("--p28-shared-basis", type=int, default=0, choices=[0, 1], help="28C: share single W_b projection across all attn Q/K/V/O per block")
     parser.add_argument("--p28-chunk-routing-size", type=int, default=0, help="28D: amortize template routing over N-token chunks (0=per-token)")
     parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode")
+    parser.add_argument("--p28-attn-proj-templates", type=int, default=0, help="28C2: override n_templates for attn c_proj (0=default)")
+    parser.add_argument("--p28-attn-qk-templates",   type=int, default=0, help="28C3: override n_templates for attn c_q/c_k (0=default)")
+    parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")
     parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
