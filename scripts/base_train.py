@@ -1177,7 +1177,8 @@ while True:
         # These train the router to predict which branch is best, separate from main loss
         _p20_dgcr = getattr(args, 'p20_dgcr_branches', 0)
         _p20_ncea = getattr(args, 'p20_ncea_branches', 0)
-        if _p20_dgcr > 0 or _p20_ncea > 0:
+        _p23_std_moe = getattr(args, 'p23_std_moe_experts', 0)
+        if _p20_dgcr > 0 or _p20_ncea > 0 or _p23_std_moe > 0:
             aux_loss_total = torch.tensor(0.0, device=loss.device)
             for block in orig_model.transformer.h:
                 if hasattr(block, 'mlp') and hasattr(block.mlp, 'compute_aux_loss'):

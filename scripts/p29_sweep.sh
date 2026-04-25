@@ -253,6 +253,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
   --target-tokens -1 \
+  --p23-quantile-route 1 \
   --target-active-params 0"
 
 # ══════════════════════════════════════════════════════

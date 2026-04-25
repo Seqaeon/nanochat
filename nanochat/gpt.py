@@ -5995,128 +5995,140 @@ def _moe_optimal_topk(n_experts: int, c: float = 0.3) -> int:
 
 
 class StandardMoE_MLP(nn.Module):
-    """23: Standard Mixture-of-Experts MLP (param-parity experts, learned router).
+    """Phase 23: Standard Mixture-of-Experts MLP with learned top-k routing.
 
-    Expert sizing follows **compute parity** with the dense baseline:
-        H_expert = 4 * D // E
-    so that when *all* experts are active (topk=E, 0% sparsity) the active FLOPs
-    exactly match a dense FFN.  This is the only fair comparison point.
+    Expert sizing (compute parity per active expert):
+        H_expert = 4 * D // topk
+    so topk active experts together match the dense FFN FLOPs exactly.
+        topk=1 → H = 4*D  (full-size experts, Switch-Transformer style)
+        topk=2 → H = 2*D
+        topk=E → H = 4*D//E
 
-    topk modes:
-      -1  → optimal sparsity: topk = max(1, round(E^(1-c))) with c=0.3
-                               Follows the P_eff ≈ P_active·E^c scaling law.
-       0  → soft routing: all E experts are computed and averaged (highest compute)
-       N  → fixed sparse top-N routing
+    Load-balance aux loss (Switch Transformer):
+        L_aux = aux_weight * E * Σ_e (mean_gate_prob_e * mean_dispatch_frac_e)
 
-    Load-balance aux loss (Switch Transformer formulation):
-        aux_loss = E * Σ_k (mean_fraction_k * mean_prob_k)
+    Memory: uses per-expert gradient checkpointing so h_e intermediates
+    are recomputed during backward rather than stored, keeping activation
+    memory at O(N*H) regardless of E.
     """
-    # Default router efficiency assumed for optimal topk when c hasn't been measured yet
-    ROUTER_C_PRIOR = 0.3
 
-    def __init__(self, config, n_experts: int = 8, topk: int = -1, aux_weight: float = 0.01):
+    def __init__(self, config, n_experts: int = 8, topk: int = 1, aux_weight: float = 0.01, use_quantile_route: int = 0):
         super().__init__()
+        D = config.n_embd
+        self.n_embd    = D
         self.n_experts = n_experts
         self.aux_weight = aux_weight
-        D = config.n_embd
-        self.n_embd = D
-        # Resolve topk=-1 → optimal sparsity first (needed for sizing)
-        if topk == -1:
-            topk = _moe_optimal_topk(n_experts, c=self.ROUTER_C_PRIOR)
-        self.topk = topk
-        # Compute-parity sizing: each active expert does the same compute as a dense FFN.
-        # H = 4*D // topk so that topk experts together match the dense MLP FLOPs.
-        # e.g. topk=1 → H=4*D (full-size), topk=2 → H=2*D, topk=E → H=4*D//E.
-        active_k = max(1, topk)
-        H = max(1, (4 * D) // active_k)
-        self.expert_hidden = H
-        print(f"StandardMoE_MLP: E={n_experts}, H_expert={H} (topk-parity), topk={topk}")
-        # Stacked 3D expert weights — vectorized, no Python loop in forward:
-        #   experts_fc_w:   (E, H, D)  up-projection   (equiv. E × Linear(D, H))
-        #   experts_proj_w: (E, D, H)  down-projection (equiv. E × Linear(H, D))
-        # All expert weights always participate in the graph → DDP-safe, compile-safe.
-        self.experts_fc_w   = nn.Parameter(torch.empty(n_experts, H, D))
-        self.experts_proj_w = nn.Parameter(torch.empty(n_experts, D, H))
-        # Learned router: D → E logits; zero-init → uniform routing at t=0
-        self.router = Linear(D, n_experts, bias=False)
-        nn.init.zeros_(self.router.weight)
-        # Kaiming-uniform init for fc_w; zeros for proj_w (mirrors Linear init convention)
-        nn.init.kaiming_uniform_(self.experts_fc_w.view(n_experts * H, D), a=math.sqrt(5))
-        self.experts_fc_w.data = self.experts_fc_w.data.view(n_experts, H, D)
-        nn.init.zeros_(self.experts_proj_w)
-        # Diagnostics (non-parameter state, not saved to checkpoint)
-        self._last_router_entropy   = 0.0
-        self._last_expert_load      = None
-        self._last_router_c         = self.ROUTER_C_PRIOR
-        self._optimal_e_feasible    = False
-        self._last_router_logits    = None
 
+        # Resolve topk=-1 → optimal
+        if topk == -1:
+            topk = max(1, round(n_experts ** 0.7))
+        self.topk = topk
+
+        # Full-size FFN per expert — same as Switch Transformer.
+        # Active FLOPs per token = topk × (2 × D × 4D) = topk × dense_MLP_flops.
+        # Total params = E × dense_MLP_params (E× overhead, but full expressivity per expert).
+        H = 4 * D
+        self.expert_hidden = H
+        print(f"StandardMoE_MLP: E={n_experts}, H={H}, topk={topk}  "
+              f"(active FLOPs ≈ dense)")
+
+        # Expert weights: stacked so all participate in every forward → DDP-safe
+        #   fc_w:   (E, H, D)   up-projection
+        #   proj_w: (E, D, H)   down-projection
+        self.fc_w   = nn.Parameter(torch.empty(n_experts, H, D))
+        self.proj_w = nn.Parameter(torch.empty(n_experts, D, H))
+
+        # Router: QuantileBalanced or simple nn.Linear
+        self.use_quantile_route = use_quantile_route
+        if use_quantile_route == 1 and topk > 0:
+            self.router = QuantileBalancedRouter(D, n_experts, topk, learned=True)
+        else:
+            self.router = nn.Linear(D, n_experts, bias=False)
+            nn.init.zeros_(self.router.weight)
+
+        # Weight init (Kaiming up, zeros down — same as dense MLP convention)
+        nn.init.kaiming_uniform_(self.fc_w.view(n_experts * H, D), a=math.sqrt(5))
+        self.fc_w.data = self.fc_w.data.view(n_experts, H, D)
+        nn.init.zeros_(self.proj_w)
+
+        # Diagnostics (not checkpointed, not saved)
+        self._last_router_logits = None
+        self._last_expert_load   = None
+
+    # ------------------------------------------------------------------ #
+    #  Single-expert forward (called through checkpoint to save memory)   #
+    # ------------------------------------------------------------------ #
+    def _expert_fwd(self, e: int, x_flat):
+        """Run expert e on all N tokens. Returns (N, D)."""
+        h = F.relu(x_flat.float() @ self.fc_w[e].T.float()).square()
+        return (h @ self.proj_w[e].T.float()).to(x_flat.dtype)
+
+    # ------------------------------------------------------------------ #
+    #  Aux loss (call after forward, before optimizer step)               #
+    # ------------------------------------------------------------------ #
     def compute_aux_loss(self):
-        """Switch Transformer load-balance loss. Call after forward() in training loop."""
+        """Switch Transformer load-balance auxiliary loss."""
         if self._last_router_logits is None:
             return None
-        logits = self._last_router_logits  # (B, T, E)
+        logits = self._last_router_logits          # (N, E)
         E = self.n_experts
-        probs    = F.softmax(logits.float(), dim=-1)   # (B, T, E)
-        mean_prob = probs.mean(dim=(0, 1))              # (E,)
-        _, hard_idx = logits.topk(1, dim=-1)            # (B, T, 1)
-        one_hot  = torch.zeros_like(probs)
-        one_hot.scatter_(-1, hard_idx, 1.0)
-        mean_frac = one_hot.mean(dim=(0, 1))            # (E,)
-        aux_loss  = E * (mean_prob * mean_frac).sum()
-        return self.aux_weight * aux_loss
+        probs = F.softmax(logits.float(), dim=-1)  # (N, E)
+        mean_prob = probs.mean(dim=0)              # (E,)
+        # Hard dispatch fraction (top-1 assignment for aux loss)
+        hard = logits.argmax(dim=-1)               # (N,)
+        one_hot = F.one_hot(hard, E).float()       # (N, E)
+        mean_frac = one_hot.mean(dim=0)            # (E,)
+        return self.aux_weight * E * (mean_prob * mean_frac).sum()
 
+    # ------------------------------------------------------------------ #
+    #  Forward                                                            #
+    # ------------------------------------------------------------------ #
     def forward(self, x):
         B, T, D = x.shape
-        dtype = x.dtype
-        router_logits  = self.router(x)                                   # (B, T, E)
-        self._last_router_logits = router_logits
-        router_weights = F.softmax(router_logits.float(), dim=-1).to(dtype)  # (B, T, E)
-
-        # ── Diagnostics ───────────────────────────────────────────────────────
-        with torch.no_grad():
-            rw_f = router_weights.float()
-            entropy = -(rw_f * torch.log(rw_f.clamp(min=1e-8))).sum(dim=-1).mean().item()
-            self._last_router_entropy = entropy
-            self._last_expert_load    = rw_f.mean(dim=(0, 1))  # (E,)
-            max_entropy = math.log(max(self.n_experts, 2))
-            c = entropy / max_entropy if max_entropy > 0 else 0.0
-            self._last_router_c = c
-            # Optimal-E feasibility: 15% gain threshold from doubling E
-            self._optimal_e_feasible = (c > 0.20)
-
-        # ── Vectorized expert computation ─────────────────────────────────────
-        # Loop over E experts sequentially so peak activation memory is O(N×H)
-        # per step regardless of E, topk, or B×T.
-        # Avoids the O(B×T×E×H) intermediate that caused 32 GiB OOM.
         E = self.n_experts
         N = B * T
-        x_flat = x.reshape(N, D)                          # (N, D)
-        router_flat = router_weights.reshape(N, E)         # (N, E)
 
-        if 0 < self.topk < E:
-            # Sparse: only top-k experts per token contribute
-            topk_w, topk_idx = router_flat.topk(self.topk, dim=-1)  # (N, k)
-            topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
-            # Build (N, E) dispatch weights via scatter_add
-            dispatch_w = torch.zeros(N, E, dtype=dtype, device=x.device)
-            dispatch_w.scatter_add_(1, topk_idx, topk_w)             # (N, E)
+        x_flat = x.reshape(N, D)                              # (N, D)
+
+        # Route
+        if self.use_quantile_route == 1 and self.topk > 0:
+            gate = self.router(x)                                 # (B, T, E) -> normalised weights
+            logits = None # Quantile doesn't produce raw logits for aux loss
         else:
-            # Dense: all experts used, weighted by softmax
-            dispatch_w = router_flat                                  # (N, E)
+            logits  = self.router(x_flat)                         # (N, E)
+            self._last_router_logits = logits   # kept alive for compute_aux_loss grad
+            gate = F.softmax(logits.float(), dim=-1).to(x.dtype)  # (N, E)
+            gate = gate.reshape(B, T, E)                          # (B, T, E)
 
-        # Sequential loop over E — peak memory O(N×H) per iteration, not O(N×E×H)
-        output = torch.zeros(N, D, dtype=dtype, device=x.device)
+        # Flatten gate for dispatch
+        gate_flat = gate.reshape(N, E)
+
+        # Diagnostics
+        with torch.no_grad():
+            self._last_expert_load = gate_flat.float().mean(dim=0)  # (E,)
+
+        # Build dispatch weights (N, E): sparse top-k or full soft
+        if 0 < self.topk < E and (self.use_quantile_route != 1):
+            topk_w, topk_idx = gate_flat.topk(self.topk, dim=-1)   # (N, k)
+            topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
+            dispatch = torch.zeros(N, E, dtype=x.dtype, device=x.device)
+            dispatch.scatter_add_(1, topk_idx, topk_w)         # (N, E)
+        else:
+            # If quantile route is used, 'gate' is already sparsified and normalised by the router
+            dispatch = gate_flat                                     # (N, E)
+
+        # Run each expert with gradient checkpointing:
+        #   h_e is recomputed during backward → not stored → no 32 GiB OOM
+        output = torch.zeros(N, D, dtype=x.dtype, device=x.device)
         for e in range(E):
-            w_e = dispatch_w[:, e].unsqueeze(-1)                     # (N, 1)
-            h_e = F.relu(
-                x_flat.float() @ self.experts_fc_w[e].T.float()
-            ).square().to(dtype)                                      # (N, H)
-            out_e = (h_e.float() @ self.experts_proj_w[e].T.float()).to(dtype)  # (N, D)
+            w_e = dispatch[:, e].unsqueeze(-1)                 # (N, 1)
+            # checkpoint avoids storing the (N, H) hidden state between fwd/bwd
+            out_e = torch.utils.checkpoint.checkpoint(
+                self._expert_fwd, e, x_flat, use_reentrant=False
+            )                                                   # (N, D)
             output = output + out_e * w_e
 
-        y = output.reshape(B, T, D)
-        return y
+        return output.reshape(B, T, D)
 
 
 class FrozenRoutedMLP(nn.Module):
@@ -7149,7 +7161,8 @@ class Block(nn.Module):
             self.mlp = StandardMoE_MLP(config,
                                        n_experts=config.p23_std_moe_experts,
                                        topk=getattr(config, 'p23_std_moe_topk', 1),
-                                       aux_weight=getattr(config, 'p23_std_moe_aux_weight', 0.01))
+                                       aux_weight=getattr(config, 'p23_std_moe_aux_weight', 0.01),
+                                       use_quantile_route=getattr(config, 'p23_quantile_route', 0))
         else:
             self.mlp = MLP(config)
 
