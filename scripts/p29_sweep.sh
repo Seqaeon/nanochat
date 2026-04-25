@@ -285,7 +285,7 @@ else
     print_header "29J" "$TAG" "StandardMoE K=8 full-size experts, top-optimal routing (baseline)"
     if bash scripts/research_sweep.sh $BASE_COMMON \
       --p23-std-moe-experts 8 \
-      --p23-std-moe-topk 5 \
+      --p23-std-moe-topk 8 \
       --p23-std-moe-aux-weight 0.01 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"

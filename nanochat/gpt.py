@@ -6020,15 +6020,17 @@ class StandardMoE_MLP(nn.Module):
         self.aux_weight = aux_weight
         D = config.n_embd
         self.n_embd = D
-        # Param-parity: each expert is 1/E the size of a dense FFN
-        H = max(1, (4 * D) // n_experts)
-        self.expert_hidden = H
-        # Resolve topk=-1 → optimal sparsity
+        # Resolve topk=-1 → optimal sparsity first (needed for sizing)
         if topk == -1:
             topk = _moe_optimal_topk(n_experts, c=self.ROUTER_C_PRIOR)
         self.topk = topk
-        print(f"StandardMoE_MLP: E={n_experts}, H_expert={H} (parity), topk={topk} "
-              f"({'optimal' if topk == _moe_optimal_topk(n_experts, self.ROUTER_C_PRIOR) else 'fixed'})")
+        # Compute-parity sizing: each active expert does the same compute as a dense FFN.
+        # H = 4*D // topk so that topk experts together match the dense MLP FLOPs.
+        # e.g. topk=1 → H=4*D (full-size), topk=2 → H=2*D, topk=E → H=4*D//E.
+        active_k = max(1, topk)
+        H = max(1, (4 * D) // active_k)
+        self.expert_hidden = H
+        print(f"StandardMoE_MLP: E={n_experts}, H_expert={H} (topk-parity), topk={topk}")
         # Stacked 3D expert weights — vectorized, no Python loop in forward:
         #   experts_fc_w:   (E, H, D)  up-projection   (equiv. E × Linear(D, H))
         #   experts_proj_w: (E, D, H)  down-projection (equiv. E × Linear(H, D))
@@ -6084,35 +6086,36 @@ class StandardMoE_MLP(nn.Module):
             self._optimal_e_feasible = (c > 0.20)
 
         # ── Vectorized expert computation ─────────────────────────────────────
+        # Loop over E experts sequentially so peak activation memory is O(N×H)
+        # per step regardless of E, topk, or B×T.
+        # Avoids the O(B×T×E×H) intermediate that caused 32 GiB OOM.
         E = self.n_experts
+        N = B * T
+        x_flat = x.reshape(N, D)                          # (N, D)
+        router_flat = router_weights.reshape(N, E)         # (N, E)
 
         if 0 < self.topk < E:
-            # Sparse path: gather only the top-k experts per token BEFORE computing.
-            # Peak memory: O(B·T·k·H) instead of O(B·T·E·H).
-            # Old approach materialised (B,T,E,H) in float32 = B×T×E×H×4 bytes
-            # e.g. 128×2048×8×128×4 = 32 GiB → OOM.
-            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)        # (B, T, k)
-            topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)     # renorm
-
-            # Gather fc weights for selected experts: (B, T, k, H, D)
-            fc_sel   = self.experts_fc_w[topk_idx]                           # (B, T, k, H, D)
-            proj_sel = self.experts_proj_w[topk_idx]                         # (B, T, k, D, H)
-
-            # Up-project: (B, T, 1, D) @ (B, T, k, D, H)^T → (B, T, k, H)
-            h = torch.einsum('btd,btkHd->btkH', x.float(), fc_sel.float())
-            h = F.relu(h).square().to(dtype)                                  # (B, T, k, H)
-            # Down-project: (B, T, k, H) @ (B, T, k, H, D) → (B, T, k, D)
-            out_k = torch.einsum('btkH,btkdH->btkd', h.float(), proj_sel.float()).to(dtype)
-            y = (out_k * topk_w.unsqueeze(-1)).sum(dim=2)                    # (B, T, D)
+            # Sparse: only top-k experts per token contribute
+            topk_w, topk_idx = router_flat.topk(self.topk, dim=-1)  # (N, k)
+            topk_w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-8)
+            # Build (N, E) dispatch weights via scatter_add
+            dispatch_w = torch.zeros(N, E, dtype=dtype, device=x.device)
+            dispatch_w.scatter_add_(1, topk_idx, topk_w)             # (N, E)
         else:
-            # Dense path (topk == 0 or topk >= E): compute all experts.
-            # (B, T, D) × (E, H, D)^T → (B, T, E, H)
-            all_h = torch.einsum('btd,ehd->bteh', x.float(), self.experts_fc_w.float())
-            all_h = F.relu(all_h).square().to(dtype)
-            # (B, T, E, H) × (E, D, H)^T → (B, T, E, D)
-            all_out = torch.einsum('bteh,edh->bted', all_h.float(), self.experts_proj_w.float()).to(dtype)
-            y = (all_out * router_weights.unsqueeze(-1)).sum(dim=2)          # (B, T, D)
+            # Dense: all experts used, weighted by softmax
+            dispatch_w = router_flat                                  # (N, E)
 
+        # Sequential loop over E — peak memory O(N×H) per iteration, not O(N×E×H)
+        output = torch.zeros(N, D, dtype=dtype, device=x.device)
+        for e in range(E):
+            w_e = dispatch_w[:, e].unsqueeze(-1)                     # (N, 1)
+            h_e = F.relu(
+                x_flat.float() @ self.experts_fc_w[e].T.float()
+            ).square().to(dtype)                                      # (N, H)
+            out_e = (h_e.float() @ self.experts_proj_w[e].T.float()).to(dtype)  # (N, D)
+            output = output + out_e * w_e
+
+        y = output.reshape(B, T, D)
         return y
 
 
