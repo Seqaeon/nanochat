@@ -6084,25 +6084,34 @@ class StandardMoE_MLP(nn.Module):
             self._optimal_e_feasible = (c > 0.20)
 
         # ── Vectorized expert computation ─────────────────────────────────────
-        # experts_fc_w:   (E, H, D)  — all E up-projections in one einsum
-        # experts_proj_w: (E, D, H)  — all E down-projections in one einsum
-        # Then top-k gather: no Python loop, DDP-safe, torch.compile-safe.
         E = self.n_experts
 
-        # (B, T, D) × (E, H, D)^T → (B, T, E, H)
-        all_h = torch.einsum('btd,ehd->bteh', x.float(), self.experts_fc_w.float())
-        all_h = F.relu(all_h).square().to(dtype)
-        # (B, T, E, H) × (E, D, H)^T → (B, T, E, D)
-        all_out = torch.einsum('bteh,edh->bted', all_h.float(), self.experts_proj_w.float()).to(dtype)
-
         if 0 < self.topk < E:
-            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)       # (B, T, k)
-            topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)
-            idx_exp = topk_idx.unsqueeze(-1).expand(*topk_idx.shape, D)     # (B, T, k, D)
-            topk_out = torch.gather(all_out, dim=2, index=idx_exp)          # (B, T, k, D)
-            y = (topk_out * topk_w.unsqueeze(-1)).sum(dim=2)                # (B, T, D)
+            # Sparse path: gather only the top-k experts per token BEFORE computing.
+            # Peak memory: O(B·T·k·H) instead of O(B·T·E·H).
+            # Old approach materialised (B,T,E,H) in float32 = B×T×E×H×4 bytes
+            # e.g. 128×2048×8×128×4 = 32 GiB → OOM.
+            topk_w, topk_idx = router_weights.topk(self.topk, dim=-1)        # (B, T, k)
+            topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-8)     # renorm
+
+            # Gather fc weights for selected experts: (B, T, k, H, D)
+            fc_sel   = self.experts_fc_w[topk_idx]                           # (B, T, k, H, D)
+            proj_sel = self.experts_proj_w[topk_idx]                         # (B, T, k, D, H)
+
+            # Up-project: (B, T, 1, D) @ (B, T, k, D, H)^T → (B, T, k, H)
+            h = torch.einsum('btd,btkHd->btkH', x.float(), fc_sel.float())
+            h = F.relu(h).square().to(dtype)                                  # (B, T, k, H)
+            # Down-project: (B, T, k, H) @ (B, T, k, H, D) → (B, T, k, D)
+            out_k = torch.einsum('btkH,btkdH->btkd', h.float(), proj_sel.float()).to(dtype)
+            y = (out_k * topk_w.unsqueeze(-1)).sum(dim=2)                    # (B, T, D)
         else:
-            y = (all_out * router_weights.unsqueeze(-1)).sum(dim=2)         # (B, T, D)
+            # Dense path (topk == 0 or topk >= E): compute all experts.
+            # (B, T, D) × (E, H, D)^T → (B, T, E, H)
+            all_h = torch.einsum('btd,ehd->bteh', x.float(), self.experts_fc_w.float())
+            all_h = F.relu(all_h).square().to(dtype)
+            # (B, T, E, H) × (E, D, H)^T → (B, T, E, D)
+            all_out = torch.einsum('bteh,edh->bted', all_h.float(), self.experts_proj_w.float()).to(dtype)
+            y = (all_out * router_weights.unsqueeze(-1)).sum(dim=2)          # (B, T, D)
 
         return y
 
