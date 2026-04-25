@@ -7902,7 +7902,7 @@ class GPT(nn.Module):
                 topk = mlp.topk if mlp.topk > 0 else K  # topk=0 means all
                 if topk < K:
                     # Total expert params in this MLP block
-                    expert_params = mlp.experts_fc_w.numel() + mlp.experts_proj_w.numel()
+                    expert_params = mlp.fc_w.numel() + mlp.proj_w.numel()
                     # Active fraction: topk/K; rest is inactive
                     inactive_frac = 1.0 - (topk / K)
                     inactive_expert_params += int(expert_params * inactive_frac)
