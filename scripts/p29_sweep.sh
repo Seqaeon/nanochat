@@ -45,7 +45,7 @@ CCL_STREAM="${CCL_STREAM:-selective}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 64 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 32 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
