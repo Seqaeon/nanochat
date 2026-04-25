@@ -1903,7 +1903,15 @@ class RemixedLinear(nn.Module):
 
                 # Route all chunks in one matmul: (B, n_chunks, K)
                 logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
-                weights_all = F.softmax(logits_all, dim=-1).to(dtype)            # (B, n_chunks, K)
+                
+                topk = getattr(self, 'template_topk', 0)
+                if topk > 0 and topk < self.n_templates:
+                    topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
+                    weights_all = torch.zeros_like(logits_all).scatter_(
+                        -1, topk_idx, F.softmax(topk_vals, dim=-1)
+                    ).to(dtype)
+                else:
+                    weights_all = F.softmax(logits_all, dim=-1).to(dtype)            # (B, n_chunks, K)
 
                 # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
                 W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
@@ -7930,8 +7938,22 @@ class GPT(nn.Module):
                         # Chunk routing: routing + mixing ops amortized over chunk_size tokens
                         template_params = sum(t.numel() for t in submod.template_bank)
                         route_params = submod.template_route.numel() if submod.template_route is not None else 0
-                        savings_frac = 1.0 - (1.0 / chunk)
-                        inactive_expert_params += int((template_params + route_params) * savings_frac)
+                        
+                        topk = getattr(submod, 'template_topk', 0)
+                        K = submod.n_templates
+                        
+                        # Active parameters per token is what's read from memory.
+                        # For soft routing (topk=0): we read ALL templates once per chunk.
+                        # For sparse routing (topk>0): we read only TOPK templates once per chunk.
+                        active_templates = topk if (0 < topk < K) else K
+                        active_template_params = template_params * (active_templates / K)
+                        
+                        # Active per token = (active_template_params + route_params) / chunk
+                        active_per_token = (active_template_params + route_params) / chunk
+                        
+                        # inactive = total - active_per_token
+                        inactive = (template_params + route_params) - active_per_token
+                        inactive_expert_params += int(inactive)
                     else:
                         # Legacy template bank with hard top-k routing
                         topk = getattr(submod, 'template_topk', 0)
