@@ -4148,6 +4148,18 @@ class QuantileBalancedRouter(nn.Module):
         if isinstance(self.route_proj, nn.Parameter):
             yield self.route_proj
 
+    @torch.compiler.disable()
+    def _update_ema(self, scores: torch.Tensor, topk: int, K: int):
+        with torch.no_grad():
+            flat = scores.detach().reshape(-1, K)                     # (N, K)
+            target_q = 1.0 - topk / K                                 # target fraction selected
+            batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
+            if not self._ema_init.item():
+                self.ema_thresholds.copy_(batch_q)
+                self._ema_init.fill_(True)
+            else:
+                self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
+
     def forward(self, x: 'Tensor') -> 'Tensor':
         """x: (B, T, D) → weights: (B, T, K) normalised expert weights."""
         B, T, D = x.shape
@@ -4160,18 +4172,8 @@ class QuantileBalancedRouter(nn.Module):
         scores  = scores.expand(B, T, K)                                  # (B, T, K)
 
         if self.training:
-            # Guard torch.quantile from torch.compile — its internal sort has dynamic
-            # output shapes that cause the compiler to hang indefinitely.
-            with torch.compiler.disable():
-                with torch.no_grad():
-                    flat = scores.detach().reshape(-1, K)                     # (N, K)
-                    target_q = 1.0 - topk / K                                 # target fraction selected
-                    batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
-                    if not self._ema_init.item():
-                        self.ema_thresholds.copy_(batch_q)
-                        self._ema_init.fill_(True)
-                    else:
-                        self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
+            # Guard torch.quantile from torch.compile by calling a decorated separate method
+            self._update_ema(scores, topk, K)
 
             thresh = self.ema_thresholds.to(scores.device)               # (K,)
             q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
