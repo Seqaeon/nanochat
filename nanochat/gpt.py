@@ -1882,26 +1882,38 @@ class RemixedLinear(nn.Module):
                 with torch.no_grad():
                     self._template_entropy_buf.copy_(torch.zeros(1, device=x.device))
             elif self.chunk_routing_size > 0:
-                # Phase 28D: amortized chunk routing — compute routing once per chunk,
-                # materialize W_eff, apply as a single bmm to all tokens in the chunk.
+                # Phase 28D: amortized chunk routing — vectorized (no Python loop).
+                # Compute routing once per chunk from the first token, then apply
+                # a single chunk-level effective weight to all tokens in the chunk.
                 T_stack = torch.stack(
                     [t.to(dtype=dtype) for t in self.template_bank], dim=0
-                )  # (K, out, basis)
+                )  # (K, out_features, basis_size)
                 chunk = self.chunk_routing_size
-                T_len = x.shape[1]
-                chunks_out = []
-                for start in range(0, T_len, chunk):
-                    end = min(start + chunk, T_len)
-                    x_chunk = x[:, start:end]              # (B, chunk_T, C)
-                    h_chunk = h_gated[:, start:end]        # (B, chunk_T, basis)
-                    # Route from first token of chunk only — causal: avoids look-ahead into future positions
-                    logits_c = x_chunk[:, 0, :].float() @ self.template_route.float()  # (B, K)
-                    weights_c = F.softmax(logits_c, dim=-1).to(dtype)                    # (B, K)
-                    # Materialize single effective weight for this chunk: (B, out, basis)
-                    W_eff_c = torch.einsum('bk,koc->boc', weights_c, T_stack)
-                    # Single bmm: (B, chunk_T, out)
-                    chunks_out.append(torch.bmm(h_chunk, W_eff_c.transpose(1, 2)))
-                pre_output = torch.cat(chunks_out, dim=1)
+                B, T_len, C = x.shape
+                n_chunks = (T_len + chunk - 1) // chunk
+                pad = n_chunks * chunk - T_len
+
+                # Pad T to a clean multiple of chunk (zero-pad the tail)
+                x_p = F.pad(x, (0, 0, 0, pad)) if pad > 0 else x          # (B, n*chunk, C)
+                h_p = F.pad(h_gated, (0, 0, 0, pad)) if pad > 0 else h_gated  # (B, n*chunk, basis)
+
+                # Extract causal routing anchor: first token of each chunk.
+                # Reshape → (B, n_chunks, chunk, C), take index 0 along the chunk dim.
+                x_anchors = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()  # (B, n_chunks, C)
+
+                # Route all chunks in one matmul: (B, n_chunks, K)
+                logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
+                weights_all = F.softmax(logits_all, dim=-1).to(dtype)            # (B, n_chunks, K)
+
+                # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
+                W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
+
+                # Apply: reshape h to (B, n_chunks, chunk, basis), batch-contract on basis
+                basis_sz = h_p.shape[-1]
+                h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)            # (B, n_chunks, chunk, basis)
+                out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)  # (B, n_chunks, chunk, out)
+                pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
+
                 with torch.no_grad():
                     w_f = F.softmax(x.float() @ self.template_route.float(), dim=-1)
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
@@ -4148,15 +4160,18 @@ class QuantileBalancedRouter(nn.Module):
         scores  = scores.expand(B, T, K)                                  # (B, T, K)
 
         if self.training:
-            with torch.no_grad():
-                flat = scores.detach().reshape(-1, K)                     # (N, K)
-                target_q = 1.0 - topk / K                                 # target fraction selected
-                batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
-                if not self._ema_init.item():
-                    self.ema_thresholds.copy_(batch_q)
-                    self._ema_init.fill_(True)
-                else:
-                    self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
+            # Guard torch.quantile from torch.compile — its internal sort has dynamic
+            # output shapes that cause the compiler to hang indefinitely.
+            with torch.compiler.disable():
+                with torch.no_grad():
+                    flat = scores.detach().reshape(-1, K)                     # (N, K)
+                    target_q = 1.0 - topk / K                                 # target fraction selected
+                    batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
+                    if not self._ema_init.item():
+                        self.ema_thresholds.copy_(batch_q)
+                        self._ema_init.fill_(True)
+                    else:
+                        self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
 
             thresh = self.ema_thresholds.to(scores.device)               # (K,)
             q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
