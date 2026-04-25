@@ -245,6 +245,55 @@ else
     fi
 fi
 
+BASE_COMMON="--fp8 --max-shards 170 --models base \\
+  --device-batch-size 128 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \\
+  --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \\
+  --sequence-len 2048 \\
+  --warmup-ratio 0.20 \\
+  --warmdown-ratio 0.50 \\
+  --research-dim -1 \\
+  --target-tokens -1 \\
+  --target-active-params 0"
+
+# ══════════════════════════════════════════════════════
+# 29I: Standard MoE baseline — K=8 full-size experts, top-1 routing
+# ══════════════════════════════════════════════════════
+TAG="29I_STD_MOE_TOP1"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29I" "$TAG" "StandardMoE K=8 full-size experts, top-1 routing (baseline)"
+    if bash scripts/research_sweep.sh $BASE_COMMON \\
+      --p23-std-moe-experts 8 \\
+      --p23-std-moe-topk 1 \\
+      --p23-std-moe-aux-weight 0.01 \\
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
+# 29J: Standard MoE baseline — K=8 full-size experts, top-optimal routing
+# ══════════════════════════════════════════════════════
+TAG="29J_STD_MOE_TOP_OPT"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29J" "$TAG" "StandardMoE K=8 full-size experts, top-optimal routing (baseline)"
+    if bash scripts/research_sweep.sh $BASE_COMMON \\
+      --p23-std-moe-experts 8 \\
+      --p23-std-moe-topk 5 \\
+      --p23-std-moe-aux-weight 0.01 \\
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
