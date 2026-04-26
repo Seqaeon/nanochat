@@ -32,7 +32,7 @@ print_header() {
     echo ""
 }
 
-DEPTH=12
+DEPTH=8
 MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
 MODEL_DIM_C4=$(( MODEL_DIM / 4 ))
 MODEL_DIM_C2=$(( MODEL_DIM / 2 ))
