@@ -72,7 +72,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #   - Basis size = MODEL_DIM (Full rank)
 #   - Token budget dynamically scaled by active params
 # ══════════════════════════════════════════════════════
-TAG="29A_8T_TOP1_BASELINE_D12"
+TAG="29A_8T_TOP1_BASELINE_D8"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -118,7 +118,7 @@ fi
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-TAG="29C_CHUNK64_BASELINE_D12"
+TAG="29C_CHUNK64_BASELINE_D8"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -162,7 +162,7 @@ fi
 #   - 8 templates, hard top-1 routing BUT amortized over 64 tokens
 #   - Tests if picking 1 expert per chunk works as well as soft-mixing
 # ══════════════════════════════════════════════════════
-TAG="29E_8T_TOP1_CHUNK64_D12"
+TAG="29E_8T_TOP1_CHUNK64_D8"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
