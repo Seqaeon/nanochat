@@ -1,0 +1,177 @@
+
+<h2 class="sr-only">Nine scatter plots organized in three sections — RemixedLinear Sparse, RemixedLinear Dense, and Standard MoE — each comparing its variants against the dense baseline curve across total params, active params, and active FLOPs.</h2>
+
+<style>
+.section { display:flex; flex-direction:column; gap:8px; }
+.section-title { font-size:13px; font-weight:500; color:var(--color-text-primary); padding-bottom:4px; border-bottom:0.5px solid var(--color-border-tertiary); }
+.chart-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.chart-wrap { display:flex; flex-direction:column; gap:4px; }
+.chart-label { font-size:10px; color:var(--color-text-secondary); }
+.chart-box { position:relative; width:100%; height:180px; }
+.leg-row { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:11px; color:var(--color-text-secondary); }
+.leg-item { display:flex; align-items:center; gap:5px; }
+</style>
+
+<div style="padding:0.75rem 0 0; display:flex; flex-direction:column; gap:2rem;">
+
+  <div class="section">
+    <div class="section-title">RemixedLinear Sparse vs Dense Baseline</div>
+    <div class="leg-row" id="leg-rls"></div>
+    <div class="chart-row">
+      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="rls-c1" role="img" aria-label="RLS variants vs dense baseline: total params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="rls-c2" role="img" aria-label="RLS variants vs dense baseline: active params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="rls-c3" role="img" aria-label="RLS variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">RemixedLinear Dense vs Dense Baseline</div>
+    <div class="leg-row" id="leg-rld"></div>
+    <div class="chart-row">
+      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="rld-c1" role="img" aria-label="RLD variants vs dense baseline: total params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="rld-c2" role="img" aria-label="RLD variants vs dense baseline: active params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="rld-c3" role="img" aria-label="RLD variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Standard MoE vs Dense Baseline</div>
+    <div class="leg-row" id="leg-moe"></div>
+    <div class="chart-row">
+      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="moe-c1" role="img" aria-label="MoE variants vs dense baseline: total params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="moe-c2" role="img" aria-label="MoE variants vs dense baseline: active params vs val bpp"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="moe-c3" role="img" aria-label="MoE variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const DENSE = [
+  { total: 36700296,   active: 36700296,   flops: 7.785754e7,   bpp: 1.170726 },
+  { total: 125829648,  active: 125829648,  flops: 2.862643e8,   bpp: 0.969126 },
+  { total: 286262424,  active: 286262424,  flops: 7.384666e8,   bpp: 0.865634 },
+  { total: 896535720,  active: 560988160,  flops: 3.49e9,       bpp: 0.8121 },
+  { total: 1879048192, active: 1879048192, flops: 1.207960e10,  bpp: 0.7236 },
+  { total: 2217082880, active: 2217082880, flops: 1.426509e10,  bpp: 0.7045 },
+];
+
+
+const RLS = [
+  { id:'29A', label:'29A top1-base',   total:55655968, active:39140896, flops:9.250114e7, bpp:1.086944, color:'#7F77DD' },
+  { id:'29B', label:'29B top1-C4',     total:39721504, active:35592736, flops:7.121218e7, bpp:1.183033, color:'#1D9E75' },
+  { id:'29C', label:'29C chunk64-base',total:55655968, active:37003936, flops:7.967938e7, bpp:1.082087, color:'#D4537E' },
+  { id:'29D', label:'29D chunk64-C4',  total:39721504, active:35004064, flops:6.768014e7, bpp:1.176537, color:'#EF9F27' },
+  { id:'29E', label:'29E top1-chunk64',total:55655968, active:36745888, flops:7.813109e7, bpp:1.086759, color:'#E24B4A' },
+];
+
+const RLD = [
+  { id:'29F', label:'29F 8T-C4',       total:39721504, active:39721504, flops:9.598478e7, bpp:1.153591, color:'#85B7EB' },
+  { id:'29G', label:'29G 4T-C4',       total:37325344, active:37325344, flops:8.160782e7, bpp:1.181004, color:'#378ADD' },
+  { id:'29H', label:'29H 4T-C2',       total:40277536, active:40277536, flops:9.932098e7, bpp:1.127241, color:'#0C447C' },
+  { id:'RLD', label:'RLD full',         total:40646200, active:40646200, flops:1.015330e8, bpp:1.125584, color:'#639922' },
+];
+
+const MOE = [
+  { id:'29I', label:'29I top-1',       total:51388552, active:36708488, flops:7.790669e7, bpp:1.186575, color:'#E24B4A' },
+  { id:'29J', label:'29J top-all',     total:51388552, active:51388552, flops:1.659871e8, bpp:1.186305, color:'#EF9F27' },
+];
+
+const M = v => v / 1e6;
+
+function buildLegend(elId, variants) {
+  const el = document.getElementById(elId);
+  const baseItem = `<span class="leg-item"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="1.5" stroke-dasharray="4,3"/></svg>Dense baseline</span>`;
+  const items = variants.map(v =>
+    `<span class="leg-item"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.5" fill="${v.color}"/></svg>${v.label}</span>`
+  ).join('');
+  el.innerHTML = baseItem + items;
+}
+
+function baseCurveDS(keyFn) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp }));
+  return {
+    label: 'Dense baseline',
+    data: pts,
+    showLine: true, tension: 0.3,
+    borderColor: '#888780', backgroundColor: '#888780',
+    borderWidth: 1.5, borderDash: [5,3],
+    pointStyle: 'circle', pointRadius: 4, pointHoverRadius: 6,
+    order: 10,
+  };
+}
+
+function varDS(v, keyFn) {
+  return {
+    label: v.label,
+    data: [{ x: M(keyFn(v)), y: v.bpp, id: v.id }],
+    backgroundColor: v.color, borderColor: v.color,
+    pointStyle: 'circle', pointRadius: 7, pointHoverRadius: 9,
+    pointBorderColor: 'rgba(255,255,255,0.5)', pointBorderWidth: 1.5,
+    order: 1,
+  };
+}
+
+function makeChart(canvasId, variants, keyFn, xLabel) {
+  const datasets = [baseCurveDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
+  new Chart(document.getElementById(canvasId), {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top:6, right:6 } },
+      scales: {
+        x: {
+          type: 'logarithmic',
+          title: { display: false },
+          ticks: {
+            font:{ size:9 }, color:'#888780', maxTicksLimit:5,
+            callback(v) {
+              const m = v/1e6;
+              const nice = [10,20,30,40,50,80,100,200,300,500,700,1000];
+              const r = Math.round(m);
+              if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
+              return null;
+            }
+          },
+          grid: { color:'rgba(136,135,128,0.1)' },
+        },
+        y: {
+          ticks: { font:{size:9}, color:'#888780', callback: v => v.toFixed(2) },
+          grid: { color:'rgba(136,135,128,0.1)' },
+          min: 0.50, max: 1.22,
+        },
+      },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const r = ctx.raw;
+              const name = r.id ? `[${r.id}] ` : '';
+              return `${name}${ctx.dataset.label}: (${r.x.toFixed(1)}M, ${r.y.toFixed(4)} bpp)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+buildLegend('leg-rls', RLS);
+buildLegend('leg-rld', RLD);
+buildLegend('leg-moe', MOE);
+
+makeChart('rls-c1', RLS, d=>d.total,  'total params');
+makeChart('rls-c2', RLS, d=>d.active, 'active params');
+makeChart('rls-c3', RLS, d=>d.flops,  'active FLOPs');
+
+makeChart('rld-c1', RLD, d=>d.total,  'total params');
+makeChart('rld-c2', RLD, d=>d.active, 'active params');
+makeChart('rld-c3', RLD, d=>d.flops,  'active FLOPs');
+
+makeChart('moe-c1', MOE, d=>d.total,  'total params');
+makeChart('moe-c2', MOE, d=>d.active, 'active params');
+makeChart('moe-c3', MOE, d=>d.flops,  'active FLOPs');
+</script>

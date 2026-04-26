@@ -4,6 +4,7 @@ import os
 import json
 import glob
 import shutil
+import datetime
 from pathlib import Path
 import subprocess
 
@@ -18,6 +19,35 @@ from nanochat.checkpoint_manager import find_last_step
 
 RUNNER = resolve_runner()
 
+# ---------------------------------------------------------------------------
+# Persistent sweep state helpers
+# sweep_state.json lives inside --run-dir and survives re-runs.
+# Format:
+# {
+#   "completed":  { "model_name": {"val_bpb": 1.23, "checkpoint": "...", "ckpt_dir": "..."} },
+#   "unfinished": { "model_name": {"ckpt_dir": "...", "started_at": "..."} }
+# }
+# ---------------------------------------------------------------------------
+
+def _state_path(run_dir_path: Path) -> Path:
+    return run_dir_path / "sweep_state.json"
+
+def load_sweep_state(run_dir_path: Path) -> dict:
+    p = _state_path(run_dir_path)
+    if p.exists():
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"completed": {}, "unfinished": {}}
+
+def save_sweep_state(run_dir_path: Path, state: dict) -> None:
+    p = _state_path(run_dir_path)
+    with open(p, "w") as f:
+        json.dump(state, f, indent=2)
+
+
 def run_training_sweep(args):
     # Ensure environment is ready
     check_and_prepare_env(args)
@@ -26,6 +56,16 @@ def run_training_sweep(args):
     run_dir = args.run_dir
     run_dir_path = Path(run_dir)
     run_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Load (or create) persistent state for this run_dir
+    state = load_sweep_state(run_dir_path)
+    if state["unfinished"]:
+        print("="*64)
+        print("Unfinished experiments found from a previous run:")
+        for name, info in state["unfinished"].items():
+            print(f"  [{name}] ckpt_dir = {info.get('ckpt_dir', '?')}")
+        print("These will be resumed from their last checkpoint.")
+        print("="*64)
     
     if args.target_tokens > 0:
         target_tokens = args.target_tokens
@@ -343,6 +383,15 @@ def run_training_sweep(args):
         
         ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
 
+        # ── Resume: prefer the ckpt_dir stored in state from a previous run ──
+        saved_ckpt_dir = None
+        if model_name in state.get("unfinished", {}):
+            saved_ckpt_dir = state["unfinished"][model_name].get("ckpt_dir")
+        elif model_name in state.get("completed", {}):
+            saved_ckpt_dir = state["completed"][model_name].get("ckpt_dir")
+        if saved_ckpt_dir:
+            ckpt_dir = Path(saved_ckpt_dir)
+
         train_cmd_args = common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),
             "--model-tag", model_name
@@ -358,9 +407,17 @@ def run_training_sweep(args):
                 base_multiplier = (model_dim / 768) ** -0.5
                 train_cmd_args.extend(["--mu-p-scale-override", str(base_multiplier)])
         # if "enable", neither flag is passed; models calculate their own inherently
-            
-        # Check for resumption
+
+        # ── Record as unfinished BEFORE launching so a crash is visible ──
         actual_model_ckpt_dir = ckpt_dir / model_name
+        state.setdefault("unfinished", {})[model_name] = {
+            "ckpt_dir": str(ckpt_dir),
+            "actual_model_ckpt_dir": str(actual_model_ckpt_dir),
+            "started_at": datetime.datetime.now().isoformat(),
+        }
+        save_sweep_state(run_dir_path, state)
+
+        # Check for resumption
         try:
             last_step = find_last_step(str(actual_model_ckpt_dir))
             print(f"  Found existing checkpoints in {actual_model_ckpt_dir}, resuming from step {last_step}")
@@ -392,7 +449,7 @@ def run_training_sweep(args):
             # Extract final checkpoint val_bpb
             # Checkpoint format is usually checkpoints_dir/model/state_*.pt etc
             # Base train saves it with step index. We find the largest one.
-            model_ckpt_dir = ckpt_dir / "model"
+            model_ckpt_dir = ckpt_dir / model_name
             if model_ckpt_dir.exists():
                 meta_files = glob.glob(str(model_ckpt_dir / "meta_*.json"))
                 if meta_files:
@@ -404,6 +461,14 @@ def run_training_sweep(args):
                         if "val_bpb" in meta_data and meta_data["val_bpb"] is not None:
                             val_bpb = float(meta_data["val_bpb"])
                             results[model_name] = {"val_bpb": val_bpb, "checkpoint": last_meta}
+                            # ── Promote to completed in state ──
+                            state.setdefault("completed", {})[model_name] = {
+                                "val_bpb": val_bpb,
+                                "checkpoint": last_meta,
+                                "ckpt_dir": str(ckpt_dir),
+                            }
+                            state.get("unfinished", {}).pop(model_name, None)
+                            save_sweep_state(run_dir_path, state)
                             print(f"Final Validation BPB for {model_name}: {val_bpb:.4f}")
                         else:
                             print(f"No val_bpb found in {last_meta}")

@@ -3,7 +3,7 @@
 set -o pipefail
 
 LOGFILE="${SWEEP_LOG:-sweep_p29.log}"
-STATEFILE="${LOGFILE%.log}.state"
+STATEFILE="${LOGFILE%.log}_state.json"
 FORCE=0
 if [[ "$1" == "--force" ]]; then
     FORCE=1
@@ -11,15 +11,56 @@ if [[ "$1" == "--force" ]]; then
     shift
 fi
 
+# ---------------------------------------------------------------------------
+# JSON state helpers — state file format:
+# {
+#   "completed":  ["TAG1", "TAG2", ...],
+#   "unfinished": { "TAG": "/path/to/ckpt_dir" },
+#   "output_dir": { "TAG": "/path/to/run_dir" }
+# }
+# ---------------------------------------------------------------------------
+_state_init() {
+    if [[ ! -f "$STATEFILE" ]]; then
+        echo '{"completed":[],"unfinished":{},"output_dir":{}}' > "$STATEFILE"
+    fi
+}
+
 check_completed() {
     local tag="$1"
     if [[ "$FORCE" -eq 1 ]]; then return 1; fi
-    if [[ ! -f "$STATEFILE" ]]; then return 1; fi
-    grep -qx "$tag" "$STATEFILE" 2>/dev/null && return 0 || return 1
+    _state_init
+    python3 -c "
+import json, sys
+with open('$STATEFILE') as f: s=json.load(f)
+sys.exit(0 if '$tag' in s.get('completed',[]) else 1)
+" 2>/dev/null && return 0 || return 1
 }
 
+# Call BEFORE launching an experiment so a crash mid-run is tracked
+mark_started() {
+    local tag="$1" ckpt_dir="$2" out_dir="$3"
+    _state_init
+    python3 - <<PYEOF
+import json
+with open('$STATEFILE') as f: s=json.load(f)
+s.setdefault('unfinished', {})['$tag'] = '$ckpt_dir'
+s.setdefault('output_dir', {})['$tag'] = '$out_dir'
+with open('$STATEFILE', 'w') as f: json.dump(s, f, indent=2)
+PYEOF
+}
+
+# Call on success — moves tag from unfinished → completed
 mark_completed() {
-    echo "$1" >> "$STATEFILE"
+    local tag="$1"
+    _state_init
+    python3 - <<PYEOF
+import json
+with open('$STATEFILE') as f: s=json.load(f)
+if '$tag' not in s.get('completed', []):
+    s.setdefault('completed', []).append('$tag')
+s.get('unfinished', {}).pop('$tag', None)
+with open('$STATEFILE', 'w') as f: json.dump(s, f, indent=2)
+PYEOF
 }
 
 print_header() {
@@ -63,6 +104,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --remix-basis-gate-mode centered \
   --target-tokens -1 \
   --target-active-params 0 \
+  --save-every 200 \
   --p23-quantile-route 1"
 
 
@@ -77,6 +119,8 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
+    _RUN_DIR="out/sweep_p29/${TAG}"
+    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
       --p22-template-topk 1 \
@@ -123,6 +167,8 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+    _RUN_DIR="out/sweep_p29/${TAG}"
+    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
       --p28-chunk-routing-size 64 \
@@ -167,6 +213,8 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
+    _RUN_DIR="out/sweep_p29/${TAG}"
+    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --p22-n-templates 8 \
       --p28-chunk-routing-size 64 \
