@@ -63,6 +63,18 @@ with open('$STATEFILE', 'w') as f: json.dump(s, f, indent=2)
 PYEOF
 }
 
+# Read the output_dir stored by mark_started for a given tag.
+# Returns the stored path if found, or empty string if not.
+get_out_dir() {
+    local tag="$1"
+    _state_init
+    python3 -c "
+import json, sys
+with open('$STATEFILE') as f: s=json.load(f)
+print(s.get('output_dir', {}).get('$tag', ''))
+" 2>/dev/null
+}
+
 print_header() {
     local num="$1" tag="$2" desc="$3"
     echo ""
@@ -80,6 +92,9 @@ MODEL_DIM_C2=$(( MODEL_DIM / 2 ))
 
 CCL_MOD="${CCL_MOD:-weight}"
 CCL_STREAM="${CCL_STREAM:-selective}"
+# Default root for output dirs on first run of each tag.
+# On re-runs, get_out_dir reads the actual path from the state file instead.
+P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 
 # Common flags shared by all variants.
 # Notes:
@@ -119,9 +134,12 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
-    _RUN_DIR="out/sweep_p29/${TAG}"
-    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    # Use stored output_dir if we've run this tag before; otherwise use default.
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 \
       --p22-template-topk 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
@@ -167,9 +185,11 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
-    _RUN_DIR="out/sweep_p29/${TAG}"
-    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 \
       --p28-chunk-routing-size 64 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
@@ -213,9 +233,11 @@ if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
     print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
-    _RUN_DIR="out/sweep_p29/${TAG}"
-    mark_started "$TAG" "${_RUN_DIR}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 \
       --p28-chunk-routing-size 64 \
       --p22-template-topk 1 \

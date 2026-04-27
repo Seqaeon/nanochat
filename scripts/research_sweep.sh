@@ -45,6 +45,7 @@ fi
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 ROOT_OUT_DIR="out/research_sweep_${TIMESTAMP}"
+ROOT_OUT_DIR_OVERRIDE=""
 
 EXTRA_ARGS=()
 MAX_SHARDS=170
@@ -291,6 +292,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--data-dir" "$2")
             shift 2
             ;;
+        --out-dir)
+            ROOT_OUT_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
         *)
             # Stop parsing flags when we hit a depth
             if [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -307,6 +312,12 @@ done
 if [ $# -eq 0 ]; then
     echo "Usage: ./scripts/research_sweep.sh [flags] <depth1> [depth2] ..."
     exit 1
+fi
+
+# If caller passed --out-dir, use that stable directory instead of the timestamped default.
+# This is what allows sweep scripts (p29_sweep.sh etc.) to resume across re-runs.
+if [[ -n "$ROOT_OUT_DIR_OVERRIDE" ]]; then
+    ROOT_OUT_DIR="$ROOT_OUT_DIR_OVERRIDE"
 fi
 
 echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"

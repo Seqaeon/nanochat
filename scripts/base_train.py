@@ -1034,6 +1034,7 @@ if not resuming:
     min_val_bpb = float("inf")
     smooth_train_loss = 0 # EMA of training loss
     total_training_time = 0 # total wall-clock time of training
+    last_periodic_ckpt_step = -1 # step of the last periodic (non-final) checkpoint saved
 else:
     step = meta_data["step"]
     loop_state = meta_data["loop_state"]
@@ -1041,6 +1042,8 @@ else:
     min_val_bpb = loop_state["min_val_bpb"]
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
+    # On resume, the checkpoint we resumed from is the last known periodic save
+    last_periodic_ckpt_step = step
 
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
 effective_device_batch_size = args.device_batch_size * (ddp_world_size if is_dp else 1)
@@ -1122,7 +1125,8 @@ while True:
         model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    is_periodic_save = (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0)
+    if last_step or is_periodic_save:
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -1145,6 +1149,24 @@ while True:
             },
             rank=ddp_rank,
         )
+        # Rolling checkpoints: after a periodic save, delete the previous periodic checkpoint
+        # to avoid disk bloat. The final checkpoint (last_step) is always kept.
+        if is_periodic_save and master_process and last_periodic_ckpt_step >= 0:
+            prev = last_periodic_ckpt_step
+            for pattern in [
+                os.path.join(checkpoint_dir, f"model_{prev:06d}.pt"),
+                os.path.join(checkpoint_dir, f"meta_{prev:06d}.json"),
+            ]:
+                if os.path.exists(pattern):
+                    os.remove(pattern)
+            # Remove optimizer shards from all ranks (rank files we don't own are best-effort)
+            for r in range(ddp_world_size):
+                optim_path = os.path.join(checkpoint_dir, f"optim_{prev:06d}_rank{r:d}.pt")
+                if os.path.exists(optim_path):
+                    os.remove(optim_path)
+            print0(f"Removed previous periodic checkpoint at step {prev:06d}")
+        if is_periodic_save:
+            last_periodic_ckpt_step = step
 
     # termination conditions
     if last_step:
