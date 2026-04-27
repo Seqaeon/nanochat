@@ -1,0 +1,1036 @@
+╔══════════════════════════════════════════════════════════════╗
+║  [29A]  29A_8T_TOP1_BASELINE_D8
+║  8T top-1 sparse routing (Full rank baseline)
+╚══════════════════════════════════════════════════════════════╝
+
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon Apr 27 06:26:08 2026       
+Mon Apr 27 06:26:08 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   22C    P0             73W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   22C    P0             73W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/research_sweep_20260426_221758
+Starting Research Sweep. Output directory: out/research_sweep_20260426_221758
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Validating system environment dependencies via uv...
+[2m[2mUsing Python 3.12.6 environment at: /usr/local[0m
+Using Python 3.12.6 environment at: /usr/local[0m
+[1m[1m[33mwarning[39m[0m[1m:[0m [1mMissing version constraint (e.g., a lower bound) for `cmaes`[0m
+[33mwarning[39m[0m[1m:[0m [1mMissing version constraint (e.g., a lower bound) for `cmaes`[0m
+[2m[2mResolved [1m130 packages[0m [2min 735ms[0m[0m
+Resolved [1m130 packages[0m [2min 735ms[0m[0m
+[2m[2mPrepared [1m1 package[0m [2min 3.80s[0m[0m
+Prepared [1m1 package[0m [2min 3.80s[0m[0m
+[2m[2mInstalled [1m1 package[0m [2min 4ms[0m[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6)[0m
+Installed [1m1 package[0m [2min 4ms[0m[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6)[0m
+Reset report and wrote header to out/report/header.md
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+================================================================
+Processing Depth: 8
+================================================================
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+
+================================================================================================================================
+Unfinished experiments found from a previous run:
+  [remixed-linear] ckpt_dir = /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+Unfinished experiments found from a previous run:
+  [remixed-linear] ckpt_dir = /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+  ┌─────────────────────────────────────────────────────┐
+  ┌─────────────────────────────────────────────────────┐
+  │  ⏩  RESUMING [remixed-linear] from step 3,200
+  │     /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 32 --total-batch-size 262144 --target-tokens -1 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.2 --warmdown-ratio 0.5 --final-lr-frac 0.0 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 0 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode centered --remix-gate-lr-scale 0.3 --p22-n-templates 8 --p22-template-routing-learned 1 --p22-template-topk 1 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream selective --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 2.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 1 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892 --resume-from-step 3200
+
+  │  ⏩  RESUMING [remixed-linear] from step 3,200
+  │     /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 32 --total-batch-size 262144 --target-tokens -1 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.2 --warmdown-ratio 0.5 --final-lr-frac 0.0 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 0 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode centered --remix-gate-lr-scale 0.3 --p22-n-templates 8 --p22-template-routing-learned 1 --p22-template-topk 1 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream selective --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 2.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 1 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 170 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892 --resume-from-step 3200
+
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+Autodetected device type: cuda
+2026-04-27 06:26:57,480 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-27 06:26:57,480 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
+WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+WARNING: SDPA has no support for sliding window attention (window_pattern='SSSL'). Your GPU utilization will be terrible.
+WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+Vocab size: 32,768
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": false,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "centered",
+    "sparse_gate_k": 0,
+    "gate_temperature": 2.0,
+    "basis_scale_factor": 4,
+    "n_templates": 8,
+    "template_routing_learned": true,
+    "template_topk": 1,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "selective",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 2.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": false,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "centered",
+    "sparse_gate_k": 0,
+    "gate_temperature": 2.0,
+    "basis_scale_factor": 4,
+    "n_templates": 8,
+    "template_routing_learned": true,
+    "template_topk": 1,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "selective",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 2.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 1,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 1,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered"
+}
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Modulation diagnostics: no position-conditioned layers found (mode=weight)
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear
+Checkpoints directory: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear
+Resuming optimization from step 3200
+Resuming optimization from step 3200
+✓ FP8 training enabled (tensorwise scaling) - converted 65/117 linear layers, skipped 52 (too small)
+✓ FP8 training enabled (tensorwise scaling) - converted 65/117 linear layers, skipped 52 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 175,437,104
+research                : 0
+scalars                 : 16
+total                   : 276,100,416
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 175,437,104
+research                : 0
+scalars                 : 16
+total                   : 276,100,416
+Estimated FLOPs per token (total):  1.187889e+09
+Estimated FLOPs per token (active): 3.951655e+08
+Estimated active params:            143,979,840
+Estimated FLOPs per token (total):  1.187889e+09
+Estimated FLOPs per token (active): 3.951655e+08
+Estimated active params:            143,979,840
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.205960 for depth 8
+Scaling weight decay from 0.200000 to 0.205960 for depth 8
+μP LR scaling OVERRIDDEN to 1.224745
+μP LR scaling OVERRIDDEN to 1.224745
+Calculated number of iterations from target data:param ratio: 7,699
+Calculated number of iterations from target data:param ratio: 7,699
+Total number of training tokens: 2,018,246,656
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 2.397453e+18
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 32 x 2048 = 65,536
+Tokens / micro-batch: 65,536
+Total batch size 262,144 => gradient accumulation steps: 4
+Total number of training tokens: 2,018,246,656
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 2.397453e+18
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 32 x 2048 = 65,536
+Tokens / micro-batch: 65,536
+Total batch size 262,144 => gradient accumulation steps: 4
+[rank0]:W0427 06:27:03.527000 506 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0427 06:27:03.527000 506 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+step 03200/07699 (41.56%) | loss: 0.320432 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1272262.88ms | tok/sec: 206 | bf16_mfu: 0.02 | epoch: 1 pq: 0 rg: 1 | total time: 21.20m | eta: 29.9m
+step 03200/07699 (41.56%) | loss: 0.320432 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1272262.88ms | tok/sec: 206 | bf16_mfu: 0.02 | epoch: 1 pq: 0 rg: 1 | total time: 21.20m | eta: 29.9m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.729 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.729 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 06:53:24,859 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003400.pt
+2026-04-27 06:53:24,859 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003400.pt
+2026-04-27 06:53:24,869 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003400.json
+2026-04-27 06:53:24,869 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003400.json
+2026-04-27 06:53:28,779 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003400_rank0.pt
+2026-04-27 06:53:28,779 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003400_rank0.pt
+Removed previous periodic checkpoint at step 003200
+Removed previous periodic checkpoint at step 003200
+step 03400/07699 (44.16%) | loss: 3.294046 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1504.38ms | tok/sec: 174,253 | bf16_mfu: 20.93 | epoch: 1 pq: 1 rg: 16 | total time: 26.30m | eta: 33.3m
+step 03400/07699 (44.16%) | loss: 3.294046 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1504.38ms | tok/sec: 174,253 | bf16_mfu: 20.93 | epoch: 1 pq: 1 rg: 16 | total time: 26.30m | eta: 33.3m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.723 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.723 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 06:58:33,753 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003600.pt
+2026-04-27 06:58:33,753 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003600.pt
+2026-04-27 06:58:33,762 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003600.json
+2026-04-27 06:58:33,762 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003600.json
+2026-04-27 06:58:37,612 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003600_rank0.pt
+2026-04-27 06:58:37,612 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003600_rank0.pt
+Removed previous periodic checkpoint at step 003400
+Removed previous periodic checkpoint at step 003400
+step 03600/07699 (46.76%) | loss: 3.267394 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1507.69ms | tok/sec: 173,870 | bf16_mfu: 20.88 | epoch: 1 pq: 2 rg: 29 | total time: 31.32m | eta: 35.8m
+step 03600/07699 (46.76%) | loss: 3.267394 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1507.69ms | tok/sec: 173,870 | bf16_mfu: 20.88 | epoch: 1 pq: 2 rg: 29 | total time: 31.32m | eta: 35.8m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.720 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.720 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:03:43,954 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003800.pt
+2026-04-27 07:03:43,954 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_003800.pt
+2026-04-27 07:03:43,963 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003800.json
+2026-04-27 07:03:43,963 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_003800.json
+2026-04-27 07:03:47,794 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003800_rank0.pt
+2026-04-27 07:03:47,794 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_003800_rank0.pt
+Removed previous periodic checkpoint at step 003600
+Removed previous periodic checkpoint at step 003600
+step 03800/07699 (49.36%) | loss: 3.287181 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1494.31ms | tok/sec: 175,427 | bf16_mfu: 21.07 | epoch: 1 pq: 3 rg: 43 | total time: 36.37m | eta: 37.4m
+step 03800/07699 (49.36%) | loss: 3.287181 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.423e-02) | dt: 1494.31ms | tok/sec: 175,427 | bf16_mfu: 21.07 | epoch: 1 pq: 3 rg: 43 | total time: 36.37m | eta: 37.4m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+<|bos|>The capital of France is the capital of the world, and the capital of the world is the capital of
+<|bos|>The capital of France is the capital of the world, and the capital of the world is the capital of
+<|bos|>The chemical symbol of gold is gold. It is a chemical element that is found in the earth's crust.
+<|bos|>The chemical symbol of gold is gold. It is a chemical element that is found in the earth's crust.
+<|bos|>If yesterday was Friday, then tomorrow will be the day of the week. The week of the week will be the week of
+<|bos|>If yesterday was Friday, then tomorrow will be the day of the week. The week of the week will be the week of
+<|bos|>The opposite of hot is a hot is a hot is a hot is a hot is a hot is a
+<|bos|>The opposite of hot is a hot is a hot is a hot is a hot is a hot is a
+<|bos|>The planets of the solar system are: the solar system, the solar system, the solar system, the solar system,
+<|bos|>The planets of the solar system are: the solar system, the solar system, the solar system, the solar system,
+<|bos|>My favorite color is the one I've seen in the past. I've seen it in the past
+<|bos|>My favorite color is the one I've seen in the past. I've seen it in the past
+<|bos|>If 5*x + 3 = 13, then x is the number of times the number of times the number of times the number of times
+<|bos|>If 5*x + 3 = 13, then x is the number of times the number of times the number of times the number of times
+2026-04-27 07:08:56,439 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004000.pt
+2026-04-27 07:08:56,439 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004000.pt
+2026-04-27 07:08:56,450 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004000.json
+2026-04-27 07:08:56,450 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004000.json
+2026-04-27 07:09:00,233 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004000_rank0.pt
+2026-04-27 07:09:00,233 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004000_rank0.pt
+Removed previous periodic checkpoint at step 003800
+Removed previous periodic checkpoint at step 003800
+step 04000/07699 (51.95%) | loss: 3.272806 | lrm: 0.96 | lr(adamw:6.414e-02, muon:1.367e-02) | dt: 1539.00ms | tok/sec: 170,334 | bf16_mfu: 20.46 | epoch: 1 pq: 4 rg: 58 | total time: 41.38m | eta: 38.4m
+step 04000/07699 (51.95%) | loss: 3.272806 | lrm: 0.96 | lr(adamw:6.414e-02, muon:1.367e-02) | dt: 1539.00ms | tok/sec: 170,334 | bf16_mfu: 20.46 | epoch: 1 pq: 4 rg: 58 | total time: 41.38m | eta: 38.4m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.715 σ=0.405 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.715 σ=0.405 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:14:07,275 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004200.pt
+2026-04-27 07:14:07,275 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004200.pt
+2026-04-27 07:14:07,282 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004200.json
+2026-04-27 07:14:07,282 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004200.json
+2026-04-27 07:14:11,252 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004200_rank0.pt
+2026-04-27 07:14:11,252 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004200_rank0.pt
+Removed previous periodic checkpoint at step 004000
+Removed previous periodic checkpoint at step 004000
+step 04200/07699 (54.55%) | loss: 3.219358 | lrm: 0.91 | lr(adamw:6.067e-02, muon:1.293e-02) | dt: 1514.70ms | tok/sec: 173,066 | bf16_mfu: 20.79 | epoch: 1 pq: 5 rg: 73 | total time: 46.43m | eta: 38.8m
+step 04200/07699 (54.55%) | loss: 3.219358 | lrm: 0.91 | lr(adamw:6.067e-02, muon:1.293e-02) | dt: 1514.70ms | tok/sec: 173,066 | bf16_mfu: 20.79 | epoch: 1 pq: 5 rg: 73 | total time: 46.43m | eta: 38.8m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.410 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.410 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:19:17,299 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004400.pt
+2026-04-27 07:19:17,299 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004400.pt
+2026-04-27 07:19:17,307 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004400.json
+2026-04-27 07:19:17,307 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004400.json
+2026-04-27 07:19:20,989 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004400_rank0.pt
+2026-04-27 07:19:20,989 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004400_rank0.pt
+Removed previous periodic checkpoint at step 004200
+Removed previous periodic checkpoint at step 004200
+step 04400/07699 (57.15%) | loss: 3.213037 | lrm: 0.86 | lr(adamw:5.720e-02, muon:1.219e-02) | dt: 1526.36ms | tok/sec: 171,744 | bf16_mfu: 20.63 | epoch: 1 pq: 7 rg: 4 | total time: 51.48m | eta: 38.7m
+step 04400/07699 (57.15%) | loss: 3.213037 | lrm: 0.86 | lr(adamw:5.720e-02, muon:1.219e-02) | dt: 1526.36ms | tok/sec: 171,744 | bf16_mfu: 20.63 | epoch: 1 pq: 7 rg: 4 | total time: 51.48m | eta: 38.7m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.717 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.717 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:24:26,684 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004600.pt
+2026-04-27 07:24:26,684 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004600.pt
+2026-04-27 07:24:26,693 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004600.json
+2026-04-27 07:24:26,693 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004600.json
+2026-04-27 07:24:30,583 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004600_rank0.pt
+2026-04-27 07:24:30,583 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004600_rank0.pt
+Removed previous periodic checkpoint at step 004400
+Removed previous periodic checkpoint at step 004400
+step 04600/07699 (59.75%) | loss: 3.177220 | lrm: 0.80 | lr(adamw:5.374e-02, muon:1.145e-02) | dt: 1566.61ms | tok/sec: 167,332 | bf16_mfu: 20.10 | epoch: 1 pq: 8 rg: 19 | total time: 56.52m | eta: 38.2m
+step 04600/07699 (59.75%) | loss: 3.177220 | lrm: 0.80 | lr(adamw:5.374e-02, muon:1.145e-02) | dt: 1566.61ms | tok/sec: 167,332 | bf16_mfu: 20.10 | epoch: 1 pq: 8 rg: 19 | total time: 56.52m | eta: 38.2m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.716 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.716 σ=0.408 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:29:36,402 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004800.pt
+2026-04-27 07:29:36,402 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_004800.pt
+2026-04-27 07:29:36,411 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004800.json
+2026-04-27 07:29:36,411 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_004800.json
+2026-04-27 07:29:40,075 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004800_rank0.pt
+2026-04-27 07:29:40,075 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_004800_rank0.pt
+Removed previous periodic checkpoint at step 004600
+Removed previous periodic checkpoint at step 004600
+step 04800/07699 (62.35%) | loss: 3.169341 | lrm: 0.75 | lr(adamw:5.027e-02, muon:1.071e-02) | dt: 1481.63ms | tok/sec: 176,929 | bf16_mfu: 21.25 | epoch: 1 pq: 9 rg: 34 | total time: 61.57m | eta: 37.3m
+step 04800/07699 (62.35%) | loss: 3.169341 | lrm: 0.75 | lr(adamw:5.027e-02, muon:1.071e-02) | dt: 1481.63ms | tok/sec: 176,929 | bf16_mfu: 21.25 | epoch: 1 pq: 9 rg: 34 | total time: 61.57m | eta: 37.3m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.406 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.718 σ=0.406 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:34:43,627 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005000.pt
+2026-04-27 07:34:43,627 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005000.pt
+2026-04-27 07:34:43,636 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005000.json
+2026-04-27 07:34:43,636 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005000.json
+2026-04-27 07:34:47,136 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005000_rank0.pt
+2026-04-27 07:34:47,136 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005000_rank0.pt
+Removed previous periodic checkpoint at step 004800
+Removed previous periodic checkpoint at step 004800
+step 05000/07699 (64.94%) | loss: 3.164444 | lrm: 0.70 | lr(adamw:4.680e-02, muon:9.975e-03) | dt: 1539.96ms | tok/sec: 170,228 | bf16_mfu: 20.45 | epoch: 1 pq: 10 rg: 48 | total time: 66.57m | eta: 36.0m
+step 05000/07699 (64.94%) | loss: 3.164444 | lrm: 0.70 | lr(adamw:4.680e-02, muon:9.975e-03) | dt: 1539.96ms | tok/sec: 170,228 | bf16_mfu: 20.45 | epoch: 1 pq: 10 rg: 48 | total time: 66.57m | eta: 36.0m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.719 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.719 σ=0.407 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:39:53,130 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005200.pt
+2026-04-27 07:39:53,130 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005200.pt
+2026-04-27 07:39:53,138 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005200.json
+2026-04-27 07:39:53,138 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005200.json
+2026-04-27 07:39:57,482 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005200_rank0.pt
+2026-04-27 07:39:57,482 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005200_rank0.pt
+Removed previous periodic checkpoint at step 005000
+Removed previous periodic checkpoint at step 005000
+step 05200/07699 (67.54%) | loss: 3.137073 | lrm: 0.65 | lr(adamw:4.333e-02, muon:9.236e-03) | dt: 1571.30ms | tok/sec: 166,832 | bf16_mfu: 20.04 | epoch: 1 pq: 11 rg: 62 | total time: 71.60m | eta: 34.5m
+step 05200/07699 (67.54%) | loss: 3.137073 | lrm: 0.65 | lr(adamw:4.333e-02, muon:9.236e-03) | dt: 1571.30ms | tok/sec: 166,832 | bf16_mfu: 20.04 | epoch: 1 pq: 11 rg: 62 | total time: 71.60m | eta: 34.5m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.721 σ=0.404 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.721 σ=0.404 | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-04-27 07:45:04,827 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005400.pt
+2026-04-27 07:45:04,827 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/model_005400.pt
+2026-04-27 07:45:04,837 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005400.json
+2026-04-27 07:45:04,837 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/meta_005400.json
+2026-04-27 07:45:08,564 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005400_rank0.pt
+2026-04-27 07:45:08,564 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-j5p4oVr6GaaOBwT03KAYe6/out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear/optim_005400_rank0.pt
+Removed previous periodic checkpoint at step 005200
+Removed previous periodic checkpoint at step 005200
+step 05400/07699 (70.14%) | loss: 3.141330 | lrm: 0.60 | lr(adamw:3.986e-02, muon:8.497e-03) | dt: 1535.78ms | tok/sec: 170,691 | bf16_mfu: 20.50 | epoch: 1 pq: 12 rg: 77 | total time: 76.66m | eta: 32.7m
+step 05400/07699 (70.14%) | loss: 3.141330 | lrm: 0.60 | lr(adamw:3.986e-02, muon:8.497e-03) | dt: 1535.78ms | tok/sec: 170,691 | bf16_mfu: 20.50 | epoch: 1 pq: 12 rg: 77 | total time: 76.66m | eta: 32.7m
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.720 σ=0.404 | ∇gate=0.000e+00 ∇struct=0.000e+00
+  gate_stats | layers=44 | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=0.720 σ=0.404 | ∇gate=0.000e+00 ∇struct=0.000e+00
+
