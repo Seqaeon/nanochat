@@ -2,6 +2,16 @@
 
 set -o pipefail
 
+# ── Startup acceleration ───────────────────────────────────────────────────────
+# Cache torch.compile (Inductor) kernels in a stable dir on the Modal volume.
+# First run still compiles; every subsequent run reuses the cache → startup
+# drops from ~3-5 min to ~15 sec.
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
+# Skip Flash Attention 3 HuggingFace network checks (6-8 HTTP round-trips).
+# FA3 is already downloaded; offline mode is safe once the build is cached.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# ──────────────────────────────────────────────────────────────────────────────
+
 LOGFILE="${SWEEP_LOG:-sweep_p29.log}"
 STATEFILE="${LOGFILE%.log}_state.json"
 FORCE=0
