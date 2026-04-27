@@ -11,18 +11,40 @@ if [[ "$1" == "--force" ]]; then
     shift
 fi
 
-# ---------------------------------------------------------------------------
+## ---------------------------------------------------------------------------
 # JSON state helpers — state file format:
 # {
 #   "completed":  ["TAG1", "TAG2", ...],
 #   "unfinished": { "TAG": "/path/to/ckpt_dir" },
 #   "output_dir": { "TAG": "/path/to/run_dir" }
 # }
+# All writes are atomic (write tmp → rename) to survive crashes mid-write.
+# All reads recover gracefully from corrupt JSON.
 # ---------------------------------------------------------------------------
+_EMPTY_STATE='{"completed":[],"unfinished":{},"output_dir":{}}'
+
 _state_init() {
     if [[ ! -f "$STATEFILE" ]]; then
-        echo '{"completed":[],"unfinished":{},"output_dir":{}}' > "$STATEFILE"
+        echo "$_EMPTY_STATE" > "${STATEFILE}.tmp" && mv "${STATEFILE}.tmp" "$STATEFILE"
     fi
+}
+
+# _state_read: prints the state JSON to stdout, recovering from corrupt files.
+_state_read() {
+    python3 -c "
+import json, sys
+try:
+    with open('$STATEFILE') as f:
+        s = json.load(f)
+    print(json.dumps(s))
+except (json.JSONDecodeError, FileNotFoundError) as e:
+    print('WARNING: state file corrupt or missing, resetting: ' + str(e), file=sys.stderr)
+    s = {'completed': [], 'unfinished': {}, 'output_dir': {}}
+    with open('${STATEFILE}.tmp', 'w') as f:
+        json.dump(s, f, indent=2)
+    import os; os.rename('${STATEFILE}.tmp', '$STATEFILE')
+    print(json.dumps(s))
+"
 }
 
 check_completed() {
@@ -31,8 +53,11 @@ check_completed() {
     _state_init
     python3 -c "
 import json, sys
-with open('$STATEFILE') as f: s=json.load(f)
-sys.exit(0 if '$tag' in s.get('completed',[]) else 1)
+try:
+    with open('$STATEFILE') as f: s = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    sys.exit(1)
+sys.exit(0 if '$tag' in s.get('completed', []) else 1)
 " 2>/dev/null && return 0 || return 1
 }
 
@@ -41,11 +66,15 @@ mark_started() {
     local tag="$1" ckpt_dir="$2" out_dir="$3"
     _state_init
     python3 - <<PYEOF
-import json
-with open('$STATEFILE') as f: s=json.load(f)
+import json, os
+try:
+    with open('$STATEFILE') as f: s = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    s = {'completed': [], 'unfinished': {}, 'output_dir': {}}
 s.setdefault('unfinished', {})['$tag'] = '$ckpt_dir'
 s.setdefault('output_dir', {})['$tag'] = '$out_dir'
-with open('$STATEFILE', 'w') as f: json.dump(s, f, indent=2)
+with open('${STATEFILE}.tmp', 'w') as f: json.dump(s, f, indent=2)
+os.rename('${STATEFILE}.tmp', '$STATEFILE')
 PYEOF
 }
 
@@ -54,12 +83,16 @@ mark_completed() {
     local tag="$1"
     _state_init
     python3 - <<PYEOF
-import json
-with open('$STATEFILE') as f: s=json.load(f)
+import json, os
+try:
+    with open('$STATEFILE') as f: s = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    s = {'completed': [], 'unfinished': {}, 'output_dir': {}}
 if '$tag' not in s.get('completed', []):
     s.setdefault('completed', []).append('$tag')
 s.get('unfinished', {}).pop('$tag', None)
-with open('$STATEFILE', 'w') as f: json.dump(s, f, indent=2)
+with open('${STATEFILE}.tmp', 'w') as f: json.dump(s, f, indent=2)
+os.rename('${STATEFILE}.tmp', '$STATEFILE')
 PYEOF
 }
 
@@ -70,8 +103,12 @@ get_out_dir() {
     _state_init
     python3 -c "
 import json, sys
-with open('$STATEFILE') as f: s=json.load(f)
-print(s.get('output_dir', {}).get('$tag', ''))
+try:
+    with open('$STATEFILE') as f: s = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    print('', end='')
+    sys.exit(0)
+print(s.get('output_dir', {}).get('$tag', ''), end='')
 " 2>/dev/null
 }
 
