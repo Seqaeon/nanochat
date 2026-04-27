@@ -67,10 +67,39 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     if load_optimizer:
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
         optimizer_data = torch.load(optimizer_path, map_location=device)
-    # Load the metadata
+    # Load the metadata — if the file is missing (e.g. accidentally deleted),
+    # synthesise a minimal stub so training can resume from the correct step.
+    # The model weights and optimizer state are intact; only the dataloader
+    # position and EMA loss state will be lost (dataloader restarts from 0).
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "r", encoding="utf-8") as f:
-        meta_data = json.load(f)
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta_data = json.load(f)
+    except FileNotFoundError:
+        log0(
+            f"WARNING: meta file not found at {meta_path}. "
+            f"Synthesising a minimal stub — model weights are intact but "
+            f"dataloader position will reset to 0 (some token overlap expected)."
+        )
+        meta_data = {
+            "step": step,
+            "val_bpb": None,
+            "model_config": {},   # base_train.py doesn't use this field on resume
+            "user_config": {},
+            "device_batch_size": None,
+            "max_seq_len": None,
+            "total_batch_size": None,
+            "dataloader_state_dict": None,  # causes dataloader to restart from shard 0
+            "loop_state": {
+                "min_val_bpb": float("inf"),
+                "smooth_train_loss": 0.0,
+                "total_training_time": 0.0,
+            },
+        }
+        # Write the stub back so subsequent loads don't warn again
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta_data, f, indent=2)
+        log0(f"Wrote stub meta to {meta_path} — edit it manually if you have the original values.")
     return model_data, optimizer_data, meta_data
 
 
