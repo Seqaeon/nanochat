@@ -11,6 +11,10 @@
     "29I_STD_MOE_TOP1": {},
     "29J_STD_MOE_TOP_OPT": {}
   },
-  "unfinished": {},
-  "output_dir": {}
+  "unfinished": {
+    "29A_8T_TOP1_BASELINE_D8": "out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear"
+  },
+  "output_dir": {
+    "29A_8T_TOP1_BASELINE_D8": "out/research_sweep_20260426_221758"
+  }
 }
