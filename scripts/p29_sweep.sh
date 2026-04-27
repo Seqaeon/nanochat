@@ -4,25 +4,48 @@ set -o pipefail
 
 # ── Startup acceleration ───────────────────────────────────────────────────────
 # Cache torch.compile (Inductor) kernels in a stable dir on the Modal volume.
-# First run still compiles; every subsequent run reuses the cache → startup
-# drops from ~3-5 min to ~15 sec.
+# First run still compiles; every subsequent run reuses the cache.
 export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
 # Also cache the Dynamo FX graph (the Python graph capture step).
-# Without this, Dynamo re-traces the computation graph on every startup even
-# when compiled kernels are already cached — this is the remaining slow step.
 export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
-# Skip Flash Attention 3 HuggingFace network checks (6-8 HTTP round-trips).
-# FA3 is already downloaded; offline mode is safe once the build is cached.
-export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# NOTE: HF_HUB_OFFLINE is intentionally NOT set here — research_sweep.sh has
+# set -euo pipefail, and any HF Hub call during the setup phase (report reset,
+# nanochat.report imports) would raise OfflineModeIsEnabled and kill the script.
 # ──────────────────────────────────────────────────────────────────────────────
 
-LOGFILE="${SWEEP_LOG:-sweep_p29.log}"
-STATEFILE="${LOGFILE%.log}_state.json"
+# Parse --force
 FORCE=0
-if [[ "$1" == "--force" ]]; then
-    FORCE=1
+if [[ "${1:-}" == "--force" ]]; then FORCE=1; shift; fi
+
+# Collect all numeric positional args as depths
+DEPTHS=()
+while [[ -n "${1:-}" && "$1" =~ ^[0-9]+$ ]]; do
+    DEPTHS+=("$1"); shift
+done
+[[ ${#DEPTHS[@]} -eq 0 ]] && DEPTHS=("${DEPTH:-8}")
+
+# Multi-depth: re-invoke self for each depth sequentially.
+# Each depth gets its own log + state file; all other env vars are inherited.
+if [[ ${#DEPTHS[@]} -gt 1 ]]; then
+    echo "P29 multi-depth sweep: ${DEPTHS[*]}"
+    for _d in "${DEPTHS[@]}"; do
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  ▶ Starting depth ${_d}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        bash "$0" $([[ "$FORCE" == 1 ]] && echo "--force") "$_d" \
+            || echo "❌  Depth ${_d} sweep failed — continuing with next depth"
+    done
+    exit 0
+fi
+DEPTH="${DEPTHS[0]}"
+
+# Log and state files auto-named per depth unless SWEEP_LOG is set explicitly.
+LOGFILE="${SWEEP_LOG:-sweep_p29_d${DEPTH}.log}"
+STATEFILE="${LOGFILE%.log}_state.json"
+
+if [[ "$FORCE" == 1 ]]; then
     rm -f "$STATEFILE"
-    shift
 fi
 
 ## ---------------------------------------------------------------------------
@@ -136,7 +159,6 @@ print_header() {
     echo ""
 }
 
-DEPTH=8
 MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
 MODEL_DIM_C4=$(( MODEL_DIM / 4 ))
 MODEL_DIM_C2=$(( MODEL_DIM / 2 ))
@@ -173,6 +195,20 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --save-every 200 \
   --p23-quantile-route 1"
 
+# Common flags for dense baseline and Standard MoE experiments.
+# Uses --models base (standard transformer, no remix-linear).
+# Higher device-batch-size (128) since there is no MoE/remix overhead.
+BASE_COMMON="--fp8 --max-shards 170 --models base \
+  --device-batch-size 128 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \
+  --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
+  --sequence-len 2048 \
+  --warmup-ratio 0.20 \
+  --warmdown-ratio 0.50 \
+  --research-dim -1 \
+  --target-tokens -1 \
+  --target-active-params 0 \
+  --save-every 200"
+
 
 # ══════════════════════════════════════════════════════
 # 29A: 8T Top-1 (Full Rank Baseline)
@@ -180,26 +216,26 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 #   - Basis size = MODEL_DIM (Full rank)
 #   - Token budget dynamically scaled by active params
 # ══════════════════════════════════════════════════════
-TAG="29A_8T_TOP1_BASELINE_D8"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
-    # Use stored output_dir if we've run this tag before; otherwise use default.
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p22-template-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29A_8T_TOP1_BASELINE_D8"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
+#    # Use stored output_dir if we've run this tag before; otherwise use default.
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p22-template-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 
 # ══════════════════════════════════════════════════════
@@ -231,25 +267,25 @@ fi
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-TAG="29C_CHUNK64_BASELINE_D8"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p28-chunk-routing-size 64 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29C_CHUNK64_BASELINE_D8"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p28-chunk-routing-size 64 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 
 # ══════════════════════════════════════════════════════
@@ -279,26 +315,26 @@ fi
 #   - 8 templates, hard top-1 routing BUT amortized over 64 tokens
 #   - Tests if picking 1 expert per chunk works as well as soft-mixing
 # ══════════════════════════════════════════════════════
-TAG="29E_8T_TOP1_CHUNK64_D8"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p28-chunk-routing-size 64 \
-      --p22-template-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29E_8T_TOP1_CHUNK64_D8"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p28-chunk-routing-size 64 \
+#      --p22-template-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 
 
@@ -416,6 +452,30 @@ fi
 #        echo "❌  $TAG FAILED — will retry next run"
 #    fi
 #fi
+
+# ══════════════════════════════════════════════════════
+# 29BASE: Dense transformer baseline
+#   - Standard transformer (no MoE, no remix-linear)
+#   - Chinchilla-optimal token budget from total params
+#   - Provides reference curve for all other variants
+# ══════════════════════════════════════════════════════
+TAG="29BASE_DENSE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      --out-dir "$_RUN_DIR" \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"

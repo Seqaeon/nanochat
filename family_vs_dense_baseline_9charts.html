@@ -24,15 +24,6 @@
     </div>
   </div>
 
-  <div class="section">
-    <div class="section-title">RemixedLinear Dense vs Dense Baseline</div>
-    <div class="leg-row" id="leg-rld"></div>
-    <div class="chart-row">
-      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="rld-c1" role="img" aria-label="RLD variants vs dense baseline: total params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="rld-c2" role="img" aria-label="RLD variants vs dense baseline: active params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="rld-c3" role="img" aria-label="RLD variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
-    </div>
-  </div>
 
   <div class="section">
     <div class="section-title">Standard MoE vs Dense Baseline</div>
@@ -49,29 +40,31 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const DENSE = [
-  { total: 36700296,   active: 36700296,   flops: 7.785754e7,   bpp: 1.170726 },
-  { total: 125829648,  active: 125829648,  flops: 2.862643e8,   bpp: 0.969126 },
-  { total: 286262424,  active: 286262424,  flops: 7.384666e8,   bpp: 0.865634 },
-  { total: 896535720,  active: 560988160,  flops: 3.491758e+09,       bpp: 0.8121 },
-  { total: 1879048192, active: 1879048192, flops: 1.207960e10,  bpp: 0.7236 },
-  { total: 2217082880, active: 2217082880, flops: 1.426509e10,  bpp: 0.7045 },
+ // { total: 36700296,   active: 36700296,   flops: 7.785754e7,  bpp: 1.170726 },        // old small entry
+//  { total: 125829648,  active: 125829648,  flops: 2.862643e8,  bpp: 0.969126 },        // old small entry
+  { total: 195953460,  active: 195953460,  flops: 4.679318e8,  bpp: 1.0312 },          // d10
+  { total: 279184534,  active: 279184534,  flops: 6.936399e8,  bpp: 1.0096 },          // d11
+  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.9825 },          // d12
+  { total: 389482042,  active: 389482042,  flops: 1.021191e9,  bpp: 0.9644 },          // d13
+  { total: 399115836,  active: 399115836,  flops: 1.081747e9,  bpp: 0.9437 },          // d14
+  { total: 524290078,  active: 524290078,  flops: 1.447047e9,  bpp: 0.9257 },          // d15
+  { total: 536872992,  active: 536872992,  flops: 1.547710e9,  bpp: 0.9101 },          // d16
+  { total: 685967938,  active: 685967938,  flops: 2.010136e9,  bpp: 0.8952 },          // d17
+  { total: 701893188,  active: 701893188,  flops: 2.109226e9,  bpp: 0.8817 },          // d18
+  { total: 876874918,  active: 876874918,  flops: 2.677820e9,  bpp: 0.8687 },          // d19
+  { total: 896535720,  active: 896535720,  flops: 2.827242e9,  bpp: 0.8572 },          // d20
+  { total: 2818580544, active: 2818580544, flops: 1.062003e10, bpp: 0.7236 },          // d32
+  { total: 3286639716, active: 3286639716, flops: 1.257392e10, bpp: 0.7045 },          // d34
 ];
 
 
 const RLS = [
-  { id:'29A', label:'29A top1-base',   total:55655968, active:39140896, flops:9.250114e7, bpp:1.086944, color:'#7F77DD' },
-  { id:'29B', label:'29B top1-C4',     total:39721504, active:35592736, flops:7.121218e7, bpp:1.183033, color:'#1D9E75' },
+  { id:'29A4', label:'29A top1-base_d4',   total:55655968, active:39140896, flops:9.250114e7, bpp:1.086944, color:'#7F77DD' },
+  { id:'29A8', label:'29A top1-base_d8',   total:276100416, active:143979840, flops:3.951655e+08, bpp:0.904716, color:'#7F77DD' },
   { id:'29C', label:'29C chunk64-base',total:55655968, active:37003936, flops:7.967938e7, bpp:1.082087, color:'#D4537E' },
-  { id:'29D', label:'29D chunk64-C4',  total:39721504, active:35004064, flops:6.768014e7, bpp:1.176537, color:'#EF9F27' },
   { id:'29E', label:'29E top1-chunk64',total:55655968, active:36745888, flops:7.813109e7, bpp:1.086759, color:'#E24B4A' },
 ];
 
-const RLD = [
-  { id:'29F', label:'29F 8T-C4',       total:39721504, active:39721504, flops:9.598478e7, bpp:1.153591, color:'#85B7EB' },
-  { id:'29G', label:'29G 4T-C4',       total:37325344, active:37325344, flops:8.160782e7, bpp:1.181004, color:'#378ADD' },
-  { id:'29H', label:'29H 4T-C2',       total:40277536, active:40277536, flops:9.932098e7, bpp:1.127241, color:'#0C447C' },
-  { id:'RLD', label:'RLD full',         total:40646200, active:40646200, flops:1.015330e8, bpp:1.125584, color:'#639922' },
-];
 
 const MOE = [
   { id:'29I', label:'29I top-1',       total:51388552, active:36708488, flops:7.790669e7, bpp:1.186575, color:'#E24B4A' },
@@ -89,16 +82,57 @@ function buildLegend(elId, variants) {
   el.innerHTML = baseItem + items;
 }
 
-function baseCurveDS(keyFn) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp }));
+// Fit power law: bpp = a * x^b  (OLS in log-log space)
+function fitPowerLaw(keyFn) {
+  const valid = DENSE.filter(d => keyFn(d) > 0 && d.bpp > 0);
+  const lx = valid.map(d => Math.log(keyFn(d)));
+  const ly = valid.map(d => Math.log(d.bpp));
+  const n = lx.length;
+  const mx = lx.reduce((s,v) => s+v, 0) / n;
+  const my = ly.reduce((s,v) => s+v, 0) / n;
+  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
+  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
+  const b = cov / varx;
+  const a = Math.exp(my - b * mx);
+  return { a, b };
+}
+
+// Extrapolated power-law curve — extends ±40% of the log range beyond the data
+function baseCurveDS(keyFn, variants) {
+  const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
+  const xMin = Math.min(...allX);
+  const xMax = Math.max(...allX);
+  const logSpan = Math.log(xMax / xMin);
+  const pad = 0.4;
+  const x0 = xMin * Math.exp(-pad * logSpan);
+  const x1 = xMax * Math.exp( pad * logSpan);
+  const { a, b } = fitPowerLaw(keyFn);
+  const N = 100;
+  const pts = Array.from({length: N}, (_, i) => {
+    const x = x0 * Math.pow(x1/x0, i/(N-1));
+    return { x: M(x), y: a * Math.pow(x, b) };
+  });
   return {
     label: 'Dense baseline',
     data: pts,
-    showLine: true, tension: 0.3,
-    borderColor: '#888780', backgroundColor: '#888780',
+    showLine: true, tension: 0,
+    borderColor: '#888780', backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [5,3],
-    pointStyle: 'circle', pointRadius: 4, pointHoverRadius: 6,
+    pointRadius: 0, pointHoverRadius: 0,
     order: 10,
+  };
+}
+
+// Actual DENSE data points (small dots, no line)
+function baseDotDS(keyFn) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp }));
+  return {
+    label: 'Dense (measured)',
+    data: pts,
+    showLine: false,
+    backgroundColor: '#888780', borderColor: '#888780',
+    pointStyle: 'circle', pointRadius: 3.5, pointHoverRadius: 5,
+    order: 9,
   };
 }
 
@@ -114,7 +148,7 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
-  const datasets = [baseCurveDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
+  const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
   new Chart(document.getElementById(canvasId), {
     type: 'scatter',
     data: { datasets },
@@ -160,16 +194,14 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
 }
 
 buildLegend('leg-rls', RLS);
-buildLegend('leg-rld', RLD);
+
 buildLegend('leg-moe', MOE);
 
 makeChart('rls-c1', RLS, d=>d.total,  'total params');
 makeChart('rls-c2', RLS, d=>d.active, 'active params');
 makeChart('rls-c3', RLS, d=>d.flops,  'active FLOPs');
 
-makeChart('rld-c1', RLD, d=>d.total,  'total params');
-makeChart('rld-c2', RLD, d=>d.active, 'active params');
-makeChart('rld-c3', RLD, d=>d.flops,  'active FLOPs');
+
 
 makeChart('moe-c1', MOE, d=>d.total,  'total params');
 makeChart('moe-c2', MOE, d=>d.active, 'active params');
