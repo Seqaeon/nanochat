@@ -420,11 +420,18 @@ def run_training_sweep(args):
         # Check for resumption
         try:
             last_step = find_last_step(str(actual_model_ckpt_dir))
-            print(f"  Found existing checkpoints in {actual_model_ckpt_dir}, resuming from step {last_step}")
+            print(f"\n  ┌─────────────────────────────────────────────────────┐")
+            print(f"  │  ⏩  RESUMING [{model_name}] from step {last_step:,}")
+            print(f"  │     {str(actual_model_ckpt_dir)}")
+            print(f"  └─────────────────────────────────────────────────────┘\n")
             train_cmd_args.extend(["--resume-from-step", str(last_step)])
         except FileNotFoundError:
-            pass # Starting fresh
+            print(f"\n  ┌─────────────────────────────────────────────────────┐")
+            print(f"  │  🆕  STARTING FRESH: [{model_name}]")
+            print(f"  │     No checkpoints found — training from scratch.")
+            print(f"  └─────────────────────────────────────────────────────┘\n")
         
+
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
