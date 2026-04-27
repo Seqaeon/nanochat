@@ -7,6 +7,10 @@ set -o pipefail
 # First run still compiles; every subsequent run reuses the cache → startup
 # drops from ~3-5 min to ~15 sec.
 export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
+# Also cache the Dynamo FX graph (the Python graph capture step).
+# Without this, Dynamo re-traces the computation graph on every startup even
+# when compiled kernels are already cached — this is the remaining slow step.
+export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 # Skip Flash Attention 3 HuggingFace network checks (6-8 HTTP round-trips).
 # FA3 is already downloaded; offline mode is safe once the build is cached.
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
