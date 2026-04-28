@@ -216,27 +216,27 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Basis size = MODEL_DIM (Full rank)
 #   - Token budget dynamically scaled by active params
 # ══════════════════════════════════════════════════════
-TAG="29A_8T_TOP1_BASELINE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
-    # Use stored output_dir if we've run this tag before; otherwise use default.
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p22-template-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
-
+#TAG="29A_8T_TOP1_BASELINE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
+#    # Use stored output_dir if we've run this tag before; otherwise use default.
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p22-template-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
+#
 
 # ══════════════════════════════════════════════════════
 # 29B: 8T Top-1 (C//4 Compressed Basis)
