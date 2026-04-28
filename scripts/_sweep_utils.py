@@ -45,13 +45,14 @@ def resolve_runner() -> list[str]:
 # Architecture sizing
 # ---------------------------------------------------------------------------
 
-def model_dims(depth: int) -> tuple[int, int, int, int]:
+def model_dims(depth: int, aspect_ratio: int = 0) -> tuple[int, int, int, int]:
     """Return (aspect_ratio, head_dim, model_dim, research_dim) for a given depth.
 
     research_dim is ~1/8th of model_dim, rounded up to the nearest head_dim
     multiple, capped at model_dim.
     """
-    aspect_ratio = 57 if depth == 9 else 64
+    if aspect_ratio <= 0:
+        aspect_ratio = 57 if depth == 9 else 64
     head_dim = 128
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim

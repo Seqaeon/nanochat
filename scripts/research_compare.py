@@ -80,7 +80,7 @@ def run_training_sweep(args):
     print("=" * 64)
 
     
-    aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth)
+    aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth, aspect_ratio=args.aspect_ratio)
     if args.research_dim > 0:
         print(f"  Overriding default target_dim ({target_dim}) with --research-dim {args.research_dim}")
         target_dim = args.research_dim
@@ -551,6 +551,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--run-dir", type=str, required=True)
+    parser.add_argument("--aspect-ratio", type=int, default=0, help="model_dim = depth * aspect_ratio (0 = use defaults)")
     parser.add_argument("--model-dim", type=int, default=0, help="Explicit model_dim override for base_train.py")
     parser.add_argument("--fp8", action="store_true", help="Enable FP8 training (Blackwell optimization)")
     parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
