@@ -1056,6 +1056,41 @@ print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 EMA_BETA = 0.9
 
+# -----------------------------------------------------------------------------
+# Pre-compilation warmup
+# On the first real training step, three things overlap to create a memory spike
+# that doesn't exist on subsequent steps:
+#   1. torch.compile graph capture allocates temporary scratch buffers
+#   2. Muon + AdamW m/v state tensors are lazily allocated on the first .step()
+#   3. The CUDA caching allocator reserves large contiguous blocks on first use
+# Together these can push peak VRAM 10–20 GB above the true steady-state cost,
+# preventing you from sizing the batch to use the available headroom.
+#
+# Fix: run one throwaway forward + backward + step before real training.
+# After this, all lazy allocations are done, compiler scratch has been released,
+# and the allocator has defragmented. Step 0 of real training then looks like step 2.
+#
+# We use zero-filled tensors with the real batch shapes so the compiler traces
+# with correct sizes but the data ordering is completely unaffected.
+if not resuming and device_type == "cuda":
+    print0("Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...")
+    torch.cuda.reset_peak_memory_stats()
+    _wx = torch.zeros_like(x)
+    _wy = torch.zeros_like(y)
+    _wloss = model(_wx, _wy)
+    if is_dp:
+        _wloss = _wloss.mean()
+    (_wloss / grad_accum_steps).backward()
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"]  # sensible default for the dummy step
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    del _wx, _wy, _wloss
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()  # reset so step-0 peak reflects real training only
+    print0(f"Warmup complete. Steady-state VRAM: {torch.cuda.memory_allocated()/1e9:.1f} GB allocated")
+
 # Go!
 while True:
     last_step = step == num_iterations # normal end
