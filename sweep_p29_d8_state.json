@@ -1,11 +1,16 @@
 {
-  "completed": [],
+  "completed": [
+    "29A_8T_TOP1_BASELINE_D8",
+    "29C_CHUNK64_BASELINE_D8"
+  ],
   "unfinished": {
-    "29A_8T_TOP1_BASELINE_D8": "out/research_sweep_20260426_221758/depth_8/ckpt_remixed-linear/remixed-linear",
-    "29C_CHUNK64_BASELINE_D8": "out/sweep_p29/29C_CHUNK64_BASELINE_D8/depth_8/ckpt_remixed-linear/remixed-linear"
+    "29E_8T_TOP1_CHUNK64_D8": "out/sweep_p29/29E_8T_TOP1_CHUNK64_D8/depth_8/ckpt_remixed-linear/remixed-linear",
+    "29BASE_DENSE_D8": "out/sweep_p29/29BASE_DENSE_D8/depth_8/ckpt_base/base"
   },
   "output_dir": {
     "29A_8T_TOP1_BASELINE_D8": "out/research_sweep_20260426_221758",
-    "29C_CHUNK64_BASELINE_D8": "out/sweep_p29/29C_CHUNK64_BASELINE_D8"
+    "29C_CHUNK64_BASELINE_D8": "out/sweep_p29/29C_CHUNK64_BASELINE_D8",
+    "29E_8T_TOP1_CHUNK64_D8": "out/sweep_p29/29E_8T_TOP1_CHUNK64_D8",
+    "29BASE_DENSE_D8": "out/sweep_p29/29BASE_DENSE_D8"
   }
 }
