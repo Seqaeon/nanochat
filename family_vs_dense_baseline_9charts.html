@@ -40,11 +40,21 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const DENSE = [
- // { total: 36700296,   active: 36700296,   flops: 7.785754e7,  bpp: 1.170726 },        // old small entry
-//  { total: 125829648,  active: 125829648,  flops: 2.862643e8,  bpp: 0.969126 },        // old small entry
-  { total: 195953460,  active: 195953460,  flops: 4.679318e8,  bpp: 1.0312 },          // d10
+// My run scores
+ /* { total: 12976164,   active: 12976164,   flops: 3.106426e7,  bpp: 1.4745 },        // d2 old small entry
+  { total: 36700296,   active: 36700296,   flops: 7.785754e7,  bpp: 1.170726 },        // d4 old small entry
+  { total: 73531692,   active: 73531692,   flops: 1.627932e8,  bpp:  1.044306 },        // d6 old small entry
+  { total: 125829648,  active: 125829648,  flops: 2.862643e8,  bpp: 0.969126 },        // d8 old small entry
+  { total: 195953460,  active: 195953460,  flops: 4.816944e8,  bpp: 0.908873 },          // d10
+  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.865634 },          // d12 old entry */
+
+
+
+
+// Jan 7 scores
+/*  { total: 195953460,  active: 195953460,  flops: 4.679318e8,  bpp: 1.0312 },          // d10
   { total: 279184534,  active: 279184534,  flops: 6.936399e8,  bpp: 1.0096 },          // d11
-  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.9825 },          // d12
+  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.9825 },          // d12 
   { total: 389482042,  active: 389482042,  flops: 1.021191e9,  bpp: 0.9644 },          // d13
   { total: 399115836,  active: 399115836,  flops: 1.081747e9,  bpp: 0.9437 },          // d14
   { total: 524290078,  active: 524290078,  flops: 1.447047e9,  bpp: 0.9257 },          // d15
@@ -52,9 +62,23 @@ const DENSE = [
   { total: 685967938,  active: 685967938,  flops: 2.010136e9,  bpp: 0.8952 },          // d17
   { total: 701893188,  active: 701893188,  flops: 2.109226e9,  bpp: 0.8817 },          // d18
   { total: 876874918,  active: 876874918,  flops: 2.677820e9,  bpp: 0.8687 },          // d19
-  { total: 896535720,  active: 896535720,  flops: 2.827242e9,  bpp: 0.8572 },          // d20
+  { total: 896535720,  active: 896535720,  flops: 2.886213e9,  bpp: 0.8572 },          // d20
   { total: 2818580544, active: 2818580544, flops: 1.062003e10, bpp: 0.7236 },          // d32
-  { total: 3286639716, active: 3286639716, flops: 1.257392e10, bpp: 0.7045 },          // d34
+  { total: 3286639716, active: 3286639716, flops: 1.257392e10, bpp: 0.7045 },          // d34 */
+
+// Feb 8 scores
+
+  { total: 286261730,  active: 286261730,  flops: 7.596959e8,  bpp: 0.9030 },          // d12 
+  { total: 399114882,  active: 399114882,  flops: 1.128533e9,  bpp: 0.8688 },          // d14
+  { total: 536871738,  active: 536871738,  flops: 1.585452e9,  bpp: 0.8364 },          // d16
+  { total: 701891594,  active: 701891594,  flops: 2.179995e9,  bpp: 0.8131 },          // d18
+  { total: 896533746,  active: 896533746,  flops: 2.886213e9,  bpp: 0.7906 },          // d20
+  { total: 1123157490,  active: 1123157490,  flops: 3.763086e9,  bpp: 0.7714 },          // d22
+  { total: 1384122122,  active: 1384122122,  flops: 4.775225e9,  bpp: 0.7545 },          // d24
+  { total: 1681786938,  active: 1681786938,  flops: 5.991051e9,  bpp: 0.7382 },          // d26
+  { total: 2018511234,  active: 2018511234,  flops: 7.365736e9,  bpp: 0.7246 },          // d28
+  { total: 2396654306, active: 2396654306, flops: 8.977137e9, bpp: 0.7120 },          // d30
+
 ];
 
 

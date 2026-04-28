@@ -174,7 +174,7 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 32 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 32 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
@@ -199,7 +199,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # Uses --models base (standard transformer, no remix-linear).
 # Higher device-batch-size (128) since there is no MoE/remix overhead.
 BASE_COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 128 --total-batch-size 262144 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --warmup-ratio 0.20 \
@@ -216,26 +216,26 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Basis size = MODEL_DIM (Full rank)
 #   - Token budget dynamically scaled by active params
 # ══════════════════════════════════════════════════════
-#TAG="29A_8T_TOP1_BASELINE_D8"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
-#    # Use stored output_dir if we've run this tag before; otherwise use default.
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      --p22-n-templates 8 \
-#      --p22-template-topk 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29A_8T_TOP1_BASELINE_D8"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29A" "$TAG" "8T top-1 sparse routing (Full rank baseline)"
+    # Use stored output_dir if we've run this tag before; otherwise use default.
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 \
+      --p22-template-topk 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 
 
 # ══════════════════════════════════════════════════════
@@ -267,25 +267,25 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-#TAG="29C_CHUNK64_BASELINE_D8"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      --p22-n-templates 8 \
-#      --p28-chunk-routing-size 64 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29C_CHUNK64_BASELINE_D8"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 \
+      --p28-chunk-routing-size 64 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 
 
 # ══════════════════════════════════════════════════════
@@ -315,26 +315,26 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - 8 templates, hard top-1 routing BUT amortized over 64 tokens
 #   - Tests if picking 1 expert per chunk works as well as soft-mixing
 # ══════════════════════════════════════════════════════
-#TAG="29E_8T_TOP1_CHUNK64_D8"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      --p22-n-templates 8 \
-#      --p28-chunk-routing-size 64 \
-#      --p22-template-topk 1 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29E_8T_TOP1_CHUNK64_D8"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 \
+      --p28-chunk-routing-size 64 \
+      --p22-template-topk 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 
 
 
@@ -459,23 +459,23 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-TAG="29BASE_DENSE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29BASE_DENSE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
