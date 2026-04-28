@@ -174,9 +174,9 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 32 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
-  --sequence-len 2048 \
+  --sequence-len 2048 --aspect-ratio 32\
   --warmup-ratio 0.20 \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
