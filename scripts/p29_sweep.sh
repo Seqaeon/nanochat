@@ -175,7 +175,7 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 64 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 32 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --target-param-data-ratio 10.5 \
@@ -289,7 +289,30 @@ else
         echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
-
+ ══════════════════════════════════════════════════════
+# 29C: Chunk Routing N=64 (Full Rank Baseline)
+#   - Soft routing over 8 templates, amortized over 64 tokens
+#   - Basis size = MODEL_DIM (Full rank)
+# ══════════════════════════════════════════════════════
+#TAG="29C_CHUNK64_BASELINE_8T_AS32_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 4 \
+#      --p28-chunk-routing-size 64 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 29D: Chunk Routing N=64 (C//4 Compressed Basis)
