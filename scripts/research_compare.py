@@ -109,6 +109,7 @@ def run_training_sweep(args):
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size), # standard for reference
         "--target-tokens", str(target_tokens),
+        *(["--target-param-data-ratio", str(args.target_param_data_ratio)] if args.target_param_data_ratio > 0 else []),
         "--eval-every", str(eval_every),        
         "--log-every", str(log_every),
         "--core-metric-every", "0" if args.skip_core else str(args.core_metric_every),
@@ -558,6 +559,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
     parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
+    parser.add_argument("--target-param-data-ratio", type=float, default=-1.0, help="Chinchilla token:param ratio (e.g. 20.0); -1 = use base_train.py default (10.5)")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="base warmup ratio passed to all runs")
     parser.add_argument("--warmdown-ratio", type=float, default=0.7, help="ratio of iterations for LR warmdown (rest is constant LR)")

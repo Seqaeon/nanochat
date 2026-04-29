@@ -159,7 +159,8 @@ print_header() {
     echo ""
 }
 
-MODEL_DIM=$(python3 -c "d=$DEPTH; h=128; print(((d*64+h-1)//h)*h)")
+ASPECT_RATIO="${ASPECT_RATIO:-64}"
+MODEL_DIM=$(python3 -c "d=$DEPTH; ar=$ASPECT_RATIO; h=128; print(((d*ar+h-1)//h)*h)")
 MODEL_DIM_C4=$(( MODEL_DIM / 4 ))
 MODEL_DIM_C2=$(( MODEL_DIM / 2 ))
 
@@ -176,7 +177,8 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --device-batch-size 64 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
-  --sequence-len 2048 --aspect-ratio 64\
+  --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
+  --target-param-data-ratio 10.5 \
   --warmup-ratio 0.20 \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
@@ -202,6 +204,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
   --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
+  --target-param-data-ratio 10.5 \
   --warmup-ratio 0.20 \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
