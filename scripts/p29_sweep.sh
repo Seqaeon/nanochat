@@ -174,9 +174,9 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 64 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
-  --sequence-len 2048 --aspect-ratio 32\
+  --sequence-len 2048 --aspect-ratio 64\
   --warmup-ratio 0.20 \
   --warmdown-ratio 0.50 \
   --research-dim -1 \
@@ -267,7 +267,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-TAG="29C_CHUNK64_BASELINE_D${DEPTH}"
+TAG="29C_CHUNK64_BASELINE_4T_D${DEPTH}"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
@@ -277,7 +277,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
+      --p22-n-templates 4 \
       --p28-chunk-routing-size 64 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
@@ -315,53 +315,53 @@ fi
 #   - 8 templates, hard top-1 routing BUT amortized over 64 tokens
 #   - Tests if picking 1 expert per chunk works as well as soft-mixing
 # ══════════════════════════════════════════════════════
-TAG="29E_8T_TOP1_CHUNK64_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p28-chunk-routing-size 64 \
-      --p22-template-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29E_8T_TOP1_CHUNK64_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p28-chunk-routing-size 64 \
+#      --p22-template-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 29E2: Top-1 AND Chunk Routing N=256 combined
 #   - 8 templates, hard top-1 routing BUT amortized over 256 tokens
 #   - Tests if picking 1 expert per chunk works as well as soft-mixing
 # ══════════════════════════════════════════════════════
-TAG="29E2_8T_TOP1_CHUNK256_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
-      --p28-chunk-routing-size 256 \
-      --p22-template-topk 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
-
+#TAG="29E2_8T_TOP1_CHUNK256_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29E" "$TAG" "Combining Top-1 sparse routing AND Chunk N=64 routing"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 \
+#      --p28-chunk-routing-size 256 \
+#      --p22-template-topk 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
+#
 
 # ══════════════════════════════════════════════════════
 # 29F: Dense Mixture 8T (C//4 Compressed Basis)
