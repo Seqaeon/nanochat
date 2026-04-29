@@ -1,0 +1,13 @@
+{
+  "completed": [
+    "29BASE_DENSE_D2",
+    "29BASE_DENSE_D6",
+    "29BASE_DENSE_D10"
+  ],
+  "unfinished": {},
+  "output_dir": {
+    "29BASE_DENSE_D2": "out/sweep_p29/29BASE_DENSE_D2",
+    "29BASE_DENSE_D6": "out/sweep_p29/29BASE_DENSE_D6",
+    "29BASE_DENSE_D10": "out/sweep_p29/29BASE_DENSE_D10"
+  }
+}
