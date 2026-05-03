@@ -239,6 +239,12 @@ def parse_args():
         choices=["", "cuda", "cpu", "mps"],
         help="Device to use: cuda | cpu | mps (default: auto-detect).",
     )
+    p.add_argument(
+        "--compile",
+        action="store_true",
+        default=False,
+        help="torch.compile the model before evaluation (much faster on GPU, ~2-3x speedup).",
+    )
     return p.parse_args()
 
 
@@ -303,6 +309,20 @@ def main():
         except Exception as e:
             print0(f"ERROR loading checkpoint: {e}")
             continue
+
+        # Compile for speed (huge difference on H100 / Ampere+)
+        if args.compile:
+            print0("  Compiling model with torch.compile ...")
+            model = torch.compile(model)
+            # Warmup pass to trigger compilation before timing starts
+            print0("  Warmup forward pass ...", end="", flush=True)
+            warmup_ids = torch.randint(0, 256, (1, 64), device=device)
+            with torch.no_grad():
+                _ = model(warmup_ids)
+            del warmup_ids
+            if device_type == "cuda":
+                torch.cuda.synchronize()
+            print0(" done.")
 
         # Run CORE
         out = _run_core(
