@@ -1,0 +1,110 @@
+\begin{thebibliography}{16}
+\providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Dao et~al.(2022)Dao, Fu, Ermon, Rudra, and
+  R{\'e}}]{dao2022flashattention}
+Tri Dao, Daniel~Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R{\'e}. 2022.
+\newblock Flash{A}ttention: Fast and memory-efficient exact attention with
+  {IO}-awareness.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~35.
+
+\bibitem[{Dauphin et~al.(2017)Dauphin, Fan, Auli, and
+  Grangier}]{dauphin2017language}
+Yann~N. Dauphin, Angela Fan, Michael Auli, and David Grangier. 2017.
+\newblock Language modeling with gated convolutional networks.
+\newblock \emph{arXiv preprint arXiv:1612.08083}.
+
+\bibitem[{Fedus et~al.(2022)Fedus, Zoph, and Shazeer}]{fedus2022switch}
+William Fedus, Barret Zoph, and Noam Shazeer. 2022.
+\newblock Switch transformers: Scaling to trillion parameter models with simple
+  and efficient sparsity.
+\newblock \emph{Journal of Machine Learning Research}, 23(120):1--39.
+
+\bibitem[{Ha et~al.(2017)Ha, Dai, and Le}]{ha2016hypernetworks}
+David Ha, Andrew Dai, and Quoc~V Le. 2017.
+\newblock Hypernetworks.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Hoffmann et~al.(2022)Hoffmann, Borgeaud, Mensch, Buchatskaya, Cai,
+  Rutherford, Casas, Hendricks, Welbl, Clark et~al.}]{hoffmann2022training}
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor
+  Cai, Eliza Rutherford, Diego de~Las Casas, Lisa~Anne Hendricks, Johannes
+  Welbl, Aidan Clark, and 1 others. 2022.
+\newblock Training compute-optimal large language models.
+\newblock \emph{arXiv preprint arXiv:2203.15556}.
+
+\bibitem[{Hu et~al.(2022)Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and
+  Chen}]{hu2021lora}
+Edward~J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+  Wang, Lu~Wang, and Weizhu Chen. 2022.
+\newblock Lo{RA}: Low-rank adaptation of large language models.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Jordan et~al.(2025)Jordan, Chen, Goldblum, Saunshi, and
+  Nakkiran}]{jordan2024muon}
+Keller Jordan, Yuqing Chen, Micah Goldblum, Nikunj Saunshi, and Preetum
+  Nakkiran. 2025.
+\newblock Muon: An optimizer for hidden layers in neural networks.
+\newblock \emph{arXiv preprint arXiv:2502.16982}.
+
+\bibitem[{Karpathy(2025)}]{karpathy2025nanochat}
+Andrej Karpathy. 2025.
+\newblock \href {https://github.com/karpathy/nanochat} {nanochat: The best
+  chatgpt that \$100 can buy}.
+
+\bibitem[{Lepikhin et~al.(2021)Lepikhin, Lee, Xu, Chen, Firat, Huang, Krikun,
+  Shazeer, and Chen}]{lepikhin2020gshard}
+Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, Dehao Chen, Orhan Firat, Yanping
+  Huang, Maxim Krikun, Noam Shazeer, and Zhifeng Chen. 2021.
+\newblock Gshard: Scaling giant models with conditional computation and
+  automatic sharding.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{{NVIDIA}(2024)}]{nvidia2024climbmix}
+{NVIDIA}. 2024.
+\newblock Climbmix: A curated pretraining dataset.
+\newblock Used via nanochat framework.
+
+\bibitem[{Schlag et~al.(2021)Schlag, Irie, and Schmidhuber}]{schlag2021linear}
+Imanol Schlag, Kazuki Irie, and J{\"u}rgen Schmidhuber. 2021.
+\newblock Linear transformers are secretly fast weight programmers.
+\newblock In \emph{International Conference on Machine Learning}, pages
+  9342--9351. PMLR.
+
+\bibitem[{Shazeer(2020)}]{shazeer2020glu}
+Noam Shazeer. 2020.
+\newblock Glu variants improve transformer.
+\newblock \emph{arXiv preprint arXiv:2002.05202}.
+
+\bibitem[{Shazeer et~al.(2017)Shazeer, Mirhoseini, Maziarz, Davis, Le, Hinton,
+  and Dean}]{shazeer2017outrageously}
+Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le,
+  Geoffrey Hinton, and Jeff Dean. 2017.
+\newblock Outrageously large neural networks: The sparsely-gated
+  mixture-of-experts layer.
+\newblock \emph{arXiv preprint arXiv:1701.06538}.
+
+\bibitem[{Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones,
+  Gomez, Kaiser, and Polosukhin}]{vaswani2017attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+  Aidan~N Gomez, {\L}ukasz Kaiser, and Illia Polosukhin. 2017.
+\newblock Attention is all you need.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~30.
+
+\bibitem[{Zhou et~al.(2022)Zhou, Lei, Liu, Du, Huang, Zhao, Dai, Chen, Le, and
+  Laudon}]{zhou2022expertchoice}
+Yanqi Zhou, Tao Lei, Hanxiao Liu, Nan Du, Yanping Huang, Vincent Zhao, Andrew
+  Dai, Zhifeng Chen, Quoc Le, and James Laudon. 2022.
+\newblock Mixture-of-experts with expert choice routing.
+\newblock \emph{Advances in Neural Information Processing Systems}, 35.
+
+\bibitem[{Zoph et~al.(2022)Zoph, Bello, Kumar, Du, Huang, Dean, Shazeer, and
+  Fedus}]{zoph2022stmoe}
+Barret Zoph, Irwan Bello, Sameer Kumar, Nan Du, Yanping Huang, Jeff Dean, Noam
+  Shazeer, and William Fedus. 2022.
+\newblock St-moe: Designing stable and transferable sparse expert models.
+\newblock \emph{arXiv preprint arXiv:2202.08906}.
+
+\end{thebibliography}

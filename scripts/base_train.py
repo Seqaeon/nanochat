@@ -296,9 +296,9 @@ parser.add_argument("--disable-mu-p", action="store_true",
                     help="disable μP-style LR scaling (model_dim/768)^-0.5 for AdamW params. "
                          "Use when sweeping absolute LRs directly for research models.")
 parser.add_argument("--mu-p-scale-override", type=float, default=-1.0, help="force a specific mu-P scale")
-parser.add_argument("--warmup-ratio", type=float, default=0.05, help="ratio of iterations for LR warmup")
-parser.add_argument("--warmdown-ratio", type=float, default=0.7, help="ratio of iterations for LR warmdown")
-parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
+parser.add_argument("--warmup-ratio", type=float, default=0.005, help="ratio of iterations for LR warmup")
+parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
+parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = only at end, 0 = disable)")

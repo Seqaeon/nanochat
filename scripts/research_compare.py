@@ -15,6 +15,7 @@ import numpy as np
 
 from scripts._sweep_utils import resolve_runner, estimate_tokens_from_base, model_dims, check_and_prepare_env
 from nanochat.checkpoint_manager import find_last_step
+from nanochat.chunked_remix_config import ChunkedRemixConfig
 
 
 RUNNER = resolve_runner()
@@ -393,7 +394,15 @@ def run_training_sweep(args):
         if saved_ckpt_dir:
             ckpt_dir = Path(saved_ckpt_dir)
 
-        train_cmd_args = common_args + extra_args + [
+        # ChunkedRemixConfig: when --use-chunked-remix 1, inject canonical config defaults
+        # as a *prefix* before common_args so explicit sweep flags (which come later) win.
+        chunked_prefix: list[str] = []
+        if getattr(args, 'use_chunked_remix', False) and model_name == "remixed-linear":
+            _cfg = ChunkedRemixConfig()
+            chunked_prefix = _cfg.to_cli_args(model_dim=model_dim)
+            print(f"  [ChunkedRemixConfig] {_cfg.summary()}")
+
+        train_cmd_args = chunked_prefix + common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),
             "--model-tag", model_name
         ]
@@ -766,6 +775,9 @@ if __name__ == "__main__":
     parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1], help="25: use DualGateLinear instead of RemixedLinear")
     parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression: 4=C//4, 1=full rank")
     parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="output gate rank")
+    parser.add_argument("--use-chunked-remix", type=int, default=0, choices=[0, 1],
+                        help="1 = activate ChunkedRemixConfig canonical P29 defaults for remixed-linear runs; "
+                             "individual flags in the sweep still override on top")
 
     args = parser.parse_args()
     
