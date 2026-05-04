@@ -1665,7 +1665,8 @@ class RemixedLinear(nn.Module):
         if _injected_h_basis is not None:
             h_basis = _injected_h_basis.to(dtype=dtype)
         else:
-            h_basis = self.ln_basis(self.basis(x).to(dtype=self.ln_basis.weight.dtype)).to(dtype=dtype)
+            _ln_dtype = self.ln_basis.weight.dtype if hasattr(self.ln_basis, 'weight') else dtype
+            h_basis = self.ln_basis(self.basis(x).to(dtype=_ln_dtype)).to(dtype=dtype)
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
@@ -7129,7 +7130,8 @@ class MLP(nn.Module):
     def forward(self, x):
         x = self.c_fc(x)
         if self.ln_intermediate is not None:
-            x = self.ln_intermediate(x)
+            _ln_in_dtype = self.ln_intermediate.weight.dtype
+            x = self.ln_intermediate(x.to(dtype=_ln_in_dtype)).to(dtype=x.dtype)
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:
