@@ -308,6 +308,14 @@ while [[ $# -gt 0 ]]; do
             ROOT_OUT_DIR_OVERRIDE="$2"
             shift 2
             ;;
+        --remix-disable-ln-basis)
+            EXTRA_ARGS+=("--remix-disable-ln-basis" "$2")
+            shift 2
+            ;;
+        --dense-intermediate-ln)
+            EXTRA_ARGS+=("--dense-intermediate-ln" "$2")
+            shift 2
+            ;;
         *)
             # Stop parsing flags when we hit a depth
             if [[ "$1" =~ ^[0-9]+$ ]]; then

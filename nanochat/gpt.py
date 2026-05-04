@@ -6109,12 +6109,12 @@ class StandardMoE_MLP(nn.Module):
 
         x_flat = x.reshape(N, D)                              # (N, D)
 
-        # Route
+        # Route — cast to router's parameter dtype to avoid BF16/FP32 mismatch under compile
         if self.use_quantile_route == 1 and self.topk > 0:
             gate = self.router(x)                                 # (B, T, E) -> normalised weights
             logits = None # Quantile doesn't produce raw logits for aux loss
         else:
-            logits  = self.router(x_flat)                         # (N, E)
+            logits  = self.router(x_flat.to(self.router.weight.dtype))  # (N, E)
             self._last_router_logits = logits   # kept alive for compute_aux_loss grad
             gate = F.softmax(logits.float(), dim=-1).to(x.dtype)  # (N, E)
             gate = gate.reshape(B, T, E)                          # (B, T, E)
