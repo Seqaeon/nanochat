@@ -134,7 +134,10 @@ def main():
     # Model info
     config = model.config
     total_params = sum(p.numel() for p in model.parameters())
-    total_flops, active_flops, active_params = model.estimate_flops_per_token(config, seq_len)
+    try:
+        total_flops, active_flops, active_params = model.estimate_flops()
+    except Exception:
+        total_flops = active_flops = active_params = 0
     is_remix = config.use_remix_linear
     model_tag = "remix" if is_remix else "dense"
 
