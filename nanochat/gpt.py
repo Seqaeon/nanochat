@@ -6087,17 +6087,27 @@ class StandardMoE_MLP(nn.Module):
     #  Aux loss (call after forward, before optimizer step)               #
     # ------------------------------------------------------------------ #
     def compute_aux_loss(self):
-        """Switch Transformer load-balance auxiliary loss."""
+        """Switch Transformer load-balance auxiliary loss.
+
+        For soft/top-all routing (topk >= n_experts), there is no load-balance
+        problem (every expert always fires), so we skip the aux loss entirely.
+        For sparse top-k routing, we compute dispatch fractions using the actual
+        top-k mask, not the hard top-1 argmax.
+        """
         if self._last_router_logits is None:
+            return None
+        # No load-balance problem when all experts are active
+        if self.topk >= self.n_experts:
             return None
         logits = self._last_router_logits          # (N, E)
         E = self.n_experts
         probs = F.softmax(logits.float(), dim=-1)  # (N, E)
         mean_prob = probs.mean(dim=0)              # (E,)
-        # Hard dispatch fraction (top-1 assignment for aux loss)
-        hard = logits.argmax(dim=-1)               # (N,)
-        one_hot = F.one_hot(hard, E).float()       # (N, E)
-        mean_frac = one_hot.mean(dim=0)            # (E,)
+        # Dispatch fraction: fraction of tokens routed to each expert via top-k
+        topk_idx = logits.topk(self.topk, dim=-1).indices  # (N, k)
+        dispatch = torch.zeros(logits.shape[0], E, device=logits.device)
+        dispatch.scatter_(1, topk_idx, 1.0 / self.topk)   # (N, E) uniform over selected experts
+        mean_frac = dispatch.mean(dim=0)                    # (E,)
         return self.aux_weight * E * (mean_prob * mean_frac).sum()
 
     # ------------------------------------------------------------------ #

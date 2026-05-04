@@ -1037,6 +1037,7 @@ def get_perm_temperature(it):
 # Training loop
 
 # Loop state (variables updated by the training loop)
+mfu = 0.0  # updated each training step; initialized here so the post-loop report always has a value
 if not resuming:
     step = 0
     val_bpb = None
