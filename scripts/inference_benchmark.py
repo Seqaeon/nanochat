@@ -347,11 +347,9 @@ def main():
 
 
 
-    # ── Save results ──────────────────────────────────────────────────────
+    # ── Save results ────────────────────────────────────────────────
     out_path = args.output or f"inference_bench_{model_tag}_d{config.n_layer}.json"
-    save_data = {'bf16': {k: v for k, v in results_bf16.items() if k != 'hw_flops_by_module'}}
-    if results_int8:
-        save_data['int8'] = results_int8
+    save_data = {k: v for k, v in results_bf16.items() if k != 'hw_flops_by_module'}
     with open(out_path, 'w') as f:
         json.dump(save_data, f, indent=2)
     print(f"Results saved to {out_path}")

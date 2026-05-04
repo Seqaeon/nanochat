@@ -157,17 +157,27 @@ class QuantizedTemplateBank(nn.Module):
 
 
 def quantize_remix_model(model: nn.Module, verbose: bool = True) -> dict:
-    """Quantize all RemixedLinear template banks in a model to INT8.
+    """Quantize RemixedLinear template banks to INT8.
 
-    Modifies the model in-place by replacing the float template parameters
-    with QuantizedTemplateBank modules.
+    Targets `module.template_bank` (nn.ParameterList of K tensors, each
+    shape (out_features, basis_size)) which is the actual storage used by
+    the P29 chunk-routed RemixedLinear implementation.
+
+    IMPORTANT — throughput vs memory:
+        INT8 templates reduce PEAK MEMORY (each template halved in size)
+        but do NOT improve throughput in the current forward pass because:
+        - The forward does `torch.stack([t.to(dtype) for t in template_bank])`
+          which dequantizes to bf16 before any einsum, so the einsum memory
+          traffic is unchanged.
+        - A throughput win requires fusing dequant into the einsum (Triton).
+        - The primary value here is fitting larger K or larger models in VRAM.
 
     Args:
-        model: The model containing RemixedLinear layers
-        verbose: Print quantization stats
+        model: model containing RemixedLinear layers
+        verbose: print per-layer quantization stats
 
     Returns:
-        stats: dict with quantization statistics
+        stats dict with layers_quantized, original_bytes, quantized_bytes, max_error
     """
     stats = {
         'layers_quantized': 0,
@@ -177,50 +187,87 @@ def quantize_remix_model(model: nn.Module, verbose: bool = True) -> dict:
     }
 
     for name, module in model.named_modules():
-        # Look for RemixedLinear layers with template banks
-        if hasattr(module, 'templates') and isinstance(module.templates, nn.Parameter):
-            templates = module.templates.data  # (K, d_out, B)
-            if templates.ndim != 3:
-                continue
+        bank = getattr(module, 'template_bank', None)
+        if bank is None or not isinstance(bank, nn.ParameterList) or len(bank) == 0:
+            continue
 
-            # Create quantized bank
-            dtype = templates.dtype
-            qbank = QuantizedTemplateBank.from_float(templates, compute_dtype=dtype)
+        layer_orig_bytes = 0
+        layer_quant_bytes = 0
+        layer_max_err = 0.0
 
-            # Measure quantization error
-            reconstructed = qbank.dequantize_all()
-            max_err = (templates - reconstructed).abs().max().item()
-            rel_err = max_err / (templates.abs().mean().item() + 1e-8)
-            stats['max_error'] = max(stats['max_error'], max_err)
+        int8_tensors = []
+        scale_tensors = []
 
-            # Replace the parameter
-            orig_bytes = templates.nelement() * templates.element_size()
-            stats['original_bytes'] += orig_bytes
-            stats['quantized_bytes'] += qbank.memory_bytes
-            stats['layers_quantized'] += 1
+        for k, param in enumerate(bank):
+            t = param.data  # (out_features, basis_size)
+            t_int8, scales = quantize_per_channel(t)
 
-            # Store as a submodule and remove the original parameter
-            module.register_module('_qbank', qbank)
-            # Replace templates parameter with a property or flag
-            del module.templates
-            module._use_int8_templates = True
+            # measure error
+            t_recon = dequantize_per_channel(t_int8, scales, dtype=t.dtype)
+            err = (t - t_recon).abs().max().item()
+            layer_max_err = max(layer_max_err, err)
 
-            if verbose:
-                print(f"  Quantized {name}.templates: "
-                      f"{templates.shape} | "
-                      f"max_err={max_err:.6f} rel_err={rel_err:.4f} | "
-                      f"compression={qbank.compression_ratio:.2f}x")
+            int8_tensors.append(t_int8)
+            scale_tensors.append(scales)
+            layer_orig_bytes += t.nelement() * t.element_size()
+            layer_quant_bytes += t_int8.nelement() * 1 + scales.nelement() * 4
+
+        # Replace the ParameterList with registered buffers so the parameters
+        # are no longer part of the optimizer and don't get saved as fp32.
+        # We keep the same interface by monkey-patching forward to dequantize.
+        module._int8_banks = int8_tensors       # list of (out, basis) int8
+        module._int8_scales = scale_tensors     # list of (out, 1) float32
+        module._int8_dtype = bank[0].data.dtype
+
+        # Remove the ParameterList from the module to free fp16/bf16 memory
+        del module.template_bank
+        module.template_bank = None             # forward guards against None already
+
+        # Monkey-patch: override the template_bank property used by forward
+        # by replacing with a lazy-dequant accessor list-like object
+        class _DequantBank:
+            """Mimics nn.ParameterList[k] access, dequantizing on demand."""
+            def __init__(self, int8s, scales, dtype):
+                self._int8s = int8s
+                self._scales = scales
+                self._dtype = dtype
+            def __iter__(self):
+                return (dequantize_per_channel(q, s, self._dtype)
+                        for q, s in zip(self._int8s, self._scales))
+            def __len__(self):
+                return len(self._int8s)
+            def __getitem__(self, k):
+                return dequantize_per_channel(self._int8s[k], self._scales[k], self._dtype)
+
+        module.template_bank = _DequantBank(int8_tensors, scale_tensors,
+                                            module._int8_dtype)
+
+        stats['layers_quantized'] += 1
+        stats['original_bytes'] += layer_orig_bytes
+        stats['quantized_bytes'] += layer_quant_bytes
+        stats['max_error'] = max(stats['max_error'], layer_max_err)
+
+        if verbose:
+            K = len(int8_tensors)
+            shape = int8_tensors[0].shape
+            compression = layer_orig_bytes / max(layer_quant_bytes, 1)
+            print(f"  {name}.template_bank: K={K}, shape={shape}, "
+                  f"max_err={layer_max_err:.5f}, compression={compression:.2f}x")
 
     if verbose and stats['layers_quantized'] > 0:
         ratio = stats['original_bytes'] / max(stats['quantized_bytes'], 1)
         saved_mb = (stats['original_bytes'] - stats['quantized_bytes']) / 1e6
-        print(f"\n  Total: {stats['layers_quantized']} layers quantized")
-        print(f"  Memory: {stats['original_bytes']/1e6:.1f} MB -> "
+        print(f"\n  Total: {stats['layers_quantized']} layers")
+        print(f"  Template memory: {stats['original_bytes']/1e6:.1f} MB -> "
               f"{stats['quantized_bytes']/1e6:.1f} MB "
-              f"(saved {saved_mb:.1f} MB, {ratio:.2f}x compression)")
-        print(f"  Max quantization error: {stats['max_error']:.6f}")
+              f"(saved {saved_mb:.1f} MB, {ratio:.2f}x)")
+        print(f"  Max quantization error: {stats['max_error']:.5f}")
+        print(f"  NOTE: throughput unchanged — peak memory reduced only.")
+    elif verbose:
+        print("  No template_bank layers found to quantize.")
 
     return stats
+
 
 
 # ─── Standalone test ──────────────────────────────────────────────────────────
