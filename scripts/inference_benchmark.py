@@ -18,7 +18,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
+
+# Ensure repo root is on path when run from Modal volumes or other non-installed environments.
+# The script may live at /__modal/volumes/.../scripts/ — walk up until we find nanochat/__init__.py.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+for _candidate in [
+    os.path.dirname(_SCRIPT_DIR),   # scripts/../  (standard layout)
+    "/root/nanochat",               # Modal default mount point
+    _SCRIPT_DIR,                    # fallback: script itself at repo root
+]:
+    if os.path.isdir(os.path.join(_candidate, "nanochat")):
+        if _candidate not in sys.path:
+            sys.path.insert(0, _candidate)
+        break
 
 import torch
 import torch.nn.functional as F
