@@ -4190,24 +4190,28 @@ class QuantileBalancedRouter(nn.Module):
         scores  = scores.expand(B, T, K)                                  # (B, T, K)
 
         if self.training:
-            # Guard torch.quantile from torch.compile by calling a decorated separate method
+            # Guard torch.quantile from torch.compile by calling a decorated separate method.
+            # This causes one graph break per layer (for the EMA side effect only), which is
+            # acceptable since _update_ema runs under torch.no_grad() and doesn't touch the
+            # backward graph.
             self._update_ema(scores, topk, K)
 
             thresh = self.ema_thresholds.to(scores.device)               # (K,)
             q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
 
-            # Guarantee exactly topk via hard fallback
+            # Guarantee exactly topk via hard top-k fallback
             _, topk_idx = scores.topk(topk, dim=-1)                      # (B, T, topk)
             hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
             mask        = q_mask | hard_mask                              # union
 
-            # Trim excess: if more than topk pass, keep only the highest-scoring topk
-            # (happens when many experts share a similar score near the threshold)
-            n_selected  = mask.sum(dim=-1, keepdim=True)                 # (B, T, 1)
-            if (n_selected > topk).any():
-                masked_scores = scores.masked_fill(~mask, -1e9)
-                _, top_idx    = masked_scores.topk(topk, dim=-1)
-                mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
+            # Always trim to exactly topk — compile-safe: no data-dependent branch.
+            # When mask already has ≤topk True entries (normal case after EMA converges),
+            # topk on -inf-filled scores returns the same set → no-op semantically.
+            # Eliminates the CPU-GPU sync from `if (n_selected > topk).any()` which was
+            # splitting the compiled graph into 3 segments every forward pass.
+            masked_scores = scores.masked_fill(~mask, -1e9)
+            _, top_idx    = masked_scores.topk(topk, dim=-1)
+            mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
 
             # Soft weights via masked softmax (preserves differentiability)
             gated   = scores.masked_fill(~mask, -1e9)
