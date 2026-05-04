@@ -210,24 +210,24 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - If this matches K=1 no-context (1.168), the 0.002
 #     improvement is from LN, not the factored structure
 # ══════════════════════════════════════════════════════
-TAG="30A_DENSE_LN_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "30A" "$TAG" "Dense baseline + intermediate LayerNorm (LN confound isolation)"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P30_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --dense-intermediate-ln 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="30A_DENSE_LN_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "30A" "$TAG" "Dense baseline + intermediate LayerNorm (LN confound isolation)"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P30_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --dense-intermediate-ln 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 30B: RemixedLinear K=1, No Context, No Gates, No LN
@@ -235,28 +235,28 @@ fi
 #   - Isolates pure factorization effect (W_b @ T_1)
 #   - Compare with K=1 no-context WITH LN (from P29: 1.168)
 # ══════════════════════════════════════════════════════
-TAG="30B_REMIX_K1_NO_LN_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "30B" "$TAG" "RemixedLinear K=1, no context/gates, no intermediate LN"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P30_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 1 \
-      --remix-use-context 0 \
-      --remix-use-basis-gate 0 \
-      --remix-use-output-gate 0 \
-      --remix-disable-ln-basis 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="30B_REMIX_K1_NO_LN_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "30B" "$TAG" "RemixedLinear K=1, no context/gates, no intermediate LN"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P30_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 1 \
+#      --remix-use-context 0 \
+#      --remix-use-basis-gate 0 \
+#      --remix-use-output-gate 0 \
+#      --remix-disable-ln-basis 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 30C: Standard MoE top-all RETRAINED
