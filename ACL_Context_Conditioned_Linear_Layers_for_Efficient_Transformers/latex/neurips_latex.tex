@@ -322,19 +322,20 @@ Table~\ref{tab:core} reports the aggregate CORE score for each model configurati
 \begin{table}[t]
 \centering
 \small
-\caption{CORE benchmark scores (22-task centered accuracy aggregate). Higher is better. RemixedLinear consistently outperforms the dense baseline on downstream tasks, confirming that BPP improvements transfer to in-context learning performance.}
+\caption{CORE benchmark scores (22-task centered accuracy aggregate). Higher is better. RemixedLinear achieves CORE scores 34--36\% above the dense power-law prediction at matched active FLOPs, confirming that BPP improvements transfer to downstream task performance.}
 \label{tab:core}
-\begin{tabular}{@{}lccc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-\textbf{Model} & \textbf{Active Params} & \textbf{Val BPP} & \textbf{CORE} \\
+\textbf{Model} & \textbf{Active Params} & \textbf{Active FLOPs} & \textbf{Val BPP} & \textbf{CORE} \\
 \midrule
-Dense d4 & 37M & 1.170 & \textit{TBD} \\
-Dense d8 & 126M & 0.969 & \textit{TBD} \\
-Dense d12 & 286M & 0.903 & \textit{TBD} \\
+Dense d12 & 286M & 7.6e8 & 0.903 & 0.114 \\
+Dense d14 & 399M & 1.1e9 & 0.869 & 0.148 \\
+Dense d20 & 897M & 2.9e9 & 0.791 & 0.215 \\
+Dense d26 & 1.68B & 6.0e9 & 0.738 & 0.266 \\
+Dense d30 & 2.40B & 9.0e9 & 0.712 & 0.291 \\
 \midrule
-Remix d4 & 37M & 1.082 & \textit{TBD} \\
-Remix d8 & 127M & 0.903 & \textit{TBD} \\
-Remix d12 & 290M & 0.814 & \textit{TBD} \\
+Remix d8 & 127M & 2.9e8 & 0.903 & \textbf{0.123} \\
+Remix d12 & 290M & 7.6e8 & 0.814 & \textbf{0.172} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -342,11 +343,11 @@ Remix d12 & 290M & 0.814 & \textit{TBD} \\
 \begin{figure*}[t]
     \centering
     \includegraphics[width=0.95\textwidth]{scaling_curves_core.png}
-    \caption{CORE benchmark score vs.\ active FLOPs. RemixedLinear (pink circles) achieves higher CORE scores than the dense scaling curve (blue squares, dashed fit) at matched active compute, confirming that the BPP scaling advantage translates to downstream task performance.}
+    \caption{CORE benchmark score vs.\ model size and compute. \textbf{Left:} Total parameters --- RemixedLinear points fall on the dense curve, reflecting the $K{\times}$ storage cost. \textbf{Middle:} Active parameters --- RemixedLinear achieves 34--36\% higher CORE scores at matched active params. \textbf{Right:} Active FLOPs --- same advantage, confirming that the scaling improvement is genuine and not an artifact of the parameter-counting methodology.}
     \label{fig:core_scaling}
 \end{figure*}
 
-Figure~\ref{fig:core_scaling} plots CORE score against active FLOPs, analogous to the BPP scaling analysis in Figure~\ref{fig:scaling}. The RemixedLinear points fall consistently above the dense scaling curve, confirming that the BPP improvements documented in Section~\ref{sec:experiments} translate to genuine downstream task gains rather than reflecting only compression-metric artifacts.
+Figure~\ref{fig:core_scaling} plots CORE score against active FLOPs, analogous to the BPP scaling analysis in Figure~\ref{fig:scaling}. At matched active FLOPs, the Remix d8 achieves a CORE score 36\% above the dense power-law prediction (0.123 vs.\ 0.090 predicted), and Remix d12 achieves 35\% above (0.172 vs.\ 0.127 predicted). The Remix d8 matches the CORE score of a dense model with roughly $2\times$ the active parameters, while Remix d12 reaches a CORE level between the dense d17 and d20 baselines. These gains confirm that the BPP improvements documented in Section~\ref{sec:experiments} translate to genuine downstream task performance rather than reflecting only compression-metric artifacts.
 
 \section{Discussion}
 

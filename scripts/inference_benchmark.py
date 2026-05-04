@@ -2,6 +2,7 @@
 Inference throughput benchmark for Dense vs RemixedLinear models.
 
 Measures tokens/sec, peak memory, and actual hardware FLOPs.
+Optionally evaluates CORE benchmark before/after INT8 template quantization.
 Designed to be run on a single GPU for fair comparison.
 
 Usage:
@@ -12,6 +13,11 @@ Usage:
     # RemixedLinear d12
     python scripts/inference_benchmark.py \
         --checkpoint-dir /path/to/ckpt_remixed-linear/remixed-linear --batch-size 8
+
+    # RemixedLinear with INT8 comparison + CORE eval
+    python scripts/inference_benchmark.py \
+        --checkpoint-dir /path/to/ckpt_remixed-linear/remixed-linear \
+        --batch-size 64 --eval-core --add-int8
 """
 from __future__ import annotations
 
@@ -137,6 +143,53 @@ def benchmark_throughput(model, device, batch_size: int = 8,
     return results
 
 
+def run_core_eval(model, device, tokenizer_dir=None, max_per_task=500):
+    """Run CORE evaluation and return the score."""
+    from scripts.base_eval import evaluate_core
+    # Need a tokenizer
+    from nanochat.tokenizer import Tokenizer
+    tokenizer_dir = tokenizer_dir or os.path.join(
+        os.path.dirname(_SCRIPT_DIR), "tokenizer"
+    )
+    tokenizer = Tokenizer(tokenizer_dir)
+
+    print(f"\n  Running CORE evaluation (max {max_per_task} per task)...")
+    results = evaluate_core(model, tokenizer, device, max_per_task=max_per_task)
+    core_score = results['core_metric']
+    print(f"  CORE score: {core_score:.4f}")
+
+    # Print per-task breakdown
+    print(f"\n  {'Task':<35} {'Accuracy':>10} {'Centered':>10}")
+    print(f"  {'-'*35} {'-'*10} {'-'*10}")
+    for label in results['results']:
+        acc = results['results'][label]
+        centered = results['centered_results'][label]
+        print(f"  {label:<35} {acc:>10.4f} {centered:>10.4f}")
+    print(f"  {'CORE (aggregate)':<35} {'':>10} {core_score:>10.4f}")
+
+    return results
+
+
+def print_results(results, label="Results"):
+    """Print formatted benchmark results."""
+    model_tag = results.get('model_tag', 'unknown')
+    print(f"\n{'='*60}")
+    print(f"{label} ({model_tag})")
+    print(f"{'='*60}")
+    print(f"  Throughput:      {results['tokens_per_sec']:,.0f} tokens/sec")
+    print(f"  Avg latency:     {results['avg_latency_ms']:.1f} ms ± {results['std_latency_ms']:.1f} ms")
+    print(f"  Peak memory:     {results['peak_memory_gb']:.2f} GB")
+    print(f"  Tokens/step:     {results['tokens_per_step']:,}")
+    if 'hw_flops_per_token' in results:
+        print(f"  HW FLOPs/token:  {results['hw_flops_per_token']:.2e}")
+        throughput = results['tokens_per_sec']
+        hw_tflops = results['hw_flops_per_token'] * throughput / 1e12
+        print(f"  HW TFLOPS:       {hw_tflops:.1f}")
+    if 'core_score' in results:
+        print(f"  CORE score:      {results['core_score']:.4f}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Inference throughput benchmark")
     parser.add_argument("--checkpoint-dir", type=str, required=True,
@@ -152,6 +205,14 @@ def main():
     parser.add_argument("--no-flop-count", action="store_true", help="Skip hardware FLOP counting")
     parser.add_argument("--tokenizer-dir", type=str, default=None)
     parser.add_argument("--output", type=str, default=None, help="Output JSON path (default: auto)")
+    # New flags
+    parser.add_argument("--eval-core", action="store_true",
+                        help="Run CORE benchmark evaluation (22 tasks, max 500 examples each)")
+    parser.add_argument("--core-max-per-task", type=int, default=500,
+                        help="Max examples per CORE task (default: 500)")
+    parser.add_argument("--add-int8", action="store_true",
+                        help="After normal benchmark, apply INT8 template quantization and re-benchmark. "
+                             "Only affects RemixedLinear models (dense models have no template banks).")
     args = parser.parse_args()
 
     device_type = autodetect_device_type()
@@ -206,7 +267,7 @@ def main():
         print(f"  Chunk size:    {rl_kw.get('chunk_routing_size', '?')}")
     print()
 
-    # Hardware FLOP counting (before compile, on uncompiled model)
+    # ── Phase 1: Hardware FLOP counting (before compile) ──────────────────
     hw_flops_results = {}
     if not args.no_flop_count:
         print("Counting actual hardware FLOPs...")
@@ -229,9 +290,23 @@ def main():
         print("Compiling model with torch.compile...")
         model = torch.compile(model)
 
-    # Run benchmark
-    print("Running benchmark...")
-    results = benchmark_throughput(
+    # ── Phase 2: CORE eval (bf16, pre-quantization) ───────────────────────
+    core_results_bf16 = None
+    if args.eval_core:
+        print(f"\n{'='*60}")
+        print(f"CORE Evaluation (bf16)")
+        print(f"{'='*60}")
+        core_results_bf16 = run_core_eval(
+            model, device,
+            tokenizer_dir=args.tokenizer_dir,
+            max_per_task=args.core_max_per_task,
+        )
+
+    # ── Phase 3: Throughput benchmark (bf16) ──────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"Throughput Benchmark (bf16)")
+    print(f"{'='*60}")
+    results_bf16 = benchmark_throughput(
         model, device,
         batch_size=args.batch_size,
         seq_len=seq_len,
@@ -240,45 +315,110 @@ def main():
     )
 
     # Add model info to results
-    results['model_tag'] = model_tag
-    results['n_layer'] = config.n_layer
-    results['n_embd'] = config.n_embd
-    results['total_params'] = total_params
-    results['active_params'] = active_params
-    results['est_total_flops_per_token'] = est_total_flops
-    results['est_active_flops_per_token'] = est_active_flops
-    results.update(hw_flops_results)
-    results['device'] = device_type
-    results['step'] = step
+    results_bf16['model_tag'] = model_tag
+    results_bf16['n_layer'] = config.n_layer
+    results_bf16['n_embd'] = config.n_embd
+    results_bf16['total_params'] = total_params
+    results_bf16['active_params'] = active_params
+    results_bf16['est_total_flops_per_token'] = est_total_flops
+    results_bf16['est_active_flops_per_token'] = est_active_flops
+    results_bf16.update(hw_flops_results)
+    results_bf16['device'] = device_type
+    results_bf16['step'] = step
+    results_bf16['quantization'] = 'bf16'
     if device_type == 'cuda':
-        results['gpu_name'] = torch.cuda.get_device_name(0)
-    results['compiled'] = args.compile
+        results_bf16['gpu_name'] = torch.cuda.get_device_name(0)
+    results_bf16['compiled'] = args.compile
     if is_remix:
         rl_kw = config.remixed_linear_kwargs or {}
-        results['n_templates'] = rl_kw.get('n_templates', None)
-        results['chunk_routing_size'] = rl_kw.get('chunk_routing_size', None)
+        results_bf16['n_templates'] = rl_kw.get('n_templates', None)
+        results_bf16['chunk_routing_size'] = rl_kw.get('chunk_routing_size', None)
+    if core_results_bf16:
+        results_bf16['core_score'] = core_results_bf16['core_metric']
 
-    # Print results
-    print(f"\n{'='*60}")
-    print(f"Results ({model_tag})")
-    print(f"{'='*60}")
-    print(f"  Throughput:      {results['tokens_per_sec']:,.0f} tokens/sec")
-    print(f"  Avg latency:     {results['avg_latency_ms']:.1f} ms ± {results['std_latency_ms']:.1f} ms")
-    print(f"  Peak memory:     {results['peak_memory_gb']:.2f} GB")
-    print(f"  Tokens/step:     {results['tokens_per_step']:,}")
-    if 'hw_flops_per_token' in results:
-        print(f"  HW FLOPs/token:  {results['hw_flops_per_token']:.2e}")
-        throughput = results['tokens_per_sec']
-        hw_tflops = results['hw_flops_per_token'] * throughput / 1e12
-        print(f"  HW TFLOPS:       {hw_tflops:.1f}")
-    print()
+    print_results(results_bf16, label="Results (bf16)")
 
-    # Save results
+    # ── Phase 4: INT8 quantization + re-benchmark ─────────────────────────
+    results_int8 = None
+    core_results_int8 = None
+
+    if args.add_int8:
+        if not is_remix:
+            print("\n⚠  --add-int8 has no effect on dense models (no template banks to quantize).")
+            print("   Dense models would need general INT8 weight quantization (torch.ao), which is a different technique.\n")
+        else:
+            print(f"\n{'='*60}")
+            print(f"Applying INT8 Template Quantization")
+            print(f"{'='*60}")
+
+            from nanochat.kernels.int8_templates import quantize_remix_model
+            quant_stats = quantize_remix_model(model, verbose=True)
+
+            # CORE eval after INT8
+            if args.eval_core:
+                print(f"\n{'='*60}")
+                print(f"CORE Evaluation (INT8 templates)")
+                print(f"{'='*60}")
+                core_results_int8 = run_core_eval(
+                    model, device,
+                    tokenizer_dir=args.tokenizer_dir,
+                    max_per_task=args.core_max_per_task,
+                )
+
+            # Throughput benchmark after INT8
+            print(f"\n{'='*60}")
+            print(f"Throughput Benchmark (INT8 templates)")
+            print(f"{'='*60}")
+            results_int8 = benchmark_throughput(
+                model, device,
+                batch_size=args.batch_size,
+                seq_len=seq_len,
+                warmup_steps=args.warmup_steps,
+                measure_steps=args.measure_steps,
+            )
+
+            results_int8['model_tag'] = model_tag
+            results_int8['quantization'] = 'int8_templates'
+            results_int8['layers_quantized'] = quant_stats['layers_quantized']
+            results_int8['quant_compression'] = round(
+                quant_stats['original_bytes'] / max(quant_stats['quantized_bytes'], 1), 2)
+            results_int8['quant_max_error'] = quant_stats['max_error']
+            if core_results_int8:
+                results_int8['core_score'] = core_results_int8['core_metric']
+
+            print_results(results_int8, label="Results (INT8 templates)")
+
+            # ── Comparison summary ────────────────────────────────────────
+            print(f"\n{'='*60}")
+            print(f"INT8 Comparison Summary")
+            print(f"{'='*60}")
+            bf16_tps = results_bf16['tokens_per_sec']
+            int8_tps = results_int8['tokens_per_sec']
+            speedup = int8_tps / bf16_tps
+            print(f"  bf16 throughput:  {bf16_tps:,.0f} tok/s")
+            print(f"  INT8 throughput:  {int8_tps:,.0f} tok/s")
+            print(f"  Speedup:         {speedup:.2f}x")
+            print(f"  bf16 memory:     {results_bf16['peak_memory_gb']:.2f} GB")
+            print(f"  INT8 memory:     {results_int8['peak_memory_gb']:.2f} GB")
+            print(f"  Memory saved:    {results_bf16['peak_memory_gb'] - results_int8['peak_memory_gb']:.2f} GB")
+            if core_results_bf16 and core_results_int8:
+                bf16_core = core_results_bf16['core_metric']
+                int8_core = core_results_int8['core_metric']
+                delta = int8_core - bf16_core
+                print(f"  bf16 CORE:       {bf16_core:.4f}")
+                print(f"  INT8 CORE:       {int8_core:.4f}")
+                print(f"  CORE delta:      {delta:+.4f} ({'degraded' if delta < -0.005 else 'no change' if abs(delta) < 0.005 else 'improved'})")
+            print(f"  Layers quantized: {quant_stats['layers_quantized']}")
+            print(f"  Template compression: {results_int8['quant_compression']:.2f}x")
+            print()
+
+    # ── Save results ──────────────────────────────────────────────────────
     out_path = args.output or f"inference_bench_{model_tag}_d{config.n_layer}.json"
-    # Remove non-serializable items
-    save_results = {k: v for k, v in results.items() if k != 'hw_flops_by_module'}
+    save_data = {'bf16': {k: v for k, v in results_bf16.items() if k != 'hw_flops_by_module'}}
+    if results_int8:
+        save_data['int8'] = results_int8
     with open(out_path, 'w') as f:
-        json.dump(save_results, f, indent=2)
+        json.dump(save_data, f, indent=2)
     print(f"Results saved to {out_path}")
 
 
