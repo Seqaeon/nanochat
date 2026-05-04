@@ -6068,7 +6068,10 @@ class StandardMoE_MLP(nn.Module):
             self.router = QuantileBalancedRouter(D, n_experts, topk, learned=True)
         else:
             self.router = nn.Linear(D, n_experts, bias=False)
-            nn.init.zeros_(self.router.weight)
+            # Small random init to break expert symmetry at step 0.
+            # Zero-init causes all experts to receive identical gradients
+            # (uniform softmax → identical dispatch) and never differentiate.
+            nn.init.normal_(self.router.weight, std=D ** -0.5)
 
         # Weight init (Kaiming up, zeros down — same as dense MLP convention)
         nn.init.kaiming_uniform_(self.fc_w.view(n_experts * H, D), a=math.sqrt(5))
@@ -6084,8 +6087,9 @@ class StandardMoE_MLP(nn.Module):
     # ------------------------------------------------------------------ #
     def _expert_fwd(self, e: int, x_flat):
         """Run expert e on all N tokens. Returns (N, D)."""
-        h = F.relu(x_flat.float() @ self.fc_w[e].T.float()).square()
-        return (h @ self.proj_w[e].T.float()).to(x_flat.dtype)
+        # Stay in input dtype (bfloat16) to avoid 2× memory blowup from .float() casts
+        h = F.relu(x_flat @ self.fc_w[e].T).square()
+        return h @ self.proj_w[e].T
 
     # ------------------------------------------------------------------ #
     #  Aux loss (call after forward, before optimizer step)               #

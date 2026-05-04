@@ -1,7 +1,7 @@
 """
 Inference throughput benchmark for Dense vs RemixedLinear models.
 
-Measures tokens/sec and peak memory for a given checkpoint directory.
+Measures tokens/sec, peak memory, and actual hardware FLOPs.
 Designed to be run on a single GPU for fair comparison.
 
 Usage:
@@ -22,7 +22,6 @@ import sys
 import time
 
 # Ensure repo root is on path when run from Modal volumes or other non-installed environments.
-# The script may live at /__modal/volumes/.../scripts/ — walk up until we find nanochat/__init__.py.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 for _candidate in [
     os.path.dirname(_SCRIPT_DIR),   # scripts/../  (standard layout)
@@ -39,6 +38,47 @@ import torch.nn.functional as F
 
 from nanochat.checkpoint_manager import build_model, find_last_step
 from nanochat.common import autodetect_device_type
+
+
+@torch.no_grad()
+def count_hardware_flops(model, device, batch_size: int = 8,
+                         seq_len: int = 2048) -> dict:
+    """Count actual hardware FLOPs using torch.utils.flop_counter."""
+    model.eval()
+    vocab_size = model.config.vocab_size
+    input_ids = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+
+    from torch.utils.flop_counter import FlopCounterMode
+
+    # Run once to warm up
+    _ = model(input_ids)
+    if device.type == 'cuda':
+        torch.cuda.synchronize()
+
+    # Count FLOPs
+    flop_counter = FlopCounterMode(display=False)
+    with flop_counter:
+        _ = model(input_ids)
+
+    total_flops = flop_counter.get_total_flops()
+    tokens = batch_size * seq_len
+    flops_per_token = total_flops / tokens
+
+    # Get per-module breakdown (top-level only)
+    flops_by_module = {}
+    try:
+        for name, mod_flops in flop_counter.get_flop_counts().items():
+            total_mod = sum(mod_flops.values())
+            if total_mod > 0:
+                flops_by_module[str(name)] = total_mod
+    except Exception:
+        pass  # older PyTorch versions may not support this
+
+    return {
+        'hw_total_flops': total_flops,
+        'hw_flops_per_token': flops_per_token,
+        'hw_flops_by_module': flops_by_module,
+    }
 
 
 @torch.no_grad()
@@ -109,6 +149,7 @@ def main():
     parser.add_argument("--warmup-steps", type=int, default=5, help="Warmup iterations")
     parser.add_argument("--measure-steps", type=int, default=20, help="Measurement iterations")
     parser.add_argument("--compile", action="store_true", help="Use torch.compile")
+    parser.add_argument("--no-flop-count", action="store_true", help="Skip hardware FLOP counting")
     parser.add_argument("--tokenizer-dir", type=str, default=None)
     parser.add_argument("--output", type=str, default=None, help="Output JSON path (default: auto)")
     args = parser.parse_args()
@@ -135,9 +176,9 @@ def main():
     config = model.config
     total_params = sum(p.numel() for p in model.parameters())
     try:
-        total_flops, active_flops, active_params = model.estimate_flops()
+        est_total_flops, est_active_flops, active_params = model.estimate_flops()
     except Exception:
-        total_flops = active_flops = active_params = 0
+        est_total_flops = est_active_flops = active_params = 0
     is_remix = config.use_remix_linear
     model_tag = "remix" if is_remix else "dense"
 
@@ -154,8 +195,8 @@ def main():
     print(f"  n_embd:        {config.n_embd}")
     print(f"  Total params:  {total_params:,}")
     print(f"  Active params: {active_params:,}")
-    print(f"  Total FLOPs:   {total_flops:.2e}")
-    print(f"  Active FLOPs:  {active_flops:.2e}")
+    print(f"  Est. Total FLOPs/tok: {est_total_flops:.2e}")
+    print(f"  Est. Active FLOPs/tok: {est_active_flops:.2e}")
     print(f"  Batch:         {args.batch_size}")
     print(f"  Seq len:       {seq_len}")
     print(f"  Compile:       {args.compile}")
@@ -164,6 +205,25 @@ def main():
         print(f"  K templates:   {rl_kw.get('n_templates', '?')}")
         print(f"  Chunk size:    {rl_kw.get('chunk_routing_size', '?')}")
     print()
+
+    # Hardware FLOP counting (before compile, on uncompiled model)
+    hw_flops_results = {}
+    if not args.no_flop_count:
+        print("Counting actual hardware FLOPs...")
+        try:
+            hw_flops_results = count_hardware_flops(model, device,
+                                                     batch_size=args.batch_size,
+                                                     seq_len=seq_len)
+            hw_fpt = hw_flops_results['hw_flops_per_token']
+            print(f"  Hardware FLOPs/token: {hw_fpt:.2e}")
+            print(f"  Hardware total FLOPs:  {hw_flops_results['hw_total_flops']:.2e}")
+            if est_active_flops > 0:
+                print(f"  HW/Est. Active ratio:  {hw_fpt / est_active_flops:.2f}x")
+            print()
+        except Exception as e:
+            print(f"  FLOP counting failed: {e}")
+            print(f"  (requires PyTorch >= 2.1 with torch.utils.flop_counter)")
+            print()
 
     if args.compile:
         print("Compiling model with torch.compile...")
@@ -185,8 +245,9 @@ def main():
     results['n_embd'] = config.n_embd
     results['total_params'] = total_params
     results['active_params'] = active_params
-    results['total_flops'] = total_flops
-    results['active_flops'] = active_flops
+    results['est_total_flops_per_token'] = est_total_flops
+    results['est_active_flops_per_token'] = est_active_flops
+    results.update(hw_flops_results)
     results['device'] = device_type
     results['step'] = step
     if device_type == 'cuda':
@@ -201,16 +262,23 @@ def main():
     print(f"\n{'='*60}")
     print(f"Results ({model_tag})")
     print(f"{'='*60}")
-    print(f"  Throughput:    {results['tokens_per_sec']:,.0f} tokens/sec")
-    print(f"  Avg latency:   {results['avg_latency_ms']:.1f} ms ± {results['std_latency_ms']:.1f} ms")
-    print(f"  Peak memory:   {results['peak_memory_gb']:.2f} GB")
-    print(f"  Tokens/step:   {results['tokens_per_step']:,}")
+    print(f"  Throughput:      {results['tokens_per_sec']:,.0f} tokens/sec")
+    print(f"  Avg latency:     {results['avg_latency_ms']:.1f} ms ± {results['std_latency_ms']:.1f} ms")
+    print(f"  Peak memory:     {results['peak_memory_gb']:.2f} GB")
+    print(f"  Tokens/step:     {results['tokens_per_step']:,}")
+    if 'hw_flops_per_token' in results:
+        print(f"  HW FLOPs/token:  {results['hw_flops_per_token']:.2e}")
+        throughput = results['tokens_per_sec']
+        hw_tflops = results['hw_flops_per_token'] * throughput / 1e12
+        print(f"  HW TFLOPS:       {hw_tflops:.1f}")
     print()
 
     # Save results
     out_path = args.output or f"inference_bench_{model_tag}_d{config.n_layer}.json"
+    # Remove non-serializable items
+    save_results = {k: v for k, v in results.items() if k != 'hw_flops_by_module'}
     with open(out_path, 'w') as f:
-        json.dump(results, f, indent=2)
+        json.dump(save_results, f, indent=2)
     print(f"Results saved to {out_path}")
 
 
