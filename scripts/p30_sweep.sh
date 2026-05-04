@@ -263,7 +263,7 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - K=8 full-size experts, all active (top-all)
 #   - Token budget from TOTAL params (not active)
 #   - Fixes the undertrained MoE_all from P29
-#   - Quantile routing (no aux loss needed for top-all)
+#   - Simple softmax router (no aux loss for top-all, already handled in gpt.py)
 # ══════════════════════════════════════════════════════
 TAG="30C_MOE_ALL_RETRAIN_D${DEPTH}"
 if check_completed "$TAG"; then
@@ -278,7 +278,6 @@ else
       --p23-std-moe-experts 8 \
       --p23-std-moe-topk 8 \
       --p23-std-moe-aux-weight 0.01 \
-      --p23-quantile-route 1 \
       --target-active-params 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
@@ -292,7 +291,7 @@ fi
 # 30D: Standard MoE top-1 RETRAINED
 #   - K=8 full-size experts, top-1 sparse routing
 #   - Token budget from TOTAL params (not active)
-#   - Quantile routing: balanced dispatch without aux loss
+#   - Simple softmax router + corrected top-k aux loss
 # ══════════════════════════════════════════════════════
 TAG="30D_MOE_TOP1_RETRAIN_D${DEPTH}"
 if check_completed "$TAG"; then
@@ -307,7 +306,6 @@ else
       --p23-std-moe-experts 8 \
       --p23-std-moe-topk 1 \
       --p23-std-moe-aux-weight 0.01 \
-      --p23-quantile-route 1 \
       --target-active-params 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
