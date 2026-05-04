@@ -278,7 +278,7 @@ else
       --p23-std-moe-experts 8 \
       --p23-std-moe-topk 8 \
       --p23-std-moe-aux-weight 0.01 \
-      --p23-quantile-route 0 \
+      --p23-quantile-route 1 \
       --target-active-params 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
@@ -307,7 +307,7 @@ else
       --p23-std-moe-experts 8 \
       --p23-std-moe-topk 1 \
       --p23-std-moe-aux-weight 0.01 \
-      --p23-quantile-route 0 \
+      --p23-quantile-route 1 \
       --target-active-params 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
