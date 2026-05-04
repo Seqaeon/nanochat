@@ -163,7 +163,7 @@ P30_OUT_BASE="${P30_OUT_BASE:-out/sweep_p30}"
 # ── Common flags for RemixedLinear experiments ────────────────────────────────
 # Mirrors P29 canonical config but with specific overrides per experiment.
 REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 16 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --target-param-data-ratio 10.5 \
