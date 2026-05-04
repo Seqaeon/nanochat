@@ -111,8 +111,8 @@
 
 \item {\bf Experiments compute resources}
     \item[] Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
-    \item[] Answer: \answerNo{}
-    \item[] Justification: The paper does not explicitly report GPU type or wall-clock time. All experiments were conducted by an independent researcher with limited compute resources, as noted in the Limitations paragraph.
+    \item[] Answer: \answerYes{}
+    \item[] Justification: Training was performed on heterogeneous GPU hardware (NVIDIA A100, H100, H200, and T4) using checkpoint resumption across sessions. Dense baseline results at d12--d30 are from the published nanochat leaderboard trained on 8$\times$H100. Due to the heterogeneous compute setup, wall-clock training times are not directly comparable; however, all models were trained to the same Chinchilla-optimal token budget (10.5$\times$ scaling parameters). Hardware details are discussed in the Limitations paragraph of Section~5.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the paper does not include experiments.
@@ -162,7 +162,7 @@
 \item {\bf Licenses for existing assets}
     \item[] Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?
     \item[] Answer: \answerYes{}
-    \item[] Justification: The nanochat framework and ClimbMix dataset are cited. All baseline architectures and methods are properly referenced.
+    \item[] Justification: The nanochat framework (MIT License) and ClimbMix dataset (CC-BY-4.0) are cited. The BPE tokenizer is from the nanochat release (MIT License). All baseline architectures and methods are properly referenced.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the paper does not use existing assets.
@@ -213,7 +213,7 @@
 \item {\bf Declaration of LLM usage}
     \item[] Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does \emph{not} impact the core methodology, scientific rigor, or originality of the research, declaration is not required.
     \item[] Answer: \answerNA{}
-    \item[] Justification: LLMs were used only for writing assistance, not as a component of the core methodology. This is disclosed in the Acknowledgments section.
+    \item[] Justification: LLMs were used only for writing assistance, not as a component of the core methodology. This usage does not impact the scientific rigor or originality of the research.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the core method development in this research does not involve LLMs as any important, original, or non-standard components.

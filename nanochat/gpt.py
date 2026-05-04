@@ -312,6 +312,9 @@ class GPTConfig:
     p24_use_sequence_gated_linear: int = 0
     p24_sequence_gated_scope: str = "per_layer"        # per_layer|per_block|global
     p24_sequence_gated_act: str = "sigmoid"
+    # Phase 30: LayerNorm ablation
+    remix_disable_ln_basis: int = 0           # 30B: 1=replace intermediate LayerNorm in RemixedLinear with Identity
+    dense_intermediate_ln: int = 0            # 30A: 1=add intermediate LayerNorm to dense linear projections
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -391,6 +394,8 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_folded_mod_scope",
     "p24_folded_mod_gate_act", "p24_use_sequence_gated_linear", "p24_sequence_gated_scope",
     "p24_sequence_gated_act",
+    # Phase 30: LayerNorm ablation
+    "remix_disable_ln_basis", "dense_intermediate_ln",
 }
 
 
@@ -1431,7 +1436,11 @@ class RemixedLinear(nn.Module):
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         else:
             self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
-        self.ln_basis = nn.LayerNorm(basis_size)
+        # Phase 30: optionally disable intermediate LayerNorm for ablation
+        if remixed_linear_kwargs.get('disable_ln_basis', False):
+            self.ln_basis = nn.Identity()
+        else:
+            self.ln_basis = nn.LayerNorm(basis_size)
 
         self.bias = nn.Parameter(torch.zeros(out_features))
 
@@ -7114,9 +7123,13 @@ class MLP(nn.Module):
         srp_mode = getattr(config, 'p19_spectral_reparam', 0)
         self.srp_proj = SpectralReparamLinear(4 * config.n_embd, config.n_embd) if srp_mode >= 1 else None
         self.srp_fc = SpectralReparamLinear(config.n_embd, 4 * config.n_embd) if srp_mode >= 2 else None
+        # Phase 30: optional intermediate LayerNorm for dense+LN ablation
+        self.ln_intermediate = nn.LayerNorm(4 * config.n_embd) if getattr(config, 'dense_intermediate_ln', 0) else None
 
     def forward(self, x):
         x = self.c_fc(x)
+        if self.ln_intermediate is not None:
+            x = self.ln_intermediate(x)
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:

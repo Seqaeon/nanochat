@@ -114,6 +114,9 @@ parser.add_argument("--gate-stats-every", type=int, default=50, help="log gate a
 parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression ratio: factor=4 → C//4 (default), factor=1 → full rank C. Depth-adaptive via min(in,out)//factor")
 parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="rank of the low-rank output gate in RemixedLinear (default 16)")
 parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="LR multiplier for gate params relative to structural matrix LR (default 0.3; lower = slower gate learning)")
+# Phase 30: LayerNorm ablation flags
+parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LayerNorm in RemixedLinear basis projection (0=keep LN, 1=remove LN)")
+parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LayerNorm to dense linear projections for controlled ablation (0=off, 1=on)")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
@@ -454,6 +457,8 @@ def build_model_meta(depth):
             lokr_rank=getattr(args, 'p23_lokr_rank', 4),
             lokr_learned=bool(getattr(args, 'p23_learned_route', 0)),
             basis_gate_rank=getattr(args, 'remix_basis_gate_rank', 8),
+            # Phase 30: LayerNorm ablation
+            disable_ln_basis=bool(getattr(args, 'remix_disable_ln_basis', 0)),
         ),
 
         # Fix 1A
@@ -606,6 +611,9 @@ def build_model_meta(depth):
         p24_sequence_gated_scope=getattr(args, 'p24_sequence_gated_scope', 'per_layer'),
         p24_sequence_gated_act=getattr(args, 'p24_sequence_gated_act', 'tanh_centered'),
         remix_output_gate_rank=getattr(args, 'remix_output_gate_rank', 16),
+        # Phase 30: LayerNorm ablation
+        remix_disable_ln_basis=getattr(args, 'remix_disable_ln_basis', 0),
+        dense_intermediate_ln=getattr(args, 'dense_intermediate_ln', 0),
     )
 
     with torch.device("meta"):

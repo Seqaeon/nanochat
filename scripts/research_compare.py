@@ -295,6 +295,9 @@ def run_training_sweep(args):
         "--p24-use-sequence-gated-linear", str(getattr(args, 'p24_use_sequence_gated_linear', 0)),
         "--p24-sequence-gated-scope", str(getattr(args, 'p24_sequence_gated_scope', "global")),
         "--p24-sequence-gated-act", str(getattr(args, 'p24_sequence_gated_act', "tanh_centered")),
+        # Phase 30: LayerNorm ablation
+        "--remix-disable-ln-basis", str(getattr(args, 'remix_disable_ln_basis', 0)),
+        "--dense-intermediate-ln", str(getattr(args, 'dense_intermediate_ln', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -778,6 +781,9 @@ if __name__ == "__main__":
     parser.add_argument("--use-chunked-remix", type=int, default=0, choices=[0, 1],
                         help="1 = activate ChunkedRemixConfig canonical P29 defaults for remixed-linear runs; "
                              "individual flags in the sweep still override on top")
+    # Phase 30: LayerNorm ablation
+    parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LN in RemixedLinear")
+    parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LN to dense projections")
 
     args = parser.parse_args()
     

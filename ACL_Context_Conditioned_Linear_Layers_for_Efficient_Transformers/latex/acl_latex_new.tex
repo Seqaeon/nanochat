@@ -31,7 +31,7 @@ Linear transformations dominate both the parameter count and computational cost 
 
 We introduce \textbf{RemixedLinear}, a linear layer that stores $K$ learned template matrices and dynamically composes them per chunk of tokens using content-aware routing. Unlike standard MoE, which routes entire tokens to discrete expert subnetworks at the feed-forward network (FFN) level, RemixedLinear operates at the level of individual linear projections (Q, K, V, projection, and both FFN layers), providing finer-grained dynamic computation. Unlike static low-rank layers, each token induces a distinct full-rank effective operator via continuous template mixing.
 
-The design of RemixedLinear was shaped by 29 phases of systematic ablation. Early designs based on content-dependent multiplicative gating consistently failed due to what we term \emph{optimization friction}: the gradient cost of simultaneously learning routing and feature weights exceeded the capacity benefit of dynamic computation. The key innovations that resolved this are: (1) \textbf{chunk routing}, which amortizes a single routing decision over $N{=}64$ tokens, reducing per-token routing overhead and stabilizing gradients; (2) \textbf{quantile-balanced routing}, which replaces auxiliary load-balancing losses with EMA-tracked quantile normalization; and (3) a \textbf{centered output gate} ($1 + \tanh$), initialized to pass-through, ensuring the model starts with dense-equivalent gradients.
+The design of RemixedLinear was shaped by 29 phases of systematic ablation. Early designs based on content-dependent multiplicative gating consistently failed due to what we term \emph{optimization friction}: the gradient cost of simultaneously learning routing and feature weights exceeded the capacity benefit of dynamic computation. The key innovations that resolved this are: (1) \textbf{chunk routing}, which amortizes a single routing decision (anchored on the first token of each chunk to preserve causality) over $N{=}64$ tokens, reducing per-token routing overhead and stabilizing gradients; (2) \textbf{quantile-balanced routing}, which replaces auxiliary load-balancing losses with EMA-tracked quantile normalization; and (3) a \textbf{centered output gate} ($1 + \tanh$), initialized to pass-through, ensuring the model starts with dense-equivalent outputs.
 
 We evaluate RemixedLinear on the nanochat framework \citep{karpathy2025nanochat} using the ClimbMix dataset with Chinchilla-optimal training horizons \citep{hoffmann2022training}. At depth 12 ($\sim$290M active parameters), RemixedLinear achieves 0.814 bits-per-byte (BPP) compared to 0.903 for the dense baseline at matched active FLOPs. Standard MoE at depth 4 scores 1.187 BPP, worse than the dense baseline of 1.17. These results hold across three model scales, with RemixedLinear points consistently falling below the dense power-law scaling curve when plotted against active compute.
 
@@ -83,19 +83,19 @@ RemixedLinear stores $K$ template matrices $\{\mathbf{T}_k\}_{k=1}^K$, each $\ma
 
 \noindent where $\boldsymbol{\alpha}(\mathbf{c}) = \text{softmax}(\mathbf{W}_r \mathbf{c} / \tau)$ are routing weights computed from the context signal, $\mathbf{W}_r \in \mathbb{R}^{K \times d_\text{in}}$ is a learned routing projection, and $\tau$ is a temperature parameter.
 
-\paragraph{Chunk amortization.} Per-token routing introduces two problems: high FLOPs overhead from computing $\boldsymbol{\alpha}$ for every token, and gradient instability from the multiplicative coupling between routing weights and template gradients. We amortize routing over chunks of $N{=}64$ tokens: the routing weights $\boldsymbol{\alpha}$ are computed once from the mean context of the chunk and shared across all tokens in that chunk. This reduces routing FLOPs by a factor of $N$ and stabilizes training by decoupling routing updates from per-token gradient noise.
+\paragraph{Chunk amortization.} Per-token routing introduces two problems: high FLOPs overhead from computing $\boldsymbol{\alpha}$ for every token, and gradient instability from the multiplicative coupling between routing weights and template gradients. We amortize routing over chunks of $N{=}64$ tokens: the routing weights $\boldsymbol{\alpha}$ are computed once from the \emph{first token} of each chunk and shared across all tokens in that chunk. Because the anchor is the chunk's earliest token, no future information leaks into the routing decision, preserving the autoregressive causal constraint. This reduces routing FLOPs by a factor of $N$ and stabilizes training by decoupling routing updates from per-token gradient noise.
 
 \paragraph{Quantile-balanced routing.}
-Standard MoE requires auxiliary load-balancing losses to prevent expert collapse \citep{fedus2022switch}. We replace this with quantile-balanced routing: an EMA tracks the running distribution of routing logits, and logits are normalized to quantile space before the softmax. This ensures balanced template utilization without introducing an additional loss term or its associated hyperparameter.
+Standard MoE requires auxiliary load-balancing losses to prevent expert collapse \citep{fedus2022switch}. We replace this with quantile-balanced routing. Concretely, we maintain a per-expert EMA threshold $\boldsymbol{\theta}_k$ updated each step as $\boldsymbol{\theta}_k \leftarrow \lambda\,\boldsymbol{\theta}_k + (1{-}\lambda)\,q_k$, where $q_k$ is the $(1 - \text{topk}/K)$-quantile of expert $k$'s batch scores and $\lambda{=}0.99$. A token is assigned to expert $k$ if its score exceeds $\boldsymbol{\theta}_k$, unioned with a hard top-$k$ fallback to guarantee at least $k$ active experts per token; excess selections are trimmed to the highest-scoring $k$. The resulting mask is applied before a masked softmax, yielding differentiable routing weights. This ensures balanced template utilization without introducing an additional loss term or its associated hyperparameter.
 
 \subsection{Centered Output Gate}
 
 A low-rank output gate modulates the output:
 \begin{equation}
-\mathbf{g}_\text{out}(\mathbf{c}) = 1 + \tanh\!\left(s \cdot (\mathbf{W}_c \mathbf{c}) \mathbf{G}\right)
+\mathbf{g}_\text{out}(\mathbf{c}) = 1 + \tanh\!\left(s \cdot (\mathbf{W}_c \mathbf{c})^\top \mathbf{G}\right)
 \end{equation}
 
-\noindent where $\mathbf{W}_c \in \mathbb{R}^{r \times d_\text{in}}$, $\mathbf{G} \in \mathbb{R}^{r \times d_\text{out}}$, $r{=}8$, and $s$ is a learned scalar initialized to 0.1. The $1 + \tanh(\cdot)$ formulation, with $\mathbf{W}_c$ and $\mathbf{G}$ zero-initialized, ensures $\mathbf{g}_\text{out} = 1$ at initialization. This is critical: it guarantees that RemixedLinear produces identical gradients to a standard linear layer at step 0, avoiding the optimization friction that caused all sigmoid-gated designs to fail in our ablation studies (Appendix~\ref{app:evolution}).
+\noindent where $\mathbf{W}_c \in \mathbb{R}^{r \times d_c}$ projects the context vector to $r$ coefficients, $\mathbf{G} \in \mathbb{R}^{r \times d_\text{out}}$ is a learned basis, $d_c$ is the context stream dimension, $r{=}8$ is the gate rank, and $s$ is a learned scalar initialized to 0.1. The $1 + \tanh(\cdot)$ formulation, with $\mathbf{W}_c$ and $\mathbf{G}$ zero-initialized, ensures $\mathbf{g}_\text{out} = \mathbf{1}$ at initialization. This is critical: it guarantees that RemixedLinear produces \emph{output-equivalent} results to a standard linear layer at step~0 (up to the intermediate LayerNorm; see Section~\ref{sec:ln_confound}), avoiding the optimization friction that caused all sigmoid-gated designs to fail in our ablation studies (Appendix~\ref{app:evolution}).
 
 \subsection{Context Stream}
 \label{sec:context}
@@ -105,7 +105,7 @@ The context signal $\mathbf{c}$ is derived from a causal context stream that mai
 \mathbf{c}_t = (1 - \mathbf{z}_t) \odot \mathbf{c}_{t-1} + \mathbf{z}_t \odot \tilde{\mathbf{c}}_t
 \end{equation}
 
-\noindent where $\mathbf{z}_t = \sigma(\mathbf{W}_z \mathbf{x}_t)$ is an input-dependent update gate and $\tilde{\mathbf{c}}_t$ is a candidate state. The context state is \emph{detached} between steps to prevent gradient explosion through long recurrent chains, a lesson from Phase~3 of our ablation study (Appendix~\ref{app:evolution}).
+\noindent where $\mathbf{z}_t = \sigma(\mathbf{W}_z \mathbf{x}_t)$ is an input-dependent update gate ($\mathbf{W}_z \in \mathbb{R}^{d_c \times d}$) and $\tilde{\mathbf{c}}_t = \tanh(\mathbf{W}_w \mathbf{x}_t)$ is the candidate state ($\mathbf{W}_w \in \mathbb{R}^{d_c \times d}$, zero-initialized so that $\tilde{\mathbf{c}}_0 = \mathbf{0}$ at initialization). The context state is \emph{detached} between steps to prevent gradient explosion through long recurrent chains, a lesson from Phase~3 of our ablation study (Appendix~\ref{app:evolution}).
 
 \subsection{Integration into the Transformer Block}
 
@@ -118,7 +118,7 @@ Table~\ref{tab:flops} compares per-token FLOPs for a single projection.
 \begin{table}[t]
 \centering
 \small
-\caption{FLOPs per token for a single linear projection with $d_\text{in} = d_\text{out} = d$, basis size $B = d$, $K$ templates, chunk size $N$.}
+\caption{FLOPs per token for a single linear projection with $d_\text{in} = d_\text{out} = d$, basis size $B = d$, $K$ templates, chunk size $N$, context dimension $d_c$, gate rank $r$.}
 \label{tab:flops}
 \begin{tabular}{@{}lc@{}}
 \toprule
@@ -127,16 +127,17 @@ Table~\ref{tab:flops} compares per-token FLOPs for a single projection.
 Dense baseline ($\mathbf{W}\mathbf{x}$) & $2d^2$ \\
 \midrule
 Basis projection ($\mathbf{W}_b \mathbf{x}$) & $2dB$ \\
+Template assembly ($\sum \alpha_k \mathbf{T}_k$, amort.) & $2KBd/N$ \\
 Template mixing ($\mathbf{W}_\text{eff} \mathbf{h}$) & $2Bd$ \\
-Routing (amortized, $1/N$) & $2dK/N$ \\
-Output gate (rank $r$) & $2(dr + rd)$ \\
+Routing (amortized, $1/N$) & $2d_c K/N$ \\
+Output gate (rank $r$) & $2(d_c r + rd)$ \\
 \midrule
-\textbf{Total (RemixedLinear)} & $\approx 4dB + 32d$ \\
+\textbf{Total (RemixedLinear)} & $\approx 4dB + 2r(d_c{+}d)$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-With $B = d$ (full-rank basis), RemixedLinear uses approximately $4d^2$ FLOPs per projection versus $2d^2$ for dense. However, the model stores $K$ template matrices totaling $K \cdot B \cdot d$ parameters while the active computation per token uses only the weighted sum. The ratio of stored to active capacity is approximately $K$, enabling the model to express a richer family of transformations from a larger parameter bank while maintaining bounded inference cost.
+With $B = d$ (full-rank basis, as used in all experiments), RemixedLinear uses approximately $4d^2$ active FLOPs per projection versus $2d^2$ for dense, a $2\times$ per-projection overhead. However, the model stores $K$ template matrices totaling $K \cdot B \cdot d$ parameters while the active computation per token uses only the weighted sum of templates plus the basis projection. The ratio of stored parameters to per-token active parameters is $(K \cdot B \cdot d + B \cdot d) / (B \cdot d + B \cdot d) = (K{+}1)/2$ for full-rank $B{=}d$, enabling the model to express a richer family of transformations from a larger parameter bank while maintaining bounded inference cost.
 
 \section{Experiments}
 \label{sec:experiments}
@@ -151,18 +152,20 @@ With $B = d$ (full-rank basis), RemixedLinear uses approximately $4d^2$ FLOPs pe
 
 \paragraph{Metric.} Validation bits-per-byte (BPP), a vocabulary-size-invariant measure of language model quality. Lower is better.
 
-\paragraph{Model scales.} We evaluate at three depths with model dimension $d = \text{depth} \times 64$, rounded to the nearest multiple of head dimension (128):
+\paragraph{Model scales.} We evaluate at three scales. In nanochat, the ``depth'' parameter serves dual duty: it sets both the number of Transformer layers ($n_\text{layer} = \text{depth}$) and the base model width ($d = \text{depth} \times 64$, rounded up to the nearest multiple of the head dimension 128). All experiments use full-rank basis $B = d$, context dimension $d_c = d$, output gate rank $r = 16$, and head dimension 128.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Model configurations. RemixedLinear uses $K{=}8$ templates, chunk size $N{=}64$, quantile routing, and selective context stream.}
+\caption{Model configurations. RemixedLinear uses $K{=}8$ templates, chunk size $N{=}64$, quantile routing ($\lambda{=}0.99$), selective context stream, and full-rank basis $B{=}d$.}
 \label{tab:configs}
 \begin{tabular}{@{}lccc@{}}
 \toprule
 & \textbf{d4} & \textbf{d8} & \textbf{d12} \\
 \midrule
-Model dim & 256 & 512 & 768 \\
+Layers ($n_\text{layer}$) & 4 & 8 & 12 \\
+Model dim ($d$) & 256 & 512 & 768 \\
+Basis size ($B$) & 256 & 512 & 768 \\
 Heads & 2 & 4 & 6 \\
 Dense params & $\sim$37M & $\sim$126M & $\sim$286M \\
 Remix total params & 56M & 276M & 792M \\
@@ -259,20 +262,24 @@ Dense baseline & 1.170 & -- \\
 
 \paragraph{Template count matters.} Reducing from $K{=}8$ to $K{=}4$ templates (29H) degrades BPP from 1.082 to 1.127, though it still outperforms the dense baseline. This suggests the model benefits from a diverse set of template specializations.
 
-\paragraph{Gate contributions are modest but additive.} With a single template ($K{=}1$), the basis-mixing factorization alone already matches the dense baseline (1.168 vs. 1.170). Adding the output gate and context stream improves BPP to 1.165, and further adding a linear basis gate reaches 1.160. The basis gate thus contributes only 0.005 BPP improvement at significant FLOPs cost ($\sim$0.625$d^2$ per projection); we omit it in the final architecture, relying on the output gate and context stream for modulation while template routing provides the primary performance gain.
+\paragraph{Gate contributions are modest but additive.} With a single template ($K{=}1$), the basis-mixing factorization alone already matches the dense baseline (1.168 vs. 1.170). Note that the $K{=}1$ variant includes an intermediate LayerNorm between the basis projection and the mixing matrix (Eq.~\ref{eq:remixedlinear}), which is absent from the dense baseline; we investigate this confound in Section~\ref{sec:ln_confound}. Adding the output gate and context stream improves BPP to 1.165, and further adding a linear basis gate reaches 1.160. The basis gate thus contributes only 0.005 BPP improvement at significant FLOPs cost ($\sim$0.625$d^2$ per projection); we omit it in the final architecture, relying on the output gate and context stream for modulation while template routing provides the primary performance gain.
 
-\paragraph{Standard MoE fails at this scale.} Both MoE variants underperform the dense baseline, indicating that coarse expert routing is insufficient when the individual expert capacity is limited.
+\paragraph{Standard MoE fails at this scale.} Both MoE variants underperform the dense baseline, indicating that coarse expert routing is insufficient when the individual expert capacity is limited. We note that the MoE baselines were trained with a token budget computed from \emph{total} parameters (matching the dense baseline's Chinchilla ratio); preliminary results with active-parameter-matched budgets showed similar trends but are not included here.
 
 \section{Discussion}
 
 \paragraph{Why fine-grained routing outperforms coarse MoE.}
-Standard MoE routes entire tokens to one of $K$ expert FFN blocks. At small-to-medium scale, each expert has limited capacity, and the discrete routing decision means most of the expert bank is unused per token. RemixedLinear's template mixing operates within each linear projection (six per block), providing $6 \times K$ effective routing decisions per block. The continuous softmax mixing ensures all templates contribute, avoiding the expert collapse problem. This fine-grained composition appears to be qualitatively superior to coarse-grained expert selection at the scales we tested.
+Standard MoE routes entire tokens to one of $K$ expert FFN blocks. At small-to-medium scale, each expert has limited capacity, and the discrete routing decision means most of the expert bank is unused per token. RemixedLinear's template mixing operates within each linear projection (six per block), providing $6 \times K$ effective routing decisions per block. We note that the advantage is primarily from this projection-level granularity and chunk amortization rather than from continuous vs.\ discrete routing per se: ablation 29E shows that top-1 chunk routing (discrete) matches soft chunk routing (29C) at 1.082 BPP. Both approaches, however, substantially outperform coarse FFN-level MoE at the scales we tested.
 
 \paragraph{The optimization friction problem.}
-Our 29-phase ablation history (Appendix~\ref{app:evolution}) documents a systematic pattern in early designs (Phases 4--9): multiplicative sigmoid gating that modulated individual basis features through learned, per-token routing consistently degraded training relative to the dense baseline. The final template-mixing design resolves this: routing operates over $K$ template-level softmax weights rather than per-feature sigmoid gates, producing a much looser gradient coupling. Per-token learned routing (29A) works well in this formulation (1.087 BPP vs.\ 1.170 dense), though chunk-amortized routing (29C) achieves equivalent quality (1.082) at lower routing cost. The centered output gate ($1 + \tanh$, zero-initialized) further reduces friction by ensuring the model starts with dense-equivalent gradients.
+Our 29-phase ablation history (Appendix~\ref{app:evolution}) documents a systematic pattern in early designs (Phases 4--9): multiplicative sigmoid gating that modulated individual basis features through learned, per-token routing consistently degraded training relative to the dense baseline. The final template-mixing design resolves this: routing operates over $K$ template-level softmax weights rather than per-feature sigmoid gates, producing a much looser gradient coupling. Per-token learned routing (29A) works well in this formulation (1.087 BPP vs.\ 1.170 dense), though chunk-amortized routing (29C) achieves equivalent quality (1.082) at lower routing cost. The centered output gate ($1 + \tanh$, zero-initialized) further reduces friction by ensuring the model starts with dense-equivalent outputs (the intermediate LayerNorm introduces a minor deviation from exact gradient identity; see Section~\ref{sec:ln_confound}).
+
+\paragraph{LayerNorm confound.}
+\label{sec:ln_confound}
+RemixedLinear applies an intermediate LayerNorm between the basis projection and the mixing matrix (Eq.~\ref{eq:remixedlinear}), which is absent from the dense baseline. At $K{=}1$ with no context or gates, the architecture reduces to $\text{LN}(\mathbf{W}_b \mathbf{x}) \cdot \mathbf{T}_1$, which differs from dense only by this LayerNorm. The 0.002 BPP improvement of the $K{=}1$ baseline (1.168 vs.\ 1.170) may partly reflect this normalization benefit rather than the factored structure alone. A controlled ablation adding an intermediate LayerNorm to the dense baseline would isolate this effect; we leave this to future work.
 
 \paragraph{Limitations.}
-Our RemixedLinear scaling curve spans only three points (d4, d8, d12). While the trend is consistent, confirming these gains at d20+ scale ($\sim$1B active parameters) remains essential future work. The standard MoE comparison is limited to d4 due to compute constraints; extending this comparison to d8 and d12 would strengthen the conclusions. All experiments were conducted by an independent researcher without institutional compute resources, limiting the breadth of the scaling analysis. The total parameter count of RemixedLinear models is $K\times$ larger than dense equivalents; while active parameters and FLOPs are matched, memory footprint during training is higher.
+Our RemixedLinear scaling curve spans only three points (d4, d8, d12). While the trend is consistent, confirming these gains at d20+ scale ($\sim$1B active parameters) remains essential future work. The standard MoE comparison is limited to d4 due to compute constraints; extending this comparison to d8 and d12 would strengthen the conclusions. All experiments were conducted by an independent researcher without institutional compute resources, limiting the breadth of the scaling analysis. Training was performed across heterogeneous GPU hardware (A100, H100, H200, T4) using checkpoint resumption; dense baseline scores are from the published nanochat leaderboard \citep{karpathy2025nanochat} trained on 8$\times$H100. This heterogeneity precludes meaningful wall-clock training comparisons, though all models were trained to the same Chinchilla-optimal token budget. The total parameter count of RemixedLinear models is $K\times$ larger than dense equivalents; while active parameters and FLOPs are matched, memory footprint during training is higher.
 
 \section{Conclusion}
 

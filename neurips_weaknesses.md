@@ -1,0 +1,112 @@
+# Weaknesses
+
+- **Potential Causal Leakage in Chunk Routing:** Section 3.2 states that routing weights $\alpha$ are "computed once from the mean context of the chunk and shared across all tokens in that chunk." In an autoregressive language model, computing the mean over the *current* chunk's context would allow the routing decision for early tokens to depend on future tokens within the same chunk, violating causal masking. The authors might consider explicitly clarifying whether the mean context is safely derived from strictly past tokens (e.g., the *previous* chunk) to ensure the validity of the autoregressive generation.
+
+- **Omitted Basis Size ($B$) and Parameter Matching:** The paper claims to exactly match active parameters and active FLOPs with the dense baseline across all scales (Table 3). However, Section 3.6 establishes that a full-rank basis ($B = d$) requires approximately $4d^2$ FLOPs per projection, effectively doubling the active compute of a standard dense projection ($2d^2$). To achieve parity, the experiments must have utilized a reduced basis size (e.g., $B \approx d/2$). Please consider specifying the exact value of $B$ used in the experiments to ensure full reproducibility.
+
+- **Missing Complexity Term for Template Assembly:** Table 1 omits the computational cost of dynamically constructing the effective mixing matrix $W_{\text{eff}} = \sum_{k=1}^{K} \alpha_k T_k$. Amortizing this over $N$ tokens adds $2KBd_{\text{out}}/N$ FLOPs per token. For the canonical setting, this adds roughly $0.25d^2$ FLOPs per token. The authors might consider formally accounting for this non-trivial cost in the complexity analysis to strictly ensure the accuracy of the efficiency claims.
+
+- **Undefined Candidate State Formulation:** In Section 3.4 (Equation 4), the selective context stream update introduces a candidate state $\tilde{c}_t$. However, the mathematical formulation defining how $\tilde{c}_t$ is computed from the input $x_t$ and/or the previous state $c_{t-1}$ appears to be omitted. Please consider adding this definition to allow for independent reproduction of the context stream mechanism.
+
+- **Mathematical Inconsistencies in Equation 3:** The output gate is defined as $g_{\text{out}}(c) = 1 + \tanh(s \cdot (W_c c) G)$. Assuming $c$ is a column vector, the product $W_c c$ yields an $r \times 1$ vector. Multiplying this by $G \in \mathbb{R}^{r \times d_{\text{out}}}$ is mathematically undefined for standard matrix multiplication and likely requires a transpose (e.g., $(W_c c)^T G$). Additionally, Figure 1 notes the context vector $c$ has dimension $d_c$, but the text defines $W_c \in \mathbb{R}^{r \times d_{\text{in}}}$. Addressing these notations would improve clarity.
+
+- **Incorrect Claim Regarding Identical Gradients:** Section 3.3 claims that initializing $g_{\text{out}} = 1$ "guarantees that RemixedLinear produces identical gradients to a standard linear layer at step 0." This statement is mathematically inaccurate because the RemixedLinear forward pass (Eq 1) includes an intermediate LayerNorm. Backpropagating through LayerNorm fundamentally alters the gradients compared to an unnormalized matrix multiplication of a standard dense layer. The authors might consider revising this claim to reflect "dense-equivalent outputs" rather than identical gradients.
+
+- **Confounding Variable in Ablation Study:** In Table 4, the $K = 1$ "No context, no gates" variant achieves a better BPP (1.168) than the Dense baseline (1.170). Since $K = 1$ reduces the module to a static projection, this improvement likely stems from the additional intermediate LayerNorm step rather than the routing mechanics. To strictly isolate the benefits of template mixing, the authors might consider controlling for this LayerNorm in the dense baseline or ablation.
+
+- **Validity of Standard MoE Baseline:** Table 3 shows the "MoE top-all" baseline at d4 performing worse than the Dense baseline (1.186 vs. 1.170 BPP), despite utilizing 51M active parameters compared to 37M. Because top-all routing functionally acts as a much wider dense FFN layer, it should theoretically equal or outperform a smaller baseline. Its severe underperformance points to potential issues with initialization or tuning, which might undermine the fairness of the MoE comparison.
+
+- **Scale and Hardware Metrics Limitations:** As thoughtfully acknowledged by the authors, the evaluation is limited to relatively small scales (up to ~290M active parameters), leaving some uncertainty about whether these gains persist at the 1B+ scale where standard MoEs typically excel. Furthermore, because RemixedLinear increases the total stored parameter count by a factor of $K$, it substantially increases memory footprint. The paper would be strengthened by reporting actual wall-clock training and inference throughput (tokens/sec) to demonstrate how this memory overhead impacts practical hardware efficiency compared to the dense baseline.
+
+# Potential Issues And Suggestions
+
+### [Motivation and Background] (Pages: 1-3)
+
+### 1. Potential Mistakes and Improvements
+
+- **Causal Leakage in Chunk-Amortized Routing (Validity):** Section 3.2 (Lines 89-91) states that the routing weights $\alpha$ are "computed once from the mean context of the chunk and shared across all tokens in that chunk." In an autoregressive language model, using the mean context of a chunk (e.g., tokens $t$ to $t + 64$) to route earlier tokens within the same chunk implies that the forward pass for early tokens depends on future tokens. This creates a causal leak, which would artificially lower the autoregressive training loss and make standard token-by-token generation impossible. If the architecture avoids this by computing the mean from a *previous* causal chunk or using a causal mask, this needs to be explicitly clarified to confirm the validity of the method.
+
+- **Incorrect Claim Regarding "Identical Gradients" at Initialization (Correctness):** In Section 3.3 (Lines 100-102), the text introduces the centered output gate and claims that initializing $g_{\text{out}} = 1$ "guarantees that RemixedLinear produces identical gradients to a standard linear layer at step 0." This statement is mathematically inaccurate. As defined in Equation 1, the RemixedLinear forward pass applies a LayerNorm operation: $y = (W_{\text{eff}}(c) \cdot \text{LN}(W_b x)) \odot g_{\text{out}}(c) + b$. LayerNorm performs input-dependent mean subtraction and variance normalization. Even when the gate acts as a transparent identity, backpropagating through the LayerNorm fundamentally alters the gradients compared to an unnormalized matrix multiplication of a standard dense layer ($y = Wx + b$).
+
+- **Discrepancy in Active Parameters and FLOPs Matching (Clarity/Alignment):** In Section 3.6, the complexity analysis states that a RemixedLinear projection with a full-rank basis ($B = d$) uses approximately $4d^2$ active FLOPs and $2d^2$ active parameters per projection (combining $W_b$ and $W_{\text{eff}}$), roughly double that of a standard dense projection. However, Tables 2 and 3 indicate that the Remixed models and Dense baselines at equivalent scales (e.g., "Remix d4" vs. "Dense d4") have identical active parameter counts (37M) and nearly identical FLOPs. It is mathematically necessary that the experimental models use a reduced basis size (e.g., $B = d/2$) or have structural differences to match the active capacity exactly. The text does not specify the basis size $B$ used in the experiments, leaving a gap in reproducibility.
+
+- **Omission in FLOPs Complexity Analysis (Correctness):** Table 1 presents the FLOPs per token for each RemixedLinear component but omits the compute required to construct the effective mixing matrix $W_{\text{eff}}$ itself. According to Equation 2, forming $W_{\text{eff}}$ requires scaling and summing $K$ templates of size $d_{\text{out}} \times B$, which entails $2KBd_{\text{out}}$ FLOPs. When amortized over a chunk of size $N$, this adds $2KBd_{\text{out}}/N$ FLOPs per token. While relatively small, this operation is a formal part of the dynamic active compute and should be included in the complexity analysis to strictly ensure the accuracy of the efficiency claims.
+
+### 2. Minor Corrections and Typos
+
+- **Equation 3 Variable and Dimensionality Mismatches:** Equation 3 defines the output gate as $g_{\text{out}}(c) = 1 + \tanh(s \cdot (W_c c) G)$. There are two distinct notation issues here:
+
+  1. The text defines $W_c \in \mathbb{R}^{r \times d_{\text{in}}}$. However, the equation multiplies it by the context vector $c$, which has dimension $d_c$ (as shown in Figure 1). Based on Figure 1's data path, the output gate actually takes the input $x \in \mathbb{R}^{d_{\text{in}}}$, so the function should likely be written as $g_{\text{out}}(x)$ using $(W_c x)$.
+  2. Assuming the input is a column vector of size $d_{\text{in}} \times 1$, the term $(W_c x)$ yields an $r \times 1$ vector. Multiplying this by $G \in \mathbb{R}^{r \times d_{\text{out}}}$ is dimensionally invalid for standard matrix multiplication. To produce a $1 \times d_{\text{out}}$ vector that broadcasts over the layer output, a transpose is required, such as $(W_c x)^T G$ or $G^T (W_c x)$.
+
+- **Stored vs. Active Capacity Ratio:** In Section 3.6 (Line 120), the text claims "The ratio of stored to active capacity is approximately K". If $B = d$, the active capacity is $2d^2$ (from $W_b$ and $W_{\text{eff}}$), while the total stored capacity is $(K+1)d^2$ (from $W_b$ and the $K$ templates). The overall ratio of stored to active parameters is therefore $(K+1)/2$. For $K = 8$, this ratio is 4.5, not 8.
+
+---
+
+### [RemixedLinear Methodology] (Pages: 2-5)
+
+**1. Potential Mistakes and Improvements**
+
+- **Potential Causal Leakage in Chunk Routing:** Section 3.2 states that routing weights $\alpha$ are "computed once from the mean context of the chunk and shared across all tokens in that chunk." In an autoregressive language model, taking the mean over the current chunk's context would allow the routing decision for early tokens in the chunk to depend on the features of future tokens within that same chunk. This would violate causal masking. If the mean context is instead derived strictly from the *previous* chunk, this critical operational detail is omitted and should be explicitly stated.
+
+- **Omitted Basis Size ($B$) in Experiments:** The paper claims to match active parameters and active FLOPs with the dense baseline across all scales in Table 3. To achieve this mathematically, the basis size $B$ must be roughly $d/2$ (so that the two matrices $W_b$ and $W_{\text{eff}}$, each of size $B \times d$, sum to $d^2$ active parameters). However, the specific value of $B$ used in the experiments is completely omitted from the Experimental Setup (Section 4) and Table 2. Section 3.6 only discusses a "full-rank basis" example ($B = d$), which would double the active parameters and FLOPs relative to the dense baseline.
+
+- **Missing Definition of Candidate State ($\tilde{c}_t$):** Equation 4 introduces a selective context stream update utilizing a candidate state $\tilde{c}_t$. However, the mathematical formulation defining how $\tilde{c}_t$ is computed from the input $x_t$ and/or the previous state $c_{t-1}$ is entirely omitted from the text, preventing independent reproduction of the context stream mechanism.
+
+- **Matrix Dimension Mismatch (Equation 3):** The output gate is defined as $g_{\text{out}}(c) = 1 + \tanh(s \cdot (W_c c) G)$. Given $W_c \in \mathbb{R}^{r \times d_{\text{in}}}$ and assuming $c$ is a standard $d_{\text{in}} \times 1$ column vector, the product $W_c c$ yields an $r \times 1$ vector. Multiplying an $r \times 1$ vector by $G \in \mathbb{R}^{r \times d_{\text{out}}}$ is mathematically undefined for standard matrix multiplication. To yield a valid vector of size $d_{\text{out}}$ for element-wise modulation, the formulation likely requires a transpose, such as $(W_c c)^T G$ or $G^T(W_c c)$.
+
+- **Missing Complexity Term for Template Assembly:** Table 1 omits the computational cost of dynamically constructing the effective mixing matrix $W_{\text{eff}}(c) = \sum_{k=1}^{K} \alpha_k \cdot T_k$. Since each template $T_k \in \mathbb{R}^{d_{\text{out}} \times B}$, constructing this weighted sum once per chunk requires $2Kd_{\text{out}}B$ floating-point operations. Amortized over $N$ tokens, this adds $2Kd_{\text{out}}B/N$ FLOPs per token. For the canonical setting ($K = 8, N = 64$) and assuming $B = d/2$, this adds roughly $0.125d^2$ FLOPs per token—a non-trivial computational cost that must be formally accounted for in the Total FLOPs summation.
+
+- **Contradiction in Context Vector Dimensionality:** Figure 1 explicitly notes that the context vector $c$ has a dimension $d_c$ (typically $d_c \ll d_{\text{in}}$). However, Sections 3.2 and 3.3 define the projection matrices acting on $c$ as $W_r \in \mathbb{R}^{K \times d_{\text{in}}}$ and $W_c \in \mathbb{R}^{r \times d_{\text{in}}}$. If these matrices process the context vector $c$, their input dimensions should be $d_c$, not $d_{\text{in}}$.
+
+- **Underspecified Quantile-Balanced Routing:** Section 3.2 states that an EMA tracks the "running distribution of routing logits" and normalizes them to "quantile space." The mathematical formulation or specific algorithmic implementation for this tracking and mapping step (e.g., whether it tracks empirical mean/variance under a Gaussian assumption or uses a quantile sketch) is omitted, leaving the load-balancing mechanism underspecified.
+
+- **Inconsistent Parameter Counts (Table 2):** The parameter counts reported in Table 2 appear mathematically inconsistent with standard Transformer scaling. For example, a standard 12-layer dense Transformer with $d = 768$ typically contains roughly 85M non-embedding parameters ($12 \text{ layers} \times 12d^2 \text{ per layer}$). However, Table 2 lists the "Dense d12" baseline at ~286M parameters. The specific architectural hyperparameter settings (e.g., FFN multiplier or sequence depth definition) causing this massive discrepancy should be clarified to validate the baseline comparisons.
+
+**2. Minor Corrections and Typos**
+
+- **Section 3.1, Equation 1:** The notation `LN(Wbx)` is slightly ambiguous as a single block of text; explicitly denoting the multiplication as `LN(W_b x)` would improve readability.
+
+---
+
+### [Experiments, Conclusion, and Design Evolution] (Pages: 4-10)
+
+### 1. Potential Mistakes and Improvements
+
+- **Incompatible Parameter Counts and Compute Parity (Clarity & Reproducibility):** Table 3 claims that RemixedLinear models perfectly match the active parameters and FLOPs of Dense baselines (e.g., 37M active parameters and ~7.8e7 FLOPs at `d4`). However, Section 3.6 establishes that a full-rank basis ($B = d$) requires approximately $4d^2$ FLOPs per projection, effectively doubling the active compute and parameters compared to a standard dense projection ($2d^2$). Because RemixedLinear replaces all six linear projections per block (Line 112), a full-rank implementation mathematically cannot match the dense baseline's active profile. This parity strongly implies the experiments utilized a reduced basis size (e.g., $B \approx d/2$) or altered the network depth. The exact value of $B$ used in the experiments is an essential missing hyperparameter.
+
+- **Unspecified Layer Count and Confusing Terminology (Clarity & Reproducibility):** Section 4.1 defines model scales using the formulation "model dimension $d = \text{depth} \times 64$," referring to `d4`, `d8`, and `d12` as "three depths." In Transformer literature, "depth" universally refers to the number of layers, whereas here it is used as a width scaling multiplier. Compounding this confusion, the actual number of layers ($L$) is never explicitly stated. The Dense `d4` baseline ($d = 256$) is reported to have ~37M parameters; assuming a standard architecture, this implies a model with approximately 36 layers. Stating the exact layer count is critical for baseline reproducibility.
+
+- **Confounding Variable in Ablation Baselines (Ablation & Attribution):** In the Table 4 ablation study, the $K = 1$ "No context, no gates" variant achieves a BPP of 1.168, outperforming the Dense baseline (1.170 BPP). Given that $K = 1$ reduces the module to a static projection, it should theoretically underperform or equal a standard full-rank layer. However, Equation 1 shows that this factorization introduces an intermediate LayerNorm (`LN(W_b x)`). This suggests the performance improvement likely stems from the additional normalization step rather than the architectural routing mechanics. The ablation should ideally control for this intermediate LayerNorm to strictly isolate the benefits of template mixing.
+
+- **Potential Causal Leakage in Chunk Routing Evaluation (Validity):** Section 3.2 describes chunk-amortized routing where routing weights $\alpha$ are computed "once from the mean context of the chunk and shared across all tokens in that chunk." If this mean is calculated over the context states of the *current* chunk (e.g., tokens $t$ through $t + 63$), the routing operator applied to early tokens will be influenced by future tokens within the same chunk, violating autoregressive causality. While introduced on page 3, this mechanism's validity is central to the experimental claims (Table 4, Configuration 29C). The text must clarify whether the mean context is safely derived from strictly past tokens (e.g., the *previous* chunk) to rule out a causal lookahead advantage.
+
+- **Validity of Standard MoE Baseline (Empirical Rigor):** Table 3 shows the "MoE top-all" baseline at `d4` performing worse than the Dense baseline (1.186 vs. 1.170 BPP), despite utilizing 51M active parameters compared to 37M. Because "top-all" routing evaluates and sums the outputs of all experts, it functionally acts as a much wider dense FFN layer. A wider dense layer should strictly equal or outperform a smaller baseline if optimized properly. Its severe underperformance points to likely issues with the baseline's initialization, learning rate, or tuning, undermining the fairness of the MoE comparison.
+
+- **Contradiction on Continuous vs. Discrete Routing (Correctness & Discussion):** In the Discussion (Section 5, Lines 180-182), the text asserts that continuous softmax mixing is "qualitatively superior to coarse-grained expert selection." However, the ablation data in Table 4 shows that Configuration 29E (Top-1 + Chunk-64), which employs discrete Top-1 routing, achieves 1.082 BPP—exactly matching the performance of the continuous mixing variant (29C). The empirical results indicate that the advantage stems from projection-level granularity and chunk amortization rather than continuous mixing, which contradicts the qualitative claim.
+
+- **Undefined Candidate State Formulation (Clarity):** In Section 3.4 (Line 108), the selective context stream update requires a candidate state $\tilde{c}_t$. While the update gate $z_t$ is explicitly defined, the mathematical formulation for computing $\tilde{c}_t$ (e.g., how it integrates the input $x_t$ or previous context) is completely omitted, making it impossible to accurately reproduce the context module.
+
+- **Missing Template Assembly in FLOPs Analysis (Correctness):** Table 1 (Page 4) omits the computational cost of assembling the effective template matrix $W_{\text{eff}} = \sum_{k=1}^{K} \alpha_k T_k$. Even when amortized over a chunk of size $N$, computing this linear combination requires $2KBd_{\text{out}}/N$ FLOPs per token. For the evaluated configuration ($K = 8, N = 64$), and assuming $B = d_{\text{out}} = d$, this adds $0.25d^2$ FLOPs per token. Because this term scales quadratically with $d$, it should be formally included in the complexity analysis.
+
+### 2. Minor Corrections and Typos
+
+- **Line 136 Formatting:** The sentence "rounded to the nearest multiple of head dimension (128):" ends abruptly with a colon but jumps directly to the "Baselines" header on the next line without listing the multiples.
+
+- **Figure 2 Extrapolation Clarity:** Section 4.3 and Figure 2 refer to power-law fits for "dense baselines (d12-d30)". Because Table 2 only defines models up to `d12`, the text should briefly define the parameter counts or dimensions of the `d12-d30` evaluation points to clarify the extrapolation context.
+
+- **Table 4 Nomenclature Consistency:** Configuration 29H is explicitly labeled "dense mix," whereas the primary continuous mixing configuration (29C) is only labeled "Chunk-64 routing." Aligning the terminology (e.g., noting that 29C is a "dense mix") would improve readability and make the comparisons more direct.
+
+---
+
+### [Administrative and Checklist compliance] (Pages: 10-17)
+
+**1. Potential Mistakes and Improvements:**
+
+- **Checklist Question 8 (Experiments compute resources):** The authors answer [No] and justify omitting the GPU type and wall-clock time by stating they are an "independent researcher with limited compute resources." While having limited resources is a valid constraint that explains the lack of multiple runs or larger scales, it does not preclude reporting the specific hardware used (e.g., the exact GPU model) and the approximate training durations. Including these hardware details and runtimes would require minimal effort, better align with the checklist guidelines, and aid reproducibility by providing concrete context for the training environment.
+
+- **Checklist Question 12 (Licenses for existing assets):** The authors answer [Yes] to the question of whether the "license and terms of use [are] explicitly mentioned," justifying this by stating that the `nanochat` framework and the `ClimbMix` dataset are cited. However, the checklist guidelines specifically stipulate that "The name of the license (e.g., CC-BY 4.0) should be included for each asset." The explicit open-source licenses for these external assets do not appear to be stated anywhere in the text or references.
+
+**2. Minor Corrections and Typos:**
+
+- **Checklist Question 16 (Declaration of LLM usage):** The justification states that the use of LLMs for writing assistance is "disclosed in the Acknowledgments section." However, there is no Acknowledgments section in the submitted manuscript (likely omitted to preserve anonymity during the double-blind review process). The authors should ensure this disclosure is correctly placed in the camera-ready version or use an anonymized placeholder in the text.
