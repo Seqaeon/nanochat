@@ -67,8 +67,8 @@
 \@writefile{toc}{\contentsline {paragraph}{Gate contributions are modest but additive.}{6}{section*.16}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Ablation study at d4. \emph  {Top}: routing variants with $K{=}8$ templates. \emph  {Middle}: gate component ablation with $K{=}1$ template (isolating gate effects from routing). \emph  {Bottom}: standard MoE baselines. $\Delta $ is relative to the dense baseline BPP of 1.170.}}{7}{table.4}\protected@file@percent }
 \newlabel{tab:ablation}{{4}{7}{Ablation study at d4. \emph {Top}: routing variants with $K{=}8$ templates. \emph {Middle}: gate component ablation with $K{=}1$ template (isolating gate effects from routing). \emph {Bottom}: standard MoE baselines. $\Delta $ is relative to the dense baseline BPP of 1.170}{table.4}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt  {torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times $ lower throughput, primarily due to memory bandwidth constraints from $K{\times }$ total parameters.}}{7}{table.5}\protected@file@percent }
-\newlabel{tab:throughput}{{5}{7}{Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt {torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times $ lower throughput, primarily due to memory bandwidth constraints from $K{\times }$ total parameters}{table.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt  {torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times $ lower throughput. GPU utilization (measured TFLOPS) drops from 195 to 86, suggesting the GPU's compute units are substantially underutilized in the RemixedLinear forward pass.}}{7}{table.5}\protected@file@percent }
+\newlabel{tab:throughput}{{5}{7}{Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt {torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times $ lower throughput. GPU utilization (measured TFLOPS) drops from 195 to 86, suggesting the GPU's compute units are substantially underutilized in the RemixedLinear forward pass}{table.5}{}}
 \@writefile{toc}{\contentsline {paragraph}{Standard MoE fails at this scale.}{7}{section*.17}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Inference Throughput}{7}{subsection.4.5}\protected@file@percent }
 \newlabel{sec:throughput}{{4.5}{7}{Inference Throughput}{subsection.4.5}{}}
@@ -80,8 +80,6 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Downstream Task Evaluation}{8}{subsection.4.6}\protected@file@percent }
 \newlabel{sec:core}{{4.6}{8}{Downstream Task Evaluation}{subsection.4.6}{}}
 \citation{karpathy2025nanochat}
-\bibstyle{plainnat}
-\bibdata{references}
 \@writefile{toc}{\contentsline {section}{\numberline {5}Discussion}{9}{section.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Why fine-grained routing outperforms coarse MoE.}{9}{section*.18}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{The optimization friction problem.}{9}{section*.19}\protected@file@percent }
@@ -89,6 +87,8 @@
 \@writefile{toc}{\contentsline {paragraph}{LayerNorm confound.}{9}{section*.20}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Limitations.}{9}{section*.21}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{section.6}\protected@file@percent }
+\bibstyle{plainnat}
+\bibdata{references}
 \bibcite{dao2022flashattention}{{1}{2022}{{Dao et~al.}}{{Dao, Fu, Ermon, Rudra, and R{\'e}}}}
 \bibcite{dauphin2017language}{{2}{2017}{{Dauphin et~al.}}{{Dauphin, Fan, Auli, and Grangier}}}
 \bibcite{fedus2022switch}{{3}{2022}{{Fedus et~al.}}{{Fedus, Zoph, and Shazeer}}}

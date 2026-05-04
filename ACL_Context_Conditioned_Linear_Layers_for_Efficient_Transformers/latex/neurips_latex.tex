@@ -277,12 +277,12 @@ Dense baseline & 1.170 & -- \\
 \subsection{Inference Throughput}
 \label{sec:throughput}
 
-While RemixedLinear improves quality at matched \emph{active} FLOPs, its wall-clock inference throughput is lower than the dense baseline due to higher total parameter count and factored computation. Table~\ref{tab:throughput} reports measurements on a single NVIDIA H200 GPU at batch size 64, sequence length 2048, without \texttt{torch.compile}.
+While RemixedLinear improves quality at matched \emph{active} FLOPs, its wall-clock inference throughput is lower than the dense baseline. Table~\ref{tab:throughput} reports measurements on a single NVIDIA H200 GPU at batch size 64, sequence length 2048, without \texttt{torch.compile}.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt{torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times$ lower throughput, primarily due to memory bandwidth constraints from $K{\times}$ total parameters.}
+\caption{Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt{torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times$ lower throughput. GPU utilization (measured TFLOPS) drops from 195 to 86, suggesting the GPU's compute units are substantially underutilized in the RemixedLinear forward pass.}
 \label{tab:throughput}
 \begin{tabular}{@{}lcc@{}}
 \toprule
@@ -299,9 +299,9 @@ Val BPP & 0.903 & 0.814 \\
 \end{tabular}
 \end{table}
 
-The hardware FLOP ratio is only 1.6$\times$ (3.6e8 vs.\ 2.2e8), yet throughput differs by 3.7$\times$. This gap is dominated by \textbf{memory bandwidth}: RemixedLinear loads 2.8$\times$ more parameters from HBM per forward pass (792M vs.\ 286M), and the many small per-chunk operations prevent efficient GPU utilization (86 vs.\ 195 TFLOPS). The architecture is memory-bandwidth bound rather than compute bound at this batch size.
+The hardware FLOP ratio is only 1.6$\times$ (3.6e8 vs.\ 2.2e8), yet throughput differs by 3.7$\times$. The GPU utilization drops from 195 to 86 TFLOPS, indicating that RemixedLinear's compute units are substantially idle during inference. Several factors likely contribute: the factored template-mixing computation replaces one large GEMM with multiple smaller operations (template stacking, chunk-level einsum for $W_\text{eff}$, and a second einsum for the output), which may reduce arithmetic intensity; the $K{\times}$ larger total parameter count increases HBM traffic; and the chunk-wise control flow may limit parallelism. We have not yet performed detailed kernel-level profiling to isolate the relative contribution of each factor.
 
-This throughput gap is analogous to standard MoE: Mixtral-8$\times$7B has 47B total parameters but 13B active, yet is substantially slower than a 13B dense model in practice. The gap is dominated by HBM memory bandwidth rather than compute (1.6$\times$ more hardware FLOPs but 3.7$\times$ lower throughput). Kernel fusion of the template assembly step does not address the root cause; the most promising directions are INT8 quantization of the template bank (halving memory bandwidth) and weight distillation to reduce $K$ at inference time.
+Closing this throughput gap is the primary practical challenge for deployment. Promising directions include fusing the template assembly and output computation into a single GPU kernel (eliminating intermediate materializations), quantizing template weights to reduce memory traffic, and distilling to fewer templates ($K{=}1$) at inference time.
 
 \subsection{Downstream Task Evaluation}
 \label{sec:core}
@@ -366,7 +366,7 @@ Our RemixedLinear scaling curve spans only three points (d4, d8, d12). While the
 
 \section{Conclusion}
 
-We introduced RemixedLinear, a drop-in replacement for dense linear layers that dynamically composes $K$ template matrices per chunk of tokens using content-aware routing. Through 29 phases of ablation, we identified chunk-amortized routing, quantile balancing, and centered output gating as the critical design choices that enable dynamic linear layers to outperform static baselines. At d12 scale, RemixedLinear achieves 10\% lower BPP than the dense baseline at matched active FLOPs, while standard MoE underperforms the baseline entirely. Inference throughput is currently 3.7$\times$ lower than dense due to memory-bandwidth costs of the larger template bank; INT8 quantization of template weights or inference-time distillation to $K{=}1$ are the most promising paths to closing this gap. These results suggest that fine-grained template routing within linear projections provides a promising alternative to coarse expert routing for compute-efficient Transformers.
+We introduced RemixedLinear, a drop-in replacement for dense linear layers that dynamically composes $K$ template matrices per chunk of tokens using content-aware routing. Through 29 phases of ablation, we identified chunk-amortized routing, quantile balancing, and centered output gating as the critical design choices that enable dynamic linear layers to outperform static baselines. At d12 scale, RemixedLinear achieves 10\% lower BPP than the dense baseline at matched active FLOPs, while standard MoE underperforms the baseline entirely. Inference throughput is currently 3.7$\times$ lower than dense; the root causes have not been fully isolated but likely involve reduced arithmetic intensity from factored computation, increased HBM traffic from the larger template bank, and limited GPU utilization from chunk-wise operations. Closing this gap through kernel fusion, weight compression, or inference-time distillation is the primary direction for future work. These results suggest that fine-grained template routing within linear projections provides a promising alternative to coarse expert routing for compute-efficient Transformers.
 
 \begin{ack}
 In accordance with the AI Writing Assistance Policy, we acknowledge the use of large language models to assist with text editing. All content was reviewed and verified by the human author.
