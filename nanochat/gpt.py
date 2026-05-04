@@ -6087,9 +6087,11 @@ class StandardMoE_MLP(nn.Module):
     # ------------------------------------------------------------------ #
     def _expert_fwd(self, e: int, x_flat):
         """Run expert e on all N tokens. Returns (N, D)."""
-        # Stay in input dtype (bfloat16) to avoid 2× memory blowup from .float() casts
-        h = F.relu(x_flat @ self.fc_w[e].T).square()
-        return h @ self.proj_w[e].T
+        # Cast weights to input dtype: fc_w/proj_w are float32 by default (torch.empty),
+        # but x_flat is bfloat16 during training. torch.compile enforces strict dtype matching.
+        dtype = x_flat.dtype
+        h = F.relu(x_flat @ self.fc_w[e].T.to(dtype)).square()
+        return h @ self.proj_w[e].T.to(dtype)
 
     # ------------------------------------------------------------------ #
     #  Aux loss (call after forward, before optimizer step)               #
