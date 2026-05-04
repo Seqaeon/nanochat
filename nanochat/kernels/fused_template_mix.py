@@ -193,10 +193,10 @@ class FusedTemplateMix(torch.autograd.Function):
 
         y = torch.empty(num_chunks, chunk_size, d_out, device=h.device, dtype=h.dtype)
 
-        # Block sizes — larger blocks = fewer iterations, better utilization
-        # BLOCK_B is the reduction tile; should be large enough to amortize K loads
-        BLOCK_M = min(64, chunk_size)
-        BLOCK_N = min(128, d_out)
+        # Block sizes tuned for H200 shared memory limit (232 KB).
+        # Shared mem per stage ≈ (BLOCK_M*BLOCK_B + BLOCK_N*BLOCK_B)*2 + BLOCK_M*BLOCK_N*4
+        BLOCK_M = min(32, chunk_size)
+        BLOCK_N = min(64, d_out)
         BLOCK_B = min(64, B_dim)
 
         grid = (
@@ -213,6 +213,7 @@ class FusedTemplateMix(torch.autograd.Function):
             alpha.stride(0), alpha.stride(1),
             y.stride(0), y.stride(1), y.stride(2),
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_B=BLOCK_B,
+            num_stages=1, num_warps=4,
         )
 
         ctx.save_for_backward(h, T_bank, alpha)
@@ -229,9 +230,9 @@ class FusedTemplateMix(torch.autograd.Function):
 
         # grad_h via fused kernel
         grad_h = torch.empty_like(h)
-        BLOCK_M = min(64, chunk_size)
+        BLOCK_M = min(32, chunk_size)
         BLOCK_N = min(64, B_dim)
-        BLOCK_K = min(128, d_out)
+        BLOCK_K = min(64, d_out)
 
         grid = (
             num_chunks,
@@ -246,6 +247,7 @@ class FusedTemplateMix(torch.autograd.Function):
             alpha.stride(0), alpha.stride(1),
             grad_h.stride(0), grad_h.stride(1), grad_h.stride(2),
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
+            num_stages=1, num_warps=4,
         )
 
         # grad_T and grad_alpha via PyTorch (not the bottleneck)
