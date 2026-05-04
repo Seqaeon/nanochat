@@ -143,20 +143,13 @@ def benchmark_throughput(model, device, batch_size: int = 8,
     return results
 
 
-def run_core_eval(model, device, tokenizer_dir=None, max_per_task=500):
-    """Run CORE evaluation and return the score."""
+def run_core_eval(model, tokenizer, device, max_per_task=500):
+    """Run CORE evaluation using an already-loaded tokenizer."""
     from scripts.base_eval import evaluate_core
-    # Need a tokenizer
-    from nanochat.tokenizer import Tokenizer
-    tokenizer_dir = tokenizer_dir or os.path.join(
-        os.path.dirname(_SCRIPT_DIR), "tokenizer"
-    )
-    tokenizer = Tokenizer(tokenizer_dir)
 
-    print(f"\n  Running CORE evaluation (max {max_per_task} per task)...")
+    print(f"\n  Running CORE evaluation (max {max_per_task} examples per task)...")
     results = evaluate_core(model, tokenizer, device, max_per_task=max_per_task)
     core_score = results['core_metric']
-    print(f"  CORE score: {core_score:.4f}")
 
     # Print per-task breakdown
     print(f"\n  {'Task':<35} {'Accuracy':>10} {'Centered':>10}")
@@ -290,22 +283,36 @@ def main():
         print("Compiling model with torch.compile...")
         model = torch.compile(model)
 
-    # ── Phase 2: CORE eval (bf16, pre-quantization) ───────────────────────
+    # ── Phase 2: CORE eval ────────────────────────────────────────────────
     core_results_bf16 = None
     if args.eval_core:
+        quant_label = "INT8 templates" if args.add_int8 else "bf16"
         print(f"\n{'='*60}")
-        print(f"CORE Evaluation (bf16)")
+        print(f"CORE Evaluation ({quant_label})")
         print(f"{'='*60}")
+        # Apply INT8 *before* CORE if --add-int8, so CORE reflects quantized model
+        if args.add_int8:
+            if not is_remix:
+                print("\n\u26a0  --add-int8 has no effect on dense models.")
+            else:
+                print("Applying INT8 template quantization before CORE eval...")
+                from nanochat.kernels.int8_templates import quantize_remix_model
+                _quant_stats_pre = quantize_remix_model(model, verbose=True)
         core_results_bf16 = run_core_eval(
-            model, device,
-            tokenizer_dir=args.tokenizer_dir,
+            model, tokenizer, device,
             max_per_task=args.core_max_per_task,
         )
 
-    # ── Phase 3: Throughput benchmark (bf16) ──────────────────────────────
+    # ── Phase 3: Throughput benchmark ─────────────────────────────────────
+    quant_label = "INT8 templates" if (args.add_int8 and is_remix) else "bf16"
     print(f"\n{'='*60}")
-    print(f"Throughput Benchmark (bf16)")
+    print(f"Throughput Benchmark ({quant_label})")
     print(f"{'='*60}")
+    # If INT8 wasn't applied before CORE (or CORE was skipped), apply now
+    if args.add_int8 and is_remix and not args.eval_core:
+        print("Applying INT8 template quantization...")
+        from nanochat.kernels.int8_templates import quantize_remix_model
+        quantize_remix_model(model, verbose=True)
     results_bf16 = benchmark_throughput(
         model, device,
         batch_size=args.batch_size,
@@ -325,7 +332,7 @@ def main():
     results_bf16.update(hw_flops_results)
     results_bf16['device'] = device_type
     results_bf16['step'] = step
-    results_bf16['quantization'] = 'bf16'
+    results_bf16['quantization'] = 'int8_templates' if (args.add_int8 and is_remix) else 'bf16'
     if device_type == 'cuda':
         results_bf16['gpu_name'] = torch.cuda.get_device_name(0)
     results_bf16['compiled'] = args.compile
@@ -338,79 +345,7 @@ def main():
 
     print_results(results_bf16, label="Results (bf16)")
 
-    # ── Phase 4: INT8 quantization + re-benchmark ─────────────────────────
-    results_int8 = None
-    core_results_int8 = None
 
-    if args.add_int8:
-        if not is_remix:
-            print("\n⚠  --add-int8 has no effect on dense models (no template banks to quantize).")
-            print("   Dense models would need general INT8 weight quantization (torch.ao), which is a different technique.\n")
-        else:
-            print(f"\n{'='*60}")
-            print(f"Applying INT8 Template Quantization")
-            print(f"{'='*60}")
-
-            from nanochat.kernels.int8_templates import quantize_remix_model
-            quant_stats = quantize_remix_model(model, verbose=True)
-
-            # CORE eval after INT8
-            if args.eval_core:
-                print(f"\n{'='*60}")
-                print(f"CORE Evaluation (INT8 templates)")
-                print(f"{'='*60}")
-                core_results_int8 = run_core_eval(
-                    model, device,
-                    tokenizer_dir=args.tokenizer_dir,
-                    max_per_task=args.core_max_per_task,
-                )
-
-            # Throughput benchmark after INT8
-            print(f"\n{'='*60}")
-            print(f"Throughput Benchmark (INT8 templates)")
-            print(f"{'='*60}")
-            results_int8 = benchmark_throughput(
-                model, device,
-                batch_size=args.batch_size,
-                seq_len=seq_len,
-                warmup_steps=args.warmup_steps,
-                measure_steps=args.measure_steps,
-            )
-
-            results_int8['model_tag'] = model_tag
-            results_int8['quantization'] = 'int8_templates'
-            results_int8['layers_quantized'] = quant_stats['layers_quantized']
-            results_int8['quant_compression'] = round(
-                quant_stats['original_bytes'] / max(quant_stats['quantized_bytes'], 1), 2)
-            results_int8['quant_max_error'] = quant_stats['max_error']
-            if core_results_int8:
-                results_int8['core_score'] = core_results_int8['core_metric']
-
-            print_results(results_int8, label="Results (INT8 templates)")
-
-            # ── Comparison summary ────────────────────────────────────────
-            print(f"\n{'='*60}")
-            print(f"INT8 Comparison Summary")
-            print(f"{'='*60}")
-            bf16_tps = results_bf16['tokens_per_sec']
-            int8_tps = results_int8['tokens_per_sec']
-            speedup = int8_tps / bf16_tps
-            print(f"  bf16 throughput:  {bf16_tps:,.0f} tok/s")
-            print(f"  INT8 throughput:  {int8_tps:,.0f} tok/s")
-            print(f"  Speedup:         {speedup:.2f}x")
-            print(f"  bf16 memory:     {results_bf16['peak_memory_gb']:.2f} GB")
-            print(f"  INT8 memory:     {results_int8['peak_memory_gb']:.2f} GB")
-            print(f"  Memory saved:    {results_bf16['peak_memory_gb'] - results_int8['peak_memory_gb']:.2f} GB")
-            if core_results_bf16 and core_results_int8:
-                bf16_core = core_results_bf16['core_metric']
-                int8_core = core_results_int8['core_metric']
-                delta = int8_core - bf16_core
-                print(f"  bf16 CORE:       {bf16_core:.4f}")
-                print(f"  INT8 CORE:       {int8_core:.4f}")
-                print(f"  CORE delta:      {delta:+.4f} ({'degraded' if delta < -0.005 else 'no change' if abs(delta) < 0.005 else 'improved'})")
-            print(f"  Layers quantized: {quant_stats['layers_quantized']}")
-            print(f"  Template compression: {results_int8['quant_compression']:.2f}x")
-            print()
 
     # ── Save results ──────────────────────────────────────────────────────
     out_path = args.output or f"inference_bench_{model_tag}_d{config.n_layer}.json"
