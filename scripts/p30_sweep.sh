@@ -168,7 +168,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 \
-  --warmdown-ratio 0.65 \
+  --warmdown-ratio 0.50 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
   --remix-basis-size $MODEL_DIM \
