@@ -184,7 +184,18 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
         Output tensor of shape (B, T, H, D)
     """
     if _BACKEND == 'fa4':
-        return _fa4.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+        # FA4 requires head_dim >= 32 (smaller dims overflow shared memory on sm_100a).
+        # Fall through to SDPA for tiny head dims (e.g. MST sub-transformers with d=64, n_head=4).
+        head_dim = q.shape[-1]
+        if head_dim >= 32:
+            try:
+                return _fa4.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+            except RuntimeError as e:
+                if 'shared memory' in str(e).lower() or 'cudaErrorInvalidValue' in str(e):
+                    import sys
+                    print(f"[flash_attention] FA4 CUDA error (falling back to SDPA): {e}", file=sys.stderr)
+                else:
+                    raise
     if _BACKEND == 'fa3':
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
