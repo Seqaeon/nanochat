@@ -64,11 +64,15 @@ def _load_flash_attention_3():
         # FA3 Hopper kernels target sm90 exactly; Blackwell uses FA4 instead.
         if major != 9:
             return None
-        import os
+        import os, sys
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
         from kernels import get_kernel
-        return get_kernel('varunneal/flash-attention-3').flash_attn_interface
-    except Exception:
+        result = get_kernel('varunneal/flash-attention-3').flash_attn_interface
+        return result
+    except Exception as e:
+        import sys, traceback
+        print(f"[flash_attention] FA3 load failed: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return None
 
 
