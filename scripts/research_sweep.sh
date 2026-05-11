@@ -316,7 +316,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--dense-intermediate-ln" "$2")
             shift 2
             ;;
-        --use-mst|--mst-n-subs|--mst-sub-dim|--mst-input-mode|--mst-rotated-slice-learned|\
+        --use-mst|--mst-n-subs|--mst-sub-dim|--mst-head-dim|--mst-input-mode|--mst-rotated-slice-learned|\
         --mst-routing-mode|--mst-routing-topk|--mst-routing-aux-weight|\
         --mst-ffn-mode|--mst-transition-mode|--mst-final-mode)
             EXTRA_ARGS+=("$1" "$2")
