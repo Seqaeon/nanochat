@@ -194,11 +194,16 @@ class Engine:
 
         # 1) Run a batch 1 prefill of the prompt tokens
         m = self.model.config
-        head_dim = m.n_embd // m.n_head
-        v_head_dim = head_dim
-        if len(self.model.transformer.h) > 0 and hasattr(self.model.transformer.h[0], 'attn') and hasattr(self.model.transformer.h[0].attn, 'v_head_dim'):
-            v_head_dim = self.model.transformer.h[0].attn.v_head_dim
-        kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": head_dim, "v_head_dim": v_head_dim, "num_layers": m.n_layer}
+        # Allow models (e.g. MST) to override KVCache sizing via kv_cache_config property.
+        # Otherwise derive from config as usual (GPT path).
+        if hasattr(self.model, 'kv_cache_config'):
+            kv_model_kwargs = self.model.kv_cache_config
+        else:
+            head_dim = m.n_embd // m.n_head
+            v_head_dim = head_dim
+            if len(self.model.transformer.h) > 0 and hasattr(self.model.transformer.h[0], 'attn') and hasattr(self.model.transformer.h[0].attn, 'v_head_dim'):
+                v_head_dim = self.model.transformer.h[0].attn.v_head_dim
+            kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": head_dim, "v_head_dim": v_head_dim, "num_layers": m.n_layer}
         kv_cache_prefill = KVCache(
             batch_size=1,
             seq_len=len(tokens),

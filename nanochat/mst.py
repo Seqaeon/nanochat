@@ -31,12 +31,13 @@ class SubTransformerAttention(nn.Module):
     Includes RoPE and QK-norm, matching the base GPT attention style.
     """
 
-    def __init__(self, d, n_head, layer_idx, n_layer):
+    def __init__(self, d, n_head, layer_idx, n_layer, sub_layer_idx=0):
         super().__init__()
         self.d = d
         self.n_head = n_head
         self.head_dim = d // n_head
         self.layer_idx = layer_idx
+        self.sub_layer_idx = sub_layer_idx  # unique cache slot index = layer_idx * N_subs + sub_idx
         assert d % n_head == 0, f"sub_dim {d} not divisible by n_head {n_head}"
 
         self.c_q = Linear(d, d, bias=False)
@@ -48,8 +49,9 @@ class SubTransformerAttention(nn.Module):
         self.ve_gate_channels = min(d, 32)
         self.ve_gate = Linear(self.ve_gate_channels, n_head, bias=False) if has_ve(layer_idx, n_layer) else None
 
-    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0)):
-        """x: (B, T, d), cos_sin: (cos, sin) for RoPE, ve: optional (B, T, d) value embedding."""
+    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0), kv_cache=None, total_sub_layers=1):
+        """x: (B, T, d), cos_sin: (cos, sin) for RoPE, ve: optional (B, T, d) value embedding.
+        kv_cache: optional KVCache for inference. total_sub_layers: n_layer * N_subs."""
         B, T, _ = x.shape
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_head, self.head_dim)
@@ -65,10 +67,26 @@ class SubTransformerAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = flash_attn.flash_attn_func(
-            q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16),
-            causal=True, window_size=window_size
-        )
+        if kv_cache is None:
+            # Training: standard causal flash attention with optional sliding window
+            y = flash_attn.flash_attn_func(
+                q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16),
+                causal=True, window_size=window_size
+            )
+        else:
+            # Inference: use flash_attn_with_kvcache — updates cache in-place
+            k_cache, v_cache = kv_cache.get_layer_cache(self.sub_layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q.to(torch.bfloat16), k_cache, v_cache,
+                k=k.to(torch.bfloat16), v=v.to(torch.bfloat16),
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            # Advance position counter after the last sub-layer processes
+            if self.sub_layer_idx == total_sub_layers - 1:
+                kv_cache.advance(T)
+
         y = y.contiguous().view(B, T, self.d)
         return self.c_proj(y)
 
@@ -103,15 +121,16 @@ class SubTransformerFFN(nn.Module):
 class SubTransformerBlock(nn.Module):
     """A single sub-transformer block: pre-norm attention + FFN with residuals."""
 
-    def __init__(self, d, n_head, layer_idx, n_layer, ffn_mode='standard'):
+    def __init__(self, d, n_head, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard'):
         super().__init__()
-        self.attn = SubTransformerAttention(d, n_head, layer_idx, n_layer)
+        self.attn = SubTransformerAttention(d, n_head, layer_idx, n_layer, sub_layer_idx)
         self.ffn = SubTransformerFFN(d, mode=ffn_mode)
         self.d = d
 
-    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0)):
+    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0), kv_cache=None, total_sub_layers=1):
         """x: (B, T, d). Returns (B, T, out_dim)."""
-        x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size)
+        x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size,
+                          kv_cache=kv_cache, total_sub_layers=total_sub_layers)
         x = x + self.ffn(norm(x)) if self.ffn.mode == 'standard' else x + self.ffn(norm(x))
         return x
 
@@ -367,20 +386,32 @@ class MSTLayer(nn.Module):
         n_layer = config.n_layer
 
         self.N = N
+        self.layer_idx = layer_idx
         self.sub_blocks = nn.ModuleList([
-            SubTransformerBlock(d, n_head, layer_idx, n_layer, ffn_mode=config.mst_ffn_mode)
-            for _ in range(N)
+            SubTransformerBlock(d, n_head, layer_idx, n_layer,
+                                sub_layer_idx=layer_idx * N + j,
+                                ffn_mode=config.mst_ffn_mode)
+            for j in range(N)
         ])
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode)
 
-    def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0)):
+    def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
+                kv_cache=None, total_sub_layers=1):
         """sub_inputs: list of N tensors (B, T, d).
         sub_ves: optional list of N tensors (B, T, d) value embeddings.
         Returns: list of N tensors (B, T, d), aux_loss."""
         if sub_ves is not None:
-            sub_outputs = [block(h, cos_sin, ve=ve, window_size=window_size) for block, h, ve in zip(self.sub_blocks, sub_inputs, sub_ves)]
+            sub_outputs = [
+                block(h, cos_sin, ve=ve, window_size=window_size,
+                      kv_cache=kv_cache, total_sub_layers=total_sub_layers)
+                for block, h, ve in zip(self.sub_blocks, sub_inputs, sub_ves)
+            ]
         else:
-            sub_outputs = [block(h, cos_sin, window_size=window_size) for block, h in zip(self.sub_blocks, sub_inputs)]
+            sub_outputs = [
+                block(h, cos_sin, window_size=window_size,
+                      kv_cache=kv_cache, total_sub_layers=total_sub_layers)
+                for block, h in zip(self.sub_blocks, sub_inputs)
+            ]
         return self.transition(sub_outputs)
 
 
@@ -566,6 +597,29 @@ class MST(nn.Module):
         return self.wte.weight.device
 
     @property
+    def transformer(self):
+        """Compatibility shim for engine.py which accesses model.transformer.h.
+        MST uses self.layers instead; return a minimal object so the engine's
+        GQA/v_head_dim detection check passes gracefully (h is empty → check skipped)."""
+        class _TransformerShim:
+            h = []  # empty list — engine checks len() > 0 before accessing h[0]
+        return _TransformerShim()
+
+    @property
+    def kv_cache_config(self):
+        """Returns the correct KVCache constructor kwargs for this MST model.
+        The engine checks for this property and uses it instead of computing from config.
+        MST needs n_layer * N_subs cache slots (one per sub-transformer per layer)."""
+        N = self.config.mst_n_subs
+        head_dim = self.config.mst_sub_dim // self.config.n_head
+        return {
+            "num_heads": self.config.n_head,
+            "head_dim": head_dim,
+            "v_head_dim": head_dim,
+            "num_layers": self.config.n_layer * N,
+        }
+
+    @property
     def max_seq_len(self):
         return self.config.sequence_len
 
@@ -600,6 +654,7 @@ class MST(nn.Module):
         # Process through L layers
         N = self.config.mst_n_subs
         d = self.config.mst_sub_dim
+        total_sub_layers = self.config.n_layer * N
         total_aux_loss = torch.tensor(0.0, device=x.device)
         for i, layer in enumerate(self.layers):
             # Per-layer residual scaling + x0 blend (matching base GPT)
@@ -615,7 +670,9 @@ class MST(nn.Module):
                 sub_ves = [ve_full] * N
 
             sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
-                                         window_size=self.window_sizes[i])
+                                         window_size=self.window_sizes[i],
+                                         kv_cache=kv_cache,
+                                         total_sub_layers=total_sub_layers)
             total_aux_loss = total_aux_loss + aux_loss
 
         # Normalize each sub output
