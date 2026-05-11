@@ -38,7 +38,9 @@ def _load_flash_attention_4():
     if major < 9:
         return None
     try:
-        from flash_attn.cute import flash_attn_func, flash_attn_with_kvcache  # noqa: F401
+        # FA4 exports: flash_attn_func, flash_attn_varlen_func
+        # (flash_attn_with_kvcache not yet implemented in FA4)
+        from flash_attn.cute import flash_attn_func  # noqa: F401
         import flash_attn.cute as fa4_module
         return fa4_module
     except Exception as e:
@@ -213,16 +215,14 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     Returns:
         Output tensor of shape (B, T_new, H, D)
     """
-    if _BACKEND == 'fa4':
-        return _fa4.flash_attn_with_kvcache(
-            q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
-            causal=causal, window_size=window_size
-        )
+    # FA4 does not yet implement flash_attn_with_kvcache — handled below by SDPA.
     if _BACKEND == 'fa3':
         return _fa3.flash_attn_with_kvcache(
             q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
             causal=causal, window_size=window_size
         )
+    # FA4 does not yet implement flash_attn_with_kvcache — fall through to SDPA.
+    # Training still uses FA4's flash_attn_func (the hot path), so this is fine.
 
     # SDPA fallback: manually manage KV cache
     B, T_new, H, D = q.shape
