@@ -193,7 +193,9 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
         head_dim = q.shape[-1]
         if head_dim >= 32:
             try:
-                return _fa4.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+                result = _fa4.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+                # FA4 returns (out, lse) tuple; FA3/SDPA return just out — normalise here.
+                return result[0] if isinstance(result, tuple) else result
             except RuntimeError as e:
                 if 'shared memory' in str(e).lower() or 'cudaErrorInvalidValue' in str(e):
                     import sys
