@@ -26,22 +26,30 @@ import torch.nn.functional as F
 # =============================================================================
 
 def _load_flash_attention_4():
-    """Try to load Flash Attention 4 (requires Blackwell GPU, sm100+).
+    """Try to load Flash Attention 4 (Hopper sm90+ and Blackwell sm100+).
 
-    FA4 ships as the `flash-attn-4` pip package.  Its public API lives under
-    `flash_attn.cute` rather than at the top-level `flash_attn` namespace.
+    FA4 ships as the `flash-attn-4` pip package with its API under `flash_attn.cute`.
+    FA4 supports both Hopper and Blackwell, so we try it first on all modern GPUs.
     """
     if not torch.cuda.is_available():
         return None
+    major, _ = torch.cuda.get_device_capability()
+    # FA4 requires Hopper (sm90) or later
+    if major < 9:
+        return None
     try:
-        major, _ = torch.cuda.get_device_capability()
-        # FA4 targets Blackwell (sm100 = compute cap 10.x) and later.
-        if major < 10:
-            return None
         from flash_attn.cute import flash_attn_func, flash_attn_with_kvcache  # noqa: F401
         import flash_attn.cute as fa4_module
         return fa4_module
-    except Exception:
+    except ImportError as e:
+        # Surface the real error so users know what's missing
+        import warnings
+        warnings.warn(f"flash-attn-4 is installed but failed to import: {e}. "
+                      f"Try: pip install 'flash-attn-4[cu13]' or check CUDA version.", stacklevel=2)
+        return None
+    except Exception as e:
+        import warnings
+        warnings.warn(f"flash-attn-4 load error: {e}", stacklevel=2)
         return None
 
 
@@ -49,7 +57,7 @@ def _load_flash_attention_3():
     """Try to load Flash Attention 3 (requires Hopper GPU, sm90).
 
     FA3 is loaded via the `kernels` hub package (varunneal/flash-attention-3).
-    We only attempt this when FA4 is not available.
+    Only tried when FA4 is not available.
     Note: varunneal FA3 kernels target sm90 (Hopper) only — not Blackwell.
     """
     if not torch.cuda.is_available():
