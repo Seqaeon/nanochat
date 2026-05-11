@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
-from nanochat.gpt import Linear, apply_rotary_emb, norm, GPTConfig
+from nanochat.gpt import Linear, apply_rotary_emb, norm, GPTConfig, has_ve
 from nanochat.flash_attention import flash_attn
 
 
@@ -31,7 +31,7 @@ class SubTransformerAttention(nn.Module):
     Includes RoPE and QK-norm, matching the base GPT attention style.
     """
 
-    def __init__(self, d, n_head, layer_idx):
+    def __init__(self, d, n_head, layer_idx, n_layer):
         super().__init__()
         self.d = d
         self.n_head = n_head
@@ -44,12 +44,22 @@ class SubTransformerAttention(nn.Module):
         self.c_v = Linear(d, d, bias=False)
         self.c_proj = Linear(d, d, bias=False)
 
-    def forward(self, x, cos_sin):
-        """x: (B, T, d), cos_sin: (cos, sin) for RoPE."""
+        # Value embeddings (ResFormer-style): alternating layers, last always included
+        self.ve_gate_channels = min(d, 32)
+        self.ve_gate = Linear(self.ve_gate_channels, n_head, bias=False) if has_ve(layer_idx, n_layer) else None
+
+    def forward(self, x, cos_sin, ve=None):
+        """x: (B, T, d), cos_sin: (cos, sin) for RoPE, ve: optional (B, T, d) value embedding."""
         B, T, _ = x.shape
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_head, self.head_dim)
+
+        # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
+        if ve is not None and self.ve_gate is not None:
+            ve_heads = ve.view(B, T, self.n_head, self.head_dim)
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_head), range (0, 2)
+            v = v + gate.unsqueeze(-1) * ve_heads
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
@@ -93,15 +103,15 @@ class SubTransformerFFN(nn.Module):
 class SubTransformerBlock(nn.Module):
     """A single sub-transformer block: pre-norm attention + FFN with residuals."""
 
-    def __init__(self, d, n_head, layer_idx, ffn_mode='standard'):
+    def __init__(self, d, n_head, layer_idx, n_layer, ffn_mode='standard'):
         super().__init__()
-        self.attn = SubTransformerAttention(d, n_head, layer_idx)
+        self.attn = SubTransformerAttention(d, n_head, layer_idx, n_layer)
         self.ffn = SubTransformerFFN(d, mode=ffn_mode)
         self.d = d
 
-    def forward(self, x, cos_sin):
+    def forward(self, x, cos_sin, ve=None):
         """x: (B, T, d). Returns (B, T, out_dim)."""
-        x = x + self.attn(norm(x), cos_sin)
+        x = x + self.attn(norm(x), cos_sin, ve=ve)
         x = x + self.ffn(norm(x)) if self.ffn.mode == 'standard' else x + self.ffn(norm(x))
         return x
 
@@ -354,18 +364,23 @@ class MSTLayer(nn.Module):
         N = config.mst_n_subs
         D = config.n_embd
         n_head = config.n_head
+        n_layer = config.n_layer
 
         self.N = N
         self.sub_blocks = nn.ModuleList([
-            SubTransformerBlock(d, n_head, layer_idx, ffn_mode=config.mst_ffn_mode)
+            SubTransformerBlock(d, n_head, layer_idx, n_layer, ffn_mode=config.mst_ffn_mode)
             for _ in range(N)
         ])
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode)
 
-    def forward(self, sub_inputs, cos_sin):
+    def forward(self, sub_inputs, cos_sin, sub_ves=None):
         """sub_inputs: list of N tensors (B, T, d).
+        sub_ves: optional list of N tensors (B, T, d) value embeddings.
         Returns: list of N tensors (B, T, d), aux_loss."""
-        sub_outputs = [block(h, cos_sin) for block, h in zip(self.sub_blocks, sub_inputs)]
+        if sub_ves is not None:
+            sub_outputs = [block(h, cos_sin, ve=ve) for block, h, ve in zip(self.sub_blocks, sub_inputs, sub_ves)]
+        else:
+            sub_outputs = [block(h, cos_sin) for block, h in zip(self.sub_blocks, sub_inputs)]
         return self.transition(sub_outputs)
 
 
@@ -402,6 +417,17 @@ class MST(nn.Module):
         self.layers = nn.ModuleList([
             MSTLayer(config, layer_idx=i) for i in range(config.n_layer)
         ])
+
+        # Per-layer learnable residual scaling (matching base GPT)
+        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
+        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
+
+        # Value embeddings (ResFormer-style): each sub-transformer gets its own VE
+        # Alternating layers, last layer always included (same as base GPT)
+        self.value_embeds = nn.ModuleDict({
+            str(i): nn.Embedding(padded_vocab_size, d)
+            for i in range(config.n_layer) if has_ve(i, config.n_layer)
+        })
 
         # Axis 2: Output routing (used by final head if aggregate_proj)
         # Axis 5: Final output
@@ -490,6 +516,20 @@ class MST(nn.Module):
             if hasattr(tr, 'router') and hasattr(tr.router, 'router'):
                 torch.nn.init.zeros_(tr.router.router.weight)
 
+        # VE gates in sub-transformer attention (init like c_v projection)
+        for layer in self.layers:
+            for block in layer.sub_blocks:
+                if block.attn.ve_gate is not None:
+                    torch.nn.init.uniform_(block.attn.ve_gate.weight, -sub_s, sub_s)
+
+        # Per-layer scalars (matching base GPT init_weights)
+        self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
+        self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection
+
+        # Value embeddings (init like c_v: uniform with same std as base GPT)
+        for ve in self.value_embeds.values():
+            torch.nn.init.uniform_(ve.weight, -s, s)
+
         # Rotary embeddings
         head_dim = self.config.mst_sub_dim // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -498,6 +538,8 @@ class MST(nn.Module):
         # Cast embeddings to compute dtype
         if COMPUTE_DTYPE != torch.float16:
             self.wte.to(dtype=COMPUTE_DTYPE)
+            for ve in self.value_embeds.values():
+                ve.to(dtype=COMPUTE_DTYPE)
 
     def get_device(self):
         return self.wte.weight.device
@@ -531,10 +573,27 @@ class MST(nn.Module):
         else:
             sub_states = self.input_layer(x, input_ids=idx)
 
+        # Save initial sub-states for x0 residual (matching GPT's x0 pattern)
+        sub_x0 = [h.clone() for h in sub_states]
+
         # Process through L layers
+        N = self.config.mst_n_subs
+        d = self.config.mst_sub_dim
         total_aux_loss = torch.tensor(0.0, device=x.device)
-        for layer in self.layers:
-            sub_states, aux_loss = layer(sub_states, cos_sin)
+        for i, layer in enumerate(self.layers):
+            # Per-layer residual scaling + x0 blend (matching base GPT)
+            rl = self.resid_lambdas[i]
+            x0l = self.x0_lambdas[i]
+            sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
+
+            # Value embeddings: per-sub VE from shared embedding, sliced like input
+            sub_ves = None
+            if str(i) in self.value_embeds:
+                ve_full = self.value_embeds[str(i)](idx).to(sub_states[0].dtype)  # (B, T, d)
+                # Each sub-transformer gets the same VE (at sub_dim d)
+                sub_ves = [ve_full] * N
+
+            sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves)
             total_aux_loss = total_aux_loss + aux_loss
 
         # Normalize each sub output
@@ -597,19 +656,24 @@ class MST(nn.Module):
         from nanochat.optim import MuonAdamW, DistMuonAdamW
         ddp, rank, local_rank, world_size = get_dist_info()
 
-        embed_params = []
-        unembed_params = []
+        embed_params = list(self.wte.parameters())
+        if hasattr(self.input_layer, 'sub_embeddings'):
+            embed_params += list(self.input_layer.sub_embeddings.parameters())
+        unembed_params = list(self.lm_head.parameters())
+        if hasattr(self.final_head, 'sub_heads'):
+            unembed_params += list(self.final_head.sub_heads.parameters())
+        value_embeds_params = list(self.value_embeds.parameters())
+        resid_params = [self.resid_lambdas]
+        x0_params = [self.x0_lambdas]
+
+        # All remaining params: matrix (2D+) → Muon, scalar (1D) → AdamW
+        covered_ids = {id(p) for p in embed_params + unembed_params + value_embeds_params + resid_params + x0_params}
         matrix_params = []
         scalar_params = []
-
-        for name, p in self.named_parameters():
-            if not p.requires_grad:
+        for p in self.parameters():
+            if id(p) in covered_ids or not p.requires_grad:
                 continue
-            if 'wte' in name or 'sub_embeddings' in name:
-                embed_params.append(p)
-            elif 'lm_head' in name or 'sub_heads' in name:
-                unembed_params.append(p)
-            elif p.ndim >= 2:
+            if p.ndim >= 2:
                 matrix_params.append(p)
             else:
                 scalar_params.append(p)
@@ -632,8 +696,14 @@ class MST(nn.Module):
                  betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embed_params, lr=embedding_lr * dmodel_lr_scale,
                  betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=scalar_params, lr=scalar_lr * dmodel_lr_scale,
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale,
                  betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=scalar_params, lr=embedding_lr * dmodel_lr_scale,
+                 betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01,
+                 betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=x0_params, lr=scalar_lr,
+                 betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
         # Matrix params → Muon, grouped by shape (matching GPT convention)
         for shape in sorted({p.shape for p in matrix_params}):
