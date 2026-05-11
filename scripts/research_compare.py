@@ -302,6 +302,7 @@ def run_training_sweep(args):
         "--use-mst", str(getattr(args, 'use_mst', 0)),
         "--mst-n-subs", str(getattr(args, 'mst_n_subs', 8)),
         "--mst-sub-dim", str(getattr(args, 'mst_sub_dim', 64)),
+        "--mst-head-dim", str(getattr(args, 'mst_head_dim', 0)),
         "--mst-input-mode", str(getattr(args, 'mst_input_mode', 'fixed_slice')),
         "--mst-rotated-slice-learned", str(getattr(args, 'mst_rotated_slice_learned', 0)),
         "--mst-routing-mode", str(getattr(args, 'mst_routing_mode', 'soft_weighted')),
@@ -800,6 +801,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
     parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers")
     parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension per sub-transformer")
+    parser.add_argument("--mst-head-dim", type=int, default=0, help="MST: attention head_dim (0=auto d//n_head)")
     parser.add_argument("--mst-input-mode", type=str, default="fixed_slice",
                         choices=["fixed_slice", "learned_proj", "rotated_slice", "per_sub_embed", "stem"])
     parser.add_argument("--mst-rotated-slice-learned", type=int, default=0, choices=[0, 1])
