@@ -31,7 +31,7 @@ done
 # ── Output directory ─────────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MST_OUT_BASE="${MST_OUT_BASE:-out/p01_mst_sweep}"
-LOGFILE="${MST_OUT_BASE}/sweep_${DEPTH}_${TIMESTAMP}.log"
+LOGFILE="${SWEEP_LOG:-${MST_OUT_BASE}/sweep_mst_p01_d${DEPTH}.log}"
 STATE_FILE="${MST_OUT_BASE}/sweep_state_d${DEPTH}.json"
 mkdir -p "$MST_OUT_BASE"
 
