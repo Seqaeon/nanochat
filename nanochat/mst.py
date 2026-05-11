@@ -48,7 +48,7 @@ class SubTransformerAttention(nn.Module):
         self.ve_gate_channels = min(d, 32)
         self.ve_gate = Linear(self.ve_gate_channels, n_head, bias=False) if has_ve(layer_idx, n_layer) else None
 
-    def forward(self, x, cos_sin, ve=None):
+    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0)):
         """x: (B, T, d), cos_sin: (cos, sin) for RoPE, ve: optional (B, T, d) value embedding."""
         B, T, _ = x.shape
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
@@ -67,7 +67,7 @@ class SubTransformerAttention(nn.Module):
 
         y = flash_attn.flash_attn_func(
             q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16),
-            causal=True, window_size=(-1, 0)
+            causal=True, window_size=window_size
         )
         y = y.contiguous().view(B, T, self.d)
         return self.c_proj(y)
@@ -109,9 +109,9 @@ class SubTransformerBlock(nn.Module):
         self.ffn = SubTransformerFFN(d, mode=ffn_mode)
         self.d = d
 
-    def forward(self, x, cos_sin, ve=None):
+    def forward(self, x, cos_sin, ve=None, window_size=(-1, 0)):
         """x: (B, T, d). Returns (B, T, out_dim)."""
-        x = x + self.attn(norm(x), cos_sin, ve=ve)
+        x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size)
         x = x + self.ffn(norm(x)) if self.ffn.mode == 'standard' else x + self.ffn(norm(x))
         return x
 
@@ -373,14 +373,14 @@ class MSTLayer(nn.Module):
         ])
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode)
 
-    def forward(self, sub_inputs, cos_sin, sub_ves=None):
+    def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0)):
         """sub_inputs: list of N tensors (B, T, d).
         sub_ves: optional list of N tensors (B, T, d) value embeddings.
         Returns: list of N tensors (B, T, d), aux_loss."""
         if sub_ves is not None:
-            sub_outputs = [block(h, cos_sin, ve=ve) for block, h, ve in zip(self.sub_blocks, sub_inputs, sub_ves)]
+            sub_outputs = [block(h, cos_sin, ve=ve, window_size=window_size) for block, h, ve in zip(self.sub_blocks, sub_inputs, sub_ves)]
         else:
-            sub_outputs = [block(h, cos_sin) for block, h in zip(self.sub_blocks, sub_inputs)]
+            sub_outputs = [block(h, cos_sin, window_size=window_size) for block, h in zip(self.sub_blocks, sub_inputs)]
         return self.transition(sub_outputs)
 
 
@@ -400,6 +400,9 @@ class MST(nn.Module):
 
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         self._padded_vocab_size = padded_vocab_size
+
+        # Sliding window attention (matching base GPT's SSSSL pattern)
+        self.window_sizes = self._compute_window_sizes(config)
 
         # Token embedding (D-dim)
         self.wte = nn.Embedding(padded_vocab_size, D)
@@ -457,6 +460,24 @@ class MST(nn.Module):
         cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
+
+    def _compute_window_sizes(self, config):
+        """Compute per-layer window sizes for sliding window attention.
+
+        Matches base GPT: pattern string (default 'SSSSL') is tiled across layers.
+        Final layer always gets full context. S=short (256), L=long (full).
+        """
+        pattern = config.window_pattern.upper()
+        long_window = config.sequence_len
+        short_window = 256
+        char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
+        window_sizes = []
+        for layer_idx in range(config.n_layer):
+            char = pattern[layer_idx % len(pattern)]
+            window_sizes.append(char_to_window[char])
+        # Final layer always gets full context
+        window_sizes[-1] = (long_window, 0)
+        return window_sizes
 
     @torch.no_grad()
     def init_weights(self):
@@ -593,7 +614,8 @@ class MST(nn.Module):
                 # Each sub-transformer gets the same VE (at sub_dim d)
                 sub_ves = [ve_full] * N
 
-            sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves)
+            sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
+                                         window_size=self.window_sizes[i])
             total_aux_loss = total_aux_loss + aux_loss
 
         # Normalize each sub output
@@ -625,15 +647,18 @@ class MST(nn.Module):
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.wte.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         layers = sum(p.numel() for p in self.layers.parameters())
         input_layer = sum(p.numel() for p in self.input_layer.parameters())
         final_head = sum(p.numel() for p in self.final_head.parameters())
-        total = sum(p.numel() for p in self.parameters())
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        transformer_matrices = layers + input_layer + final_head
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars
         return {
-            'wte': wte, 'wpe': 0, 'value_embeds': 0,
+            'wte': wte, 'wpe': 0, 'value_embeds': value_embeds,
             'lm_head': lm_head,
-            'transformer_matrices': layers + input_layer + final_head,
-            'research': 0, 'scalars': 0,
+            'transformer_matrices': transformer_matrices,
+            'research': 0, 'scalars': scalars,
             'total': total,
         }
 
