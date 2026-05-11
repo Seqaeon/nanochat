@@ -41,15 +41,10 @@ def _load_flash_attention_4():
         from flash_attn.cute import flash_attn_func, flash_attn_with_kvcache  # noqa: F401
         import flash_attn.cute as fa4_module
         return fa4_module
-    except ImportError as e:
-        # Surface the real error so users know what's missing
-        import warnings
-        warnings.warn(f"flash-attn-4 is installed but failed to import: {e}. "
-                      f"Try: pip install 'flash-attn-4[cu13]' or check CUDA version.", stacklevel=2)
-        return None
     except Exception as e:
-        import warnings
-        warnings.warn(f"flash-attn-4 load error: {e}", stacklevel=2)
+        import sys, traceback
+        print(f"[flash_attention] FA4 import failed: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return None
 
 
