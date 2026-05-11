@@ -616,25 +616,37 @@ class MST(nn.Module):
 
         # mu-P scaling
         model_dim = self.config.n_embd
-        if mu_p_scale_override > 0:
-            mu_p_scale = mu_p_scale_override
+        if mu_p_scale_override > 0.0:
+            dmodel_lr_scale = mu_p_scale_override
+            print0(f"μP LR scaling OVERRIDDEN to {dmodel_lr_scale:.6f}")
         elif disable_mu_p:
-            mu_p_scale = 1.0
+            dmodel_lr_scale = 1.0
+            print0(f"μP LR scaling DISABLED (model_dim={model_dim})")
         else:
-            mu_p_scale = (model_dim / 768) ** -0.5
+            dmodel_lr_scale = (model_dim / 768) ** -0.5
+            print0(f"Scaling AdamW LRs ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
 
-        OptimizerClass = DistMuonAdamW if (ddp and world_size > 1) else MuonAdamW
-        optimizer = OptimizerClass(
-            muon_params=matrix_params,
-            lr=matrix_lr,
-            momentum=0.95,
-            adamw_params=[
-                dict(params=embed_params, lr=embedding_lr * mu_p_scale, betas=adam_betas),
-                dict(params=unembed_params, lr=unembedding_lr * mu_p_scale, betas=adam_betas),
-                dict(params=scalar_params, lr=scalar_lr * mu_p_scale, betas=adam_betas),
-            ],
-            adamw_decay=weight_decay,
-        )
+        # Build param_groups list matching the MuonAdamW interface (kind='muon'/'adamw')
+        param_groups = [
+            dict(kind='adamw', params=unembed_params, lr=unembedding_lr * dmodel_lr_scale,
+                 betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=embed_params, lr=embedding_lr * dmodel_lr_scale,
+                 betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=scalar_params, lr=scalar_lr * dmodel_lr_scale,
+                 betas=adam_betas, eps=1e-10, weight_decay=0.0),
+        ]
+        # Matrix params → Muon, grouped by shape (matching GPT convention)
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+
+        Factory = DistMuonAdamW if (ddp and world_size > 1) else MuonAdamW
+        optimizer = Factory(param_groups)
+        for group in optimizer.param_groups:
+            group['initial_lr'] = group['lr']
         return optimizer
 
     @torch.inference_mode()
