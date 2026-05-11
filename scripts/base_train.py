@@ -121,6 +121,8 @@ parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
 parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension d per sub-transformer")
+parser.add_argument("--mst-head-dim", type=int, default=0,
+                    help="MST: attention head_dim (0=auto d//n_head; e.g. 64 expands QKV to n_head*64 then projects back to d)")
 parser.add_argument("--mst-input-mode", type=str, default="fixed_slice",
                     choices=["fixed_slice", "learned_proj", "rotated_slice", "per_sub_embed", "stem"],
                     help="MST Axis 1: input distribution mode")
@@ -650,6 +652,7 @@ def build_model_meta(depth):
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
         mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
+        mst_head_dim=getattr(args, 'mst_head_dim', 0),
         mst_input_mode=getattr(args, 'mst_input_mode', 'fixed_slice'),
         mst_rotated_slice_learned=bool(getattr(args, 'mst_rotated_slice_learned', 0)),
         mst_routing_mode=getattr(args, 'mst_routing_mode', 'soft_weighted'),
