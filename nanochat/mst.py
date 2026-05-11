@@ -27,25 +27,28 @@ from nanochat.flash_attention import flash_attn
 class SubTransformerAttention(nn.Module):
     """Self-attention for a single sub-transformer at dimension d.
 
-    Uses the same n_head as the base model; head_dim = d // n_head.
+    Supports expanded QKV projections: if head_dim > d//n_head, Q/K/V are
+    projected to n_head*head_dim then back to d, keeping residual at d.
     Includes RoPE and QK-norm, matching the base GPT attention style.
     """
 
-    def __init__(self, d, n_head, layer_idx, n_layer, sub_layer_idx=0):
+    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0):
         super().__init__()
         self.d = d
         self.n_head = n_head
-        self.head_dim = d // n_head
+        self.head_dim = head_dim
+        self.qkv_dim = n_head * head_dim   # may be > d when head_dim is expanded
         self.layer_idx = layer_idx
         self.sub_layer_idx = sub_layer_idx  # unique cache slot index = layer_idx * N_subs + sub_idx
-        assert d % n_head == 0, f"sub_dim {d} not divisible by n_head {n_head}"
+        assert d % n_head == 0 or head_dim > 0, f"sub_dim {d} not divisible by n_head {n_head}"
 
-        self.c_q = Linear(d, d, bias=False)
-        self.c_k = Linear(d, d, bias=False)
-        self.c_v = Linear(d, d, bias=False)
-        self.c_proj = Linear(d, d, bias=False)
+        self.c_q = Linear(d, self.qkv_dim, bias=False)
+        self.c_k = Linear(d, self.qkv_dim, bias=False)
+        self.c_v = Linear(d, self.qkv_dim, bias=False)
+        self.c_proj = Linear(self.qkv_dim, d, bias=False)
 
-        # Value embeddings (ResFormer-style): alternating layers, last always included
+        # Value embeddings (ResFormer-style): alternating layers, last always included.
+        # Gate maps from input (dim d) to per-head scales (n_head), VE is reshaped into head space.
         self.ve_gate_channels = min(d, 32)
         self.ve_gate = Linear(self.ve_gate_channels, n_head, bias=False) if has_ve(layer_idx, n_layer) else None
 
@@ -57,10 +60,17 @@ class SubTransformerAttention(nn.Module):
         k = self.c_k(x).view(B, T, self.n_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_head, self.head_dim)
 
-        # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
+        # Value residual (ResFormer): mix in value embedding with input-dependent gate per head.
+        # VE is at dim d; repeat-interleave to fill head_dim if head_dim > d//n_head.
         if ve is not None and self.ve_gate is not None:
-            ve_heads = ve.view(B, T, self.n_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_head), range (0, 2)
+            base_head_dim = self.d // self.n_head
+            if self.head_dim > base_head_dim:
+                # Tile VE heads to match the expanded head_dim
+                repeats = self.head_dim // base_head_dim
+                ve_heads = ve.view(B, T, self.n_head, base_head_dim).repeat_interleave(repeats, dim=-1)
+            else:
+                ve_heads = ve.view(B, T, self.n_head, self.head_dim)
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_head)
             v = v + gate.unsqueeze(-1) * ve_heads
 
         cos, sin = cos_sin
@@ -87,7 +97,7 @@ class SubTransformerAttention(nn.Module):
             if self.sub_layer_idx == total_sub_layers - 1:
                 kv_cache.advance(T)
 
-        y = y.contiguous().view(B, T, self.d)
+        y = y.contiguous().view(B, T, self.qkv_dim)
         return self.c_proj(y)
 
 
@@ -121,9 +131,9 @@ class SubTransformerFFN(nn.Module):
 class SubTransformerBlock(nn.Module):
     """A single sub-transformer block: pre-norm attention + FFN with residuals."""
 
-    def __init__(self, d, n_head, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard'):
+    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard'):
         super().__init__()
-        self.attn = SubTransformerAttention(d, n_head, layer_idx, n_layer, sub_layer_idx)
+        self.attn = SubTransformerAttention(d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx)
         self.ffn = SubTransformerFFN(d, mode=ffn_mode)
         self.d = d
 
@@ -174,7 +184,7 @@ class MSTInputLayer(nn.Module):
             # Small shared transformer on d-dim before distributing
             self.stem_proj = Linear(D, d, bias=False)
             self.stem_blocks = nn.ModuleList([
-                SubTransformerBlock(d, n_head, layer_idx=i)
+                SubTransformerBlock(d, n_head, d // n_head, layer_idx=i, n_layer=stem_depth)
                 for i in range(stem_depth)
             ])
 
@@ -387,8 +397,9 @@ class MSTLayer(nn.Module):
 
         self.N = N
         self.layer_idx = layer_idx
+        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // n_head
         self.sub_blocks = nn.ModuleList([
-            SubTransformerBlock(d, n_head, layer_idx, n_layer,
+            SubTransformerBlock(d, n_head, head_dim, layer_idx, n_layer,
                                 sub_layer_idx=layer_idx * N + j,
                                 ffn_mode=config.mst_ffn_mode)
             for j in range(N)
@@ -474,7 +485,7 @@ class MST(nn.Module):
         self.lm_head = Linear(D, padded_vocab_size, bias=False)
 
         # Rotary embeddings (precomputed, same as GPT)
-        head_dim = d // config.n_head
+        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
@@ -583,7 +594,7 @@ class MST(nn.Module):
             torch.nn.init.uniform_(ve.weight, -s, s)
 
         # Rotary embeddings
-        head_dim = self.config.mst_sub_dim // self.config.n_head
+        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
 
@@ -611,7 +622,7 @@ class MST(nn.Module):
         The engine checks for this property and uses it instead of computing from config.
         MST needs n_layer * N_subs cache slots (one per sub-transformer per layer)."""
         N = self.config.mst_n_subs
-        head_dim = self.config.mst_sub_dim // self.config.n_head
+        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
         return {
             "num_heads": self.config.n_head,
             "head_dim": head_dim,
@@ -630,7 +641,7 @@ class MST(nn.Module):
 
         if T_total > self.cos.size(1):
             new_len = max(T_total, self.cos.size(1) * 2)
-            head_dim = self.config.mst_sub_dim // self.config.n_head
+            head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
             cos, sin = self._precompute_rotary_embeddings(new_len, head_dim)
             self.register_buffer("cos", cos, persistent=False)
             self.register_buffer("sin", sin, persistent=False)

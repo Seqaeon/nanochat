@@ -319,6 +319,7 @@ class GPTConfig:
     use_mst: bool = False                      # master switch for MST mode
     mst_n_subs: int = 8                        # N = number of sub-transformers per layer
     mst_sub_dim: int = 64                      # d = dimension per sub-transformer (D/N)
+    mst_head_dim: int = 0                      # attention head_dim (0=auto: d//n_head; else expands QKV to n_head*head_dim)
     # Axis 1 — First-Layer Input
     mst_input_mode: str = 'fixed_slice'        # 'fixed_slice'|'learned_proj'|'rotated_slice'|'per_sub_embed'|'stem'
     mst_rotated_slice_learned: bool = False    # I-C: learn the rotation matrix vs random orthogonal
@@ -414,7 +415,7 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln",
     # MST: Modular Sub-Transformer
-    "use_mst", "mst_n_subs", "mst_sub_dim",
+    "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",
     "mst_routing_mode", "mst_routing_topk", "mst_routing_aux_weight",
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
