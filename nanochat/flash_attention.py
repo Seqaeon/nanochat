@@ -26,16 +26,16 @@ import torch.nn.functional as F
 # =============================================================================
 
 def _load_flash_attention_4():
-    """Try to load Flash Attention 4 (Hopper sm90+ and Blackwell sm100+).
+    """Try to load Flash Attention 4 (Blackwell sm100+).
 
     FA4 ships as the `flash-attn-4` pip package with its API under `flash_attn.cute`.
-    FA4 supports both Hopper and Blackwell, so we try it first on all modern GPUs.
+    FA4 supports Blackwell, so we try it first on modern GPUs.
     """
     if not torch.cuda.is_available():
         return None
     major, _ = torch.cuda.get_device_capability()
-    # FA4 requires Hopper (sm90) or later
-    if major < 9:
+    # FA4 targets Blackwell (sm100+)
+    if major < 10:
         return None
     try:
         # FA4 exports: flash_attn_func, flash_attn_varlen_func

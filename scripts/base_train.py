@@ -382,7 +382,7 @@ wandb_run = DummyWandb() # if use_dummy_wandb else wandb.init(project="nanochat"
 # Flash Attention backend status
 from nanochat.flash_attention import USE_FA4, USE_FA3, _BACKEND as _FA_BACKEND
 if USE_FA4:
-    print0("✓ Using Flash Attention 4 (Blackwell GPU detected) — fastest possible attention.")
+    print0(f"✓ Using Flash Attention 4 (Blackwell GPU detected) — fastest possible attention.")
 elif USE_FA3:
     major, _ = torch.cuda.get_device_capability() if device_type == 'cuda' else (0, 0)
     hw = "Blackwell" if major >= 10 else "Hopper"
