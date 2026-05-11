@@ -50,12 +50,13 @@ def _load_flash_attention_3():
 
     FA3 is loaded via the `kernels` hub package (varunneal/flash-attention-3).
     We only attempt this when FA4 is not available.
+    Note: varunneal FA3 kernels target sm90 (Hopper) only — not Blackwell.
     """
     if not torch.cuda.is_available():
         return None
     try:
         major, _ = torch.cuda.get_device_capability()
-        # FA3 Hopper kernels target sm90 exactly.
+        # FA3 Hopper kernels target sm90 exactly; Blackwell uses FA4 instead.
         if major != 9:
             return None
         import os

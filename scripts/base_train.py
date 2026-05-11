@@ -384,14 +384,24 @@ from nanochat.flash_attention import USE_FA4, USE_FA3, _BACKEND as _FA_BACKEND
 if USE_FA4:
     print0("✓ Using Flash Attention 4 (Blackwell GPU detected) — fastest possible attention.")
 elif USE_FA3:
-    print0("✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.")
+    major, _ = torch.cuda.get_device_capability() if device_type == 'cuda' else (0, 0)
+    hw = "Blackwell" if major >= 10 else "Hopper"
+    print0(f"✓ Using Flash Attention 3 ({hw} GPU detected) — efficient and fast.")
 else:
     print0("!" * 80)
     if (HAS_FA4 or HAS_FA3) and COMPUTE_DTYPE != torch.bfloat16:
         print0(f"WARNING: Flash Attention 3/4 only support bf16, but COMPUTE_DTYPE={COMPUTE_DTYPE}. Using PyTorch SDPA fallback")
     else:
-        print0("WARNING: Flash Attention 3/4 not available, using PyTorch SDPA fallback")
-    print0("WARNING: Training will be less efficient without FA3/FA4")
+        major, _ = torch.cuda.get_device_capability() if device_type == 'cuda' else (0, 0)
+        if major >= 10:
+            print0("WARNING: Blackwell GPU detected but FA4 (flash-attn-4) and FA3 (kernels) not found.")
+            print0("WARNING: Install FA3:  pip install kernels  (or pip install flash-attn-4 for FA4)")
+        elif major >= 9:
+            print0("WARNING: Hopper GPU detected but FA3 (kernels package) not found.")
+            print0("WARNING: Install FA3:  pip install kernels")
+        else:
+            print0("WARNING: Flash Attention 3/4 not available (requires Hopper sm90+ or Blackwell sm100+)")
+        print0("WARNING: Falling back to PyTorch SDPA — training will be less efficient.")
     if args.window_pattern != "L":
         print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
         print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
