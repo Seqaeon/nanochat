@@ -298,6 +298,18 @@ def run_training_sweep(args):
         # Phase 30: LayerNorm ablation
         "--remix-disable-ln-basis", str(getattr(args, 'remix_disable_ln_basis', 0)),
         "--dense-intermediate-ln", str(getattr(args, 'dense_intermediate_ln', 0)),
+        # MST: Modular Sub-Transformer
+        "--use-mst", str(getattr(args, 'use_mst', 0)),
+        "--mst-n-subs", str(getattr(args, 'mst_n_subs', 8)),
+        "--mst-sub-dim", str(getattr(args, 'mst_sub_dim', 64)),
+        "--mst-input-mode", str(getattr(args, 'mst_input_mode', 'fixed_slice')),
+        "--mst-rotated-slice-learned", str(getattr(args, 'mst_rotated_slice_learned', 0)),
+        "--mst-routing-mode", str(getattr(args, 'mst_routing_mode', 'soft_weighted')),
+        "--mst-routing-topk", str(getattr(args, 'mst_routing_topk', 4)),
+        "--mst-routing-aux-weight", str(getattr(args, 'mst_routing_aux_weight', 0.01)),
+        "--mst-ffn-mode", str(getattr(args, 'mst_ffn_mode', 'standard')),
+        "--mst-transition-mode", str(getattr(args, 'mst_transition_mode', 'parallel')),
+        "--mst-final-mode", str(getattr(args, 'mst_final_mode', 'aggregate_proj')),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -784,6 +796,22 @@ if __name__ == "__main__":
     # Phase 30: LayerNorm ablation
     parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LN in RemixedLinear")
     parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LN to dense projections")
+    # MST: Modular Sub-Transformer
+    parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
+    parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers")
+    parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension per sub-transformer")
+    parser.add_argument("--mst-input-mode", type=str, default="fixed_slice",
+                        choices=["fixed_slice", "learned_proj", "rotated_slice", "per_sub_embed", "stem"])
+    parser.add_argument("--mst-rotated-slice-learned", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--mst-routing-mode", type=str, default="soft_weighted",
+                        choices=["soft_weighted", "topk_hard", "sequence_path"])
+    parser.add_argument("--mst-routing-topk", type=int, default=4)
+    parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01)
+    parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"])
+    parser.add_argument("--mst-transition-mode", type=str, default="parallel",
+                        choices=["parallel", "aggregate_distribute", "cross_attend"])
+    parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
+                        choices=["aggregate_proj", "weighted_logits"])
 
     args = parser.parse_args()
     

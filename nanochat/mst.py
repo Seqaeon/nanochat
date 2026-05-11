@@ -1,0 +1,662 @@
+"""
+Modular Sub-Transformer (MST) Architecture.
+
+Each transformer layer contains N parallel sub-transformers operating at
+dimension d = D/N. Sub-transformers can specialize in different aspects
+of the representation through configurable input partitioning, routing,
+FFN structure, layer-to-layer transitions, and final output combination.
+
+Design axes (from modular_transformer_experiment_plan.md):
+  Axis 1 (Input):      How sub-transformers receive initial tokens
+  Axis 2 (Routing):    How outputs are combined/selected
+  Axis 3 (FFN):        Internal FFN structure (d->4d->d vs d->4d)
+  Axis 4 (Transition): How outputs flow between layers
+  Axis 5 (Final):      How final layer produces vocabulary logits
+"""
+
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
+from nanochat.gpt import Linear, apply_rotary_emb, norm, GPTConfig
+from nanochat.flash_attention import flash_attn
+
+
+class SubTransformerAttention(nn.Module):
+    """Self-attention for a single sub-transformer at dimension d.
+
+    Uses the same n_head as the base model; head_dim = d // n_head.
+    Includes RoPE and QK-norm, matching the base GPT attention style.
+    """
+
+    def __init__(self, d, n_head, layer_idx):
+        super().__init__()
+        self.d = d
+        self.n_head = n_head
+        self.head_dim = d // n_head
+        self.layer_idx = layer_idx
+        assert d % n_head == 0, f"sub_dim {d} not divisible by n_head {n_head}"
+
+        self.c_q = Linear(d, d, bias=False)
+        self.c_k = Linear(d, d, bias=False)
+        self.c_v = Linear(d, d, bias=False)
+        self.c_proj = Linear(d, d, bias=False)
+
+    def forward(self, x, cos_sin):
+        """x: (B, T, d), cos_sin: (cos, sin) for RoPE."""
+        B, T, _ = x.shape
+        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(x).view(B, T, self.n_head, self.head_dim)
+        v = self.c_v(x).view(B, T, self.n_head, self.head_dim)
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        y = flash_attn.flash_attn_func(
+            q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16),
+            causal=True, window_size=(-1, 0)
+        )
+        y = y.contiguous().view(B, T, self.d)
+        return self.c_proj(y)
+
+
+class SubTransformerFFN(nn.Module):
+    """FFN for a sub-transformer. Two modes:
+    - 'standard': d -> 4d -> d (with relu² activation)
+    - 'no_downproj': d -> 4d (output is 4d, aggregation happens in expanded space)
+    """
+
+    def __init__(self, d, mode='standard'):
+        super().__init__()
+        self.mode = mode
+        self.c_fc = Linear(d, 4 * d, bias=False)
+        if mode == 'standard':
+            self.c_proj = Linear(4 * d, d, bias=False)
+        else:
+            self.c_proj = None  # no down-projection
+
+    @property
+    def out_dim(self):
+        return self.c_fc.out_features if self.mode == 'no_downproj' else self.c_fc.in_features
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = F.relu(x).square()
+        if self.c_proj is not None:
+            x = self.c_proj(x)
+        return x
+
+
+class SubTransformerBlock(nn.Module):
+    """A single sub-transformer block: pre-norm attention + FFN with residuals."""
+
+    def __init__(self, d, n_head, layer_idx, ffn_mode='standard'):
+        super().__init__()
+        self.attn = SubTransformerAttention(d, n_head, layer_idx)
+        self.ffn = SubTransformerFFN(d, mode=ffn_mode)
+        self.d = d
+
+    def forward(self, x, cos_sin):
+        """x: (B, T, d). Returns (B, T, out_dim)."""
+        x = x + self.attn(norm(x), cos_sin)
+        x = x + self.ffn(norm(x)) if self.ffn.mode == 'standard' else x + self.ffn(norm(x))
+        return x
+
+
+class MSTInputLayer(nn.Module):
+    """Axis 1: How sub-transformers receive initial token representations.
+
+    Modes:
+      'fixed_slice':    Slice D-dim embedding into N chunks of d each.
+      'learned_proj':   Each sub has a learned W_i in R^{D x d}.
+      'rotated_slice':  Apply orthogonal rotation R then slice.
+      'per_sub_embed':  N separate embedding tables (requires vocab_size).
+      'stem':           Shared small transformer on d-dim embeddings.
+    """
+
+    def __init__(self, D, d, N, mode='fixed_slice', vocab_size=0,
+                 rotated_slice_learned=False, stem_depth=2, n_head=4):
+        super().__init__()
+        self.D = D
+        self.d = d
+        self.N = N
+        self.mode = mode
+
+        if mode == 'learned_proj':
+            self.projections = nn.ModuleList([
+                Linear(D, d, bias=False) for _ in range(N)
+            ])
+        elif mode == 'rotated_slice':
+            if rotated_slice_learned:
+                self.rotation = nn.Parameter(torch.eye(D))
+            else:
+                # Random orthogonal matrix (frozen)
+                Q, _ = torch.linalg.qr(torch.randn(D, D))
+                self.register_buffer('rotation', Q)
+        elif mode == 'per_sub_embed':
+            assert vocab_size > 0, "per_sub_embed requires vocab_size"
+            self.sub_embeddings = nn.ModuleList([
+                nn.Embedding(vocab_size, d) for _ in range(N)
+            ])
+        elif mode == 'stem':
+            # Small shared transformer on d-dim before distributing
+            self.stem_proj = Linear(D, d, bias=False)
+            self.stem_blocks = nn.ModuleList([
+                SubTransformerBlock(d, n_head, layer_idx=i)
+                for i in range(stem_depth)
+            ])
+
+    def forward(self, x, input_ids=None):
+        """x: (B, T, D) full embedding. Returns list of N tensors (B, T, d)."""
+        B, T, D = x.shape
+
+        if self.mode == 'fixed_slice':
+            return [x[..., i*self.d:(i+1)*self.d] for i in range(self.N)]
+        elif self.mode == 'learned_proj':
+            return [proj(x) for proj in self.projections]
+        elif self.mode == 'rotated_slice':
+            rot = self.rotation.to(x.dtype)
+            x_rot = x @ rot.T
+            return [x_rot[..., i*self.d:(i+1)*self.d] for i in range(self.N)]
+        elif self.mode == 'per_sub_embed':
+            assert input_ids is not None
+            return [emb(input_ids) for emb in self.sub_embeddings]
+        elif self.mode == 'stem':
+            # Project D -> d, run small transformer, then replicate
+            h = self.stem_proj(x)
+            # Need cos_sin for stem blocks - will be passed separately
+            return [h.clone() for _ in range(self.N)]
+        else:
+            raise ValueError(f"Unknown input mode: {self.mode}")
+
+    def forward_with_cos_sin(self, x, cos_sin, input_ids=None):
+        """Version that passes cos_sin to stem blocks if needed."""
+        if self.mode == 'stem':
+            h = self.stem_proj(x)
+            for block in self.stem_blocks:
+                h = block(h, cos_sin)
+            return [h.clone() for _ in range(self.N)]
+        return self.forward(x, input_ids)
+
+
+class MSTRouter(nn.Module):
+    """Axis 2: How sub-transformer outputs are combined.
+
+    Modes:
+      'soft_weighted':  Soft weighted sum of all N sub outputs (all active).
+      'topk_hard':      Hard top-k selection with load balancing aux loss.
+      'sequence_path':  Sequence-level path routing (one path per sequence).
+    """
+
+    def __init__(self, d, N, D, mode='soft_weighted', topk=4, aux_weight=0.01):
+        super().__init__()
+        self.d = d
+        self.N = N
+        self.D = D
+        self.mode = mode
+        self.topk = topk
+        self.aux_weight = aux_weight
+        self._last_entropy = None
+        self._last_balance = None
+        self._last_aux_loss = None
+
+        if mode in ('soft_weighted', 'topk_hard'):
+            # Router: project aggregated repr to N scores
+            self.router = Linear(d, N, bias=False)
+        elif mode == 'sequence_path':
+            self.router = Linear(d, N, bias=False)
+
+    def forward(self, sub_outputs):
+        """sub_outputs: list of N tensors (B, T, d). Returns (B, T, d) + aux_loss."""
+        stacked = torch.stack(sub_outputs, dim=2)  # (B, T, N, d)
+        B, T, N, d = stacked.shape
+
+        # Router input: mean across sub-transformers
+        router_input = stacked.mean(dim=2)  # (B, T, d)
+        logits = self.router(router_input)  # (B, T, N)
+
+        if self.mode == 'soft_weighted':
+            weights = F.softmax(logits, dim=-1)  # (B, T, N)
+            output = (weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, d)
+        elif self.mode == 'topk_hard':
+            k = min(self.topk, N)
+            topk_vals, topk_idx = logits.topk(k, dim=-1)
+            weights = F.softmax(topk_vals, dim=-1)  # (B, T, k)
+            # Gather selected sub outputs
+            topk_idx_exp = topk_idx.unsqueeze(-1).expand(-1, -1, -1, d)
+            selected = torch.gather(stacked, 2, topk_idx_exp)  # (B, T, k, d)
+            output = (weights.unsqueeze(-1) * selected).sum(dim=2)
+        elif self.mode == 'sequence_path':
+            # Sequence-level: average logits across T, then softmax
+            seq_logits = logits.mean(dim=1)  # (B, N)
+            weights = F.softmax(seq_logits, dim=-1)  # (B, N)
+            output = (weights.unsqueeze(1).unsqueeze(-1) * stacked).sum(dim=2)
+        else:
+            raise ValueError(f"Unknown routing mode: {self.mode}")
+
+        # Track diagnostics
+        with torch.no_grad():
+            probs = F.softmax(logits, dim=-1)
+            self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+            load = probs.mean(dim=(0, 1))  # (N,)
+            self._last_balance = (load.min() / (load.max() + 1e-8)).item()
+
+        # Load balance aux loss (switch transformer style)
+        aux_loss = torch.tensor(0.0, device=output.device)
+        if self.training and self.mode in ('soft_weighted', 'topk_hard'):
+            probs_mean = F.softmax(logits, dim=-1).mean(dim=(0, 1))  # (N,)
+            # Fraction of tokens routed to each expert
+            if self.mode == 'topk_hard':
+                dispatch = torch.zeros(N, device=output.device)
+                dispatch.scatter_add_(0, topk_idx.reshape(-1), torch.ones(B*T*self.topk, device=output.device))
+                dispatch = dispatch / (B * T)
+            else:
+                dispatch = probs_mean
+            aux_loss = self.aux_weight * N * (dispatch * probs_mean).sum()
+        self._last_aux_loss = aux_loss
+
+        return output, aux_loss
+
+
+class MSTTransition(nn.Module):
+    """Axis 4: How outputs flow between layers.
+
+    Modes:
+      'parallel':             Direct pass — sub i feeds sub i in next layer.
+      'aggregate_distribute': Router combines -> per-sub projection redistributes.
+      'cross_attend':         Each sub cross-attends to all other subs (lightweight).
+    """
+
+    def __init__(self, d, N, D, mode='parallel'):
+        super().__init__()
+        self.mode = mode
+        self.d = d
+        self.N = N
+
+        if mode == 'aggregate_distribute':
+            self.router = MSTRouter(d, N, D, mode='soft_weighted')
+            self.distribute = nn.ModuleList([
+                Linear(d, d, bias=False) for _ in range(N)
+            ])
+        elif mode == 'cross_attend':
+            # Lightweight: each sub gets a weighted sum of all other subs
+            self.cross_weights = nn.Parameter(torch.zeros(N, N))
+
+    def forward(self, sub_outputs):
+        """sub_outputs: list of N tensors (B, T, d).
+        Returns: list of N tensors (B, T, d) for next layer, aux_loss."""
+        if self.mode == 'parallel':
+            return sub_outputs, torch.tensor(0.0, device=sub_outputs[0].device)
+        elif self.mode == 'aggregate_distribute':
+            aggregated, aux_loss = self.router(sub_outputs)  # (B, T, d)
+            return [proj(aggregated) for proj in self.distribute], aux_loss
+        elif self.mode == 'cross_attend':
+            stacked = torch.stack(sub_outputs, dim=2)  # (B, T, N, d)
+            weights = F.softmax(self.cross_weights, dim=-1)  # (N, N)
+            # Each sub i gets weighted combo of all subs
+            mixed = torch.einsum('ij,btjd->btid', weights.to(stacked.dtype), stacked)
+            return [mixed[:, :, i] for i in range(self.N)], torch.tensor(0.0, device=stacked.device)
+        else:
+            raise ValueError(f"Unknown transition mode: {self.mode}")
+
+
+class MSTFinalHead(nn.Module):
+    """Axis 5: How the final layer produces vocabulary logits.
+
+    Modes:
+      'aggregate_proj':   Weighted sum of sub outputs -> single lm_head projection.
+      'weighted_logits':  Each sub has independent lm_head; weighted sum of logits.
+    """
+
+    def __init__(self, d, N, D, vocab_size, mode='aggregate_proj'):
+        super().__init__()
+        self.mode = mode
+        self.d = d
+        self.N = N
+        self.D = D
+
+        if mode == 'aggregate_proj':
+            self.agg_router = MSTRouter(d, N, D, mode='soft_weighted')
+            self.proj = Linear(d, D, bias=False)  # d -> D before lm_head
+        elif mode == 'weighted_logits':
+            self.sub_heads = nn.ModuleList([
+                Linear(d, vocab_size, bias=False) for _ in range(N)
+            ])
+            self.head_weights = nn.Parameter(torch.ones(N) / N)
+        else:
+            raise ValueError(f"Unknown final mode: {mode}")
+
+    def forward(self, sub_outputs, lm_head=None):
+        """sub_outputs: list of N tensors (B, T, d).
+        Returns logits (B, T, vocab_size) and aux_loss."""
+        if self.mode == 'aggregate_proj':
+            aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+            h = self.proj(aggregated)  # (B, T, D)
+            logits = lm_head(h)
+            return logits, aux_loss
+        elif self.mode == 'weighted_logits':
+            weights = F.softmax(self.head_weights, dim=0)
+            logits = sum(w * head(sub_out)
+                         for w, head, sub_out
+                         in zip(weights, self.sub_heads, sub_outputs))
+            return logits, torch.tensor(0.0, device=logits.device)
+
+
+class MSTLayer(nn.Module):
+    """One full MST layer: N parallel sub-transformer blocks + transition."""
+
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        d = config.mst_sub_dim
+        N = config.mst_n_subs
+        D = config.n_embd
+        n_head = config.n_head
+
+        self.N = N
+        self.sub_blocks = nn.ModuleList([
+            SubTransformerBlock(d, n_head, layer_idx, ffn_mode=config.mst_ffn_mode)
+            for _ in range(N)
+        ])
+        self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode)
+
+    def forward(self, sub_inputs, cos_sin):
+        """sub_inputs: list of N tensors (B, T, d).
+        Returns: list of N tensors (B, T, d), aux_loss."""
+        sub_outputs = [block(h, cos_sin) for block, h in zip(self.sub_blocks, sub_inputs)]
+        return self.transition(sub_outputs)
+
+
+class MST(nn.Module):
+    """Modular Sub-Transformer model.
+
+    Compatible interface with GPT: forward(idx, targets, kv_cache, loss_reduction).
+    """
+
+    def __init__(self, config, pad_vocab_size_to=64):
+        super().__init__()
+        self.config = config
+        D = config.n_embd
+        d = config.mst_sub_dim
+        N = config.mst_n_subs
+        assert D == N * d, f"n_embd ({D}) must equal mst_n_subs ({N}) * mst_sub_dim ({d})"
+
+        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        self._padded_vocab_size = padded_vocab_size
+
+        # Token embedding (D-dim)
+        self.wte = nn.Embedding(padded_vocab_size, D)
+
+        # Axis 1: Input distribution
+        self.input_layer = MSTInputLayer(
+            D, d, N,
+            mode=config.mst_input_mode,
+            vocab_size=padded_vocab_size,
+            rotated_slice_learned=config.mst_rotated_slice_learned,
+            n_head=config.n_head,
+        )
+
+        # L transformer layers
+        self.layers = nn.ModuleList([
+            MSTLayer(config, layer_idx=i) for i in range(config.n_layer)
+        ])
+
+        # Axis 2: Output routing (used by final head if aggregate_proj)
+        # Axis 5: Final output
+        self.final_head = MSTFinalHead(
+            d, N, D, padded_vocab_size,
+            mode=config.mst_final_mode,
+        )
+
+        # Standard lm_head for aggregate_proj mode
+        self.lm_head = Linear(D, padded_vocab_size, bias=False)
+
+        # Rotary embeddings (precomputed, same as GPT)
+        head_dim = d // config.n_head
+        self.rotary_seq_len = config.sequence_len * 10
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
+
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
+        if device is None:
+            device = self.wte.weight.device
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (channel_range / head_dim))
+        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        freqs = torch.outer(t, inv_freq)
+        cos, sin = freqs.cos(), freqs.sin()
+        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+        return cos, sin
+
+    @torch.no_grad()
+    def init_weights(self):
+        """Initialize all weights following the same conventions as GPT."""
+        s = 1.0 / (self.config.n_embd ** 0.5)
+
+        # Embeddings
+        torch.nn.init.normal_(self.wte.weight, std=1.0)
+
+        # lm_head
+        torch.nn.init.normal_(self.lm_head.weight, std=0.001)
+
+        # Input layer
+        if hasattr(self.input_layer, 'projections'):
+            for proj in self.input_layer.projections:
+                torch.nn.init.uniform_(proj.weight, -s, s)
+        if hasattr(self.input_layer, 'sub_embeddings'):
+            for emb in self.input_layer.sub_embeddings:
+                torch.nn.init.normal_(emb.weight, std=1.0)
+        if hasattr(self.input_layer, 'stem_proj'):
+            torch.nn.init.uniform_(self.input_layer.stem_proj.weight, -s, s)
+
+        # Sub-transformer blocks
+        sub_s = 1.0 / (self.config.mst_sub_dim ** 0.5)
+        for layer in self.layers:
+            for block in layer.sub_blocks:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -sub_s, sub_s)
+                torch.nn.init.uniform_(block.attn.c_k.weight, -sub_s, sub_s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -sub_s, sub_s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
+                torch.nn.init.uniform_(block.ffn.c_fc.weight, -sub_s, sub_s)
+                if block.ffn.c_proj is not None:
+                    torch.nn.init.zeros_(block.ffn.c_proj.weight)
+
+        # Transition layers
+        for layer in self.layers:
+            if hasattr(layer.transition, 'distribute'):
+                for proj in layer.transition.distribute:
+                    torch.nn.init.uniform_(proj.weight, -sub_s, sub_s)
+            if hasattr(layer.transition, 'cross_weights'):
+                torch.nn.init.zeros_(layer.transition.cross_weights)
+            if hasattr(layer.transition, 'router'):
+                torch.nn.init.zeros_(layer.transition.router.router.weight)
+
+        # Final head
+        if hasattr(self.final_head, 'proj'):
+            torch.nn.init.uniform_(self.final_head.proj.weight, -sub_s, sub_s)
+        if hasattr(self.final_head, 'agg_router'):
+            torch.nn.init.zeros_(self.final_head.agg_router.router.weight)
+        if hasattr(self.final_head, 'sub_heads'):
+            for head in self.final_head.sub_heads:
+                torch.nn.init.normal_(head.weight, std=0.001)
+
+        # Router weights in all layers
+        for layer in self.layers:
+            tr = layer.transition
+            if hasattr(tr, 'router') and hasattr(tr.router, 'router'):
+                torch.nn.init.zeros_(tr.router.router.weight)
+
+        # Rotary embeddings
+        head_dim = self.config.mst_sub_dim // self.config.n_head
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.cos, self.sin = cos, sin
+
+        # Cast embeddings to compute dtype
+        if COMPUTE_DTYPE != torch.float16:
+            self.wte.to(dtype=COMPUTE_DTYPE)
+
+    def get_device(self):
+        return self.wte.weight.device
+
+    @property
+    def max_seq_len(self):
+        return self.config.sequence_len
+
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+        B, T = idx.size()
+        T0 = 0 if kv_cache is None else kv_cache.get_pos()
+        T_total = T0 + T
+
+        if T_total > self.cos.size(1):
+            new_len = max(T_total, self.cos.size(1) * 2)
+            head_dim = self.config.mst_sub_dim // self.config.n_head
+            cos, sin = self._precompute_rotary_embeddings(new_len, head_dim)
+            self.register_buffer("cos", cos, persistent=False)
+            self.register_buffer("sin", sin, persistent=False)
+
+        cos_sin = self.cos[:, T0:T_total], self.sin[:, T0:T_total]
+
+        # Embed tokens
+        x = self.wte(idx)  # (B, T, D)
+        x = x.to(COMPUTE_DTYPE)
+        x = norm(x)
+
+        # Distribute to sub-transformers (Axis 1)
+        if self.config.mst_input_mode == 'stem':
+            sub_states = self.input_layer.forward_with_cos_sin(x, cos_sin, input_ids=idx)
+        else:
+            sub_states = self.input_layer(x, input_ids=idx)
+
+        # Process through L layers
+        total_aux_loss = torch.tensor(0.0, device=x.device)
+        for layer in self.layers:
+            sub_states, aux_loss = layer(sub_states, cos_sin)
+            total_aux_loss = total_aux_loss + aux_loss
+
+        # Normalize each sub output
+        sub_states = [norm(h) for h in sub_states]
+
+        # Final output (Axis 5)
+        if self.config.mst_final_mode == 'aggregate_proj':
+            logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+        else:
+            logits, final_aux = self.final_head(sub_states)
+        total_aux_loss = total_aux_loss + final_aux
+
+        logits = logits[..., :self.config.vocab_size]
+        logits = logits.float()
+        softcap = 20
+        logits = softcap * torch.tanh(logits / softcap)
+
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1),
+                ignore_index=-1, reduction=loss_reduction
+            )
+            if loss_reduction == 'mean':
+                loss = loss + total_aux_loss
+            return loss
+        else:
+            return logits
+
+    def num_scaling_params(self):
+        wte = sum(p.numel() for p in self.wte.parameters())
+        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        layers = sum(p.numel() for p in self.layers.parameters())
+        input_layer = sum(p.numel() for p in self.input_layer.parameters())
+        final_head = sum(p.numel() for p in self.final_head.parameters())
+        total = sum(p.numel() for p in self.parameters())
+        return {
+            'wte': wte, 'wpe': 0, 'value_embeds': 0,
+            'lm_head': lm_head,
+            'transformer_matrices': layers + input_layer + final_head,
+            'research': 0, 'scalars': 0,
+            'total': total,
+        }
+
+    def estimate_flops(self):
+        nparams = sum(p.numel() for p in self.parameters())
+        nparams_exclude = self.wte.weight.numel()
+        N = self.config.mst_n_subs
+        d = self.config.mst_sub_dim
+        n_head = self.config.n_head
+        head_dim = d // n_head
+        t = self.config.sequence_len
+        attn_flops = self.config.n_layer * N * 12 * n_head * head_dim * t
+        total_flops = 6 * (nparams - nparams_exclude) + attn_flops
+        return total_flops, total_flops, nparams
+
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2,
+                        matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95),
+                        scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0,
+                        gate_lr_scale=0.3):
+        from nanochat.optim import MuonAdamW, DistMuonAdamW
+        ddp, rank, local_rank, world_size = get_dist_info()
+
+        embed_params = []
+        unembed_params = []
+        matrix_params = []
+        scalar_params = []
+
+        for name, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+            if 'wte' in name or 'sub_embeddings' in name:
+                embed_params.append(p)
+            elif 'lm_head' in name or 'sub_heads' in name:
+                unembed_params.append(p)
+            elif p.ndim >= 2:
+                matrix_params.append(p)
+            else:
+                scalar_params.append(p)
+
+        # mu-P scaling
+        model_dim = self.config.n_embd
+        if mu_p_scale_override > 0:
+            mu_p_scale = mu_p_scale_override
+        elif disable_mu_p:
+            mu_p_scale = 1.0
+        else:
+            mu_p_scale = (model_dim / 768) ** -0.5
+
+        OptimizerClass = DistMuonAdamW if (ddp and world_size > 1) else MuonAdamW
+        optimizer = OptimizerClass(
+            muon_params=matrix_params,
+            lr=matrix_lr,
+            momentum=0.95,
+            adamw_params=[
+                dict(params=embed_params, lr=embedding_lr * mu_p_scale, betas=adam_betas),
+                dict(params=unembed_params, lr=unembedding_lr * mu_p_scale, betas=adam_betas),
+                dict(params=scalar_params, lr=scalar_lr * mu_p_scale, betas=adam_betas),
+            ],
+            adamw_decay=weight_decay,
+        )
+        return optimizer
+
+    @torch.inference_mode()
+    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
+        assert isinstance(tokens, list)
+        device = self.get_device()
+        rng = None
+        if temperature > 0:
+            rng = torch.Generator(device=device)
+            rng.manual_seed(seed)
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        for _ in range(max_tokens):
+            logits = self.forward(ids)
+            logits = logits[:, -1, :]
+            if top_k is not None and top_k > 0:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            if temperature > 0:
+                logits = logits / temperature
+                probs = F.softmax(logits, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+            else:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+            ids = torch.cat((ids, next_ids), dim=1)
+            yield next_ids.item()

@@ -117,6 +117,28 @@ parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="LR m
 # Phase 30: LayerNorm ablation flags
 parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LayerNorm in RemixedLinear basis projection (0=keep LN, 1=remove LN)")
 parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LayerNorm to dense linear projections for controlled ablation (0=off, 1=on)")
+# ── MST: Modular Sub-Transformer ──
+parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
+parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
+parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension d per sub-transformer")
+parser.add_argument("--mst-input-mode", type=str, default="fixed_slice",
+                    choices=["fixed_slice", "learned_proj", "rotated_slice", "per_sub_embed", "stem"],
+                    help="MST Axis 1: input distribution mode")
+parser.add_argument("--mst-rotated-slice-learned", type=int, default=0, choices=[0, 1],
+                    help="MST I-C: learn rotation matrix (0=frozen orthogonal, 1=learned)")
+parser.add_argument("--mst-routing-mode", type=str, default="soft_weighted",
+                    choices=["soft_weighted", "topk_hard", "sequence_path"],
+                    help="MST Axis 2: routing/combination mode")
+parser.add_argument("--mst-routing-topk", type=int, default=4, help="MST R-B: k for top-k hard routing")
+parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01, help="MST: load balance aux loss weight")
+parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"],
+                    help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d)")
+parser.add_argument("--mst-transition-mode", type=str, default="parallel",
+                    choices=["parallel", "aggregate_distribute", "cross_attend"],
+                    help="MST Axis 4: layer-to-layer transition mode")
+parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
+                    choices=["aggregate_proj", "weighted_logits"],
+                    help="MST Axis 5: final layer output mode")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
@@ -614,10 +636,26 @@ def build_model_meta(depth):
         # Phase 30: LayerNorm ablation
         remix_disable_ln_basis=getattr(args, 'remix_disable_ln_basis', 0),
         dense_intermediate_ln=getattr(args, 'dense_intermediate_ln', 0),
+        # MST: Modular Sub-Transformer
+        use_mst=bool(getattr(args, 'use_mst', 0)),
+        mst_n_subs=getattr(args, 'mst_n_subs', 8),
+        mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
+        mst_input_mode=getattr(args, 'mst_input_mode', 'fixed_slice'),
+        mst_rotated_slice_learned=bool(getattr(args, 'mst_rotated_slice_learned', 0)),
+        mst_routing_mode=getattr(args, 'mst_routing_mode', 'soft_weighted'),
+        mst_routing_topk=getattr(args, 'mst_routing_topk', 4),
+        mst_routing_aux_weight=getattr(args, 'mst_routing_aux_weight', 0.01),
+        mst_ffn_mode=getattr(args, 'mst_ffn_mode', 'standard'),
+        mst_transition_mode=getattr(args, 'mst_transition_mode', 'parallel'),
+        mst_final_mode=getattr(args, 'mst_final_mode', 'aggregate_proj'),
     )
 
     with torch.device("meta"):
-        model_meta = GPT(config)
+        if config.use_mst:
+            from nanochat.mst import MST
+            model_meta = MST(config)
+        else:
+            model_meta = GPT(config)
     return model_meta
 
 # Build the model, move to device, init the weights

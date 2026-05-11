@@ -315,6 +315,23 @@ class GPTConfig:
     # Phase 30: LayerNorm ablation
     remix_disable_ln_basis: int = 0           # 30B: 1=replace intermediate LayerNorm in RemixedLinear with Identity
     dense_intermediate_ln: int = 0            # 30A: 1=add intermediate LayerNorm to dense linear projections
+    # ── MST: Modular Sub-Transformer Architecture ──
+    use_mst: bool = False                      # master switch for MST mode
+    mst_n_subs: int = 8                        # N = number of sub-transformers per layer
+    mst_sub_dim: int = 64                      # d = dimension per sub-transformer (D/N)
+    # Axis 1 — First-Layer Input
+    mst_input_mode: str = 'fixed_slice'        # 'fixed_slice'|'learned_proj'|'rotated_slice'|'per_sub_embed'|'stem'
+    mst_rotated_slice_learned: bool = False    # I-C: learn the rotation matrix vs random orthogonal
+    # Axis 2 — Routing
+    mst_routing_mode: str = 'soft_weighted'    # 'soft_weighted'|'topk_hard'|'sequence_path'
+    mst_routing_topk: int = 4                  # R-B: k for top-k hard routing
+    mst_routing_aux_weight: float = 0.01       # load balancing loss coefficient
+    # Axis 3 — FFN Internal Transition
+    mst_ffn_mode: str = 'standard'             # 'standard' (d→4d→d) | 'no_downproj' (d→4d)
+    # Axis 4 — Layer-to-Layer Transition
+    mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'
+    # Axis 5 — Final Layer → Vocabulary
+    mst_final_mode: str = 'aggregate_proj'     # 'weighted_logits'|'aggregate_proj'
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -396,6 +413,11 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln",
+    # MST: Modular Sub-Transformer
+    "use_mst", "mst_n_subs", "mst_sub_dim",
+    "mst_input_mode", "mst_rotated_slice_learned",
+    "mst_routing_mode", "mst_routing_topk", "mst_routing_aux_weight",
+    "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
 }
 
 

@@ -65,6 +65,7 @@
 \@writefile{toc}{\contentsline {paragraph}{Chunk routing matches per-token.}{6}{section*.14}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Template count matters.}{6}{section*.15}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Gate contributions are modest but additive.}{6}{section*.16}\protected@file@percent }
+\citation{fedus2022switch}
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Ablation study at d4. \emph  {Top}: routing variants with $K{=}8$ templates. \emph  {Middle}: gate component ablation with $K{=}1$ template (isolating gate effects from routing). \emph  {Bottom}: standard MoE baselines. $\Delta $ is relative to the dense baseline BPP of 1.170.}}{7}{table.4}\protected@file@percent }
 \newlabel{tab:ablation}{{4}{7}{Ablation study at d4. \emph {Top}: routing variants with $K{=}8$ templates. \emph {Middle}: gate component ablation with $K{=}1$ template (isolating gate effects from routing). \emph {Bottom}: standard MoE baselines. $\Delta $ is relative to the dense baseline BPP of 1.170}{table.4}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Inference throughput at d12 on a single H200 GPU (batch 64, seq 2048). Hardware FLOPs are measured via \texttt  {torch.utils.flop\_counter}. RemixedLinear achieves 10\% better BPP but at 3.7$\times $ lower throughput. GPU utilization (measured TFLOPS) drops from 195 to 86, suggesting the GPU's compute units are substantially underutilized in the RemixedLinear forward pass.}}{7}{table.5}\protected@file@percent }
@@ -75,18 +76,13 @@
 \citation{li2024dclm}
 \@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces CORE benchmark scores (22-task centered accuracy aggregate). Higher is better. RemixedLinear achieves CORE scores 34--36\% above the dense power-law prediction at matched active FLOPs, confirming that BPP improvements transfer to downstream task performance.}}{8}{table.6}\protected@file@percent }
 \newlabel{tab:core}{{6}{8}{CORE benchmark scores (22-task centered accuracy aggregate). Higher is better. RemixedLinear achieves CORE scores 34--36\% above the dense power-law prediction at matched active FLOPs, confirming that BPP improvements transfer to downstream task performance}{table.6}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces CORE benchmark score vs.\ model size and compute. \textbf  {Left:} Total parameters --- RemixedLinear points fall on the dense curve, reflecting the $K{\times }$ storage cost. \textbf  {Middle:} Active parameters --- RemixedLinear achieves 34--36\% higher CORE scores at matched active params. \textbf  {Right:} Active FLOPs --- same advantage, confirming that the scaling improvement is genuine and not an artifact of the parameter-counting methodology.}}{8}{figure.3}\protected@file@percent }
-\newlabel{fig:core_scaling}{{3}{8}{CORE benchmark score vs.\ model size and compute. \textbf {Left:} Total parameters --- RemixedLinear points fall on the dense curve, reflecting the $K{\times }$ storage cost. \textbf {Middle:} Active parameters --- RemixedLinear achieves 34--36\% higher CORE scores at matched active params. \textbf {Right:} Active FLOPs --- same advantage, confirming that the scaling improvement is genuine and not an artifact of the parameter-counting methodology}{figure.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces CORE score vs.\ model size and compute. \textbf  {Left:} Total parameters --- Remix falls on the dense curve, reflecting $K{\times }$ storage. \textbf  {Middle/Right:} Active parameters and active FLOPs --- Remix achieves 34--36\% higher CORE scores at matched compute, confirming the scaling improvement is not a parameter-counting artifact.}}{8}{figure.3}\protected@file@percent }
+\newlabel{fig:core_scaling}{{3}{8}{CORE score vs.\ model size and compute. \textbf {Left:} Total parameters --- Remix falls on the dense curve, reflecting $K{\times }$ storage. \textbf {Middle/Right:} Active parameters and active FLOPs --- Remix achieves 34--36\% higher CORE scores at matched compute, confirming the scaling improvement is not a parameter-counting artifact}{figure.3}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Downstream Task Evaluation}{8}{subsection.4.6}\protected@file@percent }
 \newlabel{sec:core}{{4.6}{8}{Downstream Task Evaluation}{subsection.4.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Discussion}{8}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Why fine-grained routing outperforms coarse MoE.}{8}{section*.18}\protected@file@percent }
 \citation{karpathy2025nanochat}
-\@writefile{toc}{\contentsline {section}{\numberline {5}Discussion}{9}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Why fine-grained routing outperforms coarse MoE.}{9}{section*.18}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{The optimization friction problem.}{9}{section*.19}\protected@file@percent }
-\newlabel{sec:ln_confound}{{5}{9}{LayerNorm confound}{section*.20}{}}
-\@writefile{toc}{\contentsline {paragraph}{LayerNorm confound.}{9}{section*.20}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Limitations.}{9}{section*.21}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{section.6}\protected@file@percent }
 \bibstyle{plainnat}
 \bibdata{references}
 \bibcite{dao2022flashattention}{{1}{2022}{{Dao et~al.}}{{Dao, Fu, Ermon, Rudra, and R{\'e}}}}
@@ -96,6 +92,11 @@
 \bibcite{hoffmann2022training}{{5}{2022}{{Hoffmann et~al.}}{{Hoffmann, Borgeaud, Mensch, Buchatskaya, Cai, Rutherford, Casas, Hendricks, Welbl, Clark, et~al.}}}
 \bibcite{hu2021lora}{{6}{2022}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
 \bibcite{jordan2024muon}{{7}{2025}{{Jordan et~al.}}{{Jordan, Chen, Goldblum, Saunshi, and Nakkiran}}}
+\@writefile{toc}{\contentsline {paragraph}{The optimization friction problem.}{9}{section*.19}\protected@file@percent }
+\newlabel{sec:ln_confound}{{5}{9}{LayerNorm confound}{section*.20}{}}
+\@writefile{toc}{\contentsline {paragraph}{LayerNorm confound.}{9}{section*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{9}{section*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{section.6}\protected@file@percent }
 \bibcite{karpathy2025nanochat}{{8}{2025}{{Karpathy}}{{}}}
 \bibcite{lepikhin2020gshard}{{9}{2021}{{Lepikhin et~al.}}{{Lepikhin, Lee, Xu, Chen, Firat, Huang, Krikun, Shazeer, and Chen}}}
 \bibcite{li2024dclm}{{10}{2024}{{Li et~al.}}{{Li, Fang, Smyrnis, Mahdavi, Schuhmann, Laion, Gadre, Ilharco, Jitsev, Radenovic, et~al.}}}
