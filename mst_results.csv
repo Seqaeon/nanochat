@@ -1,0 +1,10 @@
+config_id,input_mode,routing_mode,ffn_mode,transition_mode,final_mode,n_subs,sub_dim,head_dim,val_loss_1k,val_loss_5k,val_loss_final,router_entropy_mean,router_entropy_min,load_balance_score,grad_norm_mean,wall_time_min,flops_per_token,total_flops,params_full,params_transformer,params_value_embeds,params_total_sp
+base,fixed_slice,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.20706735358491,1.9761,1.9297,0.7627,,14.43,270760000,1.1924E+017,45126160,3183104,8388608,45126160
+base,learned_proj,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.20426228407997,1.978,1.9609,0.5935,,14.7,272330000,1.1993E+017,45388304,3445248,8388608,45388304
+base,rotated_slice,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.28028939252614,1.975,1.9375,0.6052,,14.56,270760000,1.1924E+017,45126160,3183104,8388608,45126160
+base,rotated_slice_learned,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.20591155081277,1.9779,1.9609,0.5687,,14.6,272330000,1.1993E+017,45388304,3445248,8388608,45388304
+base,per_sub_embed,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.20601695201277,1.9175,1.8439,0.6621,,20.11,371420000,1.6357E+017,61903376,19960320,8388608,61903376
+base,stem,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.21111103277162,1.8689,1.5938,0.6391,,15.16,271540000,1.1959E+017,45257360,3314304,8388608,45257360
+base,fixed_slice,topk_hard_top4,standard,parallel,aggregate_proj,8,64,16,,,1.20669955580635,1.9767,1.9375,0.7592,,11.8,270760000,1.1924E+017,45126160,3183104,8388608,45126160
+base,fixed_slice,topk_hard_top1,standard,parallel,aggregate_proj,8,64,16,,,1.2052753002541,1.9704,1.9297,0.7366,,11.89,270760000,1.1924E+017,45126160,3183104,8388608,45126160
+base,fixed_slice,sequence_path,standard,parallel,aggregate_proj,8,64,16,,,1.20506426492327,1.9782,1.9297,0.7374,,12.1,270760000,1.1924E+017,45126160,3183104,8388608,45126160

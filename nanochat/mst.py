@@ -135,13 +135,20 @@ class SubTransformerBlock(nn.Module):
         super().__init__()
         self.attn = SubTransformerAttention(d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx)
         self.ffn = SubTransformerFFN(d, mode=ffn_mode)
+        # no_downproj: FFN outputs 4d — need a block-level projection back to d for the residual.
+        # This decouples the expansion (d→4d + relu²) from compression (plain 4d→d linear),
+        # which is the inductive bias difference being tested vs standard mode.
+        self.ffn_out_proj = Linear(4 * d, d, bias=False) if ffn_mode == 'no_downproj' else None
         self.d = d
 
     def forward(self, x, cos_sin, ve=None, window_size=(-1, 0), kv_cache=None, total_sub_layers=1):
-        """x: (B, T, d). Returns (B, T, out_dim)."""
+        """x: (B, T, d). Returns (B, T, d)."""
         x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size,
                           kv_cache=kv_cache, total_sub_layers=total_sub_layers)
-        x = x + self.ffn(norm(x)) if self.ffn.mode == 'standard' else x + self.ffn(norm(x))
+        if self.ffn.mode == 'standard':
+            x = x + self.ffn(norm(x))
+        else:  # no_downproj: FFN gives 4d, block-level proj brings back to d
+            x = x + self.ffn_out_proj(self.ffn(norm(x)))
         return x
 
 
