@@ -276,12 +276,13 @@ class MSTRouter(nn.Module):
         else:
             raise ValueError(f"Unknown routing mode: {self.mode}")
 
-        # Track diagnostics
+        # Track diagnostics — store as tensors (no .item()) to avoid graph break.
+        # Call .item() only at logging time via last_entropy / last_balance properties.
         with torch.no_grad():
             probs = F.softmax(logits, dim=-1)
-            self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+            self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean()  # tensor
             load = probs.mean(dim=(0, 1))  # (N,)
-            self._last_balance = (load.min() / (load.max() + 1e-8)).item()
+            self._last_balance = load.min() / (load.max() + 1e-8)               # tensor
 
         # Load balance aux loss (switch transformer style)
         aux_loss = torch.tensor(0.0, device=output.device)

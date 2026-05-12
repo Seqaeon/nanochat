@@ -1106,6 +1106,75 @@ else:
     # On resume, the checkpoint we resumed from is the last known periodic save
     last_periodic_ckpt_step = step
 
+# ── MST Experiment Tracker ────────────────────────────────────────────────────
+if config.use_mst and master_process:
+    class _MSTTracker:
+        """Accumulates per-step MST router diagnostics and val_loss milestones,
+        then writes a single summary CSV row at end of training."""
+        def __init__(self, config, run_dir):
+            self.config = config
+            self.run_dir = run_dir
+            self.entropy_vals, self.balance_vals, self.grad_norm_vals = [], [], []
+            self.val_at = {}  # step -> bpb
+
+        def collect(self, model, grad_norm=None):
+            """Call after each optimizer step to sample router diagnostics."""
+            from nanochat.mst import MSTRouter
+            for m in model.modules():
+                if isinstance(m, MSTRouter):
+                    if m._last_entropy is not None:
+                        self.entropy_vals.append(float(m._last_entropy))
+                    if m._last_balance is not None:
+                        self.balance_vals.append(float(m._last_balance))
+            if grad_norm is not None:
+                self.grad_norm_vals.append(float(grad_norm))
+
+        def record_val(self, step, bpb):
+            self.val_at[step] = bpb
+
+        def write_csv(self, step, val_bpb, total_training_time, num_flops_per_token,
+                      total_batch_size, num_params, sp):
+            import csv, os, statistics
+            c = self.config
+            row = {
+                'config_id':           getattr(args, 'model_tag', '') or f'd{args.depth}',
+                'input_mode':          c.mst_input_mode,
+                'routing_mode':        c.mst_routing_mode,
+                'ffn_mode':            c.mst_ffn_mode,
+                'transition_mode':     c.mst_transition_mode,
+                'final_mode':          c.mst_final_mode,
+                'n_subs':              c.mst_n_subs,
+                'sub_dim':             c.mst_sub_dim,
+                'head_dim':            c.mst_head_dim if c.mst_head_dim > 0 else c.mst_sub_dim // c.n_head,
+                'val_loss_1k':         self.val_at.get(1000, ''),
+                'val_loss_5k':         self.val_at.get(5000, ''),
+                'val_loss_final':      val_bpb if val_bpb is not None else '',
+                'router_entropy_mean': f'{statistics.mean(self.entropy_vals):.4f}' if self.entropy_vals else '',
+                'router_entropy_min':  f'{min(self.entropy_vals):.4f}'              if self.entropy_vals else '',
+                'load_balance_score':  f'{statistics.mean(self.balance_vals):.4f}'  if self.balance_vals else '',
+                'grad_norm_mean':      f'{statistics.mean(self.grad_norm_vals):.4f}' if self.grad_norm_vals else '',
+                'wall_time_min':       f'{total_training_time / 60:.2f}',
+                'flops_per_token':     f'{num_flops_per_token:.4e}',
+                'total_flops':         f'{num_flops_per_token * total_batch_size * step:.4e}',
+                'params_full':         num_params,
+                'params_transformer':  sp.get('transformer_matrices', '') if isinstance(sp, dict) else '',
+                'params_value_embeds': sp.get('value_embeds', '')         if isinstance(sp, dict) else '',
+                'params_total_sp':     sp.get('total', '')                if isinstance(sp, dict) else '',
+            }
+            csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
+            write_header = not os.path.exists(csv_path)
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+            print0(f"[MST] Results appended → {csv_path}")
+
+    _mst_tracker = _MSTTracker(config, checkpoint_dir)
+else:
+    _mst_tracker = None
+
+
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
 effective_device_batch_size = args.device_batch_size * (ddp_world_size if is_dp else 1)
 tokens_per_fwdbwd = effective_device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -1174,6 +1243,8 @@ while True:
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+        if _mst_tracker is not None:
+            _mst_tracker.record_val(step, val_bpb)
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -1376,6 +1447,9 @@ while True:
                     module._temperature.fill_(current_temp)
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
+    # Collect MST router diagnostics (reads tensors already computed in forward)
+    if _mst_tracker is not None:
+        _mst_tracker.collect(orig_model)
     synchronize()
     t1 = time.time()
     dt = t1 - t0
@@ -1496,6 +1570,19 @@ print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
+
+# MST: write per-run summary row to mst_results.csv
+if _mst_tracker is not None:
+    sp = orig_model.num_scaling_params() if hasattr(orig_model, 'num_scaling_params') else {}
+    _mst_tracker.write_csv(
+        step=step,
+        val_bpb=val_bpb,
+        total_training_time=total_training_time,
+        num_flops_per_token=num_flops_per_token,
+        total_batch_size=total_batch_size,
+        num_params=num_params,
+        sp=sp,
+    )
 
 # Log to report
 from nanochat.report import get_report
