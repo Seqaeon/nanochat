@@ -741,7 +741,29 @@ class MST(nn.Module):
         t = self.config.sequence_len
         attn_flops = self.config.n_layer * N * 12 * n_head * head_dim * t
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
-        return total_flops, total_flops, nparams
+
+        # For topk_hard routing, only k/N sub-transformers execute per token.
+        # Scale sub-transformer FLOPs and params by the active fraction.
+        routing_mode = self.config.mst_routing_mode
+        if routing_mode == 'topk_hard':
+            k = self.config.mst_routing_topk
+            active_fraction = k / N
+        else:
+            active_fraction = 1.0  # soft_weighted / sequence_path: all subs active
+
+        # Params belonging to per-sub modules (sub_blocks): scale by active_fraction.
+        # Shared params (wte, lm_head, value_embeds, input_layer, final_head) are always active.
+        sub_params = sum(p.numel() for layer in self.layers for p in layer.sub_blocks.parameters())
+        shared_params = nparams - sub_params
+        active_params = int(shared_params + sub_params * active_fraction)
+
+        # Scale only the sub-block portion of FLOPs; routing/transition/embedding overhead is always paid.
+        sub_flops = 6 * sub_params + attn_flops
+        shared_flops = total_flops - sub_flops
+        active_flops = int(shared_flops + sub_flops * active_fraction)
+
+        return total_flops, active_flops, active_params
+
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2,
                         matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95),
