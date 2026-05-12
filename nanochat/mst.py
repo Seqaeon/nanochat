@@ -237,7 +237,7 @@ class MSTRouter(nn.Module):
       'sequence_path':  Sequence-level path routing (one path per sequence).
     """
 
-    def __init__(self, d, N, D, mode='soft_weighted', topk=4, aux_weight=0.01):
+    def __init__(self, d, N, D, mode='soft_weighted', topk=4, aux_weight=0.01, diversity_weight=0.0):
         super().__init__()
         self.d = d
         self.N = N
@@ -245,6 +245,7 @@ class MSTRouter(nn.Module):
         self.mode = mode
         self.topk = topk
         self.aux_weight = aux_weight
+        self.diversity_weight = diversity_weight
         self._last_entropy = None
         self._last_balance = None
         self._last_aux_loss = None
@@ -303,6 +304,19 @@ class MSTRouter(nn.Module):
             else:
                 dispatch = probs_mean
             aux_loss = self.aux_weight * N * (dispatch * probs_mean).sum()
+
+        # Cosine diversity penalty: penalize pairwise cosine similarity of sub outputs
+        # to encourage sub-transformers to learn distinct, complementary representations.
+        if self.training and self.diversity_weight > 0.0:
+            normed = F.normalize(stacked, dim=-1)  # (B, T, N, d)
+            # (B*T, N, N) pairwise cosine similarity
+            flat = normed.flatten(0, 1)  # (B*T, N, d)
+            sim = torch.bmm(flat, flat.transpose(-1, -2))  # (B*T, N, N)
+            # Mean off-diagonal similarity
+            mask = ~torch.eye(N, device=sim.device, dtype=torch.bool).unsqueeze(0)
+            diversity_loss = sim.masked_select(mask).mean()
+            aux_loss = aux_loss + self.diversity_weight * diversity_loss
+
         self._last_aux_loss = aux_loss
 
         return output, aux_loss
@@ -315,22 +329,30 @@ class MSTTransition(nn.Module):
       'parallel':             Direct pass — sub i feeds sub i in next layer.
       'aggregate_distribute': Router combines -> per-sub projection redistributes.
       'cross_attend':         Each sub cross-attends to all other subs (lightweight).
+      'concat_proj':          Concatenate all N sub outputs, project down, redistribute.
     """
 
-    def __init__(self, d, N, D, mode='parallel'):
+    def __init__(self, d, N, D, mode='parallel', diversity_weight=0.0):
         super().__init__()
         self.mode = mode
         self.d = d
         self.N = N
 
         if mode == 'aggregate_distribute':
-            self.router = MSTRouter(d, N, D, mode='soft_weighted')
+            self.router = MSTRouter(d, N, D, mode='soft_weighted', diversity_weight=diversity_weight)
             self.distribute = nn.ModuleList([
                 Linear(d, d, bias=False) for _ in range(N)
             ])
         elif mode == 'cross_attend':
             # Lightweight: each sub gets a weighted sum of all other subs
             self.cross_weights = nn.Parameter(torch.zeros(N, N))
+        elif mode == 'concat_proj':
+            # Concatenate all N sub outputs (N*d), project to d, then redistribute.
+            # Preserves cross-sub information that weighted sum destroys.
+            self.concat_down = Linear(N * d, d, bias=False)
+            self.distribute = nn.ModuleList([
+                Linear(d, d, bias=False) for _ in range(N)
+            ])
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -346,6 +368,10 @@ class MSTTransition(nn.Module):
             # Each sub i gets weighted combo of all subs
             mixed = torch.einsum('ij,btjd->btid', weights.to(stacked.dtype), stacked)
             return [mixed[:, :, i] for i in range(self.N)], torch.tensor(0.0, device=stacked.device)
+        elif self.mode == 'concat_proj':
+            concatenated = torch.cat(sub_outputs, dim=-1)  # (B, T, N*d)
+            aggregated = self.concat_down(concatenated)     # (B, T, d)
+            return [proj(aggregated) for proj in self.distribute], torch.tensor(0.0, device=aggregated.device)
         else:
             raise ValueError(f"Unknown transition mode: {self.mode}")
 
@@ -356,9 +382,10 @@ class MSTFinalHead(nn.Module):
     Modes:
       'aggregate_proj':   Weighted sum of sub outputs -> single lm_head projection.
       'weighted_logits':  Each sub has independent lm_head; weighted sum of logits.
+      'concat_proj':      Concatenate all N sub outputs, project to D, then lm_head.
     """
 
-    def __init__(self, d, N, D, vocab_size, mode='aggregate_proj'):
+    def __init__(self, d, N, D, vocab_size, mode='aggregate_proj', diversity_weight=0.0):
         super().__init__()
         self.mode = mode
         self.d = d
@@ -366,13 +393,16 @@ class MSTFinalHead(nn.Module):
         self.D = D
 
         if mode == 'aggregate_proj':
-            self.agg_router = MSTRouter(d, N, D, mode='soft_weighted')
+            self.agg_router = MSTRouter(d, N, D, mode='soft_weighted', diversity_weight=diversity_weight)
             self.proj = Linear(d, D, bias=False)  # d -> D before lm_head
         elif mode == 'weighted_logits':
             self.sub_heads = nn.ModuleList([
                 Linear(d, vocab_size, bias=False) for _ in range(N)
             ])
             self.head_weights = nn.Parameter(torch.ones(N) / N)
+        elif mode == 'concat_proj':
+            # Concatenate all N sub outputs (N*d), project directly to D.
+            self.proj = Linear(N * d, D, bias=False)
         else:
             raise ValueError(f"Unknown final mode: {mode}")
 
@@ -390,6 +420,11 @@ class MSTFinalHead(nn.Module):
                          for w, head, sub_out
                          in zip(weights, self.sub_heads, sub_outputs))
             return logits, torch.tensor(0.0, device=logits.device)
+        elif self.mode == 'concat_proj':
+            concatenated = torch.cat(sub_outputs, dim=-1)  # (B, T, N*d)
+            h = self.proj(concatenated)  # (B, T, D)
+            logits = lm_head(h)
+            return logits, torch.tensor(0.0, device=concatenated.device)
 
 
 class MSTLayer(nn.Module):
@@ -412,7 +447,8 @@ class MSTLayer(nn.Module):
                                 ffn_mode=config.mst_ffn_mode)
             for j in range(N)
         ])
-        self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode)
+        self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
+                                         diversity_weight=config.mst_diversity_weight)
 
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 kv_cache=None, total_sub_layers=1):
@@ -487,6 +523,7 @@ class MST(nn.Module):
         self.final_head = MSTFinalHead(
             d, N, D, padded_vocab_size,
             mode=config.mst_final_mode,
+            diversity_weight=config.mst_diversity_weight,
         )
 
         # Standard lm_head for aggregate_proj mode

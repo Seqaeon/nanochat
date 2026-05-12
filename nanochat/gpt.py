@@ -327,12 +327,13 @@ class GPTConfig:
     mst_routing_mode: str = 'soft_weighted'    # 'soft_weighted'|'topk_hard'|'sequence_path'
     mst_routing_topk: int = 4                  # R-B: k for top-k hard routing
     mst_routing_aux_weight: float = 0.01       # load balancing loss coefficient
+    mst_diversity_weight: float = 0.0          # cosine diversity penalty (0=off; e.g. 0.01 to encourage sub specialization)
     # Axis 3 — FFN Internal Transition
     mst_ffn_mode: str = 'standard'             # 'standard' (d→4d→d) | 'no_downproj' (d→4d)
     # Axis 4 — Layer-to-Layer Transition
-    mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'
+    mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'|'concat_proj'
     # Axis 5 — Final Layer → Vocabulary
-    mst_final_mode: str = 'aggregate_proj'     # 'weighted_logits'|'aggregate_proj'
+    mst_final_mode: str = 'aggregate_proj'     # 'aggregate_proj'|'weighted_logits'|'concat_proj'
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -418,6 +419,7 @@ RESEARCH_ALLOWED_KEYS = {
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",
     "mst_routing_mode", "mst_routing_topk", "mst_routing_aux_weight",
+    "mst_diversity_weight",
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
 }
 

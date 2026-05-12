@@ -308,6 +308,7 @@ def run_training_sweep(args):
         "--mst-routing-mode", str(getattr(args, 'mst_routing_mode', 'soft_weighted')),
         "--mst-routing-topk", str(getattr(args, 'mst_routing_topk', 4)),
         "--mst-routing-aux-weight", str(getattr(args, 'mst_routing_aux_weight', 0.01)),
+        "--mst-diversity-weight", str(getattr(args, 'mst_diversity_weight', 0.0)),
         "--mst-ffn-mode", str(getattr(args, 'mst_ffn_mode', 'standard')),
         "--mst-transition-mode", str(getattr(args, 'mst_transition_mode', 'parallel')),
         "--mst-final-mode", str(getattr(args, 'mst_final_mode', 'aggregate_proj')),
@@ -809,11 +810,12 @@ if __name__ == "__main__":
                         choices=["soft_weighted", "topk_hard", "sequence_path"])
     parser.add_argument("--mst-routing-topk", type=int, default=4)
     parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01)
+    parser.add_argument("--mst-diversity-weight", type=float, default=0.0)
     parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"])
     parser.add_argument("--mst-transition-mode", type=str, default="parallel",
-                        choices=["parallel", "aggregate_distribute", "cross_attend"])
+                        choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj"])
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
-                        choices=["aggregate_proj", "weighted_logits"])
+                        choices=["aggregate_proj", "weighted_logits", "concat_proj"])
 
     args = parser.parse_args()
     

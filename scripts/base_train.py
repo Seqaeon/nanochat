@@ -133,13 +133,14 @@ parser.add_argument("--mst-routing-mode", type=str, default="soft_weighted",
                     help="MST Axis 2: routing/combination mode")
 parser.add_argument("--mst-routing-topk", type=int, default=4, help="MST R-B: k for top-k hard routing")
 parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01, help="MST: load balance aux loss weight")
+parser.add_argument("--mst-diversity-weight", type=float, default=0.0, help="MST: cosine diversity penalty weight (0=off, e.g. 0.01)")
 parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"],
                     help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d)")
 parser.add_argument("--mst-transition-mode", type=str, default="parallel",
-                    choices=["parallel", "aggregate_distribute", "cross_attend"],
+                    choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj"],
                     help="MST Axis 4: layer-to-layer transition mode")
 parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
-                    choices=["aggregate_proj", "weighted_logits"],
+                    choices=["aggregate_proj", "weighted_logits", "concat_proj"],
                     help="MST Axis 5: final layer output mode")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
@@ -658,6 +659,7 @@ def build_model_meta(depth):
         mst_routing_mode=getattr(args, 'mst_routing_mode', 'soft_weighted'),
         mst_routing_topk=getattr(args, 'mst_routing_topk', 4),
         mst_routing_aux_weight=getattr(args, 'mst_routing_aux_weight', 0.01),
+        mst_diversity_weight=getattr(args, 'mst_diversity_weight', 0.0),
         mst_ffn_mode=getattr(args, 'mst_ffn_mode', 'standard'),
         mst_transition_mode=getattr(args, 'mst_transition_mode', 'parallel'),
         mst_final_mode=getattr(args, 'mst_final_mode', 'aggregate_proj'),
