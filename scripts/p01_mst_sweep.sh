@@ -110,7 +110,7 @@ MST_COMMON="--models base \
   --target-tokens 0 \
   --target-active-params 0 \
   --save-every 200 \
-  --eval-every 250 \
+  --eval-every -1 \
   --use-mst 1 \
   --mst-n-subs 8 --mst-head-dim 0 \
   --mst-sub-dim 64"
