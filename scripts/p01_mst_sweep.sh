@@ -242,12 +242,12 @@ run_experiment "S1_TRANS_C_CROSS_D${DEPTH}" \
     --mst-final-mode aggregate_proj
 
 # ── Axis 5: Final Output Mode ───────────────────────────────────────────────
-
-run_experiment "S1_FINAL_A_WEIGHTED_LOGITS_D${DEPTH}" \
-    "Stage 1: Final = weighted_logits (N independent heads)" \
-    --mst-input-mode fixed_slice --mst-routing-mode soft_weighted --mst-ffn-mode standard \
-    --mst-transition-mode parallel \
-    --mst-final-mode weighted_logits
+#
+#run_experiment "S1_FINAL_A_WEIGHTED_LOGITS_D${DEPTH}" \
+#    "Stage 1: Final = weighted_logits (N independent heads)" \
+#    --mst-input-mode fixed_slice --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+#    --mst-transition-mode parallel \
+#    --mst-final-mode weighted_logits
 
 # ============================================================================
 # Stage 2: Interaction Grids (filled after Stage 1 analysis)

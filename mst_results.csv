@@ -8,3 +8,5 @@ base,stem,soft_weighted,standard,parallel,aggregate_proj,8,64,16,,,1.21111103277
 base,fixed_slice,topk_hard_top4,standard,parallel,aggregate_proj,8,64,16,,,1.20669955580635,1.9767,1.9375,0.7592,,11.8,270760000,1.1924E+017,45126160,3183104,8388608,45126160
 base,fixed_slice,topk_hard_top1,standard,parallel,aggregate_proj,8,64,16,,,1.2052753002541,1.9704,1.9297,0.7366,,11.89,270760000,1.1924E+017,45126160,3183104,8388608,45126160
 base,fixed_slice,sequence_path,standard,parallel,aggregate_proj,8,64,16,,,1.20506426492327,1.9782,1.9297,0.7374,,12.1,270760000,1.1924E+017,45126160,3183104,8388608,45126160
+base,fixed_slice,soft_weighted,standard,aggregate_distribute,aggregate_proj,8,64,16,,,1.19338,,,,,12.90,272354400,1.1995E+017,45392400,,,45392400
+base,fixed_slice,soft_weighted,standard,cross_attend,aggregate_proj,8,64,16,,,1.196724,,,,,13.25,270760000,1.1924E+017,45126672,,,45126672
