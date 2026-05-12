@@ -1,0 +1,2018 @@
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon May 11 22:57:58 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA B200                    On  |   00000000:93:00.0 Off |                    0 |
+| N/A   28C    P0            190W / 1000W |       0MiB / 183359MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/p01_mst_sweep/S0A_MST_BASELINE_D8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.10 environment at: /usr/local[0m
+[2mResolved [1m142 packages[0m [2min 565ms[0m[0m
+   [36m[1mBuilding[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[36m[1mDownloading[0m[39m nvidia-cutlass-dsl-libs-cu13 [2m(75.1MiB)[0m
+ [32m[1mDownloading[0m[39m nvidia-cutlass-dsl-libs-cu13
+      [32m[1mBuilt[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[2mPrepared [1m3 packages[0m [2min 1.17s[0m[0m
+[2mUninstalled [1m2 packages[0m [2min 5ms[0m[0m
+[2mInstalled [1m3 packages[0m [2min 48ms[0m[0m
+ [31m-[39m [1mkernels[0m[2m==0.14.0[0m
+ [32m+[39m [1mkernels[0m[2m==0.13.0[0m
+ [31m-[39m [1mnanochat[0m[2m==0.1.0 (from file:///root)[0m
+ [32m+[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5)[0m
+ [32m+[39m [1mnvidia-cutlass-dsl-libs-cu13[0m[2m==4.5.0[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Unfinished experiments found from a previous run:
+  [base] ckpt_dir = /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: 440,407,296
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 440407296 --target-param-data-ratio 10.5 --eval-every 250 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 1 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 64 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --compile --tokenizer-dir tokenizer --data-dir data --checkpoints-dir /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base --model-tag base
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-05-11 22:58:19,320 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA B200 | Peak FLOPS (BF16): 2.25e+15
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 100 (bf16 supported))
+✓ Using Flash Attention 4 (Blackwell GPU detected) — fastest possible attention.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": true,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 64,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj"
+}
+Checkpoints directory: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 16,777,216
+transformer_matrices    : 6,328,832
+research                : 0
+scalars                 : 16
+total                   : 48,271,888
+Estimated FLOPs per token (total):  2.896313e+08
+Estimated FLOPs per token (active): 2.896313e+08
+Estimated active params:            48,271,888
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.088520 for depth 8
+Scaling AdamW LRs ∝1/√(512/768) = 1.224745
+Calculated number of iterations from target data:param ratio: 1,680
+Total number of training tokens: 440,401,920
+Tokens : Scaling params ratio: 19.06
+Total training FLOPs estimate: 1.275542e+17
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0511 22:58:20.145000 1089 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1692: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS="+dynamo" for a DEBUG stack trace.
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] or:
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] to include these operations in the captured graph.
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] 
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] Graph break: from user code at:
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 375, in forward
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]     aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 282, in forward
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0]     self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] 
+[rank0]:W0511 22:58:56.315000 1089 site-packages/torch/_dynamo/variables/tensor.py:1048] [36/0] 
+[rank0]:[W511 22:59:01.742355763 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+Warmup complete. Steady-state VRAM: 0.6 GB allocated
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+/usr/local/lib/python3.12/site-packages/nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py:5789: DeprecationWarning: Use explicit `struct.scalar.ptr` for pointer instead.
+  warnings.warn(
+
+Step 00000 | Validation bpb: 3.169715
+step 00000/01680 (0.00%) | loss: 10.407242 | lrm: 0.12 | lr(adamw:5.088e-02, muon:1.768e-03) | dt: 534.18ms | tok/sec: 490,742 | bf16_mfu: 6.32 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-05-11 23:02:02,508 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_000200.pt
+2026-05-11 23:02:02,509 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_000200.json
+2026-05-11 23:02:02,960 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_000200_rank0.pt
+step 00200/01680 (11.90%) | loss: 4.635414 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 481.24ms | tok/sec: 544,722 | bf16_mfu: 7.01 | epoch: 1 pq: 1 rg: 16 | total time: 1.75m | eta: 13.6m
+Step 00250 | Validation bpb: 1.340268
+step 00200/01680 (11.90%) | loss: 4.636289 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 625609.40ms | tok/sec: 419 | bf16_mfu: 0.01 | epoch: 1 pq: 1 rg: 18 | total time: 12.17m | eta: 94.8m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00250 | Validation bpb: 1.338148
+2026-05-11 23:29:09,149 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_000400.pt
+2026-05-11 23:29:09,161 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_000400.json
+2026-05-11 23:29:09,930 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01680 (23.81%) | loss: 4.200517 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 615.19ms | tok/sec: 426,119 | bf16_mfu: 12.48 | epoch: 1 pq: 2 rg: 33 | total time: 15.06m | eta: 49.4m
+Step 00500 | Validation bpb: 1.245884
+2026-05-11 23:33:23,921 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_000600.pt
+2026-05-11 23:33:23,930 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_000600.json
+2026-05-11 23:33:24,664 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01680 (35.71%) | loss: 4.061356 | lrm: 0.99 | lr(adamw:4.028e-01, muon:1.399e-02) | dt: 568.05ms | tok/sec: 461,478 | bf16_mfu: 13.51 | epoch: 1 pq: 3 rg: 47 | total time: 17.10m | eta: 31.3m
+Step 00750 | Validation bpb: 1.208184
+2026-05-11 23:37:52,518 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_000800.pt
+2026-05-11 23:37:52,526 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_000800.json
+2026-05-11 23:37:53,276 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01680 (47.62%) | loss: 3.954043 | lrm: 0.82 | lr(adamw:3.320e-01, muon:1.153e-02) | dt: 629.17ms | tok/sec: 416,650 | bf16_mfu: 12.20 | epoch: 1 pq: 4 rg: 62 | total time: 19.17m | eta: 21.4m
+Step 01000 | Validation bpb: 1.182360
+2026-05-11 23:41:56,602 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_001000.pt
+2026-05-11 23:41:56,611 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_001000.json
+2026-05-11 23:41:57,284 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01680 (59.52%) | loss: 3.890153 | lrm: 0.64 | lr(adamw:2.612e-01, muon:9.073e-03) | dt: 624.26ms | tok/sec: 419,930 | bf16_mfu: 12.30 | epoch: 1 pq: 5 rg: 77 | total time: 21.22m | eta: 14.6m
+2026-05-11 23:44:00,730 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_001200.pt
+2026-05-11 23:44:00,739 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_001200.json
+2026-05-11 23:44:01,418 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01680 (71.43%) | loss: 3.857773 | lrm: 0.47 | lr(adamw:1.903e-01, muon:6.613e-03) | dt: 602.36ms | tok/sec: 435,194 | bf16_mfu: 12.74 | epoch: 1 pq: 7 rg: 8 | total time: 23.25m | eta: 9.4m
+Step 01250 | Validation bpb: 1.162933
+2026-05-11 23:48:15,286 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_001400.pt
+2026-05-11 23:48:15,296 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_001400.json
+2026-05-11 23:48:15,971 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01680 (83.33%) | loss: 3.788859 | lrm: 0.29 | lr(adamw:1.195e-01, muon:4.152e-03) | dt: 588.84ms | tok/sec: 445,186 | bf16_mfu: 13.04 | epoch: 1 pq: 8 rg: 23 | total time: 25.27m | eta: 5.1m
+Step 01500 | Validation bpb: 1.147757
+2026-05-11 23:52:19,019 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_001600.pt
+2026-05-11 23:52:19,024 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_001600.json
+2026-05-11 23:52:19,723 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01680 (95.24%) | loss: 3.768513 | lrm: 0.12 | lr(adamw:4.869e-02, muon:1.691e-03) | dt: 641.11ms | tok/sec: 408,889 | bf16_mfu: 11.97 | epoch: 1 pq: 9 rg: 38 | total time: 27.28m | eta: 1.4m
+step 01679/01680 (99.94%) | loss: 3.767813 | lrm: 0.05 | lr(adamw:2.071e-02, muon:7.194e-04) | dt: 568.61ms | tok/sec: 461,022 | bf16_mfu: 13.50 | epoch: 1 pq: 9 rg: 76 | total time: 28.06m | eta: 0.0m
+Step 01680 | Validation bpb: 1.140062
+<|bos|>The capital of France is the 20th century. The 20th century was the first of the
+<|bos|>The chemical symbol of gold is the gold, which is the gold, which is the gold, which is the
+<|bos|>If yesterday was Friday, then tomorrow will be the first time you have been in the field of science. The first time you
+<|bos|>The opposite of hot is the way the body works. The body is not able to work, but it
+<|bos|>The planets of the solar system are: 1. The solar system is a small, 2. The solar system
+<|bos|>My favorite color is the blue and green. I have a lot of color in my home, but
+<|bos|>If 5*x + 3 = 13, then x is the number of times the number of times the number of times the number of times
+2026-05-11 23:55:14,418 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/model_001680.pt
+2026-05-11 23:55:14,425 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/meta_001680.json
+2026-05-11 23:55:15,114 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/ckpt_base/base/optim_001680_rank0.pt
+step 01680/01680 (final) | loss: 3.767813 | early_stop: 0
+Peak memory usage: 56431.04MiB
+Total training time: 28.06m
+Minimum validation bpb: 1.140062
+Final Validation BPB for base: 1.1401
+
+--- Generating Report ---
+Saved plot to out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/comparison_depth_8.png
+Saved TSV data to out/p01_mst_sweep/S0A_MST_BASELINE_D8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/p01_mst_sweep/S0A_MST_BASELINE_D8
+================================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Mon May 11 23:55:26 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   34C    P0             74W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.10 environment at: /usr/local[0m
+[2mResolved [1m142 packages[0m [2min 425ms[0m[0m
+   [36m[1mBuilding[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+      [32m[1mBuilt[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[2mPrepared [1m1 package[0m [2min 3.72s[0m[0m
+[2mUninstalled [1m1 package[0m [2min 1ms[0m[0m
+[2mInstalled [1m1 package[0m [2min 4ms[0m[0m
+ [33m~[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5)[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-05-11 23:55:51,158 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-11 23:55:51,322 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-11 23:55:51,442 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Unfinished experiments found from a previous run:
+  [base] ckpt_dir = /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: 440,407,296
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 440407296 --target-param-data-ratio 10.5 --eval-every 250 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 1 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 64 --mst-input-mode learned_proj --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --compile --tokenizer-dir tokenizer --data-dir data --checkpoints-dir /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base --model-tag base
+2026-05-11 23:56:06,499 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-11 23:56:06,614 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-11 23:56:06,746 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-05-11 23:56:09,561 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": true,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 64,
+  "mst_input_mode": "learned_proj",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj"
+}
+Checkpoints directory: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 16,777,216
+transformer_matrices    : 6,590,976
+research                : 0
+scalars                 : 16
+total                   : 48,534,032
+Estimated FLOPs per token (total):  2.912042e+08
+Estimated FLOPs per token (active): 2.912042e+08
+Estimated active params:            48,534,032
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.089404 for depth 8
+Scaling AdamW LRs ∝1/√(512/768) = 1.224745
+Calculated number of iterations from target data:param ratio: 1,680
+Total number of training tokens: 440,401,920
+Tokens : Scaling params ratio: 18.85
+Total training FLOPs estimate: 1.282469e+17
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0511 23:56:11.435000 46082 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] or:
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] to include these operations in the captured graph.
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break: from user code at:
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 694, in forward
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 375, in forward
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 282, in forward
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0511 23:57:07.614000 46082 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:[W512 00:04:27.695803787 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 0.6 GB allocated
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00000 | Validation bpb: 3.169722
+step 00000/01680 (0.00%) | loss: 10.407261 | lrm: 0.12 | lr(adamw:5.088e-02, muon:1.768e-03) | dt: 1046.58ms | tok/sec: 250,476 | bf16_mfu: 7.38 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-05-12 00:14:23,120 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_000200.pt
+2026-05-12 00:14:23,128 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_000200.json
+2026-05-12 00:14:23,827 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_000200_rank0.pt
+step 00200/01680 (11.90%) | loss: 4.769642 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 616.37ms | tok/sec: 425,305 | bf16_mfu: 12.52 | epoch: 1 pq: 1 rg: 16 | total time: 2.58m | eta: 20.1m
+Step 00250 | Validation bpb: 1.364901
+2026-05-12 00:17:27,980 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_000400.pt
+2026-05-12 00:17:27,990 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_000400.json
+2026-05-12 00:17:28,735 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01680 (23.81%) | loss: 4.196152 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 613.09ms | tok/sec: 427,575 | bf16_mfu: 12.59 | epoch: 1 pq: 2 rg: 30 | total time: 4.61m | eta: 15.1m
+Step 00500 | Validation bpb: 1.251063
+2026-05-12 00:20:36,983 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_000600.pt
+2026-05-12 00:20:36,994 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_000600.json
+2026-05-12 00:20:37,729 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01680 (35.71%) | loss: 4.061220 | lrm: 0.99 | lr(adamw:4.028e-01, muon:1.399e-02) | dt: 581.98ms | tok/sec: 450,432 | bf16_mfu: 13.26 | epoch: 1 pq: 3 rg: 43 | total time: 6.65m | eta: 12.2m
+Step 00750 | Validation bpb: 1.211472
+2026-05-12 00:23:47,962 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_000800.pt
+2026-05-12 00:23:47,967 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_000800.json
+2026-05-12 00:23:48,682 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01680 (47.62%) | loss: 3.973116 | lrm: 0.82 | lr(adamw:3.320e-01, muon:1.153e-02) | dt: 566.51ms | tok/sec: 462,738 | bf16_mfu: 13.63 | epoch: 1 pq: 4 rg: 58 | total time: 8.71m | eta: 9.7m
+Step 01000 | Validation bpb: 1.184698
+2026-05-12 00:26:52,184 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_001000.pt
+2026-05-12 00:26:52,192 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_001000.json
+2026-05-12 00:26:52,918 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01680 (59.52%) | loss: 3.896636 | lrm: 0.64 | lr(adamw:2.612e-01, muon:9.073e-03) | dt: 587.66ms | tok/sec: 446,083 | bf16_mfu: 13.13 | epoch: 1 pq: 5 rg: 73 | total time: 10.71m | eta: 7.4m
+2026-05-12 00:28:57,218 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_001200.pt
+2026-05-12 00:28:57,227 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_001200.json
+2026-05-12 00:28:57,956 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01680 (71.43%) | loss: 3.851629 | lrm: 0.47 | lr(adamw:1.903e-01, muon:6.613e-03) | dt: 571.31ms | tok/sec: 458,850 | bf16_mfu: 13.51 | epoch: 1 pq: 7 rg: 4 | total time: 12.76m | eta: 5.1m
+Step 01250 | Validation bpb: 1.164652
+2026-05-12 00:32:05,784 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_001400.pt
+2026-05-12 00:32:05,795 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_001400.json
+2026-05-12 00:32:06,512 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01680 (83.33%) | loss: 3.792711 | lrm: 0.29 | lr(adamw:1.195e-01, muon:4.152e-03) | dt: 664.94ms | tok/sec: 394,239 | bf16_mfu: 11.61 | epoch: 1 pq: 8 rg: 19 | total time: 14.81m | eta: 3.0m
+Step 01500 | Validation bpb: 1.149053
+2026-05-12 00:35:13,707 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_001600.pt
+2026-05-12 00:35:13,713 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_001600.json
+2026-05-12 00:35:14,408 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01680 (95.24%) | loss: 3.765195 | lrm: 0.12 | lr(adamw:4.869e-02, muon:1.691e-03) | dt: 611.85ms | tok/sec: 428,447 | bf16_mfu: 12.62 | epoch: 1 pq: 9 rg: 34 | total time: 16.85m | eta: 0.8m
+step 01679/01680 (99.94%) | loss: 3.771600 | lrm: 0.05 | lr(adamw:2.071e-02, muon:7.194e-04) | dt: 618.06ms | tok/sec: 424,138 | bf16_mfu: 12.49 | epoch: 1 pq: 9 rg: 72 | total time: 17.66m | eta: 0.0m
+Step 01680 | Validation bpb: 1.141140
+<|bos|>The capital of France is the largest city in the world, and the city is the largest city in the
+<|bos|>The chemical symbol of gold is a symbol of the gold element, which is a symbol of gold. The symbol
+<|bos|>If yesterday was Friday, then tomorrow will be the first time the world was in the world. The world was a little more
+<|bos|>The opposite of hot is that the heat of the heat is the heat of the heat. The heat of
+<|bos|>The planets of the solar system are: 1. The planets are the same as the planets. 2. The
+<|bos|>My favorite color is the white, and the white is the white. The white is the white,
+<|bos|>If 5*x + 3 = 13, then x is 3.5. If 5*x + 3 = 13
+2026-05-12 00:37:11,743 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/model_001680.pt
+2026-05-12 00:37:11,753 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/meta_001680.json
+2026-05-12 00:37:12,485 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/ckpt_base/base/optim_001680_rank0.pt
+step 01680/01680 (final) | loss: 3.771600 | early_stop: 0
+Peak memory usage: 56756.06MiB
+Total training time: 17.66m
+Minimum validation bpb: 1.141140
+Final Validation BPB for base: 1.1411
+
+--- Generating Report ---
+Saved plot to out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/comparison_depth_8.png
+Saved TSV data to out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/p01_mst_sweep/S1_INPUT_B_LEARNED_PROJ_D8
+================================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Tue May 12 00:37:22 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   36C    P0             74W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.10 environment at: /usr/local[0m
+[2mResolved [1m142 packages[0m [2min 411ms[0m[0m
+   [36m[1mBuilding[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+      [32m[1mBuilt[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[2mPrepared [1m1 package[0m [2min 3.72s[0m[0m
+[2mUninstalled [1m1 package[0m [2min 1ms[0m[0m
+[2mInstalled [1m1 package[0m [2min 3ms[0m[0m
+ [33m~[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5)[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-05-12 00:37:48,019 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 00:37:48,166 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 00:37:48,295 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Unfinished experiments found from a previous run:
+  [base] ckpt_dir = /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: 440,407,296
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 440407296 --target-param-data-ratio 10.5 --eval-every 250 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 1 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 64 --mst-input-mode rotated_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --compile --tokenizer-dir tokenizer --data-dir data --checkpoints-dir /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base --model-tag base
+2026-05-12 00:38:02,505 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 00:38:02,624 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 00:38:02,744 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-05-12 00:38:05,005 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": true,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 64,
+  "mst_input_mode": "rotated_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj"
+}
+Checkpoints directory: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 16,777,216
+transformer_matrices    : 6,328,832
+research                : 0
+scalars                 : 16
+total                   : 48,271,888
+Estimated FLOPs per token (total):  2.896313e+08
+Estimated FLOPs per token (active): 2.896313e+08
+Estimated active params:            48,271,888
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.088520 for depth 8
+Scaling AdamW LRs ∝1/√(512/768) = 1.224745
+Calculated number of iterations from target data:param ratio: 1,680
+Total number of training tokens: 440,401,920
+Tokens : Scaling params ratio: 19.06
+Total training FLOPs estimate: 1.275542e+17
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0512 00:38:06.356000 28692 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] or:
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] to include these operations in the captured graph.
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break: from user code at:
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 694, in forward
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 375, in forward
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 282, in forward
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 00:38:39.684000 28692 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:[W512 00:45:30.385920921 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 0.6 GB allocated
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00000 | Validation bpb: 3.169617
+step 00000/01680 (0.00%) | loss: 10.406868 | lrm: 0.12 | lr(adamw:5.088e-02, muon:1.768e-03) | dt: 1099.35ms | tok/sec: 238,454 | bf16_mfu: 6.98 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-05-12 00:55:25,521 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_000200.pt
+2026-05-12 00:55:25,531 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_000200.json
+2026-05-12 00:55:26,227 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_000200_rank0.pt
+step 00200/01680 (11.90%) | loss: 4.782649 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 595.33ms | tok/sec: 440,333 | bf16_mfu: 12.90 | epoch: 1 pq: 1 rg: 16 | total time: 2.75m | eta: 21.4m
+Step 00250 | Validation bpb: 1.382572
+2026-05-12 00:59:49,782 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_000400.pt
+2026-05-12 00:59:49,790 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_000400.json
+2026-05-12 00:59:50,484 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01680 (23.81%) | loss: 4.298649 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 634.14ms | tok/sec: 413,383 | bf16_mfu: 12.11 | epoch: 1 pq: 2 rg: 30 | total time: 4.75m | eta: 15.6m
+Step 00500 | Validation bpb: 1.283067
+2026-05-12 01:04:09,934 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_000600.pt
+2026-05-12 01:04:09,942 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_000600.json
+2026-05-12 01:04:10,587 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01680 (35.71%) | loss: 4.172054 | lrm: 0.99 | lr(adamw:4.028e-01, muon:1.399e-02) | dt: 612.22ms | tok/sec: 428,185 | bf16_mfu: 12.54 | epoch: 1 pq: 3 rg: 43 | total time: 6.76m | eta: 12.4m
+Step 00750 | Validation bpb: 1.245879
+2026-05-12 01:08:31,797 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_000800.pt
+2026-05-12 01:08:31,805 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_000800.json
+2026-05-12 01:08:32,457 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01680 (47.62%) | loss: 4.089761 | lrm: 0.82 | lr(adamw:3.320e-01, muon:1.153e-02) | dt: 604.05ms | tok/sec: 433,980 | bf16_mfu: 12.71 | epoch: 1 pq: 4 rg: 58 | total time: 8.77m | eta: 9.8m
+Step 01000 | Validation bpb: 1.221169
+2026-05-12 01:12:48,370 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_001000.pt
+2026-05-12 01:12:48,378 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_001000.json
+2026-05-12 01:12:49,045 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01680 (59.52%) | loss: 4.017613 | lrm: 0.64 | lr(adamw:2.612e-01, muon:9.073e-03) | dt: 626.10ms | tok/sec: 418,695 | bf16_mfu: 12.26 | epoch: 1 pq: 5 rg: 73 | total time: 10.77m | eta: 7.4m
+2026-05-12 01:14:49,534 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_001200.pt
+2026-05-12 01:14:49,542 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_001200.json
+2026-05-12 01:14:50,192 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01680 (71.43%) | loss: 3.975750 | lrm: 0.47 | lr(adamw:1.903e-01, muon:6.613e-03) | dt: 597.68ms | tok/sec: 438,599 | bf16_mfu: 12.84 | epoch: 1 pq: 7 rg: 4 | total time: 12.76m | eta: 5.1m
+Step 01250 | Validation bpb: 1.203004
+2026-05-12 01:19:09,805 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_001400.pt
+2026-05-12 01:19:09,814 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_001400.json
+2026-05-12 01:19:10,512 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01680 (83.33%) | loss: 3.920810 | lrm: 0.29 | lr(adamw:1.195e-01, muon:4.152e-03) | dt: 645.33ms | tok/sec: 406,214 | bf16_mfu: 11.90 | epoch: 1 pq: 8 rg: 19 | total time: 14.77m | eta: 3.0m
+Step 01500 | Validation bpb: 1.188929
+2026-05-12 01:23:30,393 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_001600.pt
+2026-05-12 01:23:30,397 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_001600.json
+2026-05-12 01:23:31,171 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01680 (95.24%) | loss: 3.897849 | lrm: 0.12 | lr(adamw:4.869e-02, muon:1.691e-03) | dt: 611.75ms | tok/sec: 428,512 | bf16_mfu: 12.55 | epoch: 1 pq: 9 rg: 34 | total time: 16.78m | eta: 0.8m
+step 01679/01680 (99.94%) | loss: 3.903417 | lrm: 0.05 | lr(adamw:2.071e-02, muon:7.194e-04) | dt: 588.87ms | tok/sec: 445,168 | bf16_mfu: 13.04 | epoch: 1 pq: 9 rg: 72 | total time: 17.56m | eta: 0.0m
+Step 01680 | Validation bpb: 1.181776
+<|bos|>The capital of France is the first of the 19th century, and the first of the 19
+<|bos|>The chemical symbol of gold is the most common and widely used in the world. It is a common form of
+<|bos|>If yesterday was Friday, then tomorrow will be the first time I was in the morning. I was in the morning and I
+<|bos|>The opposite of hot is the heat of the heat of the heat of the heat of the heat of the
+<|bos|>The planets of the solar system are: 1. The solar system is the most important part of the solar system.
+<|bos|>My favorite color is the color of the color of the color of the color of the color of the
+<|bos|>If 5*x + 3 = 13, then x is the same as 3. The same is the same as the same as the
+2026-05-12 01:26:39,704 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/model_001680.pt
+2026-05-12 01:26:39,709 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/meta_001680.json
+2026-05-12 01:26:40,373 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/ckpt_base/base/optim_001680_rank0.pt
+step 01680/01680 (final) | loss: 3.903417 | early_stop: 0
+Peak memory usage: 56560.19MiB
+Total training time: 17.56m
+Minimum validation bpb: 1.181776
+Final Validation BPB for base: 1.1818
+
+--- Generating Report ---
+Saved plot to out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/comparison_depth_8.png
+Saved TSV data to out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/p01_mst_sweep/S1_INPUT_C_ROTATED_SLICE_D8
+================================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Tue May 12 01:26:50 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   32C    P0             73W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.10 environment at: /usr/local[0m
+[2mResolved [1m142 packages[0m [2min 464ms[0m[0m
+   [36m[1mBuilding[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+      [32m[1mBuilt[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[2mPrepared [1m1 package[0m [2min 3.85s[0m[0m
+[2mUninstalled [1m1 package[0m [2min 1ms[0m[0m
+[2mInstalled [1m1 package[0m [2min 3ms[0m[0m
+ [33m~[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5)[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-05-12 01:27:15,624 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 01:27:15,762 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 01:27:15,944 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Unfinished experiments found from a previous run:
+  [base] ckpt_dir = /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: 440,407,296
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 440407296 --target-param-data-ratio 10.5 --eval-every 250 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 1 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 64 --mst-input-mode rotated_slice --mst-rotated-slice-learned 1 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --compile --tokenizer-dir tokenizer --data-dir data --checkpoints-dir /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base --model-tag base
+2026-05-12 01:27:32,683 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 01:27:32,813 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 01:27:32,935 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-05-12 01:27:35,662 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": true,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 64,
+  "mst_input_mode": "rotated_slice",
+  "mst_rotated_slice_learned": true,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj"
+}
+Checkpoints directory: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 16,777,216
+transformer_matrices    : 6,590,976
+research                : 0
+scalars                 : 16
+total                   : 48,534,032
+Estimated FLOPs per token (total):  2.912042e+08
+Estimated FLOPs per token (active): 2.912042e+08
+Estimated active params:            48,534,032
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.089404 for depth 8
+Scaling AdamW LRs ∝1/√(512/768) = 1.224745
+Calculated number of iterations from target data:param ratio: 1,680
+Total number of training tokens: 440,401,920
+Tokens : Scaling params ratio: 18.85
+Total training FLOPs estimate: 1.282469e+17
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0512 01:27:37.228000 12006 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] or:
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] to include these operations in the captured graph.
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break: from user code at:
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 694, in forward
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 375, in forward
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 282, in forward
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 01:28:12.265000 12006 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:[W512 01:34:08.134844167 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 0.6 GB allocated
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00000 | Validation bpb: 3.169653
+step 00000/01680 (0.00%) | loss: 10.407049 | lrm: 0.12 | lr(adamw:5.088e-02, muon:1.768e-03) | dt: 1340.42ms | tok/sec: 195,568 | bf16_mfu: 5.76 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-05-12 01:44:15,519 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_000200.pt
+2026-05-12 01:44:15,527 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_000200.json
+2026-05-12 01:44:16,224 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_000200_rank0.pt
+step 00200/01680 (11.90%) | loss: 4.645166 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 591.34ms | tok/sec: 443,302 | bf16_mfu: 13.05 | epoch: 1 pq: 1 rg: 16 | total time: 2.26m | eta: 17.6m
+Step 00250 | Validation bpb: 1.350263
+2026-05-12 01:48:22,644 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_000400.pt
+2026-05-12 01:48:22,653 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_000400.json
+2026-05-12 01:48:23,366 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01680 (23.81%) | loss: 4.197075 | lrm: 1.00 | lr(adamw:4.071e-01, muon:1.414e-02) | dt: 627.65ms | tok/sec: 417,660 | bf16_mfu: 12.30 | epoch: 1 pq: 2 rg: 30 | total time: 4.27m | eta: 14.0m
+Step 00500 | Validation bpb: 1.250916
+2026-05-12 01:52:42,204 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_000600.pt
+2026-05-12 01:52:42,211 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_000600.json
+2026-05-12 01:52:42,932 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01680 (35.71%) | loss: 4.062259 | lrm: 0.99 | lr(adamw:4.028e-01, muon:1.399e-02) | dt: 561.24ms | tok/sec: 467,075 | bf16_mfu: 13.75 | epoch: 1 pq: 3 rg: 43 | total time: 6.28m | eta: 11.5m
+Step 00750 | Validation bpb: 1.211266
+2026-05-12 01:57:02,990 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_000800.pt
+2026-05-12 01:57:02,998 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_000800.json
+2026-05-12 01:57:03,683 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01680 (47.62%) | loss: 3.973856 | lrm: 0.82 | lr(adamw:3.320e-01, muon:1.153e-02) | dt: 596.10ms | tok/sec: 439,762 | bf16_mfu: 12.95 | epoch: 1 pq: 4 rg: 58 | total time: 8.29m | eta: 9.2m
+Step 01000 | Validation bpb: 1.183879
+2026-05-12 02:00:59,444 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_001000.pt
+2026-05-12 02:00:59,454 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_001000.json
+2026-05-12 02:01:00,132 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01680 (59.52%) | loss: 3.894963 | lrm: 0.64 | lr(adamw:2.612e-01, muon:9.073e-03) | dt: 610.26ms | tok/sec: 429,561 | bf16_mfu: 12.65 | epoch: 1 pq: 5 rg: 73 | total time: 10.28m | eta: 7.1m
+2026-05-12 02:03:00,064 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_001200.pt
+2026-05-12 02:03:00,074 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_001200.json
+2026-05-12 02:03:00,765 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01680 (71.43%) | loss: 3.849672 | lrm: 0.47 | lr(adamw:1.903e-01, muon:6.613e-03) | dt: 603.17ms | tok/sec: 434,608 | bf16_mfu: 12.80 | epoch: 1 pq: 7 rg: 4 | total time: 12.26m | eta: 4.9m
+Step 01250 | Validation bpb: 1.163889
+2026-05-12 02:07:20,164 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_001400.pt
+2026-05-12 02:07:20,172 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_001400.json
+2026-05-12 02:07:20,876 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01680 (83.33%) | loss: 3.790344 | lrm: 0.29 | lr(adamw:1.195e-01, muon:4.152e-03) | dt: 626.70ms | tok/sec: 418,294 | bf16_mfu: 12.32 | epoch: 1 pq: 8 rg: 19 | total time: 14.24m | eta: 2.9m
+Step 01500 | Validation bpb: 1.148272
+2026-05-12 02:11:43,164 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_001600.pt
+2026-05-12 02:11:43,173 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_001600.json
+2026-05-12 02:11:43,851 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01680 (95.24%) | loss: 3.762928 | lrm: 0.12 | lr(adamw:4.869e-02, muon:1.691e-03) | dt: 599.94ms | tok/sec: 436,953 | bf16_mfu: 12.87 | epoch: 1 pq: 9 rg: 34 | total time: 16.26m | eta: 0.8m
+step 01679/01680 (99.94%) | loss: 3.768682 | lrm: 0.05 | lr(adamw:2.071e-02, muon:7.194e-04) | dt: 614.74ms | tok/sec: 426,429 | bf16_mfu: 12.56 | epoch: 1 pq: 9 rg: 72 | total time: 17.07m | eta: 0.0m
+Step 01680 | Validation bpb: 1.140302
+<|bos|>The capital of France is a country that has been established in the 1970s and 1980
+<|bos|>The chemical symbol of gold is the symbol of the gold, which is the symbol of the gold. The symbol
+<|bos|>If yesterday was Friday, then tomorrow will be the time of the year. The time of the year is 100,
+<|bos|>The opposite of hot is the heat of the sun. The heat of the sun is the heat of the
+<|bos|>The planets of the solar system are: 1. 2. 3. 4. 5. 
+<|bos|>My favorite color is the white, white, and white, and the white, white, and white
+<|bos|>If 5*x + 3 = 13, then x is 5*x + 3 = 13, then x is 5
+2026-05-12 02:14:58,251 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/model_001680.pt
+2026-05-12 02:14:58,258 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/meta_001680.json
+2026-05-12 02:14:58,984 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/ckpt_base/base/optim_001680_rank0.pt
+step 01680/01680 (final) | loss: 3.768682 | early_stop: 0
+Peak memory usage: 56692.05MiB
+Total training time: 17.07m
+Minimum validation bpb: 1.140302
+Final Validation BPB for base: 1.1403
+
+--- Generating Report ---
+Saved plot to out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/comparison_depth_8.png
+Saved TSV data to out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/p01_mst_sweep/S1_INPUT_C2_ROTATED_LEARNED_D8
+================================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Tue May 12 02:15:08 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8C:00.0 Off |                    0 |
+| N/A   33C    P0             77W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/p01_mst_sweep/S1_INPUT_D_PER_SUB_EMBED_D8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+[2mUsing Python 3.12.10 environment at: /usr/local[0m
+[2mResolved [1m142 packages[0m [2min 457ms[0m[0m
+   [36m[1mBuilding[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+      [32m[1mBuilt[0m[39m nanochat[2m @ file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5[0m
+[2mPrepared [1m1 package[0m [2min 3.68s[0m[0m
+[2mUninstalled [1m1 package[0m [2min 1ms[0m[0m
+[2mInstalled [1m1 package[0m [2min 3ms[0m[0m
+ [33m~[39m [1mnanochat[0m[2m==0.1.0 (from file:///__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5)[0m
+Reset report and wrote header to out/report/header.md
+Dataset (up to 170 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-05-12 02:15:33,482 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 02:15:33,622 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 02:15:34,036 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Unfinished experiments found from a previous run:
+  [base] ckpt_dir = /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_D_PER_SUB_EMBED_D8/depth_8/ckpt_base
+These will be resumed from their last checkpoint.
+================================================================
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: 440,407,296
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 64 --total-batch-size 262144 --target-tokens 440407296 --target-param-data-ratio 10.5 --eval-every 250 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --target-active-params 0 --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 1 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 64 --mst-input-mode per_sub_embed --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --compile --tokenizer-dir tokenizer --data-dir data --checkpoints-dir /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_D_PER_SUB_EMBED_D8/depth_8/ckpt_base --model-tag base
+2026-05-12 02:15:48,973 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-05-12 02:15:49,189 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-05-12 02:15:49,304 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-05-12 02:15:50,734 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": true,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 64,
+  "mst_input_mode": "per_sub_embed",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj"
+}
+Checkpoints directory: /__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/out/p01_mst_sweep/S1_INPUT_D_PER_SUB_EMBED_D8/depth_8/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 8,388,608
+lm_head                 : 16,777,216
+transformer_matrices    : 23,106,048
+research                : 0
+scalars                 : 16
+total                   : 65,049,104
+Estimated FLOPs per token (total):  3.902946e+08
+Estimated FLOPs per token (active): 3.902946e+08
+Estimated active params:            65,049,104
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.145088 for depth 8
+Scaling AdamW LRs ∝1/√(512/768) = 1.224745
+Calculated number of iterations from target data:param ratio: 1,680
+Total number of training tokens: 440,401,920
+Tokens : Scaling params ratio: 11.04
+Total training FLOPs estimate: 1.718865e+17
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 64 x 2048 = 131,072
+Tokens / micro-batch: 131,072
+Total batch size 262,144 => gradient accumulation steps: 2
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0512 02:15:52.343000 59324 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] or:
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] to include these operations in the captured graph.
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] Graph break: from user code at:
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 694, in forward
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 375, in forward
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]   File "/__modal/volumes/vo-4MSgXa0FuJ41Jk55DSh0i5/nanochat/mst.py", line 282, in forward
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0]     self._last_entropy = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:W0512 02:16:44.656000 59324 site-packages/torch/_dynamo/variables/tensor.py:1048] [4/0] 
+[rank0]:[W512 02:24:12.739219588 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 0.8 GB allocated
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 00000 | Validation bpb: 3.169739
+step 00000/01680 (0.00%) | loss: 10.407318 | lrm: 0.12 | lr(adamw:5.088e-02, muon:1.768e-03) | dt: 2294.35ms | tok/sec: 114,256 | bf16_mfu: 4.51 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m

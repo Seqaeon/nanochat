@@ -112,9 +112,8 @@ MST_COMMON="--models base \
   --save-every 200 \
   --eval-every 250 \
   --use-mst 1 \
-  --mst-n-subs 8 \
-  --mst-sub-dim 64 \
-  --mst-head-dim 64"
+  --mst-n-subs 8 --mst-head-dim 0 \
+  --mst-sub-dim 64"
 
 # Add optional env-based flags
 [ -n "${DATA_DIR:-}" ]      && MST_COMMON="$MST_COMMON --data-dir $DATA_DIR"
