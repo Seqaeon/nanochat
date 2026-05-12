@@ -1107,7 +1107,7 @@ else:
     last_periodic_ckpt_step = step
 
 # ── MST Experiment Tracker ────────────────────────────────────────────────────
-if config.use_mst and master_process:
+if model_config.use_mst and master_process:
     class _MSTTracker:
         """Accumulates per-step MST router diagnostics and val_loss milestones,
         then writes a single summary CSV row at end of training."""
@@ -1170,7 +1170,7 @@ if config.use_mst and master_process:
                 writer.writerow(row)
             print0(f"[MST] Results appended → {csv_path}")
 
-    _mst_tracker = _MSTTracker(config, checkpoint_dir)
+    _mst_tracker = _MSTTracker(model_config, checkpoint_dir)
 else:
     _mst_tracker = None
 
