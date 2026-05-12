@@ -1163,6 +1163,7 @@ if model_config.use_mst and master_process:
                 'params_value_embeds': sp.get('value_embeds', '')         if isinstance(sp, dict) else '',
                 'params_total_sp':     sp.get('total', '')                if isinstance(sp, dict) else '',
             }
+            # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
             write_header = not os.path.exists(csv_path)
             with open(csv_path, 'a', newline='') as f:
@@ -1171,6 +1172,16 @@ if model_config.use_mst and master_process:
                     writer.writeheader()
                 writer.writerow(row)
             print0(f"[MST] Results appended → {csv_path}")
+            # Also write to cwd so results survive regardless of checkpoint persistence
+            cwd_csv = os.path.join(os.getcwd(), 'mst_results.csv')
+            if os.path.abspath(cwd_csv) != os.path.abspath(csv_path):
+                cwd_header = not os.path.exists(cwd_csv)
+                with open(cwd_csv, 'a', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                    if cwd_header:
+                        writer.writeheader()
+                    writer.writerow(row)
+                print0(f"[MST] Results also appended → {cwd_csv}")
 
     _mst_tracker = _MSTTracker(model_config, checkpoint_dir)
 else:
