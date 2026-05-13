@@ -317,7 +317,7 @@ run_experiment "S2C3_LEARNED_AGGDIST_TOPK1_x_CONCAT_FINAL_D${DEPTH}" \
 #
 # We test: (1) diversity penalty, (2) reduced aux, (3) both, (4) zero aux.
 
- D1: Diversity penalty with default load balance (0.01)
+# D1: Diversity penalty with default load balance (0.01)
 run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
     "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
     --mst-input-mode fixed_slice \
