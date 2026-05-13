@@ -23,38 +23,63 @@ from nanochat.checkpoint_manager import load_checkpoint
 
 def compute_router_diagnostics(model, data_tokens, n_batches=4, batch_size=16, seq_len=2048):
     """Run forward passes and collect router diagnostics."""
-    model.eval()
     device = next(model.parameters()).device
+    N = model.config.mst_n_subs
+    max_entropy = math.log2(N)
 
-    # Collect router references
-    routers = []
+    from nanochat.mst import MSTTransition
+
+    # Collect tracked modules: MSTRouter instances + MSTTransition (for free_for_all)
+    tracked = {}  # name -> {'entropy': [], 'balance': []}
+
+    # Track MSTRouter instances (aggregate_distribute, aggregate_proj)
     for name, module in model.named_modules():
         if isinstance(module, MSTRouter):
-            routers.append((name, module))
+            tracked[name] = {'entropy': [], 'balance': [], 'type': 'MSTRouter'}
 
-    if not routers:
-        print("No MSTRouter modules found in model.")
+    # Track MSTTransition with free_for_all mode
+    for name, module in model.named_modules():
+        if isinstance(module, MSTTransition) and module.mode == 'free_for_all':
+            tracked[name] = {'entropy': [], 'balance': [], 'type': 'FFA'}
+
+    if not tracked:
+        print("No routable modules found (no MSTRouter or free_for_all transitions).")
         return {}
 
-    all_entropy_vals = []
-    all_balance_vals = []
-
-    # Hook to capture router stats during forward
-    entropy_by_router = {name: [] for name, _ in routers}
-    balance_by_router = {name: [] for name, _ in routers}
-
-    def make_hook(router_name):
+    def make_mst_router_hook(key):
         def hook_fn(module, input, output):
             if hasattr(module, '_last_entropy') and module._last_entropy is not None:
-                entropy_by_router[router_name].append(module._last_entropy.item())
+                tracked[key]['entropy'].append(module._last_entropy.item())
             if hasattr(module, '_last_balance') and module._last_balance is not None:
-                balance_by_router[router_name].append(module._last_balance.item())
+                tracked[key]['balance'].append(module._last_balance.item())
+        return hook_fn
+
+    def make_ffa_hook(key):
+        """Hook on MSTTransition.forward to compute entropy/balance from sub_routers."""
+        def hook_fn(module, input, output):
+            sub_outputs = input[0]  # list of N tensors (B, T, d)
+            # Recompute routing weights from sub_routers
+            route_logits = torch.stack([
+                router(sub_out) for router, sub_out in zip(module.sub_routers, sub_outputs)
+            ], dim=2)  # (B, T, N_sender, N_target)
+            route_weights = F.softmax(route_logits, dim=-1)  # (B, T, N_sender, N_target)
+            # Per-sender entropy (how concentrated is each sender's routing?)
+            ent = -(route_weights * torch.log(route_weights + 1e-8)).sum(dim=-1)  # (B, T, N_sender)
+            ent_bits = ent / math.log(2)
+            tracked[key]['entropy'].append(ent_bits.mean().item())
+            # Load balance: avg fraction each target receives
+            target_load = route_weights.mean(dim=(0, 1, 2))  # (N_target,)
+            balance = target_load.min() / (target_load.max() + 1e-8)
+            tracked[key]['balance'].append(balance.item())
         return hook_fn
 
     handles = []
-    for name, router in routers:
-        h = router.register_forward_hook(make_hook(name))
-        handles.append(h)
+    for name, info in tracked.items():
+        module = dict(model.named_modules())[name]
+        if info['type'] == 'MSTRouter':
+            handles.append(module.register_forward_hook(make_mst_router_hook(name)))
+        elif info['type'] == 'FFA':
+            handles.append(module.register_forward_hook(make_ffa_hook(name)))
 
     # Run forward passes
     n_tokens = data_tokens.shape[0]
@@ -66,19 +91,14 @@ def compute_router_diagnostics(model, data_tokens, n_batches=4, batch_size=16, s
                 break
             x = data_tokens[start:end].reshape(batch_size, seq_len).to(device)
             targets = x.clone()
-            # Set model to train mode briefly to trigger router diagnostics
             model.train()
             _ = model(x, targets=targets)
             model.eval()
 
-    # Remove hooks
     for h in handles:
         h.remove()
 
     # Aggregate stats
-    N = model.config.mst_n_subs
-    max_entropy = math.log2(N)
-
     print(f"\n{'='*70}")
     print(f"Router Diagnostics (N={N}, max_entropy={max_entropy:.4f})")
     print(f"{'='*70}")
@@ -86,15 +106,16 @@ def compute_router_diagnostics(model, data_tokens, n_batches=4, batch_size=16, s
     all_entropies = []
     all_balances = []
 
-    for name, router in routers:
-        ents = entropy_by_router[name]
-        bals = balance_by_router[name]
+    for name, info in tracked.items():
+        ents = info['entropy']
+        bals = info['balance']
+        tag = f"[{info['type']}]"
         if ents:
             mean_ent = sum(ents) / len(ents)
             min_ent = min(ents)
             all_entropies.extend(ents)
             bal_str = f"{sum(bals)/len(bals):.4f}" if bals else "N/A"
-            print(f"  {name:50s} H_mean={mean_ent:.4f} H_min={min_ent:.4f} H/Hmax={mean_ent/max_entropy:.1%} balance={bal_str}")
+            print(f"  {name:45s} {tag:12s} H_mean={mean_ent:.4f} H_min={min_ent:.4f} H/Hmax={mean_ent/max_entropy:.1%} balance={bal_str}")
             if bals:
                 all_balances.extend(bals)
 
@@ -103,7 +124,7 @@ def compute_router_diagnostics(model, data_tokens, n_batches=4, batch_size=16, s
         overall_min = min(all_entropies)
         overall_balance = sum(all_balances) / len(all_balances) if all_balances else 0
 
-        print(f"\n  {'OVERALL':50s} H_mean={overall_mean:.4f} H_min={overall_min:.4f} H/Hmax={overall_mean/max_entropy:.1%} balance={overall_balance:.4f}")
+        print(f"\n  {'OVERALL':45s} {'':12s} H_mean={overall_mean:.4f} H_min={overall_min:.4f} H/Hmax={overall_mean/max_entropy:.1%} balance={overall_balance:.4f}")
 
         return {
             'router_entropy_mean': f'{overall_mean:.4f}',
