@@ -235,6 +235,23 @@ run_experiment "S2E2_LEARNED_x_FFA_D${DEPTH}" \
     --mst-transition-mode free_for_all \
     --mst-final-mode aggregate_proj
 
+# E3: Best input × free_for_all + concat_proj final head
+run_experiment "S2E3_LEARNED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
+    "Stage 2: learned_proj + free_for_all transition + concat_proj final head" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj
+
+# E4: Fixed Slice × free_for_all + concat_proj final head
+run_experiment "S2E4_LEARNED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
+    "Stage 2: learned_proj + free_for_all transition + concat_proj final head" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj
+
+
 # ============================================================================
 # Group C: concat_proj Final Head (2 experiments)
 # ============================================================================
@@ -257,6 +274,15 @@ run_experiment "S2C2_LEARNED_AGGDIST_x_CONCAT_FINAL_D${DEPTH}" \
     --mst-transition-mode aggregate_distribute \
     --mst-final-mode concat_proj
 
+
+# C3: Best input × aggregate_distribute + concat_proj final head
+run_experiment "S2C3_LEARNED_AGGDIST_TOPK1_x_CONCAT_FINAL_D${DEPTH}" \
+    "Stage 2: learned_proj + aggregate_distribute TOPK1_+ concat_proj final head" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode topk_hard --mst-routing-topk 1 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj
+
 # ============================================================================
 # Group D: Specialization Pressure (4 experiments)
 # ============================================================================
@@ -268,13 +294,13 @@ run_experiment "S2C2_LEARNED_AGGDIST_x_CONCAT_FINAL_D${DEPTH}" \
 # We test: (1) diversity penalty, (2) reduced aux, (3) both, (4) zero aux.
 
 # D1: Diversity penalty with default load balance (0.01)
-run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
-    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
-    --mst-input-mode fixed_slice \
-    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode aggregate_proj \
-    --mst-diversity-weight 0.01
+#run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
+#    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
+#    --mst-input-mode fixed_slice \
+#    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode aggregate_proj \
+#    --mst-diversity-weight 0.01
 
 # D2: Reduced load balance (10x lower) — let router specialize naturally
 run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
@@ -286,14 +312,14 @@ run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
     --mst-routing-aux-weight 0.001
 
 # D3: Diversity penalty + reduced load balance (best of both)
-run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
-    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
-    --mst-input-mode fixed_slice \
-    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode aggregate_proj \
-    --mst-diversity-weight 0.01 \
-    --mst-routing-aux-weight 0.001
+#run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
+#    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
+#    --mst-input-mode fixed_slice \
+#    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode aggregate_proj \
+#    --mst-diversity-weight 0.01 \
+#    --mst-routing-aux-weight 0.001
 
 # D4: No load balance at all — maximum specialization freedom
 run_experiment "S2D4_AGGDIST_NO_AUX_D${DEPTH}" \
