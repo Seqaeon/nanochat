@@ -138,7 +138,7 @@ def main():
 
     # Load checkpoint
     print(f"Loading checkpoint from {args.ckpt_dir} step {args.step}...")
-    model_data, _, meta_data = load_checkpoint(args.ckpt_dir, args.step, args.device, load_optimizer=False)
+    model_data, _, meta_data = load_checkpoint(args.ckpt_dir, args.step, 'cpu', load_optimizer=False)
 
     # Reconstruct config
     model_config = meta_data.get('model_config', {})
@@ -147,11 +147,16 @@ def main():
     print(f"Model config: n_layer={config.n_layer}, mst_n_subs={config.mst_n_subs}, "
           f"transition={config.mst_transition_mode}, final={config.mst_final_mode}")
 
-    # Build model
+    # Build model and load weights
     with torch.device('meta'):
         model = MST(config)
+    # assign=True materializes meta tensors with checkpoint data
     model.load_state_dict(model_data, assign=True)
-    model = model.to(args.device)
+    # Convert bf16 to float32 for CPU inference
+    if args.device == 'cpu':
+        model = model.float()
+    else:
+        model = model.to(args.device)
 
     # Load some data for forward passes
     print(f"Loading validation data from {args.data_dir}...")
