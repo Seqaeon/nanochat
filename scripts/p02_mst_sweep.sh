@@ -244,7 +244,7 @@ run_experiment "S2E3_LEARNED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
     --mst-final-mode concat_proj
 
 # E4: Fixed Slice × free_for_all + concat_proj final head
-run_experiment "S2E4_LEARNED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
+run_experiment "S2E4_FIXED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
     "Stage 2: learned_proj + free_for_all transition + concat_proj final head" \
     --mst-input-mode fixed_slice \
     --mst-routing-mode soft_weighted --mst-ffn-mode standard \
