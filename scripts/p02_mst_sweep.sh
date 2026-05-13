@@ -251,7 +251,13 @@ run_experiment "S2E4_FIXED_x_FFA__x_CONCAT_FINAL_D${DEPTH}" \
     --mst-transition-mode free_for_all \
     --mst-final-mode concat_proj
 
-
+# E5: Best input × free_for_all + TOPK + concat_proj final head
+run_experiment "S2E5_LEARNED_x_FFA_TOP1_x_CONCAT_FINAL_D${DEPTH}" \
+    "Stage 2: learned_proj + free_for_all transition +TOP1 + concat_proj final head" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode topk_hard --mst-routing-topk 1 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj
 # ============================================================================
 # Group C: concat_proj Final Head (2 experiments)
 # ============================================================================
