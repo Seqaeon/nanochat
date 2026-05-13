@@ -335,6 +335,15 @@ class GPTConfig:
     # Axis 5 — Final Layer → Vocabulary
     mst_final_mode: str = 'aggregate_proj'     # 'aggregate_proj'|'weighted_logits'|'concat_proj'
     mst_final_topk: int = -1                    # topk for final head (-1=same as routing_topk, 0=all subs)
+    # Stage 3+ features
+    mst_ffn_shared_up: int = 0                  # share FFN up-projection across all subs (0=off, 1=on)
+    mst_ffn_inner_dim: int = 0                  # inner dim for (shared) FFN (0=4*d default)
+    mst_sub_dropout: float = 0.0                # drop entire sub outputs during training (0=off)
+    mst_transition_every: int = 1               # apply transition every N layers (1=every, 2=even-only)
+    mst_ffa_temperature: float = 1.0            # temperature for FFA softmax routing (>1=softer, <1=sharper)
+    mst_global_residual: int = 0                # maintain D-dim global residual stream (0=off, 1=on)
+    mst_hybrid_dense: int = 0                   # alternate dense (D) and MST (N×d) layers (0=off, 1=on)
+    mst_cross_sub_kv: int = 0                   # share K,V projections across all subs (0=off, 1=on)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.

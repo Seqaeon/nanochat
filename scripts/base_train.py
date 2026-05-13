@@ -144,7 +144,22 @@ parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                     help="MST Axis 5: final layer output mode")
 parser.add_argument("--mst-final-topk", type=int, default=-1,
                     help="MST Axis 5: topk for final head (-1=same as routing_topk, 0=all subs)")
-# Phase 24: Linear layer variants
+parser.add_argument("--mst-ffn-shared-up", type=int, default=0, choices=[0, 1],
+                    help="MST: share FFN up-projection across all subs")
+parser.add_argument("--mst-ffn-inner-dim", type=int, default=0,
+                    help="MST: inner dim for shared FFN (0=4*d)")
+parser.add_argument("--mst-sub-dropout", type=float, default=0.0,
+                    help="MST: dropout entire sub outputs during training")
+parser.add_argument("--mst-transition-every", type=int, default=1,
+                    help="MST: apply transition every N layers (1=every, 2=alternate)")
+parser.add_argument("--mst-ffa-temperature", type=float, default=1.0,
+                    help="MST: temperature for FFA softmax routing")
+parser.add_argument("--mst-global-residual", type=int, default=0, choices=[0, 1],
+                    help="MST: D-dim global residual stream across layers")
+parser.add_argument("--mst-hybrid-dense", type=int, default=0, choices=[0, 1],
+                    help="MST: alternate dense (D) and MST (N×d) layers")
+parser.add_argument("--mst-cross-sub-kv", type=int, default=0, choices=[0, 1],
+                    help="MST: share K,V projections across all subs")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")

@@ -313,6 +313,14 @@ def run_training_sweep(args):
         "--mst-transition-mode", str(getattr(args, 'mst_transition_mode', 'parallel')),
         "--mst-final-mode", str(getattr(args, 'mst_final_mode', 'aggregate_proj')),
         "--mst-final-topk", str(getattr(args, 'mst_final_topk', -1)),
+        "--mst-ffn-shared-up", str(getattr(args, 'mst_ffn_shared_up', 0)),
+        "--mst-ffn-inner-dim", str(getattr(args, 'mst_ffn_inner_dim', 0)),
+        "--mst-sub-dropout", str(getattr(args, 'mst_sub_dropout', 0.0)),
+        "--mst-transition-every", str(getattr(args, 'mst_transition_every', 1)),
+        "--mst-ffa-temperature", str(getattr(args, 'mst_ffa_temperature', 1.0)),
+        "--mst-global-residual", str(getattr(args, 'mst_global_residual', 0)),
+        "--mst-hybrid-dense", str(getattr(args, 'mst_hybrid_dense', 0)),
+        "--mst-cross-sub-kv", str(getattr(args, 'mst_cross_sub_kv', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -818,6 +826,14 @@ if __name__ == "__main__":
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                         choices=["aggregate_proj", "weighted_logits", "concat_proj"])
     parser.add_argument("--mst-final-topk", type=int, default=-1)
+    parser.add_argument("--mst-ffn-shared-up", type=int, default=0)
+    parser.add_argument("--mst-ffn-inner-dim", type=int, default=0)
+    parser.add_argument("--mst-sub-dropout", type=float, default=0.0)
+    parser.add_argument("--mst-transition-every", type=int, default=1)
+    parser.add_argument("--mst-ffa-temperature", type=float, default=1.0)
+    parser.add_argument("--mst-global-residual", type=int, default=0)
+    parser.add_argument("--mst-hybrid-dense", type=int, default=0)
+    parser.add_argument("--mst-cross-sub-kv", type=int, default=0)
 
     args = parser.parse_args()
     

@@ -145,6 +145,8 @@ class SubTransformerBlock(nn.Module):
         """x: (B, T, d). Returns (B, T, d)."""
         x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size,
                           kv_cache=kv_cache, total_sub_layers=total_sub_layers)
+        if getattr(self, '_skip_ffn', False):
+            return x  # FFN handled externally by MSTLayer (shared FFN mode)
         if self.ffn.mode == 'standard':
             x = x + self.ffn(norm(x))
         else:  # no_downproj: FFN gives 4d, block-level proj brings back to d
@@ -363,6 +365,7 @@ class MSTTransition(nn.Module):
             ])
             self.aux_weight = 0.01  # light load balance for target utilization
             self.routing_topk = routing_topk  # 0 = soft (all targets), >0 = hard topk
+            self.temperature = 1.0  # set by MSTLayer from config
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -394,7 +397,7 @@ class MSTTransition(nn.Module):
                 _, topk_idx = torch.topk(route_logits, self.routing_topk, dim=-1)
                 mask = torch.zeros_like(route_logits).scatter_(-1, topk_idx, 1.0)
                 route_logits = route_logits.masked_fill(mask == 0, -1e9)
-            route_weights = F.softmax(route_logits, dim=-1)  # (B, T, N_sender, N_target)
+            route_weights = F.softmax(route_logits / self.temperature, dim=-1)  # (B, T, N_sender, N_target)
             # Target sub j receives: sum_i(weights[..., i, j] * sub_i_output)
             mixed = torch.einsum('btij,btid->btjd', route_weights, stacked)  # (B, T, N_target, d)
             # Light load balance: ensure targets are utilized roughly equally
@@ -471,6 +474,46 @@ class MSTFinalHead(nn.Module):
             return logits, torch.tensor(0.0, device=stacked.device)
 
 
+class DenseSubLayer(nn.Module):
+    """Full-width D-dim layer for hybrid dense-MST mode.
+
+    Concatenates N sub inputs to D, runs standard attention+FFN at full width,
+    then slices back to N sub outputs. Uses same head_dim as sub-transformers
+    so RoPE embeddings can be reused.
+    """
+
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        D = config.n_embd
+        d = config.mst_sub_dim
+        N = config.mst_n_subs
+        n_layer = config.n_layer
+        # Use same head_dim as sub-transformers to reuse precomputed RoPE
+        sub_head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
+        dense_n_head = D // sub_head_dim
+        self.N = N
+        self.d = d
+        self.mode = 'dense'  # for transition residual check
+
+        self.attn = SubTransformerAttention(D, dense_n_head, sub_head_dim,
+                                             layer_idx, n_layer, sub_layer_idx=layer_idx)
+        self.ffn_up = Linear(D, 4 * D, bias=False)
+        self.ffn_down = Linear(4 * D, D, bias=False)
+
+    def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
+                kv_cache=None, total_sub_layers=1):
+        """Same interface as MSTLayer — takes/returns list of N tensors (B,T,d)."""
+        x = torch.cat(sub_inputs, dim=-1)  # (B, T, D)
+        # Attention with residual
+        x = x + self.attn(norm(x), cos_sin, window_size=window_size)
+        # FFN with residual
+        h = F.relu(self.ffn_up(norm(x))).square()
+        x = x + self.ffn_down(h)
+        # Slice back to N sub outputs
+        sub_outputs = [x[..., i*self.d:(i+1)*self.d] for i in range(self.N)]
+        return sub_outputs, torch.tensor(0.0, device=x.device)
+
+
 class MSTLayer(nn.Module):
     """One full MST layer: N parallel sub-transformer blocks + transition."""
 
@@ -484,6 +527,7 @@ class MSTLayer(nn.Module):
 
         self.N = N
         self.layer_idx = layer_idx
+        self.sub_dropout = config.mst_sub_dropout
         head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // n_head
         self.sub_blocks = nn.ModuleList([
             SubTransformerBlock(d, n_head, head_dim, layer_idx, n_layer,
@@ -491,11 +535,40 @@ class MSTLayer(nn.Module):
                                 ffn_mode=config.mst_ffn_mode)
             for j in range(N)
         ])
-        # diversity_weight is set per-layer by MST (only 1st, middle, last get it)
-        self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
-                                         diversity_weight=diversity_weight,
-                                         routing_mode=config.mst_routing_mode,
-                                         routing_topk=config.mst_routing_topk)
+
+        # Cross-sub KV sharing: all subs share K,V projections (Q remains per-sub)
+        # Saves (N-1) * 2 * d * (n_head*head_dim) params
+        if config.mst_cross_sub_kv:
+            ref_k = self.sub_blocks[0].attn.c_k
+            ref_v = self.sub_blocks[0].attn.c_v
+            for block in self.sub_blocks[1:]:
+                block.attn.c_k = ref_k
+                block.attn.c_v = ref_v
+
+        # Shared FFN up-projection: all subs share feature detection, specialize in selection
+        if config.mst_ffn_shared_up:
+            inner_dim = config.mst_ffn_inner_dim if config.mst_ffn_inner_dim > 0 else 4 * d
+            self.shared_ffn_up = Linear(d, inner_dim, bias=False)
+            self.shared_ffn_downs = nn.ModuleList([
+                Linear(inner_dim, d, bias=False) for _ in range(N)
+            ])
+            for block in self.sub_blocks:
+                block._skip_ffn = True  # sub blocks only do attention
+        else:
+            self.shared_ffn_up = None
+
+        # Transition: skip at non-transition layers (transition_every > 1)
+        use_transition = (layer_idx % config.mst_transition_every == 0)
+        if use_transition:
+            self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
+                                             diversity_weight=diversity_weight,
+                                             routing_mode=config.mst_routing_mode,
+                                             routing_topk=config.mst_routing_topk)
+            # Wire FFA temperature
+            if hasattr(self.transition, 'temperature'):
+                self.transition.temperature = config.mst_ffa_temperature
+        else:
+            self.transition = MSTTransition(d, N, D, mode='parallel')
 
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 kv_cache=None, total_sub_layers=1):
@@ -514,16 +587,36 @@ class MSTLayer(nn.Module):
                       kv_cache=kv_cache, total_sub_layers=total_sub_layers)
                 for block, h in zip(self.sub_blocks, sub_inputs)
             ]
-        # Transition with residual: normalize before routing, then add skip connection
-        # (parallel mode is identity, so residual would just double — skip it)
-        if self.transition.mode == 'parallel':
+
+        # Shared FFN: apply shared up-projection + per-sub down-projection
+        if self.shared_ffn_up is not None:
+            for i in range(self.N):
+                ffn_in = norm(sub_outputs[i])
+                hidden = F.relu(self.shared_ffn_up(ffn_in)).square()
+                sub_outputs[i] = sub_outputs[i] + self.shared_ffn_downs[i](hidden)
+
+        # Sub dropout: randomly zero entire sub outputs during training
+        if self.training and self.sub_dropout > 0:
+            for i in range(self.N):
+                if torch.rand(1).item() < self.sub_dropout:
+                    sub_outputs[i] = torch.zeros_like(sub_outputs[i])
+
+        # Transition with optional residual + pre-norm.
+        # Residual helps bottleneck transitions (aggdist, cross_attend, concat_proj)
+        # by preserving sub identity through the skip path.
+        # FFA creates deliberately mixed representations — residual dilutes that and hurts.
+        _USE_TRANSITION_RESIDUAL = {'aggregate_distribute', 'cross_attend', 'concat_proj'}
+        mode = self.transition.mode
+        if mode == 'parallel':
             return self.transition(sub_outputs)
-        else:
-            # Pre-transition normalization: stabilizes routing decisions
+        elif mode in _USE_TRANSITION_RESIDUAL:
             normed = [norm(h) for h in sub_outputs]
             transitioned, aux_loss = self.transition(normed)
-            # Residual: transition refines, doesn't replace
             return [h + t for h, t in zip(sub_outputs, transitioned)], aux_loss
+        else:
+            # free_for_all: no residual, but still pre-norm for routing stability
+            normed = [norm(h) for h in sub_outputs]
+            return self.transition(normed)
 
 
 class MST(nn.Module):
@@ -563,10 +656,21 @@ class MST(nn.Module):
         n = config.n_layer
         dw = config.mst_diversity_weight
         div_layers = {0, n // 2, n - 1} if dw > 0 else set()
-        self.layers = nn.ModuleList([
-            MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
-            for i in range(n)
-        ])
+        if config.mst_hybrid_dense:
+            # Alternate: even layers = dense (full D), odd layers = MST (N×d)
+            layers = []
+            for i in range(n):
+                if i % 2 == 0:
+                    layers.append(DenseSubLayer(config, layer_idx=i))
+                else:
+                    layers.append(MSTLayer(config, layer_idx=i,
+                                           diversity_weight=dw if i in div_layers else 0.0))
+            self.layers = nn.ModuleList(layers)
+        else:
+            self.layers = nn.ModuleList([
+                MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
+                for i in range(n)
+            ])
 
         # Per-layer learnable residual scaling (matching base GPT)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
@@ -592,6 +696,17 @@ class MST(nn.Module):
 
         # Standard lm_head for aggregate_proj mode
         self.lm_head = Linear(D, padded_vocab_size, bias=False)
+
+        # Global residual stream: D-dim broadcast channel all subs read/write
+        self.use_global_residual = bool(config.mst_global_residual)
+        if self.use_global_residual:
+            self.global_read_projs = nn.ModuleList([
+                nn.ModuleList([Linear(D, d, bias=False) for _ in range(N)])
+                for _ in range(n)
+            ])
+            self.global_write_projs = nn.ModuleList([
+                Linear(N * d, D, bias=False) for _ in range(n)
+            ])
 
         # Rotary embeddings (precomputed, same as GPT)
         head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
@@ -776,11 +891,19 @@ class MST(nn.Module):
         d = self.config.mst_sub_dim
         total_sub_layers = self.config.n_layer * N
         total_aux_loss = torch.tensor(0.0, device=x.device)
+        # Global residual stream (D-dim broadcast channel)
+        global_stream = x if self.use_global_residual else None
         for i, layer in enumerate(self.layers):
             # Per-layer residual scaling + x0 blend (matching base GPT)
             rl = self.resid_lambdas[i]
             x0l = self.x0_lambdas[i]
             sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
+
+            # Global residual: each sub reads from global stream
+            if global_stream is not None:
+                gs_normed = norm(global_stream)
+                for j in range(N):
+                    sub_states[j] = sub_states[j] + self.global_read_projs[i][j](gs_normed)
 
             # Value embeddings: per-sub VE from shared embedding, sliced like input
             sub_ves = None
@@ -794,6 +917,11 @@ class MST(nn.Module):
                                          kv_cache=kv_cache,
                                          total_sub_layers=total_sub_layers)
             total_aux_loss = total_aux_loss + aux_loss
+
+            # Global residual: subs write back to global stream
+            if global_stream is not None:
+                concatenated = torch.cat(sub_states, dim=-1)  # (B, T, N*d)
+                global_stream = global_stream + self.global_write_projs[i](concatenated)
 
         # Normalize each sub output
         sub_states = [norm(h) for h in sub_states]

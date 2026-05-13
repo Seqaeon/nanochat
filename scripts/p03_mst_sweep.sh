@@ -208,27 +208,148 @@ run_experiment "S3A4_FFA_AGGPROJ_RESID_D${DEPTH}" \
     --mst-diversity-weight 0.0
 
 # ============================================================================
-# Group B: Head Dimension (head_dim=64 → 4 heads × 64-dim = 256-dim attention)
+# Group C: FFA-based new features (pre-norm, no residual for FFA)
 # ============================================================================
-# Adds ~3M params, stays under dense FLOPs budget (≤2.86e8)
-# Tests whether richer per-sub attention (wider heads) improves quality
 
-# B1: FFA + concat_proj + head_dim=64 [+transition residual]
-run_experiment "S3B1_FFA_CONCAT_HD64_D${DEPTH}" \
-    "Stage 3: learned_proj + FFA + concat_proj + head_dim=64 [+residual]" \
+# C1: Fewer, wider subs (N=4, d=128 same D=512, 4x capacity per sub)
+run_experiment "S3C1_FFA_N4_D128_D${DEPTH}" \
+    "Stage 3: N=4 d=128 + FFA + concat_proj (wider subs)" \
+    --mst-n-subs 4 --mst-sub-dim 128 \
     --mst-input-mode learned_proj \
     --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
     --mst-transition-mode free_for_all \
-    --mst-final-mode concat_proj \
-    --mst-final-topk 0 \
-    --mst-head-dim 64 \
-    --mst-routing-aux-weight 0.01 \
-    --mst-diversity-weight 0.0
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# C2: Shared FFN up-proj (256 inner = same as 4*d, saves params)
+run_experiment "S3C2_FFA_SHARED_FFN256_D${DEPTH}" \
+    "Stage 3: FFA + concat_proj + shared FFN up (inner=256)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-ffn-shared-up 1 --mst-ffn-inner-dim 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# C3: Shared FFN up-proj (512 inner = 2x wider, more feature detectors)
+run_experiment "S3C3_FFA_SHARED_FFN512_D${DEPTH}" \
+    "Stage 3: FFA + concat_proj + shared FFN up (inner=512)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-ffn-shared-up 1 --mst-ffn-inner-dim 512 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# C4: FFA every-other-layer (halves transition FLOPs)
+run_experiment "S3C4_FFA_EVERY2_D${DEPTH}" \
+    "Stage 3: FFA every 2nd layer + concat_proj" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-transition-every 2 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# C5: FFA + sub dropout (forces robustness/specialization)
+run_experiment "S3C5_FFA_SUBDROP_D${DEPTH}" \
+    "Stage 3: FFA + concat_proj + sub_dropout=0.1" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-sub-dropout 0.1 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# ============================================================================
+# Group D: Aggdist-based new features (with transition residual)
+# ============================================================================
+
+# D1: Fewer, wider subs with aggdist (N=4, d=128)
+run_experiment "S3D1_AGGDIST_N4_D128_D${DEPTH}" \
+    "Stage 3: N=4 d=128 + aggdist + concat_proj + residual" \
+    --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# D2: Shared FFN 512 + aggdist
+run_experiment "S3D2_AGGDIST_SHARED_FFN512_D${DEPTH}" \
+    "Stage 3: aggdist + concat_proj + residual + shared FFN 512" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-ffn-shared-up 1 --mst-ffn-inner-dim 512 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# D3: Global residual stream + aggdist
+run_experiment "S3D3_AGGDIST_GLOBAL_RESID_D${DEPTH}" \
+    "Stage 3: aggdist + concat_proj + residual + D-dim global stream" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-global-residual 1 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# D4: Sub dropout + aggdist
+run_experiment "S3D4_AGGDIST_SUBDROP_D${DEPTH}" \
+    "Stage 3: aggdist + concat_proj + residual + sub_dropout=0.1" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-sub-dropout 0.1 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# ============================================================================
+# Group E: Temperature (FFA-specific)
+# ============================================================================
+
+# E1: FFA with sharper routing (temp=0.5)
+run_experiment "S3E1_FFA_TEMP05_D${DEPTH}" \
+    "Stage 3: FFA + concat_proj + temperature=0.5 (sharper routing)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-ffa-temperature 0.5 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# ============================================================================
+# Group F: Architectural (hybrid dense-MST, cross-sub KV sharing)
+# ============================================================================
+
+# F1: Hybrid dense-MST (even=dense D=512, odd=MST 8×64)
+# Dense layers inject full-width capacity; MST layers specialize
+run_experiment "S3F1_HYBRID_DENSE_D${DEPTH}" \
+    "Stage 3: hybrid dense-MST + aggdist + concat_proj" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-hybrid-dense 1 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# F2: Cross-sub KV sharing (all subs share K,V projections, Q per-sub)
+# Saves params, creates shared feature space for keys/values
+run_experiment "S3F2_CROSS_SUB_KV_D${DEPTH}" \
+    "Stage 3: FFA + concat_proj + cross-sub KV sharing" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-cross-sub-kv 1 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # ============================================================================
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  P03 MST Stage 3 Sweep Complete — Depth ${DEPTH}"
-echo "  Total experiments: 5 (4 Group A + 1 Group B)"
-echo "  Key change vs S2: transition residual + pre-transition normalization"
+echo "  Total experiments: 16"
+echo "  A(4): transition residual  C(5): FFA features  D(4): aggdist features"
+echo "  E(1): temperature  F(2): hybrid dense + cross-sub KV"
 echo "═══════════════════════════════════════════════════════════════"
