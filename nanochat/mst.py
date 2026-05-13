@@ -472,7 +472,7 @@ class MSTLayer(nn.Module):
             for j in range(N)
         ])
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
-                                         diversity_weight=config.mst_diversity_weight)
+                                         diversity_weight=0.0)  # diversity only at final head
 
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 kv_cache=None, total_sub_layers=1):
