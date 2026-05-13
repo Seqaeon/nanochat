@@ -312,6 +312,7 @@ def run_training_sweep(args):
         "--mst-ffn-mode", str(getattr(args, 'mst_ffn_mode', 'standard')),
         "--mst-transition-mode", str(getattr(args, 'mst_transition_mode', 'parallel')),
         "--mst-final-mode", str(getattr(args, 'mst_final_mode', 'aggregate_proj')),
+        "--mst-final-topk", str(getattr(args, 'mst_final_topk', -1)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -816,6 +817,7 @@ if __name__ == "__main__":
                         choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all"])
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                         choices=["aggregate_proj", "weighted_logits", "concat_proj"])
+    parser.add_argument("--mst-final-topk", type=int, default=-1)
 
     args = parser.parse_args()
     

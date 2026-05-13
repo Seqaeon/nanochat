@@ -142,6 +142,8 @@ parser.add_argument("--mst-transition-mode", type=str, default="parallel",
 parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                     choices=["aggregate_proj", "weighted_logits", "concat_proj"],
                     help="MST Axis 5: final layer output mode")
+parser.add_argument("--mst-final-topk", type=int, default=-1,
+                    help="MST Axis 5: topk for final head (-1=same as routing_topk, 0=all subs)")
 # Phase 24: Linear layer variants
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")

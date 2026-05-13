@@ -258,6 +258,24 @@ run_experiment "S2E5_LEARNED_x_FFA_TOP1_x_CONCAT_FINAL_D${DEPTH}" \
     --mst-routing-mode topk_hard --mst-routing-topk 1 --mst-ffn-mode standard \
     --mst-transition-mode free_for_all \
     --mst-final-mode concat_proj
+
+# E6: FFA topk=1 transition + concat_proj final (ALL subs at final head)
+run_experiment "S2E6_LEARNED_FFA_TOP1_CONCAT_ALL_D${DEPTH}" \
+    "Stage 2: learned_proj + FFA topk=1 transition + concat_proj final (all subs)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode topk_hard --mst-routing-topk 1 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj \
+    --mst-final-topk 0
+
+# E7: FFA topk=1 transition + concat_proj final (topk=1 at final head too)
+run_experiment "S2E7_LEARNED_FFA_TOP1_CONCAT_TOP1_D${DEPTH}" \
+    "Stage 2: learned_proj + FFA topk=1 transition + concat_proj final (topk=1)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode topk_hard --mst-routing-topk 1 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj \
+    --mst-final-topk 1
 # ============================================================================
 # Group C: concat_proj Final Head (2 experiments)
 # ============================================================================
@@ -339,6 +357,6 @@ run_experiment "S2D4_AGGDIST_NO_AUX_D${DEPTH}" \
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  P02 MST Sweep Complete — Depth ${DEPTH}"
-echo "  Total experiments: 14 (4 Group A + 2 Group B + 2 Group E + 2 Group C + 4 Group D)"
+echo "  Total experiments: 21 (4 Group A + 2 Group B + 7 Group E + 2 Group C + 4 Group D + 2 Group F)"
 echo "═══════════════════════════════════════════════════════════════"
 

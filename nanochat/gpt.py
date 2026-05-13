@@ -334,6 +334,7 @@ class GPTConfig:
     mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'|'concat_proj'|'free_for_all'
     # Axis 5 — Final Layer → Vocabulary
     mst_final_mode: str = 'aggregate_proj'     # 'aggregate_proj'|'weighted_logits'|'concat_proj'
+    mst_final_topk: int = -1                    # topk for final head (-1=same as routing_topk, 0=all subs)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.

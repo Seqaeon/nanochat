@@ -333,14 +333,15 @@ class MSTTransition(nn.Module):
       'free_for_all':         Each sub dynamically routes its output to target subs.
     """
 
-    def __init__(self, d, N, D, mode='parallel', diversity_weight=0.0):
+    def __init__(self, d, N, D, mode='parallel', diversity_weight=0.0,
+                 routing_mode='soft_weighted', routing_topk=0):
         super().__init__()
         self.mode = mode
         self.d = d
         self.N = N
 
         if mode == 'aggregate_distribute':
-            self.router = MSTRouter(d, N, D, mode='soft_weighted', diversity_weight=diversity_weight)
+            self.router = MSTRouter(d, N, D, mode=routing_mode, diversity_weight=diversity_weight)
             self.distribute = nn.ModuleList([
                 Linear(d, d, bias=False) for _ in range(N)
             ])
@@ -361,6 +362,7 @@ class MSTTransition(nn.Module):
                 Linear(d, N, bias=False) for _ in range(N)
             ])
             self.aux_weight = 0.01  # light load balance for target utilization
+            self.routing_topk = routing_topk  # 0 = soft (all targets), >0 = hard topk
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -387,6 +389,11 @@ class MSTTransition(nn.Module):
             route_logits = torch.stack([
                 router(sub_out) for router, sub_out in zip(self.sub_routers, sub_outputs)
             ], dim=2)  # (B, T, N_sender, N_target)
+            # Apply topk masking if configured (each sender picks top-k targets)
+            if self.routing_topk > 0 and self.routing_topk < N:
+                _, topk_idx = torch.topk(route_logits, self.routing_topk, dim=-1)
+                mask = torch.zeros_like(route_logits).scatter_(-1, topk_idx, 1.0)
+                route_logits = route_logits.masked_fill(mask == 0, -1e9)
             route_weights = F.softmax(route_logits, dim=-1)  # (B, T, N_sender, N_target)
             # Target sub j receives: sum_i(weights[..., i, j] * sub_i_output)
             mixed = torch.einsum('btij,btid->btjd', route_weights, stacked)  # (B, T, N_target, d)
@@ -409,15 +416,17 @@ class MSTFinalHead(nn.Module):
       'concat_proj':      Concatenate all N sub outputs, project to D, then lm_head.
     """
 
-    def __init__(self, d, N, D, vocab_size, mode='aggregate_proj', diversity_weight=0.0):
+    def __init__(self, d, N, D, vocab_size, mode='aggregate_proj', diversity_weight=0.0,
+                 routing_mode='soft_weighted', routing_topk=0):
         super().__init__()
         self.mode = mode
         self.d = d
         self.N = N
         self.D = D
+        self.routing_topk = routing_topk
 
         if mode == 'aggregate_proj':
-            self.agg_router = MSTRouter(d, N, D, mode='soft_weighted', diversity_weight=diversity_weight)
+            self.agg_router = MSTRouter(d, N, D, mode=routing_mode, diversity_weight=diversity_weight)
             self.proj = Linear(d, D, bias=False)  # d -> D before lm_head
         elif mode == 'weighted_logits':
             self.sub_heads = nn.ModuleList([
@@ -427,6 +436,9 @@ class MSTFinalHead(nn.Module):
         elif mode == 'concat_proj':
             # Concatenate all N sub outputs (N*d), project directly to D.
             self.proj = Linear(N * d, D, bias=False)
+            # If topk > 0, add a selection router to pick which subs to include
+            if routing_topk > 0 and routing_topk < N:
+                self.select_router = Linear(d, N, bias=False)
         else:
             raise ValueError(f"Unknown final mode: {mode}")
 
@@ -445,10 +457,18 @@ class MSTFinalHead(nn.Module):
                          in zip(weights, self.sub_heads, sub_outputs))
             return logits, torch.tensor(0.0, device=logits.device)
         elif self.mode == 'concat_proj':
-            concatenated = torch.cat(sub_outputs, dim=-1)  # (B, T, N*d)
+            stacked = torch.stack(sub_outputs, dim=2)  # (B, T, N, d)
+            if self.routing_topk > 0 and self.routing_topk < self.N and hasattr(self, 'select_router'):
+                # Select top-k subs per token, zero out the rest
+                mean_repr = stacked.mean(dim=2)  # (B, T, d)
+                sel_logits = self.select_router(mean_repr)  # (B, T, N)
+                _, topk_idx = torch.topk(sel_logits, self.routing_topk, dim=-1)
+                mask = torch.zeros_like(sel_logits).scatter_(-1, topk_idx, 1.0)  # (B, T, N)
+                stacked = stacked * mask.unsqueeze(-1)  # zero out non-selected subs
+            concatenated = stacked.reshape(stacked.shape[0], stacked.shape[1], -1)  # (B, T, N*d)
             h = self.proj(concatenated)  # (B, T, D)
             logits = lm_head(h)
-            return logits, torch.tensor(0.0, device=concatenated.device)
+            return logits, torch.tensor(0.0, device=stacked.device)
 
 
 class MSTLayer(nn.Module):
@@ -473,7 +493,9 @@ class MSTLayer(nn.Module):
         ])
         # diversity_weight is set per-layer by MST (only 1st, middle, last get it)
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
-                                         diversity_weight=diversity_weight)
+                                         diversity_weight=diversity_weight,
+                                         routing_mode=config.mst_routing_mode,
+                                         routing_topk=config.mst_routing_topk)
 
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 kv_cache=None, total_sub_layers=1):
@@ -550,10 +572,13 @@ class MST(nn.Module):
 
         # Axis 2: Output routing (used by final head if aggregate_proj)
         # Axis 5: Final output
+        final_topk = config.mst_final_topk if config.mst_final_topk >= 0 else config.mst_routing_topk
         self.final_head = MSTFinalHead(
             d, N, D, padded_vocab_size,
             mode=config.mst_final_mode,
             diversity_weight=config.mst_diversity_weight,
+            routing_mode=config.mst_routing_mode,
+            routing_topk=final_topk,
         )
 
         # Standard lm_head for aggregate_proj mode
