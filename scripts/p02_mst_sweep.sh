@@ -335,7 +335,7 @@ run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
     --mst-final-mode aggregate_proj \
     --mst-routing-aux-weight 0.001
 
- D3: Diversity penalty + reduced load balance (best of both)
+# D3: Diversity penalty + reduced load balance (best of both)
 run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
     "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
     --mst-input-mode fixed_slice \

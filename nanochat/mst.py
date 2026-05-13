@@ -514,7 +514,16 @@ class MSTLayer(nn.Module):
                       kv_cache=kv_cache, total_sub_layers=total_sub_layers)
                 for block, h in zip(self.sub_blocks, sub_inputs)
             ]
-        return self.transition(sub_outputs)
+        # Transition with residual: normalize before routing, then add skip connection
+        # (parallel mode is identity, so residual would just double — skip it)
+        if self.transition.mode == 'parallel':
+            return self.transition(sub_outputs)
+        else:
+            # Pre-transition normalization: stabilizes routing decisions
+            normed = [norm(h) for h in sub_outputs]
+            transitioned, aux_loss = self.transition(normed)
+            # Residual: transition refines, doesn't replace
+            return [h + t for h, t in zip(sub_outputs, transitioned)], aux_loss
 
 
 class MST(nn.Module):
