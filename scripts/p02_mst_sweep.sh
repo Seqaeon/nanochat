@@ -317,14 +317,14 @@ run_experiment "S2C3_LEARNED_AGGDIST_TOPK1_x_CONCAT_FINAL_D${DEPTH}" \
 #
 # We test: (1) diversity penalty, (2) reduced aux, (3) both, (4) zero aux.
 
-# D1: Diversity penalty with default load balance (0.01)
-#run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
-#    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
-#    --mst-input-mode fixed_slice \
-#    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
-#    --mst-transition-mode aggregate_distribute \
-#    --mst-final-mode aggregate_proj \
-#    --mst-diversity-weight 0.01
+ D1: Diversity penalty with default load balance (0.01)
+run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
+    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode aggregate_proj \
+    --mst-diversity-weight 0.01
 
 # D2: Reduced load balance (10x lower) — let router specialize naturally
 run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
@@ -335,15 +335,15 @@ run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
     --mst-final-mode aggregate_proj \
     --mst-routing-aux-weight 0.001
 
-# D3: Diversity penalty + reduced load balance (best of both)
-#run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
-#    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
-#    --mst-input-mode fixed_slice \
-#    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
-#    --mst-transition-mode aggregate_distribute \
-#    --mst-final-mode aggregate_proj \
-#    --mst-diversity-weight 0.01 \
-#    --mst-routing-aux-weight 0.001
+ D3: Diversity penalty + reduced load balance (best of both)
+run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
+    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode aggregate_proj \
+    --mst-diversity-weight 0.01 \
+    --mst-routing-aux-weight 0.001
 
 # D4: No load balance at all — maximum specialization freedom
 run_experiment "S2D4_AGGDIST_NO_AUX_D${DEPTH}" \
