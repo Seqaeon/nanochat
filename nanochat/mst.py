@@ -307,13 +307,13 @@ class MSTRouter(nn.Module):
 
         # Cosine diversity penalty: penalize pairwise cosine similarity of sub outputs
         # to encourage sub-transformers to learn distinct, complementary representations.
+        # Uses mean-pooled representations to avoid O(B*T*N*N) memory.
         if self.training and self.diversity_weight > 0.0:
-            normed = F.normalize(stacked, dim=-1)  # (B, T, N, d)
-            # (B*T, N, N) pairwise cosine similarity
-            flat = normed.flatten(0, 1)  # (B*T, N, d)
-            sim = torch.bmm(flat, flat.transpose(-1, -2))  # (B*T, N, N)
+            mean_repr = stacked.mean(dim=(0, 1))        # (N, d) — mean repr per sub
+            normed = F.normalize(mean_repr, dim=-1)      # (N, d)
+            sim = normed @ normed.T                       # (N, N)
             # Mean off-diagonal similarity
-            mask = ~torch.eye(N, device=sim.device, dtype=torch.bool).unsqueeze(0)
+            mask = ~torch.eye(N, device=sim.device, dtype=torch.bool)
             diversity_loss = sim.masked_select(mask).mean()
             aux_loss = aux_loss + self.diversity_weight * diversity_loss
 
@@ -759,7 +759,7 @@ class MST(nn.Module):
         sub_states = [norm(h) for h in sub_states]
 
         # Final output (Axis 5)
-        if self.config.mst_final_mode == 'aggregate_proj':
+        if self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
             logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
         else:
             logits, final_aux = self.final_head(sub_states)
