@@ -331,7 +331,7 @@ class GPTConfig:
     # Axis 3 — FFN Internal Transition
     mst_ffn_mode: str = 'standard'             # 'standard' (d→4d→d) | 'no_downproj' (d→4d)
     # Axis 4 — Layer-to-Layer Transition
-    mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'|'concat_proj'
+    mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'|'concat_proj'|'free_for_all'
     # Axis 5 — Final Layer → Vocabulary
     mst_final_mode: str = 'aggregate_proj'     # 'aggregate_proj'|'weighted_logits'|'concat_proj'
 

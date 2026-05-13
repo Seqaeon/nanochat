@@ -213,6 +213,29 @@ run_experiment "S2B2_LEARNED_x_CONCAT_D${DEPTH}" \
     --mst-final-mode aggregate_proj
 
 # ============================================================================
+# Group E: free_for_all Transition Mode (2 experiments)
+# ============================================================================
+# free_for_all: each sub has an independent router that dynamically decides
+# which target sub(s) to send its output to. Creates input-dependent wiring
+# patterns — more expressive than cross_attend (which uses static weights).
+
+# E1: free_for_all transition (direct comparison vs agg_dist and cross_attend)
+run_experiment "S2E1_FIXED_x_FFA_D${DEPTH}" \
+    "Stage 2: fixed_slice + free_for_all transition" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode aggregate_proj
+
+# E2: Best input × free_for_all
+run_experiment "S2E2_LEARNED_x_FFA_D${DEPTH}" \
+    "Stage 2: learned_proj + free_for_all transition" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode aggregate_proj
+
+# ============================================================================
 # Group C: concat_proj Final Head (2 experiments)
 # ============================================================================
 # concat_proj final: concat all N sub outputs → Linear(N*d, D) → lm_head
@@ -235,21 +258,55 @@ run_experiment "S2C2_LEARNED_AGGDIST_x_CONCAT_FINAL_D${DEPTH}" \
     --mst-final-mode concat_proj
 
 # ============================================================================
-# Group D: Cosine Diversity Penalty (1 experiment)
+# Group D: Specialization Pressure (4 experiments)
 # ============================================================================
-# Test whether explicit specialization pressure improves quality.
-# Uses the current best config (aggregate_distribute) + diversity_weight=0.01
+# The load balance loss (aux_weight=0.01) actively fights specialization in
+# soft_weighted mode because there's no expert starvation risk — all subs
+# always process all tokens. The quadratic penalty pushes routing weights
+# back to uniform 1/N, counteracting any natural specialization signal.
+#
+# We test: (1) diversity penalty, (2) reduced aux, (3) both, (4) zero aux.
 
+# D1: Diversity penalty with default load balance (0.01)
 run_experiment "S2D1_AGGDIST_DIVERSITY_D${DEPTH}" \
-    "Stage 2: aggregate_distribute + cosine diversity penalty (0.01)" \
+    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.01 (default)" \
     --mst-input-mode fixed_slice \
     --mst-routing-mode soft_weighted --mst-ffn-mode standard \
     --mst-transition-mode aggregate_distribute \
     --mst-final-mode aggregate_proj \
     --mst-diversity-weight 0.01
 
+# D2: Reduced load balance (10x lower) — let router specialize naturally
+run_experiment "S2D2_AGGDIST_LOW_AUX_D${DEPTH}" \
+    "Stage 2: aggregate_distribute + aux=0.001 (reduced load balance)" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode aggregate_proj \
+    --mst-routing-aux-weight 0.001
+
+# D3: Diversity penalty + reduced load balance (best of both)
+run_experiment "S2D3_AGGDIST_DIV_LOW_AUX_D${DEPTH}" \
+    "Stage 2: aggregate_distribute + diversity=0.01 + aux=0.001" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode aggregate_proj \
+    --mst-diversity-weight 0.01 \
+    --mst-routing-aux-weight 0.001
+
+# D4: No load balance at all — maximum specialization freedom
+run_experiment "S2D4_AGGDIST_NO_AUX_D${DEPTH}" \
+    "Stage 2: aggregate_distribute + aux=0.0 (no load balance)" \
+    --mst-input-mode fixed_slice \
+    --mst-routing-mode soft_weighted --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode aggregate_proj \
+    --mst-routing-aux-weight 0.0
+
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  P02 MST Sweep Complete — Depth ${DEPTH}"
-echo "  Total experiments: 9 (4 Group A + 2 Group B + 2 Group C + 1 Group D)"
+echo "  Total experiments: 14 (4 Group A + 2 Group B + 2 Group E + 2 Group C + 4 Group D)"
 echo "═══════════════════════════════════════════════════════════════"
+

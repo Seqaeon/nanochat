@@ -330,6 +330,7 @@ class MSTTransition(nn.Module):
       'aggregate_distribute': Router combines -> per-sub projection redistributes.
       'cross_attend':         Each sub cross-attends to all other subs (lightweight).
       'concat_proj':          Concatenate all N sub outputs, project down, redistribute.
+      'free_for_all':         Each sub dynamically routes its output to target subs.
     """
 
     def __init__(self, d, N, D, mode='parallel', diversity_weight=0.0):
@@ -353,6 +354,13 @@ class MSTTransition(nn.Module):
             self.distribute = nn.ModuleList([
                 Linear(d, d, bias=False) for _ in range(N)
             ])
+        elif mode == 'free_for_all':
+            # Each sub has a router: (B, T, d) → (B, T, N) logits over target subs.
+            # Creates a dynamic, input-dependent (N_sender, N_target) wiring pattern.
+            self.sub_routers = nn.ModuleList([
+                Linear(d, N, bias=False) for _ in range(N)
+            ])
+            self.aux_weight = 0.01  # light load balance for target utilization
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -372,6 +380,22 @@ class MSTTransition(nn.Module):
             concatenated = torch.cat(sub_outputs, dim=-1)  # (B, T, N*d)
             aggregated = self.concat_down(concatenated)     # (B, T, d)
             return [proj(aggregated) for proj in self.distribute], torch.tensor(0.0, device=aggregated.device)
+        elif self.mode == 'free_for_all':
+            N = self.N
+            stacked = torch.stack(sub_outputs, dim=2)  # (B, T, N, d)
+            # Each sender sub produces routing logits over N target subs
+            route_logits = torch.stack([
+                router(sub_out) for router, sub_out in zip(self.sub_routers, sub_outputs)
+            ], dim=2)  # (B, T, N_sender, N_target)
+            route_weights = F.softmax(route_logits, dim=-1)  # (B, T, N_sender, N_target)
+            # Target sub j receives: sum_i(weights[..., i, j] * sub_i_output)
+            mixed = torch.einsum('btij,btid->btjd', route_weights, stacked)  # (B, T, N_target, d)
+            # Light load balance: ensure targets are utilized roughly equally
+            aux_loss = torch.tensor(0.0, device=stacked.device)
+            if self.training:
+                target_load = route_weights.mean(dim=(0, 1, 2))  # (N_target,) avg fraction to each target
+                aux_loss = self.aux_weight * N * (target_load * target_load).sum()
+            return [mixed[:, :, j] for j in range(N)], aux_loss
         else:
             raise ValueError(f"Unknown transition mode: {self.mode}")
 

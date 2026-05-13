@@ -137,7 +137,7 @@ parser.add_argument("--mst-diversity-weight", type=float, default=0.0, help="MST
 parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"],
                     help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d)")
 parser.add_argument("--mst-transition-mode", type=str, default="parallel",
-                    choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj"],
+                    choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all"],
                     help="MST Axis 4: layer-to-layer transition mode")
 parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                     choices=["aggregate_proj", "weighted_logits", "concat_proj"],
@@ -1134,7 +1134,8 @@ if model_config.use_mst and master_process:
         def record_val(self, step, bpb):
             self.val_at[step] = bpb
 
-        def write_csv(self, step, val_bpb, total_training_time, num_flops_per_token,
+        def write_csv(self, step, val_bpb, train_loss_final, total_training_time,
+                      num_flops_per_token, num_active_flops_per_token, num_active_params,
                       total_batch_size, num_params, sp):
             import csv, os, statistics
             c = self.config
@@ -1151,14 +1152,18 @@ if model_config.use_mst and master_process:
                 'val_loss_1k':         self.val_at.get(1000, ''),
                 'val_loss_5k':         self.val_at.get(5000, ''),
                 'val_loss_final':      val_bpb if val_bpb is not None else '',
+                'train_loss_final':    f'{train_loss_final:.6f}' if train_loss_final is not None else '',
                 'router_entropy_mean': f'{statistics.mean(self.entropy_vals):.4f}' if self.entropy_vals else '',
                 'router_entropy_min':  f'{min(self.entropy_vals):.4f}'              if self.entropy_vals else '',
                 'load_balance_score':  f'{statistics.mean(self.balance_vals):.4f}'  if self.balance_vals else '',
                 'grad_norm_mean':      f'{statistics.mean(self.grad_norm_vals):.4f}' if self.grad_norm_vals else '',
                 'wall_time_min':       f'{total_training_time / 60:.2f}',
                 'flops_per_token':     f'{num_flops_per_token:.4e}',
+                'active_flops_per_token': f'{num_active_flops_per_token:.4e}',
                 'total_flops':         f'{num_flops_per_token * total_batch_size * step:.4e}',
+                'active_total_flops':  f'{num_active_flops_per_token * total_batch_size * step:.4e}',
                 'params_full':         num_params,
+                'active_params':       num_active_params,
                 'params_transformer':  sp.get('transformer_matrices', '') if isinstance(sp, dict) else '',
                 'params_value_embeds': sp.get('value_embeds', '')         if isinstance(sp, dict) else '',
                 'params_total_sp':     sp.get('total', '')                if isinstance(sp, dict) else '',
@@ -1587,11 +1592,15 @@ if val_bpb is not None:
 # MST: write per-run summary row to mst_results.csv
 if _mst_tracker is not None:
     sp = orig_model.num_scaling_params() if hasattr(orig_model, 'num_scaling_params') else {}
+    final_train_loss = smooth_train_loss / (1 - EMA_BETA**max(step, 1)) if step > 0 else None
     _mst_tracker.write_csv(
         step=step,
         val_bpb=val_bpb,
+        train_loss_final=final_train_loss,
         total_training_time=total_training_time,
         num_flops_per_token=num_flops_per_token,
+        num_active_flops_per_token=num_active_flops_per_token,
+        num_active_params=num_active_params,
         total_batch_size=total_batch_size,
         num_params=num_params,
         sp=sp,
