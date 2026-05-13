@@ -454,7 +454,7 @@ class MSTFinalHead(nn.Module):
 class MSTLayer(nn.Module):
     """One full MST layer: N parallel sub-transformer blocks + transition."""
 
-    def __init__(self, config, layer_idx):
+    def __init__(self, config, layer_idx, diversity_weight=0.0):
         super().__init__()
         d = config.mst_sub_dim
         N = config.mst_n_subs
@@ -471,8 +471,9 @@ class MSTLayer(nn.Module):
                                 ffn_mode=config.mst_ffn_mode)
             for j in range(N)
         ])
+        # diversity_weight is set per-layer by MST (only 1st, middle, last get it)
         self.transition = MSTTransition(d, N, D, mode=config.mst_transition_mode,
-                                         diversity_weight=0.0)  # diversity only at final head
+                                         diversity_weight=diversity_weight)
 
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 kv_cache=None, total_sub_layers=1):
@@ -527,8 +528,13 @@ class MST(nn.Module):
         )
 
         # L transformer layers
+        # Diversity penalty only at 1st, middle, and last layers to limit memory
+        n = config.n_layer
+        dw = config.mst_diversity_weight
+        div_layers = {0, n // 2, n - 1} if dw > 0 else set()
         self.layers = nn.ModuleList([
-            MSTLayer(config, layer_idx=i) for i in range(config.n_layer)
+            MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
+            for i in range(n)
         ])
 
         # Per-layer learnable residual scaling (matching base GPT)
