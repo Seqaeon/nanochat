@@ -147,15 +147,12 @@ def main():
     print(f"Model config: n_layer={config.n_layer}, mst_n_subs={config.mst_n_subs}, "
           f"transition={config.mst_transition_mode}, final={config.mst_final_mode}")
 
-    # Build model and load weights
-    with torch.device('meta'):
-        model = MST(config)
-    # assign=True materializes meta tensors with checkpoint data
-    model.load_state_dict(model_data, assign=True)
-    # Convert bf16 to float32 for CPU inference
-    if args.device == 'cpu':
-        model = model.float()
-    else:
+    # Build model on CPU and load weights (45M params fits easily)
+    model = MST(config)
+    # Convert bf16 state dict to float32 for CPU compatibility
+    model_data = {k: v.float() if v.dtype == torch.bfloat16 else v for k, v in model_data.items()}
+    model.load_state_dict(model_data, strict=False)
+    if args.device != 'cpu':
         model = model.to(args.device)
 
     # Load some data for forward passes
