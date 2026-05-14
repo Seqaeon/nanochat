@@ -170,15 +170,7 @@ for DEPTH in "${DEPTHS[@]}"; do
     echo "  Depth: ${DEPTH} (model_dim=$(( ((DEPTH * ASPECT_RATIO + 127) / 128) * 128 )))"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Variant A: FFA + concat_proj
-    run_experiment "P4A_FFA_D${DEPTH}" \
-        "FFA + concat_proj" \
-        "$DEPTH" \
-        --mst-input-mode learned_proj \
-        --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-        --mst-transition-mode free_for_all \
-        --mst-final-mode concat_proj --mst-final-topk 0 \
-        --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
 
     # Variant B: Aggdist + concat_proj + residual
     run_experiment "P4B_AGGDIST_D${DEPTH}" \
@@ -187,6 +179,16 @@ for DEPTH in "${DEPTHS[@]}"; do
         --mst-input-mode learned_proj \
         --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
         --mst-transition-mode aggregate_distribute \
+        --mst-final-mode concat_proj --mst-final-topk 0 \
+        --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+    # Variant A: FFA + concat_proj
+    run_experiment "P4A_FFA_D${DEPTH}" \
+        "FFA + concat_proj" \
+        "$DEPTH" \
+        --mst-input-mode learned_proj \
+        --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+        --mst-transition-mode free_for_all \
         --mst-final-mode concat_proj --mst-final-topk 0 \
         --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
