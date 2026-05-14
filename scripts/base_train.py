@@ -680,6 +680,15 @@ def build_model_meta(depth):
         mst_ffn_mode=getattr(args, 'mst_ffn_mode', 'standard'),
         mst_transition_mode=getattr(args, 'mst_transition_mode', 'parallel'),
         mst_final_mode=getattr(args, 'mst_final_mode', 'aggregate_proj'),
+        mst_final_topk=getattr(args, 'mst_final_topk', -1),
+        mst_ffn_shared_up=getattr(args, 'mst_ffn_shared_up', 0),
+        mst_ffn_inner_dim=getattr(args, 'mst_ffn_inner_dim', 0),
+        mst_sub_dropout=getattr(args, 'mst_sub_dropout', 0.0),
+        mst_transition_every=getattr(args, 'mst_transition_every', 1),
+        mst_ffa_temperature=getattr(args, 'mst_ffa_temperature', 1.0),
+        mst_global_residual=getattr(args, 'mst_global_residual', 0),
+        mst_hybrid_dense=getattr(args, 'mst_hybrid_dense', 0),
+        mst_cross_sub_kv=getattr(args, 'mst_cross_sub_kv', 0),
     )
 
     with torch.device("meta"):
