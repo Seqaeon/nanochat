@@ -554,13 +554,14 @@ class MSTLayer(nn.Module):
                 block.attn.c_k = ref_k
                 block.attn.c_v = ref_v
 
-        # Shared FFN up-projection: all subs share feature detection, specialize in selection
+        # Shared FFN: single D-width FFN replaces per-sub FFNs.
+        # Concat sub outputs → D → inner_dim → D → slice back.
+        # One forward pass instead of N, captures cross-sub interactions.
         if config.mst_ffn_shared_up:
+            D = config.n_embd
             inner_dim = config.mst_ffn_inner_dim if config.mst_ffn_inner_dim > 0 else 4 * d
-            self.shared_ffn_up = Linear(d, inner_dim, bias=False)
-            self.shared_ffn_downs = nn.ModuleList([
-                Linear(inner_dim, d, bias=False) for _ in range(N)
-            ])
+            self.shared_ffn_up = Linear(D, inner_dim, bias=False)
+            self.shared_ffn_down = Linear(inner_dim, D, bias=False)
             for block in self.sub_blocks:
                 block._skip_ffn = True  # sub blocks only do attention
         else:
@@ -597,18 +598,24 @@ class MSTLayer(nn.Module):
                 for block, h in zip(self.sub_blocks, sub_inputs)
             ]
 
-        # Shared FFN: apply shared up-projection + per-sub down-projection
+        # Shared FFN: concat to D, one FFN pass, slice back
         if self.shared_ffn_up is not None:
+            x = torch.cat(sub_outputs, dim=-1)  # (B, T, D)
+            h = F.relu(self.shared_ffn_up(norm(x))).square()  # (B, T, inner_dim)
+            ffn_out = self.shared_ffn_down(h)  # (B, T, D)
+            d = sub_outputs[0].shape[-1]
             for i in range(self.N):
-                ffn_in = norm(sub_outputs[i])
-                hidden = F.relu(self.shared_ffn_up(ffn_in)).square()
-                sub_outputs[i] = sub_outputs[i] + self.shared_ffn_downs[i](hidden)
+                sub_outputs[i] = sub_outputs[i] + ffn_out[..., i*d:(i+1)*d]
 
         # Sub dropout: randomly zero entire sub outputs during training
         if self.training and self.sub_dropout > 0:
+            drop_mask = torch.rand(self.N, device=sub_outputs[0].device) < self.sub_dropout
+            # Don't drop ALL subs
+            if drop_mask.all():
+                drop_mask[torch.randint(self.N, (1,))] = False
             for i in range(self.N):
-                if torch.rand(1).item() < self.sub_dropout:
-                    sub_outputs[i] = torch.zeros_like(sub_outputs[i])
+                if drop_mask[i]:
+                    sub_outputs[i] = sub_outputs[i] * 0  # in-place-compatible, keeps graph but no extra alloc
 
         # Transition with optional residual + pre-norm.
         # Residual helps bottleneck transitions (aggdist, cross_attend, concat_proj)
@@ -978,11 +985,15 @@ class MST(nn.Module):
 
     def estimate_flops(self):
         nparams = sum(p.numel() for p in self.parameters())
-        nparams_exclude = self.wte.weight.numel()
+        # Exclude non-matmul params: embeddings, value embeds, and per-layer scalars
+        # (matching dense GPT formula — these are lookups, not matrix multiplies)
+        ve_numel = sum(p.numel() for n, p in self.named_parameters() if 'value_embed' in n)
+        nparams_exclude = (self.wte.weight.numel() + ve_numel +
+                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
         N = self.config.mst_n_subs
         d = self.config.mst_sub_dim
         n_head = self.config.n_head
-        head_dim = d // n_head
+        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else d // n_head
         t = self.config.sequence_len
         attn_flops = self.config.n_layer * N * 12 * n_head * head_dim * t
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops

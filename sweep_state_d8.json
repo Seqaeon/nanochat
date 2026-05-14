@@ -17,12 +17,13 @@
     },
     "S3D1_AGGDIST_N4_D128_D8": {
       "completed_at": "2026-05-14T01:08:35.823334"
+    },
+    "S3G3_N4_LINEAR_FFA_D8": {
+      "completed_at": "2026-05-14T12:24:17.420699"
+    },
+    "S3G4_N8_LINEAR_FFA_D8": {
+      "completed_at": "2026-05-14T12:43:37.252991"
     }
   },
-  "started": {
-    "S3G1_N4_RFFN256_FFA_D8": {
-      "run_dir": "out/p03_mst_sweep/S3G1_N4_RFFN256_FFA_D8",
-      "started_at": "2026-05-14T11:16:53.996749"
-    }
-  }
+  "started": {}
 }

@@ -221,26 +221,6 @@ run_experiment "S3C1_FFA_N4_D128_D${DEPTH}" \
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
-# C2: Shared FFN up-proj (256 inner = same as 4*d, saves params)
-run_experiment "S3C2_FFA_SHARED_FFN256_D${DEPTH}" \
-    "Stage 3: FFA + concat_proj + shared FFN up (inner=256)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-ffn-shared-up 1 --mst-ffn-inner-dim 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
-
-# C3: Shared FFN up-proj (512 inner = 2x wider, more feature detectors)
-run_experiment "S3C3_FFA_SHARED_FFN512_D${DEPTH}" \
-    "Stage 3: FFA + concat_proj + shared FFN up (inner=512)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-ffn-shared-up 1 --mst-ffn-inner-dim 512 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
-
 # C4: FFA every-other-layer (halves transition FLOPs)
 run_experiment "S3C4_FFA_EVERY2_D${DEPTH}" \
     "Stage 3: FFA every 2nd layer + concat_proj" \
