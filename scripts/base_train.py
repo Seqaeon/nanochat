@@ -134,7 +134,7 @@ parser.add_argument("--mst-routing-mode", type=str, default="soft_weighted",
 parser.add_argument("--mst-routing-topk", type=int, default=4, help="MST R-B: k for top-k hard routing")
 parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01, help="MST: load balance aux loss weight")
 parser.add_argument("--mst-diversity-weight", type=float, default=0.0, help="MST: cosine diversity penalty weight (0=off, e.g. 0.01)")
-parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj"],
+parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear"],
                     help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d)")
 parser.add_argument("--mst-transition-mode", type=str, default="parallel",
                     choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all"],

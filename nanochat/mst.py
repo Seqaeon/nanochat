@@ -105,16 +105,22 @@ class SubTransformerFFN(nn.Module):
     """FFN for a sub-transformer. Two modes:
     - 'standard': d -> 4d -> d (with relu² activation)
     - 'no_downproj': d -> 4d (output is 4d, aggregation happens in expanded space)
+    - 'linear':      d -> d (single projection, no expansion — minimal FFN)
     """
 
-    def __init__(self, d, mode='standard'):
+    def __init__(self, d, mode='standard', inner_dim=0):
         super().__init__()
         self.mode = mode
-        self.c_fc = Linear(d, 4 * d, bias=False)
-        if mode == 'standard':
-            self.c_proj = Linear(4 * d, d, bias=False)
+        if mode == 'linear':
+            self.c_fc = Linear(d, d, bias=False)
+            self.c_proj = None
         else:
-            self.c_proj = None  # no down-projection
+            actual_inner = inner_dim if inner_dim > 0 else 4 * d
+            self.c_fc = Linear(d, actual_inner, bias=False)
+            if mode == 'standard':
+                self.c_proj = Linear(actual_inner, d, bias=False)
+            else:
+                self.c_proj = None  # no down-projection
 
     @property
     def out_dim(self):
@@ -122,6 +128,8 @@ class SubTransformerFFN(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
+        if self.mode == 'linear':
+            return x  # simple linear mixing, no nonlinearity
         x = F.relu(x).square()
         if self.c_proj is not None:
             x = self.c_proj(x)
@@ -131,10 +139,10 @@ class SubTransformerFFN(nn.Module):
 class SubTransformerBlock(nn.Module):
     """A single sub-transformer block: pre-norm attention + FFN with residuals."""
 
-    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard'):
+    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard', ffn_inner_dim=0):
         super().__init__()
         self.attn = SubTransformerAttention(d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx)
-        self.ffn = SubTransformerFFN(d, mode=ffn_mode)
+        self.ffn = SubTransformerFFN(d, mode=ffn_mode, inner_dim=ffn_inner_dim)
         # no_downproj: FFN outputs 4d — need a block-level projection back to d for the residual.
         # This decouples the expansion (d→4d + relu²) from compression (plain 4d→d linear),
         # which is the inductive bias difference being tested vs standard mode.
@@ -147,7 +155,7 @@ class SubTransformerBlock(nn.Module):
                           kv_cache=kv_cache, total_sub_layers=total_sub_layers)
         if getattr(self, '_skip_ffn', False):
             return x  # FFN handled externally by MSTLayer (shared FFN mode)
-        if self.ffn.mode == 'standard':
+        if self.ffn.mode in ('standard', 'linear'):
             x = x + self.ffn(norm(x))
         else:  # no_downproj: FFN gives 4d, block-level proj brings back to d
             x = x + self.ffn_out_proj(self.ffn(norm(x)))
@@ -532,7 +540,8 @@ class MSTLayer(nn.Module):
         self.sub_blocks = nn.ModuleList([
             SubTransformerBlock(d, n_head, head_dim, layer_idx, n_layer,
                                 sub_layer_idx=layer_idx * N + j,
-                                ffn_mode=config.mst_ffn_mode)
+                                ffn_mode=config.mst_ffn_mode,
+                                ffn_inner_dim=config.mst_ffn_inner_dim)
             for j in range(N)
         ])
 

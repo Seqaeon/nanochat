@@ -346,10 +346,57 @@ run_experiment "S3F2_CROSS_SUB_KV_D${DEPTH}" \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # ============================================================================
+# Group G: FLOPs-controlled N=4 d=128 + FFN variants
+# ============================================================================
+# N=4 d=128 achieves 1.035-1.042 but FLOPs (3.43e8) exceed dense budget (2.86e8).
+# Reducing FFN inner_dim from 4d=512 to 2d=256 cuts FFN FLOPs in half.
+
+# G1: N=4 d=128 + reducedFFN(256) + FFA
+run_experiment "S3G1_N4_RFFN256_FFA_D${DEPTH}" \
+    "Stage 3: N=4 d=128 + FFA + reducedFFN(inner=256)" \
+    --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-ffn-inner-dim 256 \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# G2: N=4 d=128 + reducedFFN(256) + aggdist + residual
+run_experiment "S3G2_N4_RFFN256_AGG_D${DEPTH}" \
+    "Stage 3: N=4 d=128 + aggdist + reducedFFN(inner=256) + residual" \
+    --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-ffn-inner-dim 256 \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# G3: N=4 d=128 + linear FFN (d→d, no expansion) + FFA
+run_experiment "S3G3_N4_LINEAR_FFA_D${DEPTH}" \
+    "Stage 3: N=4 d=128 + FFA + linear FFN (d→d)" \
+    --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode linear \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# G4: N=8 d=64 + linear FFN + FFA (minimal sub-transformer)
+run_experiment "S3G4_N8_LINEAR_FFA_D${DEPTH}" \
+    "Stage 3: N=8 d=64 + FFA + linear FFN (d→d)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode linear \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# ============================================================================
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  P03 MST Stage 3 Sweep Complete — Depth ${DEPTH}"
-echo "  Total experiments: 16"
+echo "  Total experiments: 20"
 echo "  A(4): transition residual  C(5): FFA features  D(4): aggdist features"
-echo "  E(1): temperature  F(2): hybrid dense + cross-sub KV"
+echo "  E(1): temperature  F(2): hybrid/crossKV  G(4): FLOPs-controlled N=4"
 echo "═══════════════════════════════════════════════════════════════"
