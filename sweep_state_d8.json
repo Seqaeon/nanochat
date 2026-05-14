@@ -15,52 +15,14 @@
     "S3C1_FFA_N4_D128_D8": {
       "completed_at": "2026-05-13T23:27:56.159282"
     },
-    "S3C2_FFA_SHARED_FFN256_D8": {
-      "completed_at": "2026-05-13T23:52:31.316103"
-    },
-    "S3C3_FFA_SHARED_FFN512_D8": {
-      "completed_at": "2026-05-14T00:13:25.308624"
-    },
-    "S3C4_FFA_EVERY2_D8": {
-      "completed_at": "2026-05-14T00:33:25.418725"
-    },
-    "S3C5_FFA_SUBDROP_D8": {
-      "completed_at": "2026-05-14T00:52:37.903352"
-    },
     "S3D1_AGGDIST_N4_D128_D8": {
       "completed_at": "2026-05-14T01:08:35.823334"
-    },
-    "S3D2_AGGDIST_SHARED_FFN512_D8": {
-      "completed_at": "2026-05-14T01:30:48.950925"
-    },
-    "S3D3_AGGDIST_GLOBAL_RESID_D8": {
-      "completed_at": "2026-05-14T01:48:38.551406"
-    },
-    "S3D4_AGGDIST_SUBDROP_D8": {
-      "completed_at": "2026-05-14T02:06:27.778955"
-    },
-    "S3E1_FFA_TEMP05_D8": {
-      "completed_at": "2026-05-14T02:27:31.796170"
-    },
-    "S3F1_HYBRID_DENSE_D8": {
-      "completed_at": "2026-05-14T02:52:28.548919"
-    },
-    "S3F2_CROSS_SUB_KV_D8": {
-      "completed_at": "2026-05-14T03:11:38.388006"
     }
   },
   "started": {
-    "S3B1_FFA_CONCAT_HD64_D8": {
-      "run_dir": "out/p03_mst_sweep/S3B1_FFA_CONCAT_HD64_D8",
-      "started_at": "2026-05-13T22:19:41.197870"
-    },
     "S3G1_N4_RFFN256_FFA_D8": {
       "run_dir": "out/p03_mst_sweep/S3G1_N4_RFFN256_FFA_D8",
       "started_at": "2026-05-14T11:16:53.996749"
-    },
-    "S3G2_N4_RFFN256_AGG_D8": {
-      "run_dir": "out/p03_mst_sweep/S3G2_N4_RFFN256_AGG_D8",
-      "started_at": "2026-05-14T11:30:05.260560"
     }
   }
 }
