@@ -188,14 +188,14 @@ run_experiment "S5_0_AGGDIST_BASE_D${DEPTH}" \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # S5-H3: AggDist + Per-Sub Auxiliary LM Heads (specialization via per-sub prediction)
-run_experiment "S5_H3_SUB_AUX_D${DEPTH}" \
-    "AggDist + per-sub aux prediction heads (weight=0.3)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-sub-aux-weight 0.3
+#run_experiment "S5_H3_SUB_AUX_D${DEPTH}" \
+#    "AggDist + per-sub aux prediction heads (weight=0.3)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-sub-aux-weight 0.3
 
 # S5-T1: AggDist-style routing + Micro-Attention Transition (selective, not averaging)
 run_experiment "S5_T1_MICRO_ATTN_D${DEPTH}" \
