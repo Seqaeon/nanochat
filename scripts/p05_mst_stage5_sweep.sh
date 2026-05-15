@@ -217,14 +217,14 @@ run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
     --mst-progressive-merge 1
 
 # S5-H3-T1: Combined — Micro-attention + per-sub aux loss
-run_experiment "S5_H3T1_COMBO_D${DEPTH}" \
-    "Micro-attention + per-sub aux (combined best candidates)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode micro_attention \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-sub-aux-weight 0.3
+#run_experiment "S5_H3T1_COMBO_D${DEPTH}" \
+#    "Micro-attention + per-sub aux (combined best candidates)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+#    --mst-transition-mode micro_attention \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-sub-aux-weight 0.3
 
 echo ""
 echo "  ✓ Depth ${DEPTH} complete"

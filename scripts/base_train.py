@@ -1449,14 +1449,22 @@ while True:
     if _mst_diag_this_step:
         _cached_sub_grad_norms = {}
         N = model_config.get('mst_n_subs', 0) if isinstance(model_config, dict) else getattr(model_config, 'mst_n_subs', 0)
-        for j in range(N):
-            total_grad_sq = 0.0
-            for layer in orig_model.layers:
+        # Accumulate grad norms per sub index across layers.
+        # With progressive merge, later layers have fewer subs — only iterate valid indices.
+        sub_grad_sq = [0.0] * N
+        for layer in orig_model.layers:
+            n_subs_this_layer = len(layer.sub_blocks)
+            for j in range(n_subs_this_layer):
                 block = layer.sub_blocks[j]
                 for p in block.parameters():
                     if p.grad is not None:
-                        total_grad_sq += float(p.grad.float().norm() ** 2)
-            _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(total_grad_sq ** 0.5)
+                        # Map merged sub indices back: after merge, sub j in this layer
+                        # encompasses original subs [j*stride, (j+1)*stride).
+                        # For simplicity, accumulate to sub index j (valid for uniform N).
+                        if j < N:
+                            sub_grad_sq[j] += float(p.grad.float().norm() ** 2)
+        for j in range(N):
+            _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(sub_grad_sq[j] ** 0.5)
         orig_model._cached_grad_norms = _cached_sub_grad_norms
     # step the optimizer
     lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
