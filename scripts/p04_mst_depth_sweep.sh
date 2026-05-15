@@ -125,6 +125,13 @@ run_experiment() {
 
     print_header "$tag" "$tag" "$desc (model_dim=${model_dim}, sub_dim=${sub_dim})"
     local run_dir="${MST_OUT_BASE}/${tag}"
+
+    # --force: clean old run directory to prevent checkpoint resumption
+    if [ "$FORCE" -eq 1 ] && [ -d "$run_dir" ]; then
+        echo "🗑  --force: removing old run directory: $run_dir"
+        rm -rf "$run_dir"
+    fi
+
     mark_started "$tag" "$run_dir"
 
     # Common training flags
@@ -134,7 +141,7 @@ run_experiment() {
       --sequence-len 2048 \
       --target-param-data-ratio 10.5 \
       --warmup-ratio 0.005 \
-      --warmdown-ratio 0.20 \
+      --warmdown-ratio 0.65 \
       --final-lr-frac 0.05 \
       --research-dim -1 \
       --target-tokens 0 \
