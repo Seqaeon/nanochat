@@ -321,6 +321,8 @@ def run_training_sweep(args):
         "--mst-global-residual", str(getattr(args, 'mst_global_residual', 0)),
         "--mst-hybrid-dense", str(getattr(args, 'mst_hybrid_dense', 0)),
         "--mst-cross-sub-kv", str(getattr(args, 'mst_cross_sub_kv', 0)),
+        "--mst-sub-aux-weight", str(getattr(args, 'mst_sub_aux_weight', 0.0)),
+        "--mst-progressive-merge", str(getattr(args, 'mst_progressive_merge', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -822,7 +824,7 @@ if __name__ == "__main__":
     parser.add_argument("--mst-diversity-weight", type=float, default=0.0)
     parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear"])
     parser.add_argument("--mst-transition-mode", type=str, default="parallel",
-                        choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all"])
+                        choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all", "micro_attention"])
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                         choices=["aggregate_proj", "weighted_logits", "concat_proj"])
     parser.add_argument("--mst-final-topk", type=int, default=-1)
@@ -834,6 +836,9 @@ if __name__ == "__main__":
     parser.add_argument("--mst-global-residual", type=int, default=0)
     parser.add_argument("--mst-hybrid-dense", type=int, default=0)
     parser.add_argument("--mst-cross-sub-kv", type=int, default=0)
+    # Stage 5 features
+    parser.add_argument("--mst-sub-aux-weight", type=float, default=0.0, help="H3: per-sub auxiliary prediction loss weight")
+    parser.add_argument("--mst-progressive-merge", type=int, default=0, choices=[0, 1], help="N1: pyramid sub-merging")
 
     args = parser.parse_args()
     

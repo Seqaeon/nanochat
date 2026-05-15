@@ -160,6 +160,10 @@ parser.add_argument("--mst-hybrid-dense", type=int, default=0, choices=[0, 1],
                     help="MST: alternate dense (D) and MST (N×d) layers")
 parser.add_argument("--mst-cross-sub-kv", type=int, default=0, choices=[0, 1],
                     help="MST: share K,V projections across all subs")
+parser.add_argument("--mst-sub-aux-weight", type=float, default=0.0,
+                    help="MST: per-sub auxiliary prediction loss weight (H3)")
+parser.add_argument("--mst-progressive-merge", type=int, default=0, choices=[0, 1],
+                    help="MST: progressive sub-merging pyramid (N1)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -689,6 +693,8 @@ def build_model_meta(depth):
         mst_global_residual=getattr(args, 'mst_global_residual', 0),
         mst_hybrid_dense=getattr(args, 'mst_hybrid_dense', 0),
         mst_cross_sub_kv=getattr(args, 'mst_cross_sub_kv', 0),
+        mst_sub_aux_weight=getattr(args, 'mst_sub_aux_weight', 0.0),
+        mst_progressive_merge=getattr(args, 'mst_progressive_merge', 0),
     )
 
     with torch.device("meta"):

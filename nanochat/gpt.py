@@ -344,6 +344,9 @@ class GPTConfig:
     mst_global_residual: int = 0                # maintain D-dim global residual stream (0=off, 1=on)
     mst_hybrid_dense: int = 0                   # alternate dense (D) and MST (N×d) layers (0=off, 1=on)
     mst_cross_sub_kv: int = 0                   # share K,V projections across all subs (0=off, 1=on)
+    # Stage 5 features
+    mst_sub_aux_weight: float = 0.0             # H3: per-sub auxiliary prediction loss weight (0=off)
+    mst_progressive_merge: int = 0              # N1: pyramid sub-merging (0=off, 1=on)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -431,6 +434,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_routing_mode", "mst_routing_topk", "mst_routing_aux_weight",
     "mst_diversity_weight",
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
+    "mst_sub_aux_weight", "mst_progressive_merge",
 }
 
 
