@@ -374,6 +374,7 @@ class MSTTransition(nn.Module):
             self.aux_weight = 0.01  # light load balance for target utilization
             self.routing_topk = routing_topk  # 0 = soft (all targets), >0 = hard topk
             self.temperature = 1.0  # set by MSTLayer from config
+            self._last_route_weights = None  # stored for diagnostics
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -406,6 +407,7 @@ class MSTTransition(nn.Module):
                 mask = torch.zeros_like(route_logits).scatter_(-1, topk_idx, 1.0)
                 route_logits = route_logits.masked_fill(mask == 0, -1e9)
             route_weights = F.softmax(route_logits / self.temperature, dim=-1)  # (B, T, N_sender, N_target)
+            self._last_route_weights = route_weights.detach()  # store for diagnostics
             # Target sub j receives: sum_i(weights[..., i, j] * sub_i_output)
             mixed = torch.einsum('btij,btid->btjd', route_weights, stacked)  # (B, T, N_target, d)
             # Light load balance: ensure targets are utilized roughly equally
@@ -731,6 +733,10 @@ class MST(nn.Module):
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
+        # Diagnostics state (must be in __init__, not init_weights)
+        self._diag_enabled = False
+        self._diag_sub_states = {}  # layer_idx -> list of N tensors (detached)
+
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
         if device is None:
             device = self.wte.weight.device
@@ -930,9 +936,14 @@ class MST(nn.Module):
 
             sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
                                          window_size=self.window_sizes[i],
+
                                          kv_cache=kv_cache,
                                          total_sub_layers=total_sub_layers)
             total_aux_loss = total_aux_loss + aux_loss
+
+            # Capture sub states for diagnostics (detached, no grad graph impact)
+            if self._diag_enabled:
+                self._diag_sub_states[i] = [h.detach() for h in sub_states]
 
             # Global residual: subs write back to global stream
             if global_stream is not None:
@@ -1019,6 +1030,84 @@ class MST(nn.Module):
         active_flops = int(shared_flops + sub_flops * active_fraction)
 
         return total_flops, active_flops, active_params
+
+    @torch.no_grad()
+    def compute_diagnostics(self):
+        """Compute diagnostic metrics from the last forward pass.
+
+        Must be called after a forward with self._diag_enabled = True.
+        Returns a flat dict of metrics suitable for JSONL logging.
+
+        Metrics computed:
+        - sub_sim_L{i}_mean/max: pairwise cosine similarity between sub outputs at layer i
+        - sub_norm_L{i}_S{j}: activation L2 norm for sub j at layer i
+        - route_entropy_L{i}: mean entropy of FFA routing weights at layer i
+        - route_matrix_L{i}: mean N×N routing weight matrix at layer i (flattened)
+        - grad_norm_S{j}: gradient norm for sub-block j (across all layers)
+        """
+        diag = {}
+        N = self.config.mst_n_subs
+
+        # --- Sub similarity and norms from stored sub_states ---
+        for layer_idx, sub_states in self._diag_sub_states.items():
+            # Each sub_state is (B, T, d). Flatten to (B*T, d) then average over batch.
+            subs_flat = []
+            for j, h in enumerate(sub_states):
+                flat = h.float().reshape(-1, h.shape[-1])  # (B*T, d)
+                # Per-sub activation norm (mean over tokens)
+                diag[f'sub_norm_L{layer_idx}_S{j}'] = float(flat.norm(dim=-1).mean())
+                subs_flat.append(F.normalize(flat.mean(dim=0), dim=0))  # (d,) normalized
+
+            # Pairwise cosine similarity between subs
+            subs_matrix = torch.stack(subs_flat, dim=0)  # (N, d)
+            cos_sim = subs_matrix @ subs_matrix.T  # (N, N)
+            # Upper triangle (exclude diagonal)
+            mask = torch.triu(torch.ones(N, N, dtype=torch.bool, device=cos_sim.device), diagonal=1)
+            off_diag = cos_sim[mask]
+            if off_diag.numel() > 0:
+                diag[f'sub_sim_L{layer_idx}_mean'] = float(off_diag.mean())
+                diag[f'sub_sim_L{layer_idx}_max'] = float(off_diag.max())
+                diag[f'sub_sim_L{layer_idx}_min'] = float(off_diag.min())
+
+        # --- FFA routing entropy and weight distribution ---
+        from nanochat.mst import MSTTransition
+        for i, layer in enumerate(self.layers):
+            trans = layer.transition
+            if trans.mode == 'free_for_all' and trans._last_route_weights is not None:
+                rw = trans._last_route_weights  # (B, T, N_sender, N_target)
+                # Mean routing matrix (averaged over batch and tokens)
+                mean_matrix = rw.float().mean(dim=(0, 1))  # (N_sender, N_target)
+                # Entropy per sender, averaged
+                eps = 1e-8
+                entropy = -(rw.float() * (rw.float() + eps).log()).sum(dim=-1).mean()
+                diag[f'route_entropy_L{i}'] = float(entropy)
+                # Store flattened mean routing matrix
+                diag[f'route_matrix_L{i}'] = mean_matrix.cpu().tolist()
+
+            elif trans.mode == 'aggregate_distribute':
+                # For aggdist, check the router's last weights
+                if hasattr(trans, 'router') and trans.router._last_entropy is not None:
+                    diag[f'route_entropy_L{i}'] = float(trans.router._last_entropy)
+                if hasattr(trans, 'router') and trans.router._last_balance is not None:
+                    diag[f'route_balance_L{i}'] = float(trans.router._last_balance)
+
+        # --- Per-sub gradient norms (across all layers) ---
+        for j in range(N):
+            total_grad_sq = 0.0
+            n_params = 0
+            for layer in self.layers:
+                block = layer.sub_blocks[j]
+                for p in block.parameters():
+                    if p.grad is not None:
+                        total_grad_sq += float(p.grad.float().norm() ** 2)
+                        n_params += 1
+            if n_params > 0:
+                diag[f'grad_norm_S{j}'] = float(total_grad_sq ** 0.5)
+
+        # Clear stored data to free memory
+        self._diag_sub_states.clear()
+
+        return diag
 
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2,

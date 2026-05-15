@@ -1215,8 +1215,13 @@ if model_config.use_mst and master_process:
                 print0(f"[MST] Results also appended → {cwd_csv}")
 
     _mst_tracker = _MSTTracker(model_config, checkpoint_dir)
+    _mst_diag_log = os.path.join(checkpoint_dir, 'mst_diagnostics.jsonl')
+    _mst_diag_every = args.log_every  # log diagnostics at same frequency as training logs
+    print0(f"[MST] Diagnostics will be logged to: {_mst_diag_log}")
 else:
     _mst_tracker = None
+    _mst_diag_log = None
+    _mst_diag_every = 0
 
 
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
@@ -1392,8 +1397,16 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    # Enable MST diagnostic capture on log steps (last micro-step only)
+    _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
+                           (step % _mst_diag_every == 0 or step == num_iterations - 1))
     for micro_step in range(grad_accum_steps):
+        # Only capture diagnostics on the last micro-step to avoid overhead
+        if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
+            orig_model._diag_enabled = True
         loss = model(x, y)
+        if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
+            orig_model._diag_enabled = False
         if is_dp:
             loss = loss.mean()
         train_loss = loss.detach() # for logging
@@ -1494,6 +1507,28 @@ while True:
     # Collect MST router diagnostics (reads tensors already computed in forward)
     if _mst_tracker is not None:
         _mst_tracker.collect(orig_model)
+        # Compute and log full diagnostics if this was a diagnostic step
+        if _mst_diag_this_step and master_process:
+            try:
+                mst_diag = orig_model.compute_diagnostics()
+                mst_diag['step'] = step
+                mst_diag['train_loss'] = train_loss_f
+                with open(_mst_diag_log, 'a') as f:
+                    # Convert any non-serializable values
+                    f.write(json.dumps(mst_diag, default=str) + '\n')
+                # Print summary to stdout
+                sim_keys = [k for k in mst_diag if 'sub_sim' in k and '_mean' in k]
+                ent_keys = [k for k in mst_diag if 'route_entropy' in k]
+                grad_keys = [k for k in mst_diag if 'grad_norm' in k]
+                sim_vals = [mst_diag[k] for k in sorted(sim_keys)]
+                ent_vals = [mst_diag[k] for k in sorted(ent_keys)]
+                grad_vals = [mst_diag[k] for k in sorted(grad_keys)]
+                sim_str = ', '.join(f'{v:.3f}' for v in sim_vals) if sim_vals else 'n/a'
+                ent_str = ', '.join(f'{v:.3f}' for v in ent_vals) if ent_vals else 'n/a'
+                grad_str = ', '.join(f'{v:.3f}' for v in grad_vals) if grad_vals else 'n/a'
+                print0(f"  [MST diag] sub_sim=[{sim_str}] | route_ent=[{ent_str}] | grad_norm=[{grad_str}]")
+            except Exception as e:
+                print0(f"  [MST diag] ERROR: {e}")
     synchronize()
     t1 = time.time()
     dt = t1 - t0
