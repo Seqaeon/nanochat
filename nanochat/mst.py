@@ -74,13 +74,25 @@ class SubTransformerAttention(nn.Module):
             v = v + gate.unsqueeze(-1) * ve_heads
 
         cos, sin = cos_sin
-        # Slice cos/sin to match this layer's head_dim (handles progressive merge
-        # where different levels have different head_dim but share pre-computed rotary)
+        # Handle progressive merge: different levels have different head_dim
+        # but share pre-computed rotary embeddings at max head_dim.
         half_hd = self.head_dim // 2
-        if cos.shape[-1] > half_hd:
+        cos_dim = cos.shape[-1]
+        if cos_dim >= half_hd:
+            # cos is at max head_dim — slice down to this level's head_dim
             cos = cos[..., :half_hd]
             sin = sin[..., :half_hd]
-        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+            q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        else:
+            # cos is smaller than this head_dim — apply partial RoPE
+            # Rotate first 2*cos_dim dims, pass rest through unchanged
+            rot_dim = cos_dim * 2
+            q_rot, q_pass = q[..., :rot_dim], q[..., rot_dim:]
+            k_rot, k_pass = k[..., :rot_dim], k[..., rot_dim:]
+            q_rot = apply_rotary_emb(q_rot, cos, sin)
+            k_rot = apply_rotary_emb(k_rot, cos, sin)
+            q = torch.cat([q_rot, q_pass], dim=-1)
+            k = torch.cat([k_rot, k_pass], dim=-1)
         q, k = norm(q), norm(k)
 
         if kv_cache is None:
@@ -799,9 +811,8 @@ class MST(nn.Module):
         # H3: Per-sub auxiliary prediction heads (for specialization pressure)
         self.sub_aux_weight = config.mst_sub_aux_weight
         if self.sub_aux_weight > 0:
-            # Each sub gets a small d → vocab LM head for auxiliary next-token prediction.
-            # Total params: N × d × vocab = same as D × vocab (iso-parameter with main head).
-            # Applied at the final layer only (no intermediate tapping needed).
+            # Each sub gets its own d → vocab LM head for auxiliary next-token prediction.
+            # Forces each sub to independently predict, preventing collapse.
             self.sub_aux_heads = nn.ModuleList([
                 Linear(d, padded_vocab_size, bias=False) for _ in range(N)
             ])

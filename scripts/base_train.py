@@ -137,7 +137,7 @@ parser.add_argument("--mst-diversity-weight", type=float, default=0.0, help="MST
 parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear"],
                     help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d)")
 parser.add_argument("--mst-transition-mode", type=str, default="parallel",
-                    choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all"],
+                    choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all", "micro_attention"],
                     help="MST Axis 4: layer-to-layer transition mode")
 parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
                     choices=["aggregate_proj", "weighted_logits", "concat_proj"],
