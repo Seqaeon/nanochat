@@ -1439,6 +1439,19 @@ while True:
         else:
             loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # Capture MST per-sub grad norms BEFORE optimizer step / zero_grad clears them
+    if _mst_diag_this_step:
+        _cached_sub_grad_norms = {}
+        N = model_config.get('mst_n_subs', 0) if isinstance(model_config, dict) else getattr(model_config, 'mst_n_subs', 0)
+        for j in range(N):
+            total_grad_sq = 0.0
+            for layer in orig_model.layers:
+                block = layer.sub_blocks[j]
+                for p in block.parameters():
+                    if p.grad is not None:
+                        total_grad_sq += float(p.grad.float().norm() ** 2)
+            _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(total_grad_sq ** 0.5)
+        orig_model._cached_grad_norms = _cached_sub_grad_norms
     # step the optimizer
     lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)

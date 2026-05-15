@@ -1091,18 +1091,10 @@ class MST(nn.Module):
                 if hasattr(trans, 'router') and trans.router._last_balance is not None:
                     diag[f'route_balance_L{i}'] = float(trans.router._last_balance)
 
-        # --- Per-sub gradient norms (across all layers) ---
-        for j in range(N):
-            total_grad_sq = 0.0
-            n_params = 0
-            for layer in self.layers:
-                block = layer.sub_blocks[j]
-                for p in block.parameters():
-                    if p.grad is not None:
-                        total_grad_sq += float(p.grad.float().norm() ** 2)
-                        n_params += 1
-            if n_params > 0:
-                diag[f'grad_norm_S{j}'] = float(total_grad_sq ** 0.5)
+        # --- Per-sub gradient norms (cached by base_train.py before zero_grad) ---
+        if hasattr(self, '_cached_grad_norms') and self._cached_grad_norms:
+            diag.update(self._cached_grad_norms)
+            self._cached_grad_norms = {}  # clear after reading
 
         # Clear stored data to free memory
         self._diag_sub_states.clear()
