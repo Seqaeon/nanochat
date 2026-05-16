@@ -207,6 +207,7 @@ run_experiment "S5_T1_MICRO_ATTN_D${DEPTH}" \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # S5-N1: Progressive Sub-Merging (Pyramid: 8→4→2→1)
+# Needs smaller device-batch-size: merged layers have d=512 FFN (4× activation memory)
 run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
     "Progressive sub-merging pyramid (8→4→2→1)" \
     --mst-input-mode learned_proj \
@@ -214,7 +215,8 @@ run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
     --mst-transition-mode aggregate_distribute \
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-progressive-merge 1
+    --mst-progressive-merge 1 \
+    --device-batch-size 64
 
 # S5-H3-T1: Combined — Micro-attention + per-sub aux loss
 #run_experiment "S5_H3T1_COMBO_D${DEPTH}" \
