@@ -206,17 +206,37 @@ run_experiment "S5_T1_MICRO_ATTN_D${DEPTH}" \
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
+
+# S5-T2: AggDist-style routing + Micro-Attention Transition (selective, not averaging) 4 subs
+run_experiment "S5_T2_MICRO_ATTN_D${DEPTH}" \
+    "Micro-attention transition (N-way self-attn over 4 subs)" \
+    --mst-input-mode learned_proj --mst-n-subs 4 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+    --mst-transition-mode micro_attention \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
+# Variant A: FFA + concat_proj 4 subs
+run_experiment "P4A_FFA_D${DEPTH}" \
+    "FFA + concat_proj" \
+    "$DEPTH" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all --mst-n-subs 4 \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+
 # S5-N1: Progressive Sub-Merging (Pyramid: 8→4→2→1)
 # Needs smaller device-batch-size: merged layers have d=512 FFN (4× activation memory)
-run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
-    "Progressive sub-merging pyramid (8→4→2→1)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-progressive-merge 1 \
-    --device-batch-size 64
+#run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
+#    "Progressive sub-merging pyramid (8→4→2→1)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-progressive-merge 1 \
+#    --device-batch-size 64
 
 # S5-H3-T1: Combined — Micro-attention + per-sub aux loss
 #run_experiment "S5_H3T1_COMBO_D${DEPTH}" \
