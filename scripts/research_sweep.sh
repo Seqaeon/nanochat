@@ -322,7 +322,7 @@ while [[ $# -gt 0 ]]; do
         --mst-ffn-shared-up|--mst-ffn-inner-dim|--mst-sub-dropout|\
         --mst-transition-every|--mst-ffa-temperature|--mst-global-residual|\
         --mst-hybrid-dense|--mst-cross-sub-kv|\
-        --mst-sub-aux-weight|--mst-progressive-merge)
+        --mst-sub-aux-weight|--mst-progressive-merge|--mst-multi-scale-windows)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

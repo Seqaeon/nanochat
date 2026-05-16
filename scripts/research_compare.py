@@ -323,6 +323,7 @@ def run_training_sweep(args):
         "--mst-cross-sub-kv", str(getattr(args, 'mst_cross_sub_kv', 0)),
         "--mst-sub-aux-weight", str(getattr(args, 'mst_sub_aux_weight', 0.0)),
         "--mst-progressive-merge", str(getattr(args, 'mst_progressive_merge', 0)),
+        "--mst-multi-scale-windows", str(getattr(args, 'mst_multi_scale_windows', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -839,6 +840,7 @@ if __name__ == "__main__":
     # Stage 5 features
     parser.add_argument("--mst-sub-aux-weight", type=float, default=0.0, help="H3: per-sub auxiliary prediction loss weight")
     parser.add_argument("--mst-progressive-merge", type=int, default=0, choices=[0, 1], help="N1: pyramid sub-merging")
+    parser.add_argument("--mst-multi-scale-windows", type=int, default=0, choices=[0, 1], help="W1: per-sub multi-scale windows")
 
     args = parser.parse_args()
     
