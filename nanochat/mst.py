@@ -403,6 +403,15 @@ class MSTTransition(nn.Module):
             self.ma_v = Linear(d, d, bias=False)
             self.ma_proj = Linear(d, d, bias=False)
             self._last_attn_weights = None  # N×N attention pattern for diagnostics
+        elif mode == 'micro_attention_shared_kv':
+            # T1b: Shared-KV micro-attention. Each sub has its own Q but K,V are shared.
+            # Encourages subs to specialize via different "questions" into same "memory".
+            # Per-sub Q: N separate d→d projections. Shared K,V: 1 each.
+            self.ma_qs = nn.ModuleList([Linear(d, d, bias=False) for _ in range(N)])
+            self.ma_k = Linear(d, d, bias=False)  # shared
+            self.ma_v = Linear(d, d, bias=False)  # shared
+            self.ma_proj = Linear(d, d, bias=False)
+            self._last_attn_weights = None
 
     def forward(self, sub_outputs):
         """sub_outputs: list of N tensors (B, T, d).
@@ -470,6 +479,25 @@ class MSTTransition(nn.Module):
             # Output projection
             out = self.ma_proj(attended)  # (B, T, N, d)
             return [out[:, :, j] for j in range(N)], torch.tensor(0.0, device=stacked.device)
+        elif self.mode == 'micro_attention_shared_kv':
+            # T1b: Per-sub Q, shared K/V. Each sub asks different questions of shared memory.
+            N = self.N
+            stacked = torch.stack(sub_outputs, dim=2)  # (B, T, N, d)
+            B, T, _, d = stacked.shape
+            # Shared K, V from all sub outputs
+            k = self.ma_k(stacked)  # (B, T, N, d) — shared weights, N different keys
+            v = self.ma_v(stacked)  # (B, T, N, d) — shared weights, N different values
+            # Per-sub Q: each sub has its own query projection
+            q = torch.stack([wq(sub_outputs[i]) for i, wq in enumerate(self.ma_qs)], dim=2)  # (B, T, N, d)
+            # Attention: each sub's Q attends over all N keys
+            scale = d ** -0.5
+            attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale  # (B, T, N, N)
+            attn_weights = F.softmax(attn_weights, dim=-1)
+            with torch.no_grad():
+                self._last_attn_weights = attn_weights.detach().mean(dim=(0, 1))
+            attended = torch.matmul(attn_weights, v)  # (B, T, N, d)
+            out = self.ma_proj(attended)
+            return [out[:, :, j] for j in range(N)], torch.tensor(0.0, device=stacked.device)
         else:
             raise ValueError(f"Unknown transition mode: {self.mode}")
 
@@ -532,7 +560,13 @@ class MSTFinalHead(nn.Module):
                 _, topk_idx = torch.topk(sel_logits, self.routing_topk, dim=-1)
                 mask = torch.zeros_like(sel_logits).scatter_(-1, topk_idx, 1.0)  # (B, T, N)
                 stacked = stacked * mask.unsqueeze(-1)  # zero out non-selected subs
-            concatenated = stacked.reshape(stacked.shape[0], stacked.shape[1], -1)  # (B, T, N*d)
+            concatenated = stacked.reshape(stacked.shape[0], stacked.shape[1], -1)  # (B, T, N_actual*d)
+            # Handle progressive merge: fewer subs than N, pad to expected N*d
+            expected_dim = self.N * self.d
+            if concatenated.shape[-1] < expected_dim:
+                pad = torch.zeros(*concatenated.shape[:-1], expected_dim - concatenated.shape[-1],
+                                  device=concatenated.device, dtype=concatenated.dtype)
+                concatenated = torch.cat([concatenated, pad], dim=-1)
             h = self.proj(concatenated)  # (B, T, D)
             logits = lm_head(h)
             return logits, torch.tensor(0.0, device=stacked.device)
@@ -677,7 +711,7 @@ class MSTLayer(nn.Module):
         # Residual helps bottleneck transitions (aggdist, cross_attend, concat_proj)
         # by preserving sub identity through the skip path.
         # FFA creates deliberately mixed representations — residual dilutes that and hurts.
-        _USE_TRANSITION_RESIDUAL = {'aggregate_distribute', 'cross_attend', 'concat_proj', 'micro_attention'}
+        _USE_TRANSITION_RESIDUAL = {'aggregate_distribute', 'cross_attend', 'concat_proj', 'micro_attention', 'micro_attention_shared_kv'}
         mode = self.transition.mode
         if mode == 'parallel':
             return self.transition(sub_outputs)
@@ -739,8 +773,10 @@ class MST(nn.Module):
                                            diversity_weight=dw if i in div_layers else 0.0))
             self.layers = nn.ModuleList(layers)
         elif config.mst_progressive_merge:
-            # N1: Build layers with varying N and d at each pyramid level.
-            # Compute merge schedule first (same logic as later in __init__)
+            # N1 (iso-FLOP): Progressive sub-merging pyramid.
+            # All layers keep the SAME d dimension. After each merge, N halves
+            # but d stays constant (concat 2d → project-down to d).
+            # This keeps per-layer FLOPs identical across all levels.
             import math, copy
             n_merges = int(math.log2(N))
             merge_interval = max(1, n // (n_merges + 1))
@@ -749,22 +785,18 @@ class MST(nn.Module):
                 merge_at = m * merge_interval - 1
                 if merge_at < n - 1:
                     merge_at_layers.add(merge_at)
-            # Build layers: after each merge point, N halves and d doubles
+            # Build layers: after each merge point, N halves but d stays the same
             layers = []
             current_n = N
-            current_d = d
             for i in range(n):
-                # Create a modified config for this level
                 level_config = copy.copy(config)
                 level_config.mst_n_subs = current_n
-                level_config.mst_sub_dim = current_d
-                level_config.n_embd = current_n * current_d  # must stay consistent
+                level_config.mst_sub_dim = d  # d is ALWAYS the original sub_dim
+                level_config.n_embd = current_n * d
                 layers.append(MSTLayer(level_config, layer_idx=i,
                                        diversity_weight=dw if i in div_layers else 0.0))
-                # After this layer, do we merge?
                 if i in merge_at_layers:
                     current_n = max(1, current_n // 2)
-                    current_d = current_d * 2
             self.layers = nn.ModuleList(layers)
         else:
             self.layers = nn.ModuleList([
@@ -819,40 +851,29 @@ class MST(nn.Module):
         else:
             self.sub_aux_heads = None
 
-        # N1: Progressive sub-merging (pyramid)
+        # N1: Progressive sub-merging (pyramid) — iso-FLOP version
         self.progressive_merge = bool(config.mst_progressive_merge)
         if self.progressive_merge:
-            # Compute merge schedule: merge pairs every `merge_interval` layers.
-            # N=8, n=8 → merges at layers 2, 4, 6 (8→4→2→1)
-            # N=8, n=12 → merges at layers 4, 8, (12 not needed since last=1)
             import math
-            n_merges = int(math.log2(N))  # 3 merges for N=8
-            merge_interval = max(1, n // (n_merges + 1))  # +1 for final dense segment
-            self.merge_layers = set()  # layer indices AFTER which a merge happens
+            n_merges = int(math.log2(N))
+            merge_interval = max(1, n // (n_merges + 1))
+            self.merge_layers = set()
             for m in range(1, n_merges + 1):
-                merge_at = m * merge_interval - 1  # merge after this layer
-                if merge_at < n - 1:  # don't merge at the very last layer
+                merge_at = m * merge_interval - 1
+                if merge_at < n - 1:
                     self.merge_layers.add(merge_at)
-            # Each merge halves N and doubles d.
-            # Build per-merge LayerNorm for the concatenated representations.
-            # merge_layers is a set of layer indices.
-            self.merge_norms = nn.ModuleDict()
-            current_d = d
-            for ml in sorted(self.merge_layers):
-                current_d *= 2  # after merge, d doubles
-                # No learnable parameters needed — just concatenation.
-                # But we store the expected dim for validation.
-                self.merge_norms[str(ml)] = nn.Identity()
+            # Each merge: concat pairs (2d) → project-down to d.
+            # Learned projections: Linear(2d, d) at each merge point.
+            self.merge_projs = nn.ModuleDict({
+                str(ml): Linear(2 * d, d, bias=False)
+                for ml in sorted(self.merge_layers)
+            })
         else:
             self.merge_layers = set()
 
         # Rotary embeddings (precomputed, same as GPT)
-        # For progressive merge, use max head_dim (final level has d=D, head_dim=D/n_head)
-        if config.mst_progressive_merge:
-            max_d = D  # final merged level uses full D
-            head_dim = config.mst_head_dim if config.mst_head_dim > 0 else max_d // config.n_head
-        else:
-            head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
+        # For iso-FLOP progressive merge, d is constant so no special handling needed.
+        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
@@ -1072,20 +1093,23 @@ class MST(nn.Module):
             if self._diag_enabled:
                 self._diag_sub_states[i] = [h.detach() for h in sub_states]
 
-            # N1: Progressive merge — concatenate adjacent pairs to halve N, double d
+            # N1: Progressive merge — concat pairs (2d) → project down to d (iso-FLOP)
             if i in self.merge_layers:
+                proj = self.merge_projs[str(i)]
                 merged = []
                 for j in range(0, len(sub_states), 2):
                     if j + 1 < len(sub_states):
-                        merged.append(torch.cat([sub_states[j], sub_states[j + 1]], dim=-1))
+                        cat = torch.cat([sub_states[j], sub_states[j + 1]], dim=-1)  # (B, T, 2d)
+                        merged.append(proj(cat))  # (B, T, d) — project down
                     else:
-                        merged.append(sub_states[j])  # odd sub passes through (shouldn't happen with N=2^k)
+                        merged.append(sub_states[j])
                 sub_states = merged
-                # Update x0 to match new dimensionality (merge x0 pairs too)
+                # Update x0: merge pairs with same projection
                 merged_x0 = []
                 for j in range(0, len(sub_x0), 2):
                     if j + 1 < len(sub_x0):
-                        merged_x0.append(torch.cat([sub_x0[j], sub_x0[j + 1]], dim=-1))
+                        cat_x0 = torch.cat([sub_x0[j], sub_x0[j + 1]], dim=-1)
+                        merged_x0.append(proj(cat_x0))
                     else:
                         merged_x0.append(sub_x0[j])
                 sub_x0 = merged_x0
@@ -1099,11 +1123,7 @@ class MST(nn.Module):
         sub_states = [norm(h) for h in sub_states]
 
         # Final output (Axis 5)
-        if self.progressive_merge and len(sub_states) == 1:
-            # Progressive merge has reduced to a single D-dim sub — use lm_head directly
-            logits = self.lm_head(sub_states[0])
-            final_aux = torch.tensor(0.0, device=logits.device)
-        elif self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
+        if self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
             logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
         else:
             logits, final_aux = self.final_head(sub_states)
