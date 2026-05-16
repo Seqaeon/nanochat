@@ -208,13 +208,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 
 # S5-T2: AggDist-style routing + Micro-Attention Transition (selective, not averaging) 4 subs
-run_experiment "S5_T2_MICRO_ATTN_D${DEPTH}" \
-    "Micro-attention transition (N-way self-attn over 4 subs)" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode micro_attention \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+#run_experiment "S5_T2_MICRO_ATTN_D${DEPTH}" \
+#    "Micro-attention transition (N-way self-attn over 4 subs)" \
+#    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+#    --mst-transition-mode micro_attention \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # Variant A: FFA + concat_proj 4 subs
 #run_experiment "P4A_FFA_D${DEPTH}" \
@@ -227,15 +227,15 @@ run_experiment "S5_T2_MICRO_ATTN_D${DEPTH}" \
 
 # S5-N1: Progressive Sub-Merging (Pyramid: 8→4→2→1)
 # Needs smaller device-batch-size: merged layers have d=512 FFN (4× activation memory)
-run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
-    "Progressive sub-merging pyramid (8→4→2→1)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-progressive-merge 1 \
-    --device-batch-size 64
+#run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
+#    "Progressive sub-merging pyramid (8→4→2→1)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-progressive-merge 1 \
+#    --device-batch-size 64
 
 # S5-H3-T1: Combined — Micro-attention + per-sub aux loss
 #run_experiment "S5_H3T1_COMBO_D${DEPTH}" \
@@ -248,22 +248,22 @@ run_experiment "S5_N1_PYRAMID_D${DEPTH}" \
 #    --mst-sub-aux-weight 0.3
 
 # S5-T1b-4: Shared-KV Micro-Attention, N=4 (per-sub Q, shared K/V — query-based specialization)
-run_experiment "S5_T1B_SHARED_KV_4SUB_D${DEPTH}" \
-    "Shared-KV micro-attention N=4 (per-sub Q, shared K/V)" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
-    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode micro_attention_shared_kv \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
-
+#run_experiment "S5_T1B_SHARED_KV_4SUB_D${DEPTH}" \
+#    "Shared-KV micro-attention N=4 (per-sub Q, shared K/V)" \
+#    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode micro_attention_shared_kv \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+#
 # S5-T1b-8: Shared-KV Micro-Attention, N=8 (same but with original 8 subs)
-run_experiment "S5_T1B_SHARED_KV_8SUB_D${DEPTH}" \
-    "Shared-KV micro-attention N=8 (per-sub Q, shared K/V)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode micro_attention_shared_kv \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
+#run_experiment "S5_T1B_SHARED_KV_8SUB_D${DEPTH}" \
+#    "Shared-KV micro-attention N=8 (per-sub Q, shared K/V)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode micro_attention_shared_kv \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
 # S5-W1-4: Multi-scale windows, N=4 + micro-attention (each sub sees different context range)
 run_experiment "S5_W1_MULTISCALE_4SUB_D${DEPTH}" \
