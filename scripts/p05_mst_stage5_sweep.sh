@@ -210,7 +210,7 @@ run_experiment "S5_T1_MICRO_ATTN_D${DEPTH}" \
 # S5-T2: AggDist-style routing + Micro-Attention Transition (selective, not averaging) 4 subs
 run_experiment "S5_T2_MICRO_ATTN_D${DEPTH}" \
     "Micro-attention transition (N-way self-attn over 4 subs)" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 0 \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
     --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-ffn-mode standard \
     --mst-transition-mode micro_attention \
     --mst-final-mode concat_proj --mst-final-topk 0 \
@@ -222,7 +222,7 @@ run_experiment "P4A_FFA_D${DEPTH}" \
     "$DEPTH" \
     --mst-input-mode learned_proj \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all --mst-n-subs 4  --mst-sub-dim 0\
+    --mst-transition-mode free_for_all --mst-n-subs 4  --mst-sub-dim 128\
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0
 
