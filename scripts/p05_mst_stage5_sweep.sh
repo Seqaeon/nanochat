@@ -34,7 +34,7 @@ done
 
 # ── Configuration ────────────────────────────────────────────────────────────
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
-N_SUBS="${N_SUBS:-8}"
+N_SUBS="${N_SUBS:-4}"
 
 # Compute model_dim and sub_dim from depth (same logic as p04)
 MODEL_DIM=$(( DEPTH * ASPECT_RATIO ))
@@ -116,7 +116,7 @@ init_state
 
 # ── Common flags ─────────────────────────────────────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 20 --skip-core \
+  --device-batch-size 64 --total-batch-size -1 --use-onecycle 0 --log-every 20 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -268,7 +268,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # S5-W1-4: Multi-scale windows, N=4 + micro-attention (each sub sees different context range)
 run_experiment "S5_W1_MULTISCALE_4SUB_D${DEPTH}" \
     "Multi-scale windows N=4 + micro-attn (local→global per sub)" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj --mst-n-subs 4 \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
     --mst-transition-mode micro_attention \
     --mst-final-mode concat_proj --mst-final-topk 0 \
@@ -286,14 +286,14 @@ run_experiment "S5_W1_MULTISCALE_4SUB_D${DEPTH}" \
 #    --mst-multi-scale-windows 1
 
 # S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
-run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
-    "Multi-scale windows N=4 + aggdist" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
-    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-multi-scale-windows 1
+#run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
+#    "Multi-scale windows N=4 + aggdist" \
+#    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-multi-scale-windows 1
 
 echo ""
 echo "  ✓ Depth ${DEPTH} complete"
