@@ -296,12 +296,94 @@ run_experiment "S5_W1_MULTISCALE_4SUB_D${DEPTH}" \
 #    --mst-multi-scale-windows 1
 
 echo ""
-echo "  ✓ Depth ${DEPTH} complete"
+echo "  ✓ Depth ${DEPTH} Stage 5 complete"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  P05 Stage 5 Sweep Complete"
+echo "  Stage 6: Delta Residual + Multi-Layer Subs"
+echo "═══════════════════════════════════════════════════════════════"
+
+# S6-DR-4: Delta residual, N=4 + aggdist (best config + delta corrections to full-D)
+run_experiment "S6_DR_4SUB_D${DEPTH}" \
+    "Delta residual N=4 + aggdist (subs produce D-dim corrections)" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-delta-residual 1
+
+# S6-DR-8: Delta residual, N=8 + aggdist
+run_experiment "S6_DR_8SUB_D${DEPTH}" \
+    "Delta residual N=8 + aggdist" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-delta-residual 1
+
+# S6-DR-4-MICRO: Delta residual + micro-attention transition (test if transitions help with delta)
+run_experiment "S6_DR_MICRO_4SUB_D${DEPTH}" \
+    "Delta residual N=4 + micro-attn" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode micro_attention \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-delta-residual 1
+
+# S6-SL2: Multi-layer subs (2 layers each), N=4
+run_experiment "S6_SL2_4SUB_D${DEPTH}" \
+    "Multi-layer subs (L=2) N=4 + aggdist" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-sub-layers 2 \
+    --device-batch-size 16
+
+# S6-SL4: Multi-layer subs (4 layers each), N=4
+run_experiment "S6_SL4_4SUB_D${DEPTH}" \
+    "Multi-layer subs (L=4) N=4 + aggdist" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-sub-layers 4 \
+    --device-batch-size 8
+
+# S6-SL8: Multi-layer subs (8 layers each), N=4
+run_experiment "S6_SL8_4SUB_D${DEPTH}" \
+    "Multi-layer subs (L=8) N=4 + aggdist" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-sub-layers 8 \
+    --device-batch-size 4
+
+# S6-DR-SL2: Combined: delta residual + 2 layers/sub, N=4
+run_experiment "S6_DR_SL2_4SUB_D${DEPTH}" \
+    "Delta residual + multi-layer (L=2) N=4" \
+    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-delta-residual 1 --mst-sub-layers 2 \
+    --device-batch-size 16
+
+echo ""
+echo "  ✓ Depth ${DEPTH} Stage 6 complete"
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  P05 Stage 5+6 Sweep Complete"
 echo "  Depth:    ${DEPTH}"
-echo "  Variants: 0=AggDist baseline, H3=per-sub aux, T1=micro-attn,"
-echo "            N1=pyramid, H3T1=micro-attn+aux combo"
+echo "  S5 Variants: AggDist, micro-attn, pyramid, shared-KV, multi-scale"
+echo "  S6 Variants: DR=delta residual, SL=multi-layer subs"
 echo "═══════════════════════════════════════════════════════════════"

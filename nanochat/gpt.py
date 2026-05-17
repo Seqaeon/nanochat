@@ -348,6 +348,9 @@ class GPTConfig:
     mst_sub_aux_weight: float = 0.0             # H3: per-sub auxiliary prediction loss weight (0=off)
     mst_progressive_merge: int = 0              # N1: pyramid sub-merging (0=off, 1=on)
     mst_multi_scale_windows: int = 0            # W1: per-sub window sizes (0=off, 1=on)
+    # Stage 6 features
+    mst_delta_residual: int = 0                 # DR1: delta residual mode — subs produce corrections to full-D stream
+    mst_sub_layers: int = 1                     # SL1: layers per sub-transformer (1=current, 2/4/8=deeper subs)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -436,6 +439,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_diversity_weight",
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
     "mst_sub_aux_weight", "mst_progressive_merge", "mst_multi_scale_windows",
+    "mst_delta_residual", "mst_sub_layers",
 }
 
 

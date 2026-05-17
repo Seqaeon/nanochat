@@ -166,6 +166,10 @@ parser.add_argument("--mst-progressive-merge", type=int, default=0, choices=[0, 
                     help="MST: progressive sub-merging pyramid (N1)")
 parser.add_argument("--mst-multi-scale-windows", type=int, default=0, choices=[0, 1],
                     help="MST: per-sub window sizes for multi-scale attention (W1)")
+parser.add_argument("--mst-delta-residual", type=int, default=0, choices=[0, 1],
+                    help="MST: delta residual mode — subs produce corrections to full-D stream (DR1)")
+parser.add_argument("--mst-sub-layers", type=int, default=1,
+                    help="MST: layers per sub-transformer (SL1, default 1)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")

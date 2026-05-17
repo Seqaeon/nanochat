@@ -155,10 +155,13 @@ class SubTransformerFFN(nn.Module):
 
 
 class SubTransformerBlock(nn.Module):
-    """A single sub-transformer block: pre-norm attention + FFN with residuals."""
+    """A single sub-transformer block: pre-norm attention + FFN with residuals.
+    When sub_layers > 1, contains multiple internal attention+FFN layers."""
 
-    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0, ffn_mode='standard', ffn_inner_dim=0):
+    def __init__(self, d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx=0,
+                 ffn_mode='standard', ffn_inner_dim=0, sub_layers=1):
         super().__init__()
+        self.sub_layers = sub_layers
         self.attn = SubTransformerAttention(d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx)
         self.ffn = SubTransformerFFN(d, mode=ffn_mode, inner_dim=ffn_inner_dim)
         # no_downproj: FFN outputs 4d — need a block-level projection back to d for the residual.
@@ -167,16 +170,44 @@ class SubTransformerBlock(nn.Module):
         self.ffn_out_proj = Linear(4 * d, d, bias=False) if ffn_mode == 'no_downproj' else None
         self.d = d
 
+        # SL1: Additional internal layers for multi-layer subs
+        if sub_layers > 1:
+            self.extra_attns = nn.ModuleList([
+                SubTransformerAttention(d, n_head, head_dim, layer_idx, n_layer, sub_layer_idx)
+                for _ in range(sub_layers - 1)
+            ])
+            self.extra_ffns = nn.ModuleList([
+                SubTransformerFFN(d, mode=ffn_mode, inner_dim=ffn_inner_dim)
+                for _ in range(sub_layers - 1)
+            ])
+            if ffn_mode == 'no_downproj':
+                self.extra_ffn_out_projs = nn.ModuleList([
+                    Linear(4 * d, d, bias=False) for _ in range(sub_layers - 1)
+                ])
+            else:
+                self.extra_ffn_out_projs = None
+
     def forward(self, x, cos_sin, ve=None, window_size=(-1, 0), kv_cache=None, total_sub_layers=1):
         """x: (B, T, d). Returns (B, T, d)."""
+        # First internal layer
         x = x + self.attn(norm(x), cos_sin, ve=ve, window_size=window_size,
                           kv_cache=kv_cache, total_sub_layers=total_sub_layers)
-        if getattr(self, '_skip_ffn', False):
-            return x  # FFN handled externally by MSTLayer (shared FFN mode)
-        if self.ffn.mode in ('standard', 'linear'):
-            x = x + self.ffn(norm(x))
-        else:  # no_downproj: FFN gives 4d, block-level proj brings back to d
-            x = x + self.ffn_out_proj(self.ffn(norm(x)))
+        if not getattr(self, '_skip_ffn', False):
+            if self.ffn.mode in ('standard', 'linear'):
+                x = x + self.ffn(norm(x))
+            else:  # no_downproj
+                x = x + self.ffn_out_proj(self.ffn(norm(x)))
+
+        # Additional internal layers (SL1)
+        if self.sub_layers > 1:
+            for i in range(self.sub_layers - 1):
+                x = x + self.extra_attns[i](norm(x), cos_sin, ve=ve, window_size=window_size,
+                                             kv_cache=kv_cache, total_sub_layers=total_sub_layers)
+                if not getattr(self, '_skip_ffn', False):
+                    if self.ffn.mode in ('standard', 'linear'):
+                        x = x + self.extra_ffns[i](norm(x))
+                    elif self.extra_ffn_out_projs is not None:
+                        x = x + self.extra_ffn_out_projs[i](self.extra_ffns[i](norm(x)))
         return x
 
 
@@ -631,7 +662,8 @@ class MSTLayer(nn.Module):
             SubTransformerBlock(d, n_head, head_dim, layer_idx, n_layer,
                                 sub_layer_idx=layer_idx * N + j,
                                 ffn_mode=config.mst_ffn_mode,
-                                ffn_inner_dim=config.mst_ffn_inner_dim)
+                                ffn_inner_dim=config.mst_ffn_inner_dim,
+                                sub_layers=config.mst_sub_layers)
             for j in range(N)
         ])
 
@@ -874,6 +906,18 @@ class MST(nn.Module):
             self.global_write_projs = nn.ModuleList([
                 Linear(N * d, D, bias=False) for _ in range(n)
             ])
+        # DR1: Delta residual — subs produce corrections to full-D residual stream.
+        # Per-layer per-sub down_proj(D→d) and up_proj(d→D).
+        self.delta_residual = bool(config.mst_delta_residual)
+        if self.delta_residual:
+            self.delta_down_projs = nn.ModuleList([
+                nn.ModuleList([Linear(D, d, bias=False) for _ in range(N)])
+                for _ in range(n)
+            ])
+            self.delta_up_projs = nn.ModuleList([
+                nn.ModuleList([Linear(d, D, bias=False) for _ in range(N)])
+                for _ in range(n)
+            ])
 
         # H3: Per-sub auxiliary prediction heads (for specialization pressure)
         self.sub_aux_weight = config.mst_sub_aux_weight
@@ -1077,13 +1121,20 @@ class MST(nn.Module):
         x = norm(x)
 
         # Distribute to sub-transformers (Axis 1)
-        if self.config.mst_input_mode == 'stem':
-            sub_states = self.input_layer.forward_with_cos_sin(x, cos_sin, input_ids=idx)
+        if self.delta_residual:
+            # DR1: In delta mode, x_D is the main full-D residual stream.
+            # Sub states are created fresh from down_proj at each layer.
+            x_D = x  # Full-D residual (B, T, D)
+            sub_states = None  # Created per-layer
+            sub_x0 = None
         else:
-            sub_states = self.input_layer(x, input_ids=idx)
-
-        # Save initial sub-states for x0 residual (matching GPT's x0 pattern)
-        sub_x0 = [h.clone() for h in sub_states]
+            if self.config.mst_input_mode == 'stem':
+                sub_states = self.input_layer.forward_with_cos_sin(x, cos_sin, input_ids=idx)
+            else:
+                sub_states = self.input_layer(x, input_ids=idx)
+            # Save initial sub-states for x0 residual (matching GPT's x0 pattern)
+            sub_x0 = [h.clone() for h in sub_states]
+            x_D = None
 
         # Process through L layers
         N = self.config.mst_n_subs
@@ -1093,10 +1144,15 @@ class MST(nn.Module):
         # Global residual stream (D-dim broadcast channel)
         global_stream = x if self.use_global_residual else None
         for i, layer in enumerate(self.layers):
-            # Per-layer residual scaling + x0 blend (matching base GPT)
-            rl = self.resid_lambdas[i]
-            x0l = self.x0_lambdas[i]
-            sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
+            if self.delta_residual:
+                # DR1: Create sub inputs from full-D stream via per-sub down projections
+                x_D_normed = norm(x_D)
+                sub_states = [self.delta_down_projs[i][j](x_D_normed) for j in range(N)]
+            else:
+                # Per-layer residual scaling + x0 blend (matching base GPT)
+                rl = self.resid_lambdas[i]
+                x0l = self.x0_lambdas[i]
+                sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
 
             # Global residual: each sub reads from global stream
             if global_stream is not None:
@@ -1130,6 +1186,12 @@ class MST(nn.Module):
             if self._diag_enabled:
                 self._diag_sub_states[i] = [h.detach() for h in sub_states]
 
+            # DR1: Up-project sub outputs to D-dim deltas and add to full-D stream
+            if self.delta_residual:
+                deltas = [self.delta_up_projs[i][j](sub_states[j]) for j in range(len(sub_states))]
+                # Mean of deltas added to residual stream
+                x_D = x_D + torch.stack(deltas, dim=0).mean(dim=0)
+
             # N1: Progressive merge — group concat (doubles d per merge)
             if i in self.merge_layers:
                 target_n = self._merge_schedule[i]
@@ -1151,18 +1213,23 @@ class MST(nn.Module):
                 concatenated = torch.cat(sub_states, dim=-1)  # (B, T, N*d)
                 global_stream = global_stream + self.global_write_projs[i](concatenated)
 
-        # Normalize each sub output
-        sub_states = [norm(h) for h in sub_states]
-
-        # Final output (Axis 5)
-        if self.progressive_merge and len(sub_states) == 1:
+        # Final output
+        if self.delta_residual:
+            # DR1: x_D is already at full D — use lm_head directly
+            logits = self.lm_head(norm(x_D))
+            final_aux = torch.tensor(0.0, device=logits.device)
+        elif self.progressive_merge and len(sub_states) == 1:
             # Progressive merge reduced to single D-dim sub — use lm_head directly
+            sub_states = [norm(sub_states[0])]
             logits = self.lm_head(sub_states[0])
             final_aux = torch.tensor(0.0, device=logits.device)
-        elif self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
-            logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
         else:
-            logits, final_aux = self.final_head(sub_states)
+            # Normalize each sub output
+            sub_states = [norm(h) for h in sub_states]
+            if self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
+                logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+            else:
+                logits, final_aux = self.final_head(sub_states)
         total_aux_loss = total_aux_loss + final_aux
 
         logits = logits[..., :self.config.vocab_size]

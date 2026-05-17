@@ -324,6 +324,8 @@ def run_training_sweep(args):
         "--mst-sub-aux-weight", str(getattr(args, 'mst_sub_aux_weight', 0.0)),
         "--mst-progressive-merge", str(getattr(args, 'mst_progressive_merge', 0)),
         "--mst-multi-scale-windows", str(getattr(args, 'mst_multi_scale_windows', 0)),
+        "--mst-delta-residual", str(getattr(args, 'mst_delta_residual', 0)),
+        "--mst-sub-layers", str(getattr(args, 'mst_sub_layers', 1)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -841,6 +843,8 @@ if __name__ == "__main__":
     parser.add_argument("--mst-sub-aux-weight", type=float, default=0.0, help="H3: per-sub auxiliary prediction loss weight")
     parser.add_argument("--mst-progressive-merge", type=int, default=0, choices=[0, 1], help="N1: pyramid sub-merging")
     parser.add_argument("--mst-multi-scale-windows", type=int, default=0, choices=[0, 1], help="W1: per-sub multi-scale windows")
+    parser.add_argument("--mst-delta-residual", type=int, default=0, choices=[0, 1], help="DR1: delta residual mode")
+    parser.add_argument("--mst-sub-layers", type=int, default=1, help="SL1: layers per sub-transformer")
 
     args = parser.parse_args()
     
