@@ -701,6 +701,9 @@ def build_model_meta(depth):
         mst_cross_sub_kv=getattr(args, 'mst_cross_sub_kv', 0),
         mst_sub_aux_weight=getattr(args, 'mst_sub_aux_weight', 0.0),
         mst_progressive_merge=getattr(args, 'mst_progressive_merge', 0),
+        mst_multi_scale_windows=getattr(args, 'mst_multi_scale_windows', 0),
+        mst_delta_residual=getattr(args, 'mst_delta_residual', 0),
+        mst_sub_layers=getattr(args, 'mst_sub_layers', 1),
     )
 
     with torch.device("meta"):
