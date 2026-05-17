@@ -702,13 +702,99 @@ class MSTLayer(nn.Module):
         else:
             self.transition = MSTTransition(d, N, D, mode='parallel')
 
+    def _can_batch(self, sub_window_sizes, sub_ves, kv_cache):
+        """Check if we can use the fast batched path."""
+        if sub_window_sizes is not None:  # Multi-scale: different windows per sub
+            return False
+        if sub_ves is not None:  # Value embeddings: complex per-sub logic
+            return False
+        if kv_cache is not None:  # Inference: per-sub cache slots
+            return False
+        if self.sub_blocks[0].sub_layers > 1:  # Multi-layer subs
+            return False
+        if any(getattr(b, '_skip_ffn', False) for b in self.sub_blocks):  # Shared FFN
+            return False
+        if self.sub_blocks[0].ffn.mode != 'standard':  # Non-standard FFN
+            return False
+        return True
+
+    def _batched_forward(self, sub_inputs, cos_sin, window_size):
+        """Process all N subs in a single batched operation for better MFU.
+        Folds N subs into batch dimension: (N, B, T, d) → (N*B, T, d).
+        Uses torch.bmm with stacked weights for projections."""
+        N = self.N
+        x = torch.stack(sub_inputs)  # (N, B, T, d)
+        _, B, T, d = x.shape
+
+        # ===== ATTENTION =====
+        x_normed = norm(x.reshape(N * B * T, d)).reshape(N, B * T, d)
+
+        # Stack weights from all sub blocks: (N, d, qkv_dim) and (N, qkv_dim, d)
+        dtype = x_normed.dtype
+        W_q = torch.stack([b.attn.c_q.weight.T for b in self.sub_blocks]).to(dtype)  # (N, d, qkv_dim)
+        W_k = torch.stack([b.attn.c_k.weight.T for b in self.sub_blocks]).to(dtype)
+        W_v = torch.stack([b.attn.c_v.weight.T for b in self.sub_blocks]).to(dtype)
+        W_proj = torch.stack([b.attn.c_proj.weight.T for b in self.sub_blocks]).to(dtype)  # (N, qkv_dim, d)
+
+        n_head = self.sub_blocks[0].attn.n_head
+        head_dim = self.sub_blocks[0].attn.head_dim
+
+        # Batched QKV projection: (N, B*T, d) @ (N, d, qkv_dim) → (N, B*T, qkv_dim)
+        q = torch.bmm(x_normed, W_q).reshape(N * B, T, n_head, head_dim)
+        k = torch.bmm(x_normed, W_k).reshape(N * B, T, n_head, head_dim)
+        v = torch.bmm(x_normed, W_v).reshape(N * B, T, n_head, head_dim)
+
+        # RoPE
+        cos, sin = cos_sin
+        half_hd = head_dim // 2
+        cos_dim = cos.shape[-1]
+        if cos_dim >= half_hd:
+            cos_s = cos[..., :half_hd]
+            sin_s = sin[..., :half_hd]
+            # Expand cos/sin for N*B batch: (1, T, 1, half_hd) → repeat N*B times
+            cos_s = cos_s.expand(N * B, -1, -1, -1)
+            sin_s = sin_s.expand(N * B, -1, -1, -1)
+            q, k = apply_rotary_emb(q, cos_s, sin_s), apply_rotary_emb(k, cos_s, sin_s)
+        q, k = norm(q), norm(k)
+
+        # Single FlashAttention call with batch=N*B
+        y = flash_attn.flash_attn_func(
+            q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16),
+            causal=True, window_size=window_size
+        )
+        y = y.contiguous().reshape(N, B * T, -1)  # (N, B*T, qkv_dim)
+
+        # Batched output projection
+        attn_out = torch.bmm(y, W_proj).reshape(N, B, T, d)
+
+        # Attention residual
+        x = x + attn_out
+
+        # ===== FFN =====
+        x_normed = norm(x.reshape(N * B * T, d)).reshape(N, B * T, d)
+
+        W_fc = torch.stack([b.ffn.c_fc.weight.T for b in self.sub_blocks]).to(dtype)  # (N, d, 4d)
+        W_proj_ffn = torch.stack([b.ffn.c_proj.weight.T for b in self.sub_blocks]).to(dtype)  # (N, 4d, d)
+
+        h = torch.bmm(x_normed, W_fc)  # (N, B*T, 4d)
+        h = F.relu(h).square()
+        ffn_out = torch.bmm(h, W_proj_ffn).reshape(N, B, T, d)
+
+        x = x + ffn_out
+
+        return [x[j] for j in range(N)]
+
     def forward(self, sub_inputs, cos_sin, sub_ves=None, window_size=(-1, 0),
                 sub_window_sizes=None, kv_cache=None, total_sub_layers=1):
         """sub_inputs: list of N tensors (B, T, d).
         sub_ves: optional list of N tensors (B, T, d) value embeddings.
         sub_window_sizes: optional list of N tuples for per-sub window sizes (multi-scale).
         Returns: list of N tensors (B, T, d), aux_loss."""
-        if sub_ves is not None:
+
+        # Fast batched path: fold N subs into batch dim for better GPU utilization
+        if self._can_batch(sub_window_sizes, sub_ves, kv_cache):
+            sub_outputs = self._batched_forward(sub_inputs, cos_sin, window_size)
+        elif sub_ves is not None:
             sub_outputs = [
                 block(h, cos_sin, ve=ve,
                       window_size=sub_window_sizes[j] if sub_window_sizes else window_size,
