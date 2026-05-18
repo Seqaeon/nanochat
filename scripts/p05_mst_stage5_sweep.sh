@@ -306,7 +306,7 @@ echo "════════════════════════�
 # S6-DR-4: Delta residual, N=4 + aggdist (best config + delta corrections to full-D)
 run_experiment "S6_DR_4SUB_D${DEPTH}" \
     "Delta residual N=4 + aggdist (subs produce D-dim corrections)" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj --mst-n-subs 4 \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
     --mst-transition-mode aggregate_distribute \
     --mst-final-mode concat_proj --mst-final-topk 0 \
