@@ -586,9 +586,44 @@ class EarlyExitGPT(GPT):
             return logits
 
     def num_scaling_params(self):
-        """Override to include EET params in scaling count."""
-        counts = super().num_scaling_params()
+        """Override to include EET params in scaling count without causing assertion errors."""
+        # Count each group separately (mirrors the grouping in setup_optimizers)
+        wte = sum(p.numel() for p in self.transformer.wte.parameters())
+        wpe = sum(p.numel() for p in self.transformer.wpe.parameters()) if "wpe" in self.transformer else 0
+        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
+        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        research = 0
+        if self.embedding_model is not None:
+            research += sum(p.numel() for p in self.embedding_model.parameters())
+        if self.aux_head is not None:
+            research += sum(p.numel() for p in self.aux_head.parameters())
+
+        # EET: Add router and translator parameters to research (and keep track of them separately)
         eet_params = sum(p.numel() for p in self.eet_routers.parameters())
         eet_params += sum(p.numel() for p in self.eet_translators.parameters())
-        counts['eet_routers_and_translators'] = eet_params
-        return counts
+        research += eet_params
+
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        if self.depth_decay_raw is not None:
+            scalars += self.depth_decay_raw.numel()
+        if self.residual_mix_gamma is not None:
+            for gamma_p in self.residual_mix_gamma:
+                scalars += gamma_p.numel()
+        if self.residual_mixers is not None:
+            for mixer in self.residual_mixers:
+                scalars += sum(p.numel() for p in mixer.parameters())
+
+        total = wte + wpe + value_embeds + lm_head + transformer_matrices + research + scalars
+        assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch in EarlyExitGPT"
+        return {
+            'wte': wte,
+            'wpe': wpe,
+            'value_embeds': value_embeds,
+            'lm_head': lm_head,
+            'transformer_matrices': transformer_matrices,
+            'research': research,
+            'scalars': scalars,
+            'eet_routers_and_translators': eet_params,
+            'total': total,
+        }
