@@ -388,6 +388,8 @@ parser.add_argument("--model-tag", type=str, default=None, help="override model 
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
 args = parser.parse_args()
+if args.data_dir is not None:
+    os.environ["NANOCHAT_DATA_DIR"] = args.data_dir
 if args.use_onecycle is not None:
     args.research_onecycle = args.use_onecycle
 user_config = vars(args).copy()  # for logging
@@ -1310,7 +1312,14 @@ if not resuming and device_type == "cuda":
     torch.cuda.reset_peak_memory_stats()
     _wx = torch.zeros_like(x)
     _wy = torch.zeros_like(y)
-    _wloss = model(_wx, _wy)
+    if model_config.use_eet:
+        _wloss = model(_wx, _wy,
+                       eet_do_route=False,
+                       eet_phase=1,
+                       eet_lambda_r=torch.tensor(0.0, device=_wx.device, dtype=torch.float32),
+                       eet_lambda_e=torch.tensor(0.0, device=_wx.device, dtype=torch.float32))
+    else:
+        _wloss = model(_wx, _wy)
     if is_dp:
         _wloss = _wloss.mean()
     (_wloss / grad_accum_steps).backward()
@@ -1475,8 +1484,8 @@ while True:
             loss = model(x, y,
                          eet_do_route=_eet_phase_info['do_route'],
                          eet_phase=_eet_phase_info['phase'],
-                         eet_lambda_r=_eet_phase_info['lambda_r'],
-                         eet_lambda_e=_eet_phase_info['lambda_e'])
+                         eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
+                         eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32))
         else:
             loss = model(x, y)
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:

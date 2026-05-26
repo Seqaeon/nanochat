@@ -38,15 +38,15 @@ class FrequencyPrior(nn.Module):
     computes from training data and caches.
     """
 
-    def __init__(self, vocab_size: int, tokenizer_dir: str = None):
+    def __init__(self, vocab_size: int, tokenizer_dir: str = None, device: str = 'cpu'):
         super().__init__()
-        freq_table = self._load_or_compute(vocab_size, tokenizer_dir)
+        freq_table = self._load_or_compute(vocab_size, tokenizer_dir, device)
         # Normalize to [0, 1]: 1 = most frequent (early exit), 0 = rarest
         log_freq = torch.log1p(freq_table)
         log_freq = log_freq / (log_freq.max() + 1e-8)
         self.register_buffer('freq_bias', log_freq)  # (vocab_size,)
 
-    def _load_or_compute(self, vocab_size: int, tokenizer_dir: str = None) -> torch.Tensor:
+    def _load_or_compute(self, vocab_size: int, tokenizer_dir: str = None, device: str = 'cpu') -> torch.Tensor:
         if tokenizer_dir is None:
             from nanochat.common import get_base_dir
             tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
@@ -57,29 +57,42 @@ class FrequencyPrior(nn.Module):
             return torch.load(cache_path, weights_only=True)
 
         print0(f"[EET] Computing frequency table from training data...")
-        freq = torch.zeros(vocab_size, dtype=torch.float32)
+        freq = torch.zeros(vocab_size, dtype=torch.float32, device=device)
         try:
             from nanochat.dataset import resolve_data_dir, list_parquet_files
+            from nanochat.tokenizer import get_tokenizer
             import pyarrow.parquet as pq
+            import numpy as np
             data_dir = resolve_data_dir()
             shards = list_parquet_files(data_dir=data_dir)
-            for shard_path in shards:
-                table = pq.read_table(shard_path, columns=["tokens"])
-                for batch in table.to_batches():
-                    for row in batch.column("tokens"):
-                        tokens = row.as_py()
-                        for tok in tokens:
-                            if 0 <= tok < vocab_size:
-                                freq[tok] += 1
+            tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
+            
+            for idx, shard_path in enumerate(shards):
+                print0(f"[EET] Processing shard {idx+1}/{len(shards)}: {os.path.basename(shard_path)}")
+                table = pq.read_table(shard_path, columns=["text"])
+                texts = table.column("text").to_pylist()
+                texts = [t for t in texts if t]
+                
+                # Batched parallel tokenization (tiktoken Rust implementation)
+                all_token_ids_list = tokenizer.encode(texts)
+                
+                # Flatten and count in PyTorch on target device (GPU)
+                if all_token_ids_list:
+                    flat_np = np.concatenate([np.array(tokens, dtype=np.int32) for tokens in all_token_ids_list])
+                    flat_tokens_t = torch.from_numpy(flat_np).to(device=device, non_blocking=True).long()
+                    freq += torch.bincount(flat_tokens_t, minlength=vocab_size)[:vocab_size]
+            
+            # Copy to CPU before saving to disk
+            freq_cpu = freq.cpu()
             print0(f"[EET] Frequency table computed from {len(shards)} shards")
         except Exception as e:
             print0(f"[EET] Warning: could not compute freq table ({e}), using uniform")
-            freq = torch.ones(vocab_size, dtype=torch.float32)
+            freq_cpu = torch.ones(vocab_size, dtype=torch.float32)
 
         os.makedirs(tokenizer_dir, exist_ok=True)
-        torch.save(freq, cache_path)
+        torch.save(freq_cpu, cache_path)
         print0(f"[EET] Frequency table saved to {cache_path}")
-        return freq
+        return freq_cpu
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Returns per-token frequency bias. Shape: (B, T)."""
@@ -356,7 +369,7 @@ class EarlyExitGPT(GPT):
         tokenizer_dir = getattr(config, '_tokenizer_dir', None)
 
         if config.eet_freq_prior_alpha > 0:
-            self._freq_prior = FrequencyPrior(config.vocab_size, tokenizer_dir)
+            self._freq_prior = FrequencyPrior(config.vocab_size, tokenizer_dir, device)
             self._freq_prior.freq_bias = self._freq_prior.freq_bias.to(device)
         if config.eet_pos_prior_beta > 0:
             self._pos_prior = POSPrior(config.vocab_size, tokenizer_dir)
@@ -540,31 +553,35 @@ class EarlyExitGPT(GPT):
             )
 
             # --- Reconstruction loss (Phase 2) ---
-            # Weighted KL divergence — no exit_mask.any() graph break, no fancy indexing.
-            # exit_weight (B, T) float is 1.0 for exited tokens, 0.0 otherwise.
+            # Indexed KL divergence — only project exited tokens to vocab space, saving 90%+ VRAM.
             if reconstruction_losses and loss_reduction == 'mean':
                 recon_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
-                target_logits = logits.detach()
+                target_logits = logits.detach().view(-1, logits.size(-1))
                 for translated_h, exit_weight in reconstruction_losses:
-                    trans_logits = self.lm_head(norm(translated_h))
+                    flat_mask = exit_weight.bool().view(-1)
+                    n_exits = flat_mask.sum().clamp(min=1.0)
+                    
+                    # Index only exited tokens
+                    exited_h = translated_h.view(-1, translated_h.size(-1))[flat_mask]
+                    exited_target_logits = target_logits[flat_mask]
+                    
+                    # Project only exited tokens to vocabulary size (saving huge memory)
+                    trans_logits = self.lm_head(norm(exited_h))
                     trans_logits = trans_logits[..., :config.vocab_size].float()
-                    # Per-token KL, weighted by exit mask, normalised by exit count.
-                    t_probs = F.softmax(target_logits, dim=-1)         # (B, T, V)
-                    e_log_probs = F.log_softmax(trans_logits, dim=-1)  # (B, T, V)
-                    kl_per_token = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)  # (B, T)
-                    n_exits = exit_weight.sum().clamp(min=1.0)
-                    recon_loss = recon_loss + (kl_per_token * exit_weight).sum() / n_exits
-                # Use scalar tensor to avoid compile guard on changing float
-                _lr = torch.tensor(eet_lambda_r, device=loss.device, dtype=loss.dtype)
-                loss = loss + _lr * recon_loss / max(len(reconstruction_losses), 1)
+                    
+                    # Compute KL divergence on exited tokens
+                    t_probs = F.softmax(exited_target_logits, dim=-1)
+                    e_log_probs = F.log_softmax(trans_logits, dim=-1)
+                    kl_exited = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)
+                    recon_loss = recon_loss + kl_exited.sum() / n_exits
+                
+                loss = loss + eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
             # --- Efficiency loss (Phase 2 & 3) ---
             # Penalize tokens that DON'T exit (encourage early exit)
             if do_route and n_routed_layers > 0 and loss_reduction == 'mean':
                 avg_active = token_active.float().mean()
-                # Use scalar tensor to avoid compile guard on changing float
-                _le = torch.tensor(eet_lambda_e, device=loss.device, dtype=loss.dtype)
-                loss = loss + _le * avg_active
+                loss = loss + eet_lambda_e * avg_active
 
             # Store diagnostics as raw tensors — NO .item() here (would graph-break compile).
             # Callers must extract .item() outside the compiled region for logging.
