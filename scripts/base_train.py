@@ -1682,6 +1682,13 @@ while True:
             if master_process:
                 with open(gate_stats_log, 'a') as _gf:
                     _gf.write(json.dumps(gs) + '\n')
+        # EET: Early Exit diagnostics (safe to call .item() here — outside compiled forward)
+        if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics'):
+            _eet_diag = orig_model._eet_diagnostics
+            _eet_phase = _eet_diag.get('phase', 0)
+            _eet_active = _eet_diag['active_frac'].item() if hasattr(_eet_diag.get('active_frac', 0), 'item') else _eet_diag.get('active_frac', 1.0)
+            _eet_exit = _eet_diag['total_exit_frac'].item() if hasattr(_eet_diag.get('total_exit_frac', 0), 'item') else _eet_diag.get('total_exit_frac', 0.0)
+            print0(f"  eet | phase={_eet_phase} | active={_eet_active:.3f} | exit_frac={_eet_exit:.3f}")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -1703,6 +1710,14 @@ while True:
         # Phase 20: dynamic weight diagnostics
         if mod_diag is not None and p20_metrics:
             log_data.update(mod_diag.to_dict_p20(p20_metrics))
+        # EET: add exit diagnostics to step log for post-hoc effective FLOPs analysis
+        if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics'):
+            _eet_diag = orig_model._eet_diagnostics
+            _af = _eet_diag.get('active_frac', None)
+            _ef = _eet_diag.get('total_exit_frac', None)
+            log_data['eet/phase'] = _eet_diag.get('phase', 0)
+            log_data['eet/active_frac'] = _af.item() if hasattr(_af, 'item') else float(_af or 1.0)
+            log_data['eet/exit_frac'] = _ef.item() if hasattr(_ef, 'item') else float(_ef or 0.0)
         wandb_run.log(log_data)
 
     # state update

@@ -463,16 +463,11 @@ class EarlyExitGPT(GPT):
             ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
             x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
 
-            if do_route and not token_active.all():
-                if config.eet_frozen_kv:
-                    # Option B: Frozen KV — exited tokens participated in attention
-                    # (their K/V were used) but their hidden state stays frozen
-                    active_mask = token_active.unsqueeze(-1)  # (B, T, 1)
-                    x = torch.where(active_mask, x_new, frozen_h)
-                else:
-                    # Option A: Masked — exited tokens get their frozen state back
-                    active_mask = token_active.unsqueeze(-1)
-                    x = torch.where(active_mask, x_new, frozen_h)
+            # Unconditional torch.where: avoids token_active.all() graph break.
+            # When no tokens have exited, frozen_h is all-zeros so this is a no-op.
+            if do_route:
+                active_mask = token_active.unsqueeze(-1)  # (B, T, 1)
+                x = torch.where(active_mask, x_new, frozen_h)
             else:
                 x = x_new
 
@@ -485,21 +480,19 @@ class EarlyExitGPT(GPT):
                     pos_beta=config.eet_pos_prior_beta,
                 )  # (B, T)
 
-                exit_mask = (exit_prob > config.eet_exit_threshold) & token_active
+                # Base exit candidates: above threshold and still active
+                exit_candidates = (exit_prob > config.eet_exit_threshold) & token_active
 
-                # Safety cap: don't exit more than max_frozen_kv_frac of tokens
-                current_active_frac = token_active.float().mean()
-                if current_active_frac - exit_mask.float().mean() < (1.0 - config.eet_max_frozen_kv_frac):
-                    # Too many exits — randomly keep some tokens active
-                    excess = exit_mask.float().sum() - (config.eet_max_frozen_kv_frac * B * T - (~token_active).float().sum())
-                    if excess > 0:
-                        # Reduce exits: keep tokens with lowest exit_prob
-                        exit_probs_masked = exit_prob.masked_fill(~exit_mask, float('inf'))
-                        _, sort_idx = exit_probs_masked.view(-1).sort()
-                        keep_count = int(excess.item())
-                        flat_mask = exit_mask.view(-1)
-                        flat_mask[sort_idx[:keep_count]] = False
-                        exit_mask = flat_mask.view(B, T)
+                # Safety cap using topk with static Python int k — fully compile-friendly.
+                # No .item(), no data-dependent Python branches.
+                # Non-candidates get prob 0.0 so topk naturally favours real exits;
+                # final & exit_candidates prevents 0-prob slots from leaking through.
+                n_max_exits = int(config.eet_max_frozen_kv_frac * B * T)
+                probs_for_cap = exit_prob * exit_candidates.float()
+                _, top_idx = probs_for_cap.view(-1).topk(n_max_exits, largest=True, sorted=False)
+                budget_mask = torch.zeros(B * T, dtype=torch.bool, device=x.device)
+                budget_mask.scatter_(0, top_idx, True)
+                exit_mask = exit_candidates & budget_mask.view(B, T)
 
                 # Freeze exiting tokens
                 frozen_h = torch.where(
@@ -513,10 +506,16 @@ class EarlyExitGPT(GPT):
                 total_exit_frac = total_exit_frac + exit_mask.float().mean()
                 n_routed_layers += 1
 
-                # Reconstruction loss (Phase 2): exited tokens should predict final output
-                if phase_info['lambda_r'] > 0 and exit_mask.any():
-                    translated = self.eet_translators[i](x)
-                    reconstruction_losses.append((translated, exit_mask))
+                # Reconstruction loss (Phase 2).
+                # CRITICAL: x.detach() prevents holding full backbone grad graphs for
+                # every layer — primary cause of OOM on long runs / large models.
+                # Translators learn to map detached intermediate states to final-layer
+                # space (standard TunedLens practice: translators train, backbone doesn't
+                # receive gradient from this loss path, avoiding double-penalisation).
+                if phase_info['lambda_r'] > 0:
+                    translated = self.eet_translators[i](x.detach())
+                    # Store (translated_h, exit_weight as float) - avoids .any() check
+                    reconstruction_losses.append((translated, exit_mask.float()))
 
             # Residual stream mixing
             if self.residual_mixers is not None:
@@ -527,8 +526,8 @@ class EarlyExitGPT(GPT):
         # --- Final layer processing ---
         # All tokens (active + exited) get the final normalization
         # For exited tokens, use their frozen hidden state
-        if do_route and not token_active.all():
-            # Re-integrate: active tokens use x, exited tokens use frozen_h
+        # Unconditional re-integration — no token_active.all() graph break.
+        if do_route:
             x = torch.where(token_active.unsqueeze(-1), x, frozen_h)
 
         x = norm(x)
@@ -547,22 +546,20 @@ class EarlyExitGPT(GPT):
             )
 
             # --- Reconstruction loss (Phase 2) ---
+            # Weighted KL divergence — no exit_mask.any() graph break, no fancy indexing.
+            # exit_weight (B, T) float is 1.0 for exited tokens, 0.0 otherwise.
             if reconstruction_losses and loss_reduction == 'mean':
                 recon_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
-                with torch.no_grad():
-                    # Target: what the final-layer logits produce
-                    target_logits = logits.detach()
-                for translated_h, exit_mask in reconstruction_losses:
-                    # Translate exited hidden states to logit space
+                target_logits = logits.detach()
+                for translated_h, exit_weight in reconstruction_losses:
                     trans_logits = self.lm_head(norm(translated_h))
                     trans_logits = trans_logits[..., :config.vocab_size].float()
-                    # KL divergence on exited tokens only
-                    if exit_mask.any():
-                        t_probs = F.softmax(target_logits[exit_mask], dim=-1)
-                        e_log_probs = F.log_softmax(trans_logits[exit_mask], dim=-1)
-                        recon_loss = recon_loss + F.kl_div(
-                            e_log_probs, t_probs, reduction='batchmean'
-                        )
+                    # Per-token KL, weighted by exit mask, normalised by exit count.
+                    t_probs = F.softmax(target_logits, dim=-1)         # (B, T, V)
+                    e_log_probs = F.log_softmax(trans_logits, dim=-1)  # (B, T, V)
+                    kl_per_token = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)  # (B, T)
+                    n_exits = exit_weight.sum().clamp(min=1.0)
+                    recon_loss = recon_loss + (kl_per_token * exit_weight).sum() / n_exits
                 loss = loss + phase_info['lambda_r'] * recon_loss / max(len(reconstruction_losses), 1)
 
             # --- Efficiency loss (Phase 2 & 3) ---
@@ -573,12 +570,13 @@ class EarlyExitGPT(GPT):
                 efficiency_loss = avg_active  # minimize active fraction
                 loss = loss + phase_info['lambda_e'] * efficiency_loss
 
-            # Store diagnostics for logging
+            # Store diagnostics as raw tensors — NO .item() here (would graph-break compile).
+            # Callers must extract .item() outside the compiled region for logging.
             if self.training:
                 self._eet_diagnostics = {
                     'phase': phase_info['phase'],
-                    'active_frac': token_active.float().mean().item(),
-                    'total_exit_frac': total_exit_frac.item() if n_routed_layers > 0 else 0.0,
+                    'active_frac': token_active.float().mean(),
+                    'total_exit_frac': total_exit_frac / max(n_routed_layers, 1),
                 }
 
             return loss
