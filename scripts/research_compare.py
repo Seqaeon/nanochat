@@ -326,6 +326,23 @@ def run_training_sweep(args):
         "--mst-multi-scale-windows", str(getattr(args, 'mst_multi_scale_windows', 0)),
         "--mst-delta-residual", str(getattr(args, 'mst_delta_residual', 0)),
         "--mst-sub-layers", str(getattr(args, 'mst_sub_layers', 1)),
+        # EET: Early Exit Transformer
+        "--use-eet", str(getattr(args, 'use_eet', 0)),
+        "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
+        "--eet-router-type", str(getattr(args, 'eet_router_type', 'mlp2')),
+        "--eet-router-hidden", str(getattr(args, 'eet_router_hidden', 0)),
+        "--eet-freq-prior-alpha", str(getattr(args, 'eet_freq_prior_alpha', 0.0)),
+        "--eet-pos-prior-beta", str(getattr(args, 'eet_pos_prior_beta', 0.0)),
+        "--eet-domain-prior", str(getattr(args, 'eet_domain_prior', 0)),
+        "--eet-warmup-frac", str(getattr(args, 'eet_warmup_frac', 0.02)),
+        "--eet-explore-frac", str(getattr(args, 'eet_explore_frac', 0.15)),
+        "--eet-reconstruct-lambda", str(getattr(args, 'eet_reconstruct_lambda', 1.0)),
+        "--eet-efficiency-lambda-start", str(getattr(args, 'eet_efficiency_lambda_start', 0.01)),
+        "--eet-efficiency-lambda-end", str(getattr(args, 'eet_efficiency_lambda_end', 0.1)),
+        "--eet-translator-rank", str(getattr(args, 'eet_translator_rank', 0)),
+        "--eet-max-frozen-kv-frac", str(getattr(args, 'eet_max_frozen_kv_frac', 0.75)),
+        "--eet-exit-threshold", str(getattr(args, 'eet_exit_threshold', 0.5)),
+        "--eet-min-exit-layer", str(getattr(args, 'eet_min_exit_layer', 1)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -845,6 +862,23 @@ if __name__ == "__main__":
     parser.add_argument("--mst-multi-scale-windows", type=int, default=0, choices=[0, 1], help="W1: per-sub multi-scale windows")
     parser.add_argument("--mst-delta-residual", type=int, default=0, choices=[0, 1], help="DR1: delta residual mode")
     parser.add_argument("--mst-sub-layers", type=int, default=1, help="SL1: layers per sub-transformer")
+    # EET: Early Exit Transformer
+    parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
+    parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")
+    parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2"])
+    parser.add_argument("--eet-router-hidden", type=int, default=0)
+    parser.add_argument("--eet-freq-prior-alpha", type=float, default=0.0)
+    parser.add_argument("--eet-pos-prior-beta", type=float, default=0.0)
+    parser.add_argument("--eet-domain-prior", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-warmup-frac", type=float, default=0.02)
+    parser.add_argument("--eet-explore-frac", type=float, default=0.15)
+    parser.add_argument("--eet-reconstruct-lambda", type=float, default=1.0)
+    parser.add_argument("--eet-efficiency-lambda-start", type=float, default=0.01)
+    parser.add_argument("--eet-efficiency-lambda-end", type=float, default=0.1)
+    parser.add_argument("--eet-translator-rank", type=int, default=0)
+    parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75)
+    parser.add_argument("--eet-exit-threshold", type=float, default=0.5)
+    parser.add_argument("--eet-min-exit-layer", type=int, default=1)
 
     args = parser.parse_args()
     

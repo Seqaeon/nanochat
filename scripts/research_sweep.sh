@@ -327,6 +327,15 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --use-eet|--eet-frozen-kv|--eet-router-type|--eet-router-hidden|\
+        --eet-freq-prior-alpha|--eet-pos-prior-beta|--eet-domain-prior|\
+        --eet-warmup-frac|--eet-explore-frac|--eet-reconstruct-lambda|\
+        --eet-efficiency-lambda-start|--eet-efficiency-lambda-end|\
+        --eet-translator-rank|--eet-max-frozen-kv-frac|\
+        --eet-exit-threshold|--eet-min-exit-layer)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         *)
             # Stop parsing flags when we hit a depth
             if [[ "$1" =~ ^[0-9]+$ ]]; then

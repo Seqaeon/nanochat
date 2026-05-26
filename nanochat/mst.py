@@ -907,16 +907,15 @@ class MST(nn.Module):
                 Linear(N * d, D, bias=False) for _ in range(n)
             ])
         # DR1: Delta residual — subs produce corrections to full-D residual stream.
-        # Per-layer per-sub down_proj(D→d) and up_proj(d→D).
+        # Shared per-sub down_proj(D→d) and up_proj(d→D) reused at every layer.
+        # Sharing across layers matches MoL's design and avoids n_layer× param overhead.
         self.delta_residual = bool(config.mst_delta_residual)
         if self.delta_residual:
             self.delta_down_projs = nn.ModuleList([
-                nn.ModuleList([Linear(D, d, bias=False) for _ in range(N)])
-                for _ in range(n)
+                Linear(D, d, bias=False) for _ in range(N)
             ])
             self.delta_up_projs = nn.ModuleList([
-                nn.ModuleList([Linear(d, D, bias=False) for _ in range(N)])
-                for _ in range(n)
+                Linear(d, D, bias=False) for _ in range(N)
             ])
 
         # H3: Per-sub auxiliary prediction heads (for specialization pressure)
@@ -1145,9 +1144,9 @@ class MST(nn.Module):
         global_stream = x if self.use_global_residual else None
         for i, layer in enumerate(self.layers):
             if self.delta_residual:
-                # DR1: Create sub inputs from full-D stream via per-sub down projections
+                # DR1: Create sub inputs from full-D stream via shared per-sub down projections
                 x_D_normed = norm(x_D)
-                sub_states = [self.delta_down_projs[i][j](x_D_normed) for j in range(N)]
+                sub_states = [self.delta_down_projs[j](x_D_normed) for j in range(N)]
             else:
                 # Per-layer residual scaling + x0 blend (matching base GPT)
                 rl = self.resid_lambdas[i]
@@ -1188,7 +1187,7 @@ class MST(nn.Module):
 
             # DR1: Up-project sub outputs to D-dim deltas and add to full-D stream
             if self.delta_residual:
-                deltas = [self.delta_up_projs[i][j](sub_states[j]) for j in range(len(sub_states))]
+                deltas = [self.delta_up_projs[j](sub_states[j]) for j in range(len(sub_states))]
                 # Mean of deltas added to residual stream
                 x_D = x_D + torch.stack(deltas, dim=0).mean(dim=0)
 

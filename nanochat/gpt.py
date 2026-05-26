@@ -351,6 +351,24 @@ class GPTConfig:
     # Stage 6 features
     mst_delta_residual: int = 0                 # DR1: delta residual mode — subs produce corrections to full-D stream
     mst_sub_layers: int = 1                     # SL1: layers per sub-transformer (1=current, 2/4/8=deeper subs)
+    # ── EET: Early Exit Transformer ──
+    use_eet: bool = False                          # master switch for EET mode
+    eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
+    eet_router_type: str = 'mlp2'                  # 'linear', 'mlp1', 'mlp2' — exit router architecture
+    eet_router_hidden: int = 0                     # router MLP hidden dim (0 = n_embd // 4)
+    eet_freq_prior_alpha: float = 0.0              # weight of frequency-based exit bias (0=disabled)
+    eet_pos_prior_beta: float = 0.0                # weight of POS-category exit bias (0=disabled)
+    eet_domain_prior: bool = False                 # enable domain-conditioned routing
+    # Three-phase training schedule
+    eet_warmup_frac: float = 0.02                  # Phase 1: dense warmup fraction of total steps
+    eet_explore_frac: float = 0.15                 # Phase 2: exploration phase fraction
+    eet_reconstruct_lambda: float = 1.0            # Phase 2: reconstruction loss weight (λ_r)
+    eet_efficiency_lambda_start: float = 0.01      # Phase 3: initial efficiency loss weight (λ_e)
+    eet_efficiency_lambda_end: float = 0.1         # Phase 3: final efficiency loss weight
+    eet_translator_rank: int = 0                   # TunedLens translator rank (0 = full rank d→d)
+    eet_max_frozen_kv_frac: float = 0.75           # safety cap: max fraction of tokens that can exit
+    eet_exit_threshold: float = 0.5                # sigmoid threshold for exit decision
+    eet_min_exit_layer: int = 1                    # earliest layer a token can exit at
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -440,6 +458,13 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
     "mst_sub_aux_weight", "mst_progressive_merge", "mst_multi_scale_windows",
     "mst_delta_residual", "mst_sub_layers",
+    # EET: Early Exit Transformer
+    "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
+    "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",
+    "eet_warmup_frac", "eet_explore_frac", "eet_reconstruct_lambda",
+    "eet_efficiency_lambda_start", "eet_efficiency_lambda_end",
+    "eet_translator_rank", "eet_max_frozen_kv_frac",
+    "eet_exit_threshold", "eet_min_exit_layer",
 }
 
 

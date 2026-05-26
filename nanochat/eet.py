@@ -1,0 +1,594 @@
+"""
+Early Exit Transformer (EET) Architecture.
+
+Prior-informed adaptive computation with exit-to-final-layer design.
+Tokens can exit early based on semantic routing priors (frequency, POS, domain),
+but ALL tokens are re-integrated at the final layer via frozen KV injection
+(Option B) or masked attention (Option A).
+
+Three-phase training:
+  Phase 1 (Dense Warmup):   All tokens process all layers, router observes only.
+  Phase 2 (Exploration):    Reconstruction loss + efficiency penalty, routing active.
+  Phase 3 (Committed):      Fixed routing with increasing efficiency pressure.
+
+Design grounded in Token Rank Stability (TRS) findings:
+  - High-frequency tokens stabilize early (ρ = −0.32 to −0.45)
+  - POS categories have consistent exit ordering
+  - Code requires deeper processing than natural language
+"""
+
+import math
+import os
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from nanochat.common import COMPUTE_DTYPE, print0
+from nanochat.gpt import GPT, GPTConfig, Linear, Block, norm, has_ve
+
+
+# ---------------------------------------------------------------------------
+# Routing Priors
+# ---------------------------------------------------------------------------
+
+class FrequencyPrior(nn.Module):
+    """Log-frequency exit bias: common tokens → early exit, rare → late.
+
+    Checks for pre-computed freq_table.pt in tokenizer_dir. If missing,
+    computes from training data and caches.
+    """
+
+    def __init__(self, vocab_size: int, tokenizer_dir: str = None):
+        super().__init__()
+        freq_table = self._load_or_compute(vocab_size, tokenizer_dir)
+        # Normalize to [0, 1]: 1 = most frequent (early exit), 0 = rarest
+        log_freq = torch.log1p(freq_table)
+        log_freq = log_freq / (log_freq.max() + 1e-8)
+        self.register_buffer('freq_bias', log_freq)  # (vocab_size,)
+
+    def _load_or_compute(self, vocab_size: int, tokenizer_dir: str = None) -> torch.Tensor:
+        if tokenizer_dir is None:
+            from nanochat.common import get_base_dir
+            tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
+
+        cache_path = os.path.join(tokenizer_dir, "freq_table.pt")
+        if os.path.exists(cache_path):
+            print0(f"[EET] Loading frequency table from {cache_path}")
+            return torch.load(cache_path, weights_only=True)
+
+        print0(f"[EET] Computing frequency table from training data...")
+        freq = torch.zeros(vocab_size, dtype=torch.float32)
+        try:
+            from nanochat.dataset import resolve_data_dir, list_parquet_files
+            import pyarrow.parquet as pq
+            data_dir = resolve_data_dir()
+            shards = list_parquet_files(data_dir=data_dir)
+            for shard_path in shards:
+                table = pq.read_table(shard_path, columns=["tokens"])
+                for batch in table.to_batches():
+                    for row in batch.column("tokens"):
+                        tokens = row.as_py()
+                        for tok in tokens:
+                            if 0 <= tok < vocab_size:
+                                freq[tok] += 1
+            print0(f"[EET] Frequency table computed from {len(shards)} shards")
+        except Exception as e:
+            print0(f"[EET] Warning: could not compute freq table ({e}), using uniform")
+            freq = torch.ones(vocab_size, dtype=torch.float32)
+
+        os.makedirs(tokenizer_dir, exist_ok=True)
+        torch.save(freq, cache_path)
+        print0(f"[EET] Frequency table saved to {cache_path}")
+        return freq
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Returns per-token frequency bias. Shape: (B, T)."""
+        return self.freq_bias[input_ids]
+
+
+class POSPrior(nn.Module):
+    """POS-category exit bias: function words → early, content words → late.
+
+    Category mapping (exit bias, higher = earlier exit):
+      punctuation/special: 1.0
+      function words:      0.8
+      determiners/preps:   0.6
+      adjectives/adverbs:  0.4
+      content words:       0.2
+      numbers/symbols:     0.1
+    """
+
+    POS_EXIT_SCORES = {
+        'PUNCT': 1.0, 'SPACE': 1.0, 'SYM': 0.9,
+        'DET': 0.8, 'CCONJ': 0.8, 'SCONJ': 0.8, 'ADP': 0.7, 'PART': 0.7,
+        'PRON': 0.6, 'AUX': 0.6, 'INTJ': 0.6,
+        'ADJ': 0.4, 'ADV': 0.4,
+        'VERB': 0.3, 'NOUN': 0.2, 'PROPN': 0.2,
+        'NUM': 0.1, 'X': 0.3,
+    }
+
+    def __init__(self, vocab_size: int, tokenizer_dir: str = None):
+        super().__init__()
+        pos_table = self._load_or_compute(vocab_size, tokenizer_dir)
+        self.register_buffer('pos_bias', pos_table)  # (vocab_size,)
+
+    def _load_or_compute(self, vocab_size: int, tokenizer_dir: str = None) -> torch.Tensor:
+        if tokenizer_dir is None:
+            from nanochat.common import get_base_dir
+            tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
+
+        cache_path = os.path.join(tokenizer_dir, "pos_categories.pt")
+        if os.path.exists(cache_path):
+            print0(f"[EET] Loading POS categories from {cache_path}")
+            return torch.load(cache_path, weights_only=True)
+
+        print0(f"[EET] Computing POS categories via spaCy...")
+        pos_scores = torch.full((vocab_size,), 0.5, dtype=torch.float32)  # default: mid
+        try:
+            import spacy
+            nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "lemmatizer"])
+            from nanochat.tokenizer import get_tokenizer
+            tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
+
+            # Decode each token and tag it
+            batch_texts = []
+            batch_ids = []
+            for tok_id in range(vocab_size):
+                try:
+                    text = tokenizer.decode([tok_id])
+                    if text.strip():
+                        batch_texts.append(text.strip())
+                        batch_ids.append(tok_id)
+                except Exception:
+                    continue
+
+            # Process in batches for efficiency
+            BATCH = 1000
+            for i in range(0, len(batch_texts), BATCH):
+                chunk_texts = batch_texts[i:i + BATCH]
+                chunk_ids = batch_ids[i:i + BATCH]
+                docs = list(nlp.pipe(chunk_texts))
+                for doc, tid in zip(docs, chunk_ids):
+                    if len(doc) > 0:
+                        pos = doc[0].pos_
+                        pos_scores[tid] = self.POS_EXIT_SCORES.get(pos, 0.5)
+
+            print0(f"[EET] POS categories computed for {len(batch_ids)} tokens")
+        except Exception as e:
+            print0(f"[EET] Warning: could not compute POS table ({e}), using uniform 0.5")
+
+        os.makedirs(tokenizer_dir, exist_ok=True)
+        torch.save(pos_scores, cache_path)
+        print0(f"[EET] POS categories saved to {cache_path}")
+        return pos_scores
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Returns per-token POS exit bias. Shape: (B, T)."""
+        return self.pos_bias[input_ids]
+
+
+# ---------------------------------------------------------------------------
+# Exit Router (3 variants)
+# ---------------------------------------------------------------------------
+
+class EarlyExitRouter(nn.Module):
+    """Per-layer exit router producing per-token exit probability.
+
+    Three architecture variants:
+      'linear': Single linear projection d → 1
+      'mlp1':   d → hidden → 1 (one hidden layer + ReLU)
+      'mlp2':   d → hidden → hidden → 1 (two hidden layers + ReLU)
+
+    Adds frequency and POS prior biases to the raw logit before sigmoid.
+    """
+
+    def __init__(self, n_embd: int, router_type: str = 'mlp2',
+                 hidden_dim: int = 0):
+        super().__init__()
+        self.router_type = router_type
+        hidden = hidden_dim if hidden_dim > 0 else n_embd // 4
+
+        if router_type == 'linear':
+            self.net = Linear(n_embd, 1, bias=True)
+        elif router_type == 'mlp1':
+            self.net = nn.Sequential(
+                Linear(n_embd, hidden, bias=True),
+                nn.ReLU(),
+                Linear(hidden, 1, bias=True),
+            )
+        elif router_type == 'mlp2':
+            self.net = nn.Sequential(
+                Linear(n_embd, hidden, bias=True),
+                nn.ReLU(),
+                Linear(hidden, hidden, bias=True),
+                nn.ReLU(),
+                Linear(hidden, 1, bias=True),
+            )
+        else:
+            raise ValueError(f"Unknown router type: {router_type}")
+
+    def forward(self, h: torch.Tensor,
+                freq_bias: torch.Tensor = None,
+                pos_bias: torch.Tensor = None,
+                freq_alpha: float = 0.0,
+                pos_beta: float = 0.0) -> torch.Tensor:
+        """Compute exit probability for each token.
+
+        Args:
+            h: hidden states (B, T, d)
+            freq_bias: frequency prior (B, T), higher = more likely to exit
+            pos_bias: POS prior (B, T), higher = more likely to exit
+            freq_alpha: weight for frequency prior
+            pos_beta: weight for POS prior
+
+        Returns:
+            exit_prob: (B, T) in [0, 1]
+        """
+        logit = self.net(h).squeeze(-1)  # (B, T)
+        if freq_bias is not None and freq_alpha > 0:
+            logit = logit + freq_alpha * freq_bias.to(logit.dtype)
+        if pos_bias is not None and pos_beta > 0:
+            logit = logit + pos_beta * pos_bias.to(logit.dtype)
+        return torch.sigmoid(logit)
+
+
+# ---------------------------------------------------------------------------
+# TunedLens Translator
+# ---------------------------------------------------------------------------
+
+class TunedLensTranslator(nn.Module):
+    """Per-layer affine translator: maps intermediate hidden state to
+    final-layer prediction space for reconstruction loss.
+
+    rank=0: full d→d linear (identity-init via zero weights)
+    rank>0: d→rank→d bottleneck
+    """
+
+    def __init__(self, n_embd: int, rank: int = 0):
+        super().__init__()
+        if rank > 0:
+            self.down = Linear(n_embd, rank, bias=False)
+            self.up = Linear(rank, n_embd, bias=False)
+        else:
+            self.proj = Linear(n_embd, n_embd, bias=True)
+        self.rank = rank
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        if self.rank > 0:
+            return self.up(self.down(h))
+        return self.proj(h)
+
+
+# ---------------------------------------------------------------------------
+# Phase Scheduler
+# ---------------------------------------------------------------------------
+
+class EETPhaseScheduler:
+    """Step-aware training phase manager for the three-phase EET schedule.
+
+    Phase 1 (Dense Warmup):  steps [0, W)       — no routing
+    Phase 2 (Exploration):   steps [W, W+E)     — reconstruction + efficiency loss
+    Phase 3 (Committed):     steps [W+E, total) — increasing efficiency pressure
+    """
+
+    def __init__(self, total_steps: int, warmup_frac: float = 0.02,
+                 explore_frac: float = 0.15,
+                 reconstruct_lambda: float = 1.0,
+                 efficiency_lambda_start: float = 0.01,
+                 efficiency_lambda_end: float = 0.1):
+        self.total_steps = max(total_steps, 1)
+        self.warmup_end = int(warmup_frac * self.total_steps)
+        self.explore_end = self.warmup_end + int(explore_frac * self.total_steps)
+        self.reconstruct_lambda = reconstruct_lambda
+        self.efficiency_lambda_start = efficiency_lambda_start
+        self.efficiency_lambda_end = efficiency_lambda_end
+
+    def get_phase(self, step: int) -> dict:
+        """Returns current phase info.
+
+        Keys: phase (1/2/3), do_route (bool), lambda_r (float), lambda_e (float)
+        """
+        if step < self.warmup_end:
+            return {'phase': 1, 'do_route': False, 'lambda_r': 0.0, 'lambda_e': 0.0}
+        elif step < self.explore_end:
+            # Linear ramp-up of efficiency penalty during exploration
+            progress = (step - self.warmup_end) / max(self.explore_end - self.warmup_end, 1)
+            lambda_e = self.efficiency_lambda_start * progress
+            return {
+                'phase': 2, 'do_route': True,
+                'lambda_r': self.reconstruct_lambda,
+                'lambda_e': lambda_e,
+            }
+        else:
+            # Linear ramp from start to end efficiency weight
+            progress = (step - self.explore_end) / max(self.total_steps - self.explore_end, 1)
+            progress = min(progress, 1.0)
+            lambda_e = (self.efficiency_lambda_start +
+                        progress * (self.efficiency_lambda_end - self.efficiency_lambda_start))
+            return {
+                'phase': 3, 'do_route': True,
+                'lambda_r': 0.0,  # no reconstruction loss in committed phase
+                'lambda_e': lambda_e,
+            }
+
+
+# ---------------------------------------------------------------------------
+# EarlyExitGPT — extends GPT with early exit forward pass
+# ---------------------------------------------------------------------------
+
+class EarlyExitGPT(GPT):
+    """GPT with prior-informed early exit.
+
+    Extends GPT.__init__ to add per-layer routers, translators, and priors.
+    Overrides forward() to implement masking-based early exit with frozen KV.
+    """
+
+    def __init__(self, config: GPTConfig, pad_vocab_size_to: int = 64):
+        super().__init__(config, pad_vocab_size_to)
+
+        n_layer = config.n_layer
+        n_embd = config.n_embd
+        router_hidden = config.eet_router_hidden if config.eet_router_hidden > 0 else n_embd // 4
+
+        # Per-layer routers (layers 0..N-2; final layer has no router)
+        self.eet_routers = nn.ModuleList([
+            EarlyExitRouter(n_embd, router_type=config.eet_router_type,
+                            hidden_dim=router_hidden)
+            for _ in range(n_layer - 1)
+        ])
+
+        # Per-layer TunedLens translators (for reconstruction loss)
+        self.eet_translators = nn.ModuleList([
+            TunedLensTranslator(n_embd, rank=config.eet_translator_rank)
+            for _ in range(n_layer - 1)
+        ])
+
+        # Priors (lazy-loaded, compute on first use)
+        self._freq_prior = None
+        self._pos_prior = None
+        self._priors_initialized = False
+
+    def _ensure_priors(self, device):
+        """Lazy-initialize priors on first forward pass."""
+        if self._priors_initialized:
+            return
+        config = self.config
+        tokenizer_dir = getattr(config, '_tokenizer_dir', None)
+
+        if config.eet_freq_prior_alpha > 0:
+            self._freq_prior = FrequencyPrior(config.vocab_size, tokenizer_dir)
+            self._freq_prior.freq_bias = self._freq_prior.freq_bias.to(device)
+        if config.eet_pos_prior_beta > 0:
+            self._pos_prior = POSPrior(config.vocab_size, tokenizer_dir)
+            self._pos_prior.pos_bias = self._pos_prior.pos_bias.to(device)
+        self._priors_initialized = True
+
+    @torch.no_grad()
+    def init_weights(self):
+        """Initialize base GPT weights + EET-specific parameters."""
+        super().init_weights()
+
+        # Routers: zero-init final layer so routers start as "don't exit"
+        for router in self.eet_routers:
+            if router.router_type == 'linear':
+                nn.init.zeros_(router.net.weight)
+                nn.init.constant_(router.net.bias, -2.0)  # sigmoid(-2) ≈ 0.12
+            else:
+                # Zero-init last linear in MLP chain
+                last_linear = list(router.net.modules())[-1]
+                if isinstance(last_linear, (Linear, nn.Linear)):
+                    nn.init.zeros_(last_linear.weight)
+                    nn.init.constant_(last_linear.bias, -2.0)
+
+        # Translators: identity-like init
+        for translator in self.eet_translators:
+            if translator.rank > 0:
+                nn.init.zeros_(translator.down.weight)
+                nn.init.zeros_(translator.up.weight)
+            else:
+                nn.init.zeros_(translator.proj.weight)
+                nn.init.zeros_(translator.proj.bias)
+
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
+                eet_step=None, eet_total_steps=None):
+        B, T = idx.size()
+        config = self.config
+
+        # Phase scheduling
+        if eet_step is not None and eet_total_steps is not None:
+            scheduler = EETPhaseScheduler(
+                eet_total_steps,
+                warmup_frac=config.eet_warmup_frac,
+                explore_frac=config.eet_explore_frac,
+                reconstruct_lambda=config.eet_reconstruct_lambda,
+                efficiency_lambda_start=config.eet_efficiency_lambda_start,
+                efficiency_lambda_end=config.eet_efficiency_lambda_end,
+            )
+            phase_info = scheduler.get_phase(eet_step)
+        else:
+            phase_info = {'phase': 1, 'do_route': False, 'lambda_r': 0.0, 'lambda_e': 0.0}
+
+        do_route = phase_info['do_route'] and self.training
+
+        # --- Standard GPT embedding ---
+        T0 = 0 if kv_cache is None else kv_cache.get_pos()
+        T_total = T0 + T
+        if T_total > self.cos.size(1):
+            new_len = max(T_total, self.cos.size(1) * 2)
+            head_dim = config.n_embd // config.n_head
+            cos, sin = self._precompute_rotary_embeddings(new_len, head_dim)
+            self.register_buffer("cos", cos, persistent=False)
+            self.register_buffer("sin", sin, persistent=False)
+        cos_sin = self.cos[:, T0:T_total], self.sin[:, T0:T_total]
+
+        if self.embedding_model is None:
+            x = self.transformer.wte(idx)
+        else:
+            x, _ = self.embedding_model(idx)
+        if "wpe" in self.transformer:
+            positions = torch.arange(T0, T_total, device=idx.device)
+            x = x + self.transformer.wpe(positions)
+        x = x.to(COMPUTE_DTYPE)
+        x = norm(x)
+        x0 = x  # save for x0 residual
+
+        # --- Lazy-init priors ---
+        self._ensure_priors(x.device)
+        freq_bias = self._freq_prior(idx) if self._freq_prior is not None else None
+        pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
+
+        # --- Early exit forward pass ---
+        # token_active: (B, T) bool — tracks which tokens are still being processed
+        # frozen_h: (B, T, d) — accumulates hidden states of exited tokens
+        token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
+        frozen_h = torch.zeros_like(x)
+        reconstruction_losses = []
+        total_exit_frac = torch.tensor(0.0, device=x.device)
+        n_routed_layers = 0
+
+        blocks = list(self.transformer.h)
+        n_layer = len(blocks)
+
+        for i, block in enumerate(blocks):
+            # Apply per-layer residual scaling
+            x0_w = self.x0_lambdas[i]
+            if self._use_residual_decay and self.depth_decay_raw is not None:
+                decay_base = torch.sigmoid(self.depth_decay_raw)
+                x0_w = x0_w * (decay_base ** i)
+            x_input = self.resid_lambdas[i] * x + x0_w * x0
+
+            # --- Option A (masked) vs Option B (frozen KV) ---
+            # In both cases, all tokens flow through the block for attention
+            # connectivity. The difference is in how exited tokens' states update.
+            ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
+            x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
+
+            if do_route and not token_active.all():
+                if config.eet_frozen_kv:
+                    # Option B: Frozen KV — exited tokens participated in attention
+                    # (their K/V were used) but their hidden state stays frozen
+                    active_mask = token_active.unsqueeze(-1)  # (B, T, 1)
+                    x = torch.where(active_mask, x_new, frozen_h)
+                else:
+                    # Option A: Masked — exited tokens get their frozen state back
+                    active_mask = token_active.unsqueeze(-1)
+                    x = torch.where(active_mask, x_new, frozen_h)
+            else:
+                x = x_new
+
+            # --- Routing decision (not on final layer) ---
+            if i < n_layer - 1 and do_route and i >= config.eet_min_exit_layer:
+                exit_prob = self.eet_routers[i](
+                    x.detach() if self.training else x,
+                    freq_bias=freq_bias, pos_bias=pos_bias,
+                    freq_alpha=config.eet_freq_prior_alpha,
+                    pos_beta=config.eet_pos_prior_beta,
+                )  # (B, T)
+
+                exit_mask = (exit_prob > config.eet_exit_threshold) & token_active
+
+                # Safety cap: don't exit more than max_frozen_kv_frac of tokens
+                current_active_frac = token_active.float().mean()
+                if current_active_frac - exit_mask.float().mean() < (1.0 - config.eet_max_frozen_kv_frac):
+                    # Too many exits — randomly keep some tokens active
+                    excess = exit_mask.float().sum() - (config.eet_max_frozen_kv_frac * B * T - (~token_active).float().sum())
+                    if excess > 0:
+                        # Reduce exits: keep tokens with lowest exit_prob
+                        exit_probs_masked = exit_prob.masked_fill(~exit_mask, float('inf'))
+                        _, sort_idx = exit_probs_masked.view(-1).sort()
+                        keep_count = int(excess.item())
+                        flat_mask = exit_mask.view(-1)
+                        flat_mask[sort_idx[:keep_count]] = False
+                        exit_mask = flat_mask.view(B, T)
+
+                # Freeze exiting tokens
+                frozen_h = torch.where(
+                    exit_mask.unsqueeze(-1),
+                    x.detach(),
+                    frozen_h,
+                )
+                token_active = token_active & ~exit_mask
+
+                # Track exit fraction for efficiency loss
+                total_exit_frac = total_exit_frac + exit_mask.float().mean()
+                n_routed_layers += 1
+
+                # Reconstruction loss (Phase 2): exited tokens should predict final output
+                if phase_info['lambda_r'] > 0 and exit_mask.any():
+                    translated = self.eet_translators[i](x)
+                    reconstruction_losses.append((translated, exit_mask))
+
+            # Residual stream mixing
+            if self.residual_mixers is not None:
+                gamma = self.residual_mix_gamma[i].to(x.dtype)
+                mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
+                x = x + gamma * mixed
+
+        # --- Final layer processing ---
+        # All tokens (active + exited) get the final normalization
+        # For exited tokens, use their frozen hidden state
+        if do_route and not token_active.all():
+            # Re-integrate: active tokens use x, exited tokens use frozen_h
+            x = torch.where(token_active.unsqueeze(-1), x, frozen_h)
+
+        x = norm(x)
+
+        # --- LM head ---
+        softcap = 20
+        logits = self.lm_head(x)
+        logits = logits[..., :config.vocab_size]
+        logits = logits.float()
+        logits = softcap * torch.tanh(logits / softcap)
+
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1),
+                ignore_index=-1, reduction=loss_reduction,
+            )
+
+            # --- Reconstruction loss (Phase 2) ---
+            if reconstruction_losses and loss_reduction == 'mean':
+                recon_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
+                with torch.no_grad():
+                    # Target: what the final-layer logits produce
+                    target_logits = logits.detach()
+                for translated_h, exit_mask in reconstruction_losses:
+                    # Translate exited hidden states to logit space
+                    trans_logits = self.lm_head(norm(translated_h))
+                    trans_logits = trans_logits[..., :config.vocab_size].float()
+                    # KL divergence on exited tokens only
+                    if exit_mask.any():
+                        t_probs = F.softmax(target_logits[exit_mask], dim=-1)
+                        e_log_probs = F.log_softmax(trans_logits[exit_mask], dim=-1)
+                        recon_loss = recon_loss + F.kl_div(
+                            e_log_probs, t_probs, reduction='batchmean'
+                        )
+                loss = loss + phase_info['lambda_r'] * recon_loss / max(len(reconstruction_losses), 1)
+
+            # --- Efficiency loss (Phase 2 & 3) ---
+            # Penalize tokens that DON'T exit (encourage early exit)
+            if phase_info['lambda_e'] > 0 and n_routed_layers > 0 and loss_reduction == 'mean':
+                # Average fraction of tokens still active (lower = more efficient)
+                avg_active = token_active.float().mean()
+                efficiency_loss = avg_active  # minimize active fraction
+                loss = loss + phase_info['lambda_e'] * efficiency_loss
+
+            # Store diagnostics for logging
+            if self.training:
+                self._eet_diagnostics = {
+                    'phase': phase_info['phase'],
+                    'active_frac': token_active.float().mean().item(),
+                    'total_exit_frac': total_exit_frac.item() if n_routed_layers > 0 else 0.0,
+                }
+
+            return loss
+        else:
+            return logits
+
+    def num_scaling_params(self):
+        """Override to include EET params in scaling count."""
+        counts = super().num_scaling_params()
+        eet_params = sum(p.numel() for p in self.eet_routers.parameters())
+        eet_params += sum(p.numel() for p in self.eet_translators.parameters())
+        counts['eet_routers_and_translators'] = eet_params
+        return counts

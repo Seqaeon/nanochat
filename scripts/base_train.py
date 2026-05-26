@@ -170,6 +170,23 @@ parser.add_argument("--mst-delta-residual", type=int, default=0, choices=[0, 1],
                     help="MST: delta residual mode — subs produce corrections to full-D stream (DR1)")
 parser.add_argument("--mst-sub-layers", type=int, default=1,
                     help="MST: layers per sub-transformer (SL1, default 1)")
+# ── EET: Early Exit Transformer ──
+parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
+parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
+parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2"], help="EET: exit router architecture")
+parser.add_argument("--eet-router-hidden", type=int, default=0, help="EET: router MLP hidden dim (0=n_embd//4)")
+parser.add_argument("--eet-freq-prior-alpha", type=float, default=0.0, help="EET: frequency prior weight (0=disabled)")
+parser.add_argument("--eet-pos-prior-beta", type=float, default=0.0, help="EET: POS prior weight (0=disabled)")
+parser.add_argument("--eet-domain-prior", type=int, default=0, choices=[0, 1], help="EET: enable domain-conditioned routing")
+parser.add_argument("--eet-warmup-frac", type=float, default=0.02, help="EET: Phase 1 dense warmup fraction")
+parser.add_argument("--eet-explore-frac", type=float, default=0.15, help="EET: Phase 2 exploration fraction")
+parser.add_argument("--eet-reconstruct-lambda", type=float, default=1.0, help="EET: reconstruction loss weight (λ_r)")
+parser.add_argument("--eet-efficiency-lambda-start", type=float, default=0.01, help="EET: initial efficiency loss weight")
+parser.add_argument("--eet-efficiency-lambda-end", type=float, default=0.1, help="EET: final efficiency loss weight")
+parser.add_argument("--eet-translator-rank", type=int, default=0, help="EET: TunedLens translator rank (0=full)")
+parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75, help="EET: max fraction of tokens that can exit")
+parser.add_argument("--eet-exit-threshold", type=float, default=0.5, help="EET: sigmoid threshold for exit decision")
+parser.add_argument("--eet-min-exit-layer", type=int, default=1, help="EET: earliest layer a token can exit at")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -704,10 +721,32 @@ def build_model_meta(depth):
         mst_multi_scale_windows=getattr(args, 'mst_multi_scale_windows', 0),
         mst_delta_residual=getattr(args, 'mst_delta_residual', 0),
         mst_sub_layers=getattr(args, 'mst_sub_layers', 1),
+        # EET: Early Exit Transformer
+        use_eet=bool(getattr(args, 'use_eet', 0)),
+        eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
+        eet_router_type=getattr(args, 'eet_router_type', 'mlp2'),
+        eet_router_hidden=getattr(args, 'eet_router_hidden', 0),
+        eet_freq_prior_alpha=getattr(args, 'eet_freq_prior_alpha', 0.0),
+        eet_pos_prior_beta=getattr(args, 'eet_pos_prior_beta', 0.0),
+        eet_domain_prior=bool(getattr(args, 'eet_domain_prior', 0)),
+        eet_warmup_frac=getattr(args, 'eet_warmup_frac', 0.02),
+        eet_explore_frac=getattr(args, 'eet_explore_frac', 0.15),
+        eet_reconstruct_lambda=getattr(args, 'eet_reconstruct_lambda', 1.0),
+        eet_efficiency_lambda_start=getattr(args, 'eet_efficiency_lambda_start', 0.01),
+        eet_efficiency_lambda_end=getattr(args, 'eet_efficiency_lambda_end', 0.1),
+        eet_translator_rank=getattr(args, 'eet_translator_rank', 0),
+        eet_max_frozen_kv_frac=getattr(args, 'eet_max_frozen_kv_frac', 0.75),
+        eet_exit_threshold=getattr(args, 'eet_exit_threshold', 0.5),
+        eet_min_exit_layer=getattr(args, 'eet_min_exit_layer', 1),
     )
+    # Stash tokenizer_dir on config for lazy prior loading in EET
+    config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
 
     with torch.device("meta"):
-        if config.use_mst:
+        if config.use_eet:
+            from nanochat.eet import EarlyExitGPT
+            model_meta = EarlyExitGPT(config)
+        elif config.use_mst:
             from nanochat.mst import MST
             model_meta = MST(config)
         else:
@@ -1419,7 +1458,7 @@ while True:
         # Only capture diagnostics on the last micro-step to avoid overhead
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = True
-        loss = model(x, y)
+        loss = model(x, y, eet_step=step, eet_total_steps=num_iterations) if model_config.use_eet else model(x, y)
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = False
         if is_dp:
