@@ -417,6 +417,20 @@ class EarlyExitGPT(GPT):
 
         do_route = eet_do_route and self.training
 
+        # Phase 1 (no routing): delegate to parent GPT.forward() to get the
+        # exact same torch.compile graph as dense — avoiding OOM from the
+        # compiler generating a less memory-efficient graph for the EET
+        # forward's additional dead-code paths (frozen_h, reconstruction, etc.)
+        if not do_route:
+            loss_or_logits = super().forward(idx, targets, kv_cache, loss_reduction)
+            if self.training and targets is not None:
+                self._eet_diagnostics = {
+                    'phase': eet_phase,
+                    'active_frac': torch.tensor(1.0, device=idx.device),
+                    'total_exit_frac': torch.tensor(0.0, device=idx.device),
+                }
+            return loss_or_logits
+
         # --- Standard GPT embedding ---
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         T_total = T0 + T

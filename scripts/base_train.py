@@ -1313,11 +1313,9 @@ if not resuming and device_type == "cuda":
     _wx = torch.zeros_like(x)
     _wy = torch.zeros_like(y)
     if model_config.use_eet:
-        _wloss = model(_wx, _wy,
-                       eet_do_route=False,
-                       eet_phase=1,
-                       eet_lambda_r=torch.tensor(0.0, device=_wx.device, dtype=torch.float32),
-                       eet_lambda_e=torch.tensor(0.0, device=_wx.device, dtype=torch.float32))
+        # Phase 1 delegates to super().forward() which ignores EET kwargs,
+        # but we still need to pass eet_do_route=False so the guard matches.
+        _wloss = model(_wx, _wy, eet_do_route=False)
     else:
         _wloss = model(_wx, _wy)
     if is_dp:
