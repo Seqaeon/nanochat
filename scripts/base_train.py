@@ -1458,7 +1458,27 @@ while True:
         # Only capture diagnostics on the last micro-step to avoid overhead
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = True
-        loss = model(x, y, eet_step=step, eet_total_steps=num_iterations) if model_config.use_eet else model(x, y)
+        if model_config.use_eet:
+            # Phase scheduling computed OUTSIDE compiled forward to prevent
+            # torch.compile from generating a single graph covering all phases
+            # (which pre-allocates buffers for reconstruction loss etc.)
+            from nanochat.eet import EETPhaseScheduler
+            _eet_sched = EETPhaseScheduler(
+                num_iterations,
+                warmup_frac=model_config.eet_warmup_frac,
+                explore_frac=model_config.eet_explore_frac,
+                reconstruct_lambda=model_config.eet_reconstruct_lambda,
+                efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
+                efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
+            )
+            _eet_phase_info = _eet_sched.get_phase(step)
+            loss = model(x, y,
+                         eet_do_route=_eet_phase_info['do_route'],
+                         eet_phase=_eet_phase_info['phase'],
+                         eet_lambda_r=_eet_phase_info['lambda_r'],
+                         eet_lambda_e=_eet_phase_info['lambda_e'])
+        else:
+            loss = model(x, y)
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = False
         if is_dp:

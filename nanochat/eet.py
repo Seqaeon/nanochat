@@ -390,25 +390,19 @@ class EarlyExitGPT(GPT):
                 nn.init.zeros_(translator.proj.bias)
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
-                eet_step=None, eet_total_steps=None):
+                eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0):
+        """Forward pass with early exit routing.
+
+        Phase scheduling is done OUTSIDE this method (in base_train.py) to
+        avoid torch.compile creating a single graph covering all phases.
+        Args eet_do_route (bool) and eet_phase (int) are stable compile guards
+        that cause at most 3 compiled graph variants. eet_lambda_r/e are Python
+        floats converted to scalar tensors inside to avoid per-step recompiles.
+        """
         B, T = idx.size()
         config = self.config
 
-        # Phase scheduling
-        if eet_step is not None and eet_total_steps is not None:
-            scheduler = EETPhaseScheduler(
-                eet_total_steps,
-                warmup_frac=config.eet_warmup_frac,
-                explore_frac=config.eet_explore_frac,
-                reconstruct_lambda=config.eet_reconstruct_lambda,
-                efficiency_lambda_start=config.eet_efficiency_lambda_start,
-                efficiency_lambda_end=config.eet_efficiency_lambda_end,
-            )
-            phase_info = scheduler.get_phase(eet_step)
-        else:
-            phase_info = {'phase': 1, 'do_route': False, 'lambda_r': 0.0, 'lambda_e': 0.0}
-
-        do_route = phase_info['do_route'] and self.training
+        do_route = eet_do_route and self.training
 
         # --- Standard GPT embedding ---
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
@@ -512,7 +506,7 @@ class EarlyExitGPT(GPT):
                 # Translators learn to map detached intermediate states to final-layer
                 # space (standard TunedLens practice: translators train, backbone doesn't
                 # receive gradient from this loss path, avoiding double-penalisation).
-                if phase_info['lambda_r'] > 0:
+                if eet_lambda_r > 0:
                     translated = self.eet_translators[i](x.detach())
                     # Store (translated_h, exit_weight as float) - avoids .any() check
                     reconstruction_losses.append((translated, exit_mask.float()))
@@ -560,21 +554,23 @@ class EarlyExitGPT(GPT):
                     kl_per_token = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)  # (B, T)
                     n_exits = exit_weight.sum().clamp(min=1.0)
                     recon_loss = recon_loss + (kl_per_token * exit_weight).sum() / n_exits
-                loss = loss + phase_info['lambda_r'] * recon_loss / max(len(reconstruction_losses), 1)
+                # Use scalar tensor to avoid compile guard on changing float
+                _lr = torch.tensor(eet_lambda_r, device=loss.device, dtype=loss.dtype)
+                loss = loss + _lr * recon_loss / max(len(reconstruction_losses), 1)
 
             # --- Efficiency loss (Phase 2 & 3) ---
             # Penalize tokens that DON'T exit (encourage early exit)
-            if phase_info['lambda_e'] > 0 and n_routed_layers > 0 and loss_reduction == 'mean':
-                # Average fraction of tokens still active (lower = more efficient)
+            if do_route and n_routed_layers > 0 and loss_reduction == 'mean':
                 avg_active = token_active.float().mean()
-                efficiency_loss = avg_active  # minimize active fraction
-                loss = loss + phase_info['lambda_e'] * efficiency_loss
+                # Use scalar tensor to avoid compile guard on changing float
+                _le = torch.tensor(eet_lambda_e, device=loss.device, dtype=loss.dtype)
+                loss = loss + _le * avg_active
 
             # Store diagnostics as raw tensors — NO .item() here (would graph-break compile).
             # Callers must extract .item() outside the compiled region for logging.
             if self.training:
                 self._eet_diagnostics = {
-                    'phase': phase_info['phase'],
+                    'phase': eet_phase,
                     'active_frac': token_active.float().mean(),
                     'total_exit_frac': total_exit_frac / max(n_routed_layers, 1),
                 }
