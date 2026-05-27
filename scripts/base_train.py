@@ -1887,12 +1887,13 @@ while True:
                 per_layer_parts.append(f'L{layer_idx}={ln:.3e}')
             per_layer_str = ' '.join(per_layer_parts) if per_layer_parts else 'none'
             print0(f"  eet_grad | ∇router={_r_gnorm:.3e} ∇trans={_t_gnorm:.3e} params_with_grad={_n_with_grad} | {per_layer_str}")
-            # Write full grad info to JSONL log file
-            if master_process:
+            # Write full grad info to JSONL log file (only when routing is active)
+            if master_process and _gi.get('n_router_params_with_grad', 0) > 0:
                 import json
                 _gi['eet_phase'] = _eet_diag.get('phase', 0) if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics') else 0
                 _gi['active_frac'] = _eet_active if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics') else 1.0
                 eet_grad_log_path = os.path.join(checkpoint_dir, "eet_grad_log.jsonl")
+                os.makedirs(checkpoint_dir, exist_ok=True)
                 with open(eet_grad_log_path, 'a') as _ef:
                     _ef.write(json.dumps(_gi) + '\n')
     if step % 100 == 0:
