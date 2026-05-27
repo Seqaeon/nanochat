@@ -139,7 +139,13 @@ class POSPrior(nn.Module):
         pos_scores = torch.full((vocab_size,), 0.5, dtype=torch.float32)  # default: mid
         try:
             import spacy
-            nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "lemmatizer"])
+            try:
+                nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "lemmatizer"])
+            except OSError:
+                print0("[EET] Downloading missing spaCy model 'en_core_web_sm'...")
+                import spacy.cli
+                spacy.cli.download("en_core_web_sm")
+                nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "lemmatizer"])
             from nanochat.tokenizer import get_tokenizer
             tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
 
@@ -465,6 +471,7 @@ class EarlyExitGPT(GPT):
         # token_active: (B, T) bool — tracks which tokens are still being processed
         # frozen_h: (B, T, d) — accumulates hidden states of exited tokens
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
+        soft_active = torch.ones(B, T, dtype=x.dtype, device=x.device)
         frozen_h = torch.zeros_like(x)
         reconstruction_losses = []
         total_exit_frac = torch.tensor(0.0, device=x.device)
@@ -513,6 +520,9 @@ class EarlyExitGPT(GPT):
                     pos_beta=config.eet_pos_prior_beta,
                 )  # (B, T)
 
+                # Update soft active probability for gradient flow
+                soft_active = soft_active * (1.0 - exit_prob * token_active.float())
+
                 # Base exit candidates: above threshold and still active
                 exit_candidates = (exit_prob > config.eet_exit_threshold) & token_active
 
@@ -541,16 +551,17 @@ class EarlyExitGPT(GPT):
 
                 # Phase 2 loss data collection
                 if eet_phase == 2:
+                    exit_weight = exit_prob - exit_prob.detach() + exit_mask.float()
                     if loss_variant == 'reconstruct':
                         # TunedLens translator — x.detach() prevents backbone grad
                         translated = self.eet_translators[i](x.detach())
-                        reconstruction_losses.append((translated, exit_mask.float()))
+                        reconstruction_losses.append((translated, exit_weight))
                     elif need_exit_tracking:
-                        # Variants A/B: track per-token exit-layer hidden state
-                        exit_hidden = torch.where(exit_mask.unsqueeze(-1), x.detach(), exit_hidden)
+                        # Variants A/B: track per-token exit-layer hidden state via Straight-Through Estimator
+                        exit_hidden = torch.where(exit_mask.unsqueeze(-1), exit_weight.unsqueeze(-1) * x.detach(), exit_hidden)
                         exit_layers = torch.where(exit_mask, torch.tensor(i, device=x.device), exit_layers)
                         if loss_variant == 'entropy_surprise':
-                            prev_exit_hidden = torch.where(exit_mask.unsqueeze(-1), prev_x, prev_exit_hidden)
+                            prev_exit_hidden = torch.where(exit_mask.unsqueeze(-1), exit_weight.unsqueeze(-1) * prev_x, prev_exit_hidden)
 
             # Update prev_x for surprise computation (before residual mixing)
             if need_exit_tracking:
@@ -612,9 +623,9 @@ class EarlyExitGPT(GPT):
                     loss = loss + variant_loss
 
             # --- Efficiency loss (Phase 2 & 3) ---
-            # Penalize tokens that DON'T exit (encourage early exit)
+            # Penalize tokens that DON'T exit (encourage early exit) using soft_active for backpropagation
             if do_route and n_routed_layers > 0 and loss_reduction == 'mean':
-                avg_active = token_active.float().mean()
+                avg_active = soft_active.mean()
                 loss = loss + eet_lambda_e * avg_active
 
             # Store diagnostics as raw tensors — NO .item() here (would graph-break compile).
@@ -651,6 +662,8 @@ class EarlyExitGPT(GPT):
             t_log_probs = F.log_softmax(exited_target_logits, dim=-1)
             e_log_probs = F.log_softmax(trans_logits, dim=-1)
             kl_exited = (t_probs * (t_log_probs - e_log_probs)).sum(-1)
+            # Propagate gradients back through exit_weight using Straight-Through Estimator
+            kl_exited = kl_exited * exit_weight.view(-1)[flat_mask]
             recon_loss = recon_loss + kl_exited.sum() / n_exits
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
@@ -736,15 +749,29 @@ class EarlyExitGPT(GPT):
             chunk_logits = chunk_logits[..., :vocab_size].float()
             chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
             early_logits_chunks.append(chunk_logits)
-        early_logits = torch.cat(early_logits_chunks, dim=0)  # (B*T, V)
-
         # CE losses
         flat_targets = targets.reshape(-1)  # (B*T,)
-        loss_early = F.cross_entropy(early_logits, flat_targets, ignore_index=-1)
         loss_full = F.cross_entropy(
             full_logits.detach().view(-1, full_logits.size(-1)),
             flat_targets, ignore_index=-1,
         )
+
+        # Compute unreduced cross entropy chunk-by-chunk to save massive peak memory (avoiding B*T*V tensor)
+        total_ce_early = torch.tensor(0.0, device=exit_hidden.device, dtype=torch.float32)
+        total_valid = 0
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            h_normed = norm(flat_h[start:end])  # apply same layernorm as real forward
+            chunk_logits = self.lm_head(h_normed)  # (chunk, padded_V)
+            chunk_logits = chunk_logits[..., :vocab_size].float()
+            chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
+            
+            chunk_targets = flat_targets[start:end]
+            chunk_ce = F.cross_entropy(chunk_logits, chunk_targets, ignore_index=-1, reduction='sum')
+            total_ce_early = total_ce_early + chunk_ce
+            total_valid += (chunk_targets != -1).sum().item()
+        
+        loss_early = total_ce_early / max(total_valid, 1)
 
         # Gap: how much worse is early exit vs full depth? Clamp at 0 (no reward for being better)
         adversarial_loss = (loss_early - loss_full).clamp(min=0)
