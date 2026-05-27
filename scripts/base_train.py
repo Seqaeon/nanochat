@@ -44,10 +44,12 @@ from scripts.base_eval import evaluate_core
 print_banner()
 
 
-def check_router_learned(exit_probs, token_ids, tokenizer, token_freq):
+def check_router_learned(exit_probs, token_ids, orig_model):
     """
     Run this at end of Phase 2 before committing to Phase 3.
     Check if exit_probs correlates with token frequency as TRS predicted.
+    Uses orig_model._freq_prior.freq_bias as the authoritative frequency source
+    (the exact signal the router saw during training).
     """
     import numpy as np
     from scipy import stats
@@ -59,42 +61,62 @@ def check_router_learned(exit_probs, token_ids, tokenizer, token_freq):
     print0(f'[EET DIAGNOSTIC] Exit probability distribution across {n_exits} slots:')
     for slot in range(n_exits):
         slot_probs = probs_cpu[:, :, slot].numpy().ravel()
-        label = f'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
+        label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
         print0(f'  {label}: mean={slot_probs.mean():.6f}  std={slot_probs.std():.6f}  '
                f'min={slot_probs.min():.6f}  max={slot_probs.max():.6f}')
     
     # Expected exit layer under soft distribution
-    layer_indices   = torch.arange(n_exits, device=exit_probs.device).float()
-    expected_exit   = (exit_probs * layer_indices).sum(dim=-1)  # (B, T)
+    layer_indices = torch.arange(n_exits, device=exit_probs.device).float()
+    expected_exit = (exit_probs * layer_indices).sum(dim=-1)  # (B, T)
     
-    # Flatten and get frequencies
-    flat_ids        = token_ids.view(-1).cpu().numpy()
-    flat_exit       = expected_exit.view(-1).detach().cpu().numpy()
-    flat_freq       = np.array([token_freq.get(id_, 0) for id_ in flat_ids])
+    flat_ids  = token_ids.view(-1)
+    flat_exit = expected_exit.view(-1).detach().cpu().numpy()
     
     print0(f'[EET DIAGNOSTIC] Mean expected exit layer: {flat_exit.mean():.4f}')
     print0(f'[EET DIAGNOSTIC] Std expected exit layer:  {flat_exit.std():.6f}')
     
-    # Guard against constant arrays (std=0 → Spearman is undefined)
+    # Guard against constant router output (std=0 → Spearman undefined)
     if flat_exit.std() < 1e-8:
         print0('[EET DIAGNOSTIC] ⚠ Router output is CONSTANT across all tokens — no structure learned.')
         print0('[EET DIAGNOSTIC] Router has NOT learned structure yet. Extend Phase 2 or check gradients.')
         return 0.0
     
-    log_freq        = np.log1p(flat_freq)
+    # Build frequency signal — prefer _freq_prior.freq_bias (authoritative: exact signal the router saw)
+    freq_prior = getattr(orig_model, '_freq_prior', None)
+    if freq_prior is not None and hasattr(freq_prior, 'freq_bias'):
+        freq_bias = freq_prior.freq_bias  # (vocab_size,), already log-normalized to [0,1]
+        log_freq  = freq_bias[flat_ids.clamp(0, freq_bias.size(0) - 1)].cpu().float().numpy()
+        freq_src  = '_freq_prior.freq_bias'
+    else:
+        # Fallback: load raw counts from disk and apply log1p
+        import os
+        from nanochat.common import get_base_dir
+        cache_path = os.path.join(get_base_dir(), 'tokenizer', 'freq_table.pt')
+        if os.path.exists(cache_path):
+            ft = torch.load(cache_path, map_location='cpu')
+            flat_ids_np = flat_ids.cpu().numpy()
+            log_freq   = np.log1p(np.array([ft[i].item() for i in flat_ids_np]))
+            freq_src   = f'freq_table.pt ({cache_path})'
+        else:
+            print0('[EET DIAGNOSTIC] ⚠ No frequency source available (no _freq_prior and no freq_table.pt). Skipping correlation.')
+            return 0.0
+    
+    print0(f'[EET DIAGNOSTIC] Frequency source: {freq_src}')
+    print0(f'[EET DIAGNOSTIC] log_freq — mean={log_freq.mean():.6f}  std={log_freq.std():.6f}'
+           f'  min={log_freq.min():.6f}  max={log_freq.max():.6f}')
+    
     if log_freq.std() < 1e-8:
-        print0('[EET DIAGNOSTIC] ⚠ Token frequency is constant (freq_table missing?) — cannot compute correlation.')
+        print0('[EET DIAGNOSTIC] ⚠ Frequency signal is constant (freq_table was saved with uniform fallback).')
+        print0('[EET DIAGNOSTIC]   Run FrequencyPrior with access to training data shards to rebuild freq_table.pt.')
         return 0.0
     
-    rho, p          = stats.spearmanr(log_freq, flat_exit)
-    
+    rho, p = stats.spearmanr(log_freq, flat_exit)
     print0(f'[EET DIAGNOSTIC] Spearman ρ (freq vs expected exit layer): {rho:.4f} (p={p:.4f})')
     
-    # If rho is negative and significant, router has learned frequency structure
     if rho < -0.1 and p < 0.05:
-        print0('[EET DIAGNOSTIC] Router has learned frequency-depth structure. Safe to enter Phase 3.')
+        print0('[EET DIAGNOSTIC] ✓ Router has learned frequency-depth structure. Safe to enter Phase 3.')
     else:
-        print0('[EET DIAGNOSTIC] Router has NOT learned structure yet. Extend Phase 2 or check gradients.')
+        print0('[EET DIAGNOSTIC] ✗ Router has NOT learned structure yet. Extend Phase 2 or check gradients.')
     
     return rho
 
@@ -1539,28 +1561,14 @@ while True:
         )
         if step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
-            orig_model.eval()
+            orig_model.train()  # must be training=True so do_route = eet_do_route and self.training → True
             with torch.no_grad():
-                # Perform a single forward pass on the current batch (x) with soft routing to populate _last_exit_probs
+                # Forward pass in soft-routing mode to populate _last_exit_probs
                 _ = orig_model(x, eet_do_route=True, eet_phase=2, eet_lambda_r=0.0, eet_lambda_e=0.0)
             
             if hasattr(orig_model, '_last_exit_probs'):
-                exit_probs = orig_model._last_exit_probs
-                token_ids = x
-                
-                # Load or construct token_freq dictionary from freq_table.pt
-                import os
-                from nanochat.common import get_base_dir
-                tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
-                cache_path = os.path.join(tokenizer_dir, "freq_table.pt")
-                if os.path.exists(cache_path):
-                    freq_table = torch.load(cache_path, map_location='cpu')
-                    token_freq = {idx: freq_table[idx].item() for idx in range(len(freq_table))}
-                else:
-                    token_freq = {}
-                
                 try:
-                    check_router_learned(exit_probs, token_ids, tokenizer, token_freq)
+                    check_router_learned(orig_model._last_exit_probs, x, orig_model)
                 except Exception as e:
                     print0(f"[EET DIAGNOSTIC] Warning: correlation check failed with error: {e}")
             else:

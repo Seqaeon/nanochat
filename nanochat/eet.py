@@ -386,17 +386,20 @@ class EarlyExitGPT(GPT):
         """Initialize base GPT weights + EET-specific parameters."""
         super().init_weights()
 
-        # Routers: zero-init final layer so routers start as "don't exit"
+        # Routers: small-init last layer so routers start with slight "don't exit" bias
+        # but KEEP random weights so the output varies across tokens from step 1.
+        # Zero-ing the weights causes the router to collapse to a constant function.
         for router in self.eet_routers:
             if router.router_type == 'linear':
-                nn.init.zeros_(router.net.weight)
-                nn.init.constant_(router.net.bias, -2.0)  # sigmoid(-2) ≈ 0.12
+                # Scale down weights for stable init, mild negative bias
+                nn.init.normal_(router.net.weight, std=0.01)
+                nn.init.constant_(router.net.bias, -1.0)  # sigmoid(-1) ≈ 0.27
             else:
-                # Zero-init last linear in MLP chain
+                # Scale down (not zero!) last linear in MLP chain
                 last_linear = list(router.net.modules())[-1]
                 if isinstance(last_linear, (Linear, nn.Linear)):
-                    nn.init.zeros_(last_linear.weight)
-                    nn.init.constant_(last_linear.bias, -2.0)
+                    nn.init.normal_(last_linear.weight, std=0.01)
+                    nn.init.constant_(last_linear.bias, -1.0)  # sigmoid(-1) ≈ 0.27
 
         # Translators: identity-like init (only when present)
         for translator in self.eet_translators:
