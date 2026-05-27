@@ -533,7 +533,7 @@ class EarlyExitGPT(GPT):
                 # Translators learn to map detached intermediate states to final-layer
                 # space (standard TunedLens practice: translators train, backbone doesn't
                 # receive gradient from this loss path, avoiding double-penalisation).
-                if eet_lambda_r > 0:
+                if eet_phase == 2:
                     translated = self.eet_translators[i](x.detach())
                     # Store (translated_h, exit_weight as float) - avoids .any() check
                     reconstruction_losses.append((translated, exit_mask.float()))
@@ -567,29 +567,13 @@ class EarlyExitGPT(GPT):
             )
 
             # --- Reconstruction loss (Phase 2) ---
-            # Indexed KL divergence — only project exited tokens to vocab space, saving 90%+ VRAM.
+            # Computed in eager mode via @torch.compiler.disable to prevent compiler
+            # upper-bound/static activation pre-allocation for dynamic indexed tensors.
             if reconstruction_losses and loss_reduction == 'mean':
-                recon_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
-                target_logits = logits.detach().view(-1, logits.size(-1))
-                for translated_h, exit_weight in reconstruction_losses:
-                    flat_mask = exit_weight.bool().view(-1)
-                    n_exits = flat_mask.sum().clamp(min=1.0)
-                    
-                    # Index only exited tokens
-                    exited_h = translated_h.view(-1, translated_h.size(-1))[flat_mask]
-                    exited_target_logits = target_logits[flat_mask]
-                    
-                    # Project only exited tokens to vocabulary size (saving huge memory)
-                    trans_logits = self.lm_head(norm(exited_h))
-                    trans_logits = trans_logits[..., :config.vocab_size].float()
-                    
-                    # Compute KL divergence on exited tokens
-                    t_probs = F.softmax(exited_target_logits, dim=-1)
-                    e_log_probs = F.log_softmax(trans_logits, dim=-1)
-                    kl_exited = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)
-                    recon_loss = recon_loss + kl_exited.sum() / n_exits
-                
-                loss = loss + eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
+                recon_loss_term = self._compute_reconstruction_loss(
+                    logits, reconstruction_losses, eet_lambda_r, config.vocab_size
+                )
+                loss = loss + recon_loss_term
 
             # --- Efficiency loss (Phase 2 & 3) ---
             # Penalize tokens that DON'T exit (encourage early exit)
@@ -609,6 +593,30 @@ class EarlyExitGPT(GPT):
             return loss
         else:
             return logits
+
+    @torch.compiler.disable
+    def _compute_reconstruction_loss(self, logits, reconstruction_losses, eet_lambda_r, vocab_size):
+        recon_loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+        target_logits = logits.detach().view(-1, logits.size(-1))
+        for translated_h, exit_weight in reconstruction_losses:
+            flat_mask = exit_weight.bool().view(-1)
+            n_exits = flat_mask.sum().clamp(min=1.0)
+            
+            # Index only exited tokens
+            exited_h = translated_h.view(-1, translated_h.size(-1))[flat_mask]
+            exited_target_logits = target_logits[flat_mask]
+            
+            # Project only exited tokens to vocabulary size (saving huge memory)
+            trans_logits = self.lm_head(norm(exited_h))
+            trans_logits = trans_logits[..., :vocab_size].float()
+            
+            # Compute KL divergence on exited tokens
+            t_probs = F.softmax(exited_target_logits, dim=-1)
+            e_log_probs = F.log_softmax(trans_logits, dim=-1)
+            kl_exited = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)
+            recon_loss = recon_loss + kl_exited.sum() / n_exits
+            
+        return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
     def num_scaling_params(self):
         """Override to include EET params in scaling count without causing assertion errors."""
