@@ -565,16 +565,15 @@ class EarlyExitGPT(GPT):
                         pos_beta=config.eet_pos_prior_beta,
                     )
                     exit_probs_list.append(exit_prob_i)
-                    # Detach candidate states: for REINFORCE quality loss, the
-                    # quality scores are reward signals (not differentiable paths).
-                    # Gradients only flow through p_exit_i → router params.
-                    # Keeping these live would create a double backward path
-                    # through the entire model → gradient explosion → NaN.
-                    candidate_states.append(norm(x).detach())
-                    candidate_prev_states.append(norm(prev_x_val).detach())
+                    # Keep candidate states LIVE (not detached) so that the
+                    # LM loss gradient flows: CE → soft_h → h_i → transformer blocks.
+                    # The quality loss is protected from NaN by _compute_quality_advantages
+                    # using @torch.compiler.disable + torch.no_grad() + .detach() on output.
+                    candidate_states.append(norm(x))
+                    candidate_prev_states.append(norm(prev_x_val))
                 elif i == n_layer - 1:
-                    candidate_states.append(norm(x).detach())
-                    candidate_prev_states.append(norm(prev_x_val).detach())
+                    candidate_states.append(norm(x))
+                    candidate_prev_states.append(norm(prev_x_val))
             else:
                 # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
                 if do_route:
