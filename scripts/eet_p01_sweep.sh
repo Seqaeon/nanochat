@@ -115,7 +115,7 @@ EET_COMMON="--models base \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
-  --target-tokens 0 \
+  --target-tokens -1 \
   --target-active-params 0 \
   --save-every 200 \
   --eval-every -1"
@@ -186,7 +186,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # EET_P1_10: Variant A — Entropy + Surprise (no translators)
 run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
     "Variant A: entropy + surprise loss (no reconstruction/translators)" \
-    --use-eet 1 --eet-frozen-kv 1 \
+    --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
     --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \

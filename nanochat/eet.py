@@ -310,20 +310,20 @@ class EETPhaseScheduler:
         if step < self.warmup_end:
             return {'phase': 1, 'do_route': False, 'lambda_r': 0.0, 'lambda_e': 0.0}
         elif step < self.explore_end:
-            # Linear ramp-up of efficiency penalty during exploration
+            # Linear ramp-up of efficiency penalty during exploration, scaled by 0.01 to prevent dominating quality losses
             progress = (step - self.warmup_end) / max(self.explore_end - self.warmup_end, 1)
-            lambda_e = self.efficiency_lambda_start * progress
+            lambda_e = self.efficiency_lambda_start * progress * 0.01
             return {
                 'phase': 2, 'do_route': True,
                 'lambda_r': self.reconstruct_lambda,
                 'lambda_e': lambda_e,
             }
         else:
-            # Linear ramp from start to end efficiency weight
+            # Gradually anneal efficiency up from the explore end
             progress = (step - self.explore_end) / max(self.total_steps - self.explore_end, 1)
             progress = min(progress, 1.0)
-            lambda_e = (self.efficiency_lambda_start +
-                        progress * (self.efficiency_lambda_end - self.efficiency_lambda_start))
+            lambda_e = (self.efficiency_lambda_start * 0.01 +
+                        progress * (self.efficiency_lambda_end - self.efficiency_lambda_start * 0.01))
             return {
                 'phase': 3, 'do_route': True,
                 'lambda_r': 0.0,  # no reconstruction loss in committed phase
@@ -462,25 +462,31 @@ class EarlyExitGPT(GPT):
         pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
 
         # --- Early exit forward pass ---
-        # token_active: (B, T) bool — tracks which tokens are still being processed
-        # frozen_h: (B, T, d) — accumulates hidden states of exited tokens
+        is_soft_training = eet_do_route and self.training and eet_phase == 2
+
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
-        soft_active = torch.ones(B, T, dtype=x.dtype, device=x.device)
         frozen_h = torch.zeros_like(x)
         reconstruction_losses = []
         total_exit_frac = torch.tensor(0.0, device=x.device)
         n_routed_layers = 0
 
-        # Exit-layer tracking for variant losses (A/B)
         loss_variant = config.eet_loss_variant
         blocks = list(self.transformer.h)
         n_layer = len(blocks)
         need_exit_tracking = (eet_phase == 2 and loss_variant != 'reconstruct')
+        
         if need_exit_tracking:
             exit_hidden = torch.zeros_like(x)                # (B, T, D)
             exit_layers = torch.full((B, T), n_layer - 1, dtype=torch.long, device=x.device)
             if loss_variant == 'entropy_surprise':
                 prev_exit_hidden = torch.zeros_like(x)       # for surprise term
+                
+        if is_soft_training:
+            exit_probs_list = []
+            candidate_states = []
+            candidate_prev_states = []
+            routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+
         prev_x = x.detach()  # hidden state before first block
 
         for i, block in enumerate(blocks):
@@ -490,98 +496,134 @@ class EarlyExitGPT(GPT):
                 decay_base = torch.sigmoid(self.depth_decay_raw)
                 x0_w = x0_w * (decay_base ** i)
             x_input = self.resid_lambdas[i] * x + x0_w * x0
+            
+            prev_x_val = x_input  # track state before block
 
-            # --- Option A (masked) vs Option B (frozen KV) ---
-            # In both cases, all tokens flow through the block for attention
-            # connectivity. The difference is in how exited tokens' states update.
             ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
             x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
 
-            # Unconditional torch.where: avoids token_active.all() graph break.
-            # When no tokens have exited, frozen_h is all-zeros so this is a no-op.
-            if do_route:
-                active_mask = token_active.unsqueeze(-1)  # (B, T, 1)
-                x = torch.where(active_mask, x_new, frozen_h)
-            else:
+            if is_soft_training:
+                # Dense forward with residual mixing for soft training
+                if self.residual_mixers is not None:
+                    gamma = self.residual_mix_gamma[i].to(x_new.dtype)
+                    mixed = self.residual_mixers[i](x_new.transpose(1, 2)).transpose(1, 2)
+                    x_new = x_new + gamma * mixed
                 x = x_new
+                
+                # Routing check for soft path
+                if i in routing_layers:
+                    exit_prob_i = self.eet_routers[i](
+                        x.detach() if self.training else x,
+                        freq_bias=freq_bias, pos_bias=pos_bias,
+                        freq_alpha=config.eet_freq_prior_alpha,
+                        pos_beta=config.eet_pos_prior_beta,
+                    )
+                    exit_probs_list.append(exit_prob_i)
+                    candidate_states.append(norm(x))
+                    candidate_prev_states.append(norm(prev_x_val))
+                elif i == n_layer - 1:
+                    candidate_states.append(norm(x))
+                    candidate_prev_states.append(norm(prev_x_val))
+            else:
+                # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
+                if do_route:
+                    active_mask = token_active.unsqueeze(-1)  # (B, T, 1)
+                    x = torch.where(active_mask, x_new, frozen_h)
+                else:
+                    x = x_new
 
-            # --- Routing decision (not on final layer) ---
-            if i < n_layer - 1 and do_route and i >= config.eet_min_exit_layer:
-                exit_prob = self.eet_routers[i](
-                    x.detach() if self.training else x,
-                    freq_bias=freq_bias, pos_bias=pos_bias,
-                    freq_alpha=config.eet_freq_prior_alpha,
-                    pos_beta=config.eet_pos_prior_beta,
-                )  # (B, T)
+                # Routing decision
+                if i < n_layer - 1 and do_route and i >= config.eet_min_exit_layer:
+                    exit_prob = self.eet_routers[i](
+                        x.detach() if self.training else x,
+                        freq_bias=freq_bias, pos_bias=pos_bias,
+                        freq_alpha=config.eet_freq_prior_alpha,
+                        pos_beta=config.eet_pos_prior_beta,
+                    )  # (B, T)
 
-                # Update soft active probability for gradient flow
-                soft_active = soft_active * (1.0 - exit_prob * token_active.float())
+                    exit_candidates = (exit_prob > config.eet_exit_threshold) & token_active
+                    n_max_exits = int(config.eet_max_frozen_kv_frac * B * T)
+                    probs_for_cap = exit_prob * exit_candidates.float()
+                    _, top_idx = probs_for_cap.view(-1).topk(n_max_exits, largest=True, sorted=False)
+                    budget_mask = torch.zeros(B * T, dtype=torch.bool, device=x.device)
+                    budget_mask.scatter_(0, top_idx, True)
+                    exit_mask = exit_candidates & budget_mask.view(B, T)
 
-                # Base exit candidates: above threshold and still active
-                exit_candidates = (exit_prob > config.eet_exit_threshold) & token_active
+                    frozen_h = torch.where(
+                        exit_mask.unsqueeze(-1),
+                        x.detach(),
+                        frozen_h,
+                    )
+                    token_active = token_active & ~exit_mask
+                    total_exit_frac = total_exit_frac + exit_mask.float().mean()
+                    n_routed_layers += 1
 
-                # Safety cap using topk with static Python int k — fully compile-friendly.
-                # No .item(), no data-dependent Python branches.
-                # Non-candidates get prob 0.0 so topk naturally favours real exits;
-                # final & exit_candidates prevents 0-prob slots from leaking through.
-                n_max_exits = int(config.eet_max_frozen_kv_frac * B * T)
-                probs_for_cap = exit_prob * exit_candidates.float()
-                _, top_idx = probs_for_cap.view(-1).topk(n_max_exits, largest=True, sorted=False)
-                budget_mask = torch.zeros(B * T, dtype=torch.bool, device=x.device)
-                budget_mask.scatter_(0, top_idx, True)
-                exit_mask = exit_candidates & budget_mask.view(B, T)
+                    if eet_phase == 2:
+                        if loss_variant == 'reconstruct':
+                            translated = self.eet_translators[i](x.detach())
+                            reconstruction_losses.append((translated, exit_mask.float()))
+                        elif need_exit_tracking:
+                            exit_hidden = torch.where(exit_mask.unsqueeze(-1), x.detach(), exit_hidden)
+                            exit_layers = torch.where(exit_mask, torch.tensor(i, device=x.device), exit_layers)
+                            if loss_variant == 'entropy_surprise':
+                                prev_exit_hidden = torch.where(exit_mask.unsqueeze(-1), prev_x, prev_exit_hidden)
 
-                # Freeze exiting tokens
-                frozen_h = torch.where(
-                    exit_mask.unsqueeze(-1),
-                    x.detach(),
-                    frozen_h,
-                )
-                token_active = token_active & ~exit_mask
+                if need_exit_tracking:
+                    prev_x = x.detach()
 
-                # Track exit fraction for efficiency loss
-                total_exit_frac = total_exit_frac + exit_mask.float().mean()
-                n_routed_layers += 1
+                if self.residual_mixers is not None:
+                    gamma = self.residual_mix_gamma[i].to(x.dtype)
+                    mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
+                    x = x + gamma * mixed
 
-                # Phase 2 loss data collection
-                if eet_phase == 2:
-                    exit_weight = exit_prob - exit_prob.detach() + exit_mask.float()
-                    if loss_variant == 'reconstruct':
-                        # TunedLens translator — x.detach() prevents backbone grad
-                        translated = self.eet_translators[i](x.detach())
-                        reconstruction_losses.append((translated, exit_weight))
-                    elif need_exit_tracking:
-                        # Variants A/B: track per-token exit-layer hidden state via Straight-Through Estimator
-                        exit_hidden = torch.where(exit_mask.unsqueeze(-1), exit_weight.unsqueeze(-1) * x.detach(), exit_hidden)
-                        exit_layers = torch.where(exit_mask, torch.tensor(i, device=x.device), exit_layers)
-                        if loss_variant == 'entropy_surprise':
-                            prev_exit_hidden = torch.where(exit_mask.unsqueeze(-1), exit_weight.unsqueeze(-1) * prev_x, prev_exit_hidden)
+        # --- Final post-processing ---
+        if is_soft_training:
+            p_exits = []
+            p_reach = torch.ones(B, T, dtype=x.dtype, device=x.device)
+            soft_h = torch.zeros_like(x)
+            soft_prev_h = torch.zeros_like(x)
+            soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
 
-            # Update prev_x for surprise computation (before residual mixing)
+            for idx, (r_i, h_i, prev_h_i) in enumerate(zip(exit_probs_list, candidate_states[:-1], candidate_prev_states[:-1])):
+                p_exit_i = r_i * p_reach
+                p_exits.append(p_exit_i)
+                soft_h = soft_h + p_exit_i.unsqueeze(-1) * h_i
+                soft_prev_h = soft_prev_h + p_exit_i.unsqueeze(-1) * prev_h_i
+                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
+                
+                if loss_variant == 'reconstruct':
+                    block_idx = config.eet_min_exit_layer + idx
+                    translated = self.eet_translators[block_idx](h_i.detach())
+                    reconstruction_losses.append((translated, p_exit_i))
+                    
+                p_reach = p_reach * (1.0 - r_i)
+
+            soft_h = soft_h + p_reach.unsqueeze(-1) * candidate_states[-1]
+            soft_prev_h = soft_prev_h + p_reach.unsqueeze(-1) * candidate_prev_states[-1]
+            soft_active = soft_active + p_reach * 1.0
+            p_exits.append(p_reach)
+            
+            # Save stacked soft exit probabilities for structure diagnostics
+            self._last_exit_probs = torch.stack(p_exits, dim=-1)
+
+            x = soft_h
+            exit_hidden = soft_h
+            prev_exit_hidden = soft_prev_h
+            avg_active = soft_active.mean()
+            total_exit_frac = 1.0 - avg_active
+            n_routed_layers = len(routing_layers)
+        else:
+            if do_route:
+                x = torch.where(token_active.unsqueeze(-1), x, frozen_h)
+
             if need_exit_tracking:
-                prev_x = x.detach()
+                never_exited = token_active.unsqueeze(-1)
+                exit_hidden = torch.where(never_exited, x.detach(), exit_hidden)
+                if loss_variant == 'entropy_surprise':
+                    prev_exit_hidden = torch.where(never_exited, prev_x, prev_exit_hidden)
 
-            # Residual stream mixing
-            if self.residual_mixers is not None:
-                gamma = self.residual_mix_gamma[i].to(x.dtype)
-                mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
-                x = x + gamma * mixed
-
-        # --- Final layer processing ---
-        # All tokens (active + exited) get the final normalization
-        # For exited tokens, use their frozen hidden state
-        # Unconditional re-integration — no token_active.all() graph break.
-        if do_route:
-            x = torch.where(token_active.unsqueeze(-1), x, frozen_h)
-
-        # Fill exit_hidden for tokens that never exited (ran all layers)
-        if need_exit_tracking:
-            never_exited = token_active.unsqueeze(-1)  # (B, T, 1)
-            exit_hidden = torch.where(never_exited, x.detach(), exit_hidden)
-            if loss_variant == 'entropy_surprise':
-                prev_exit_hidden = torch.where(never_exited, prev_x, prev_exit_hidden)
-
-        x = norm(x)
+            x = norm(x)
+            avg_active = token_active.float().mean()
 
         # --- LM head ---
         softcap = 20
@@ -597,8 +639,6 @@ class EarlyExitGPT(GPT):
             )
 
             # --- Phase 2 variant losses ---
-            # All computed in eager mode via @torch.compiler.disable to prevent
-            # compiler upper-bound static activation pre-allocation.
             if eet_phase == 2 and loss_reduction == 'mean':
                 if loss_variant == 'reconstruct' and reconstruction_losses:
                     recon_loss_term = self._compute_reconstruction_loss(
@@ -617,18 +657,15 @@ class EarlyExitGPT(GPT):
                     loss = loss + variant_loss
 
             # --- Efficiency loss (Phase 2 & 3) ---
-            # Penalize tokens that DON'T exit (encourage early exit) using soft_active for backpropagation
-            if do_route and n_routed_layers > 0 and loss_reduction == 'mean':
-                avg_active = soft_active.mean()
+            if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
                 loss = loss + eet_lambda_e * avg_active
 
-            # Store diagnostics as raw tensors — NO .item() here (would graph-break compile).
-            # Callers must extract .item() outside the compiled region for logging.
+            # Store diagnostics
             if self.training:
                 self._eet_diagnostics = {
                     'phase': eet_phase,
-                    'active_frac': token_active.float().mean(),
-                    'total_exit_frac': total_exit_frac / max(n_routed_layers, 1),
+                    'active_frac': avg_active,
+                    'total_exit_frac': total_exit_frac if is_soft_training else (total_exit_frac / max(n_routed_layers, 1)),
                 }
 
             return loss
@@ -640,12 +677,12 @@ class EarlyExitGPT(GPT):
         recon_loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
         target_logits = logits.detach().view(-1, logits.size(-1))
         for translated_h, exit_weight in reconstruction_losses:
-            flat_mask = exit_weight.bool().view(-1)
-            n_exits = flat_mask.sum().clamp(min=1.0)
+            flat_mask = (exit_weight > 0).view(-1)
             
             # Index only exited tokens
             exited_h = translated_h.view(-1, translated_h.size(-1))[flat_mask]
             exited_target_logits = target_logits[flat_mask]
+            flat_weights = exit_weight.view(-1)[flat_mask]
             
             # Project only exited tokens to vocabulary size (saving huge memory)
             trans_logits = self.lm_head(norm(exited_h))
@@ -656,9 +693,7 @@ class EarlyExitGPT(GPT):
             t_log_probs = F.log_softmax(exited_target_logits, dim=-1)
             e_log_probs = F.log_softmax(trans_logits, dim=-1)
             kl_exited = (t_probs * (t_log_probs - e_log_probs)).sum(-1)
-            # Propagate gradients back through exit_weight using Straight-Through Estimator
-            kl_exited = kl_exited * exit_weight.view(-1)[flat_mask]
-            recon_loss = recon_loss + kl_exited.sum() / n_exits
+            recon_loss = recon_loss + (kl_exited * flat_weights).sum() / flat_weights.sum().clamp(min=1e-5)
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
@@ -735,14 +770,6 @@ class EarlyExitGPT(GPT):
         flat_h = exit_hidden.reshape(-1, D)  # (N, D)
         N = flat_h.shape[0]
         chunk_size = 8192
-        early_logits_chunks = []
-        for start in range(0, N, chunk_size):
-            end = min(start + chunk_size, N)
-            h_normed = norm(flat_h[start:end])  # apply same layernorm as real forward
-            chunk_logits = self.lm_head(h_normed)  # (chunk, padded_V)
-            chunk_logits = chunk_logits[..., :vocab_size].float()
-            chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
-            early_logits_chunks.append(chunk_logits)
         # CE losses
         flat_targets = targets.reshape(-1)  # (B*T,)
         loss_full = F.cross_entropy(
@@ -802,17 +829,16 @@ class EarlyExitGPT(GPT):
         wpe = sum(p.numel() for p in self.transformer.wpe.parameters()) if "wpe" in self.transformer else 0
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        # EET: Add router and translator parameters to transformer_matrices (and keep track of them separately)
+        eet_params = sum(p.numel() for p in self.eet_routers.parameters())
+        eet_params += sum(p.numel() for p in self.eet_translators.parameters())
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters()) + eet_params
+
         research = 0
         if self.embedding_model is not None:
             research += sum(p.numel() for p in self.embedding_model.parameters())
         if self.aux_head is not None:
             research += sum(p.numel() for p in self.aux_head.parameters())
-
-        # EET: Add router and translator parameters to research (and keep track of them separately)
-        eet_params = sum(p.numel() for p in self.eet_routers.parameters())
-        eet_params += sum(p.numel() for p in self.eet_translators.parameters())
-        research += eet_params
 
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         if self.depth_decay_raw is not None:

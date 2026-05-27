@@ -43,6 +43,40 @@ from nanochat.flash_attention import HAS_FA3, HAS_FA4
 from scripts.base_eval import evaluate_core
 print_banner()
 
+
+def check_router_learned(exit_probs, token_ids, tokenizer, token_freq):
+    """
+    Run this at end of Phase 2 before committing to Phase 3.
+    Check if exit_probs correlates with token frequency as TRS predicted.
+    """
+    import numpy as np
+    from scipy import stats
+    
+    # Expected exit layer under soft distribution
+    layer_indices   = torch.arange(exit_probs.size(-1), device=exit_probs.device).float()
+    expected_exit   = (exit_probs * layer_indices).sum(dim=-1)  # (B, T)
+    
+    # Flatten and get frequencies
+    flat_ids        = token_ids.view(-1).cpu().numpy()
+    flat_exit       = expected_exit.view(-1).detach().cpu().numpy()
+    flat_freq       = np.array([token_freq.get(id_, 0) for id_ in flat_ids])
+    
+    log_freq        = np.log1p(flat_freq)
+    rho, p          = stats.spearmanr(log_freq, flat_exit)
+    
+    print0(f'[EET DIAGNOSTIC] Spearman ρ (freq vs expected exit layer): {rho:.4f} (p={p:.4f})')
+    print0(f'[EET DIAGNOSTIC] Mean expected exit layer: {flat_exit.mean():.2f}')
+    print0(f'[EET DIAGNOSTIC] Std expected exit layer: {flat_exit.std():.2f}')
+    
+    # If rho is negative and significant, router has learned frequency structure
+    # If mean expected exit is still near N_layers/2, router hasn't learned to exit early
+    if rho < -0.1 and p < 0.05:
+        print0('[EET DIAGNOSTIC] Router has learned frequency-depth structure. Safe to enter Phase 3.')
+    else:
+        print0('[EET DIAGNOSTIC] Router has NOT learned structure yet. Extend Phase 2 or check gradients.')
+    
+    return rho
+
 # -----------------------------------------------------------------------------
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
@@ -1471,6 +1505,48 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    # Enable EET Phase 2 to Phase 3 transition diagnostic check
+    if model_config.use_eet:
+        from nanochat.eet import EETPhaseScheduler
+        _eet_sched = EETPhaseScheduler(
+            num_iterations,
+            warmup_frac=model_config.eet_warmup_frac,
+            explore_frac=model_config.eet_explore_frac,
+            reconstruct_lambda=model_config.eet_reconstruct_lambda,
+            efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
+            efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
+        )
+        if step == _eet_sched.explore_end:
+            print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
+            orig_model.eval()
+            with torch.no_grad():
+                # Perform a single forward pass on the current batch (x) with soft routing to populate _last_exit_probs
+                _ = orig_model(x, eet_do_route=True, eet_phase=2, eet_lambda_r=0.0, eet_lambda_e=0.0)
+            
+            if hasattr(orig_model, '_last_exit_probs'):
+                exit_probs = orig_model._last_exit_probs
+                token_ids = x
+                
+                # Load or construct token_freq dictionary from freq_table.pt
+                import os
+                from nanochat.common import get_base_dir
+                tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
+                cache_path = os.path.join(tokenizer_dir, "freq_table.pt")
+                if os.path.exists(cache_path):
+                    freq_table = torch.load(cache_path, map_location='cpu')
+                    token_freq = {idx: freq_table[idx].item() for idx in range(len(freq_table))}
+                else:
+                    token_freq = {}
+                
+                try:
+                    check_router_learned(exit_probs, token_ids, tokenizer, token_freq)
+                except Exception as e:
+                    print0(f"[EET DIAGNOSTIC] Warning: correlation check failed with error: {e}")
+            else:
+                print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during forward pass.")
+            
+            orig_model.train()
+
     # Enable MST diagnostic capture on log steps (last micro-step only)
     _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
                            (step % _mst_diag_every == 0 or step == num_iterations - 1))
@@ -1492,6 +1568,19 @@ while True:
                 efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
             )
             _eet_phase_info = _eet_sched.get_phase(step)
+            
+            # Phase 3: Freeze routers and translators, they are already trained
+            if _eet_phase_info['phase'] == 3:
+                for param in orig_model.eet_routers.parameters():
+                    param.requires_grad = False
+                for param in orig_model.eet_translators.parameters():
+                    param.requires_grad = False
+            else:
+                for param in orig_model.eet_routers.parameters():
+                    param.requires_grad = True
+                for param in orig_model.eet_translators.parameters():
+                    param.requires_grad = True
+
             loss = model(x, y,
                          eet_do_route=_eet_phase_info['do_route'],
                          eet_phase=_eet_phase_info['phase'],
