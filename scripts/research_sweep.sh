@@ -335,7 +335,7 @@ while [[ $# -gt 0 ]]; do
         --eet-exit-threshold|--eet-min-exit-layer|\
         --eet-loss-variant|--eet-topk-vocab|--eet-entropy-lambda|\
         --eet-surprise-lambda|--eet-adv-lambda|--eet-adv-entropy-lambda|\
-        --eet-quality-lambda)
+        --eet-quality-lambda|--eet-quality-entropy-bonus)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

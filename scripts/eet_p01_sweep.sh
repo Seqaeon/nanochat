@@ -183,15 +183,16 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --use-eet 1 --eet-frozen-kv 1 \
 #    --eet-router-type mlp2
 
-# EET_P1_10: Variant A — REINFORCE Quality Loss (per-token exit quality signal)
+# EET_P1_10: Variant A — REINFORCE Quality Loss + Entropy Bonus
 run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
-    "Variant A: REINFORCE quality loss (per-token exit differentiation)" \
+    "Variant A: REINFORCE quality loss + entropy bonus (per-token exit differentiation)" \
     --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
     --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
     --eet-loss-variant quality \
     --eet-quality-lambda 1.0 \
+    --eet-quality-entropy-bonus 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_11: Variant B — Adversarial + Entropy stabilizer (uses hard routing, deprecated)
@@ -208,15 +209,15 @@ run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
 #    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_12: Entropy + Surprise Loss (runs with hard routing in Phase 2)
-#run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
-#    "Entropy + surprise loss variant (running with hard routing)" \
-#    --use-eet 1 --eet-frozen-kv 0 \
-#    --eet-router-type mlp2 \
-#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
-#    --eet-loss-variant entropy_surprise \
-#    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
-#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
+    "Entropy + surprise loss variant (running with hard routing)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-loss-variant entropy_surprise \
+    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_3: Frozen KV + Frequency Prior (α=0.1)
 #run_experiment "EET_P1_3_FREQ_PRIOR_D${DEPTH}" \

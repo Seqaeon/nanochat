@@ -377,6 +377,7 @@ class GPTConfig:
     eet_adv_lambda: float = 1.0                     # Variant B: adversarial gap weight
     eet_adv_entropy_lambda: float = 0.2             # Variant B: entropy stabilizer weight
     eet_quality_lambda: float = 1.0                 # REINFORCE quality loss weight
+    eet_quality_entropy_bonus: float = 0.1           # entropy bonus to prevent exit distribution collapse
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.

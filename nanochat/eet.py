@@ -504,11 +504,11 @@ class EarlyExitGPT(GPT):
         pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
 
         # --- Early exit forward pass ---
-        # Soft blending only for quality and reconstruct variants.
-        # entropy_surprise and adversarial use hard routing in Phase 2
-        # (they need per-token exit states, not a global blend).
-        soft_variants = ('quality', 'reconstruct')
-        is_soft_training = eet_do_route and self.training and eet_phase == 2 and config.eet_loss_variant in soft_variants
+        # All variants use soft blending in Phase 2 — this provides gradient
+        # to the router through the main LM loss path (CE → soft_h → p_exit_i → router).
+        # Hard routing (Phase 3) is non-differentiable (no STE), so Phase 2
+        # soft blending is the ONLY way the router learns.
+        is_soft_training = eet_do_route and self.training and eet_phase == 2
 
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
         frozen_h = torch.zeros_like(x)
@@ -727,6 +727,20 @@ class EarlyExitGPT(GPT):
                     for qi, p_exit_i in enumerate(p_exits):
                         quality_loss = quality_loss - (p_exit_i.float() * adv_tensor[qi]).mean()
                     loss = loss + config.eet_quality_lambda * quality_loss
+
+                    # --- Entropy bonus: prevent exit distribution mode collapse ---
+                    # H(p_exit) = -Σ_i p_exit_i * log(p_exit_i + ε)
+                    # Maximizing entropy keeps the exit distribution spread out so
+                    # the quality loss can differentiate tokens once layer quality
+                    # differences emerge. Without this, the efficiency loss
+                    # collapses everything to "exit at layer 0" before the model
+                    # has learned enough for quality differences to exist.
+                    if config.eet_quality_entropy_bonus > 0:
+                        entropy_bonus = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+                        for p_exit_i in p_exits:
+                            p_f = p_exit_i.float().clamp(min=1e-8)
+                            entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
+                        loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
             # --- Efficiency loss (Phase 2 & 3) ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
