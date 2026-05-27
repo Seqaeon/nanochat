@@ -52,8 +52,19 @@ def check_router_learned(exit_probs, token_ids, tokenizer, token_freq):
     import numpy as np
     from scipy import stats
     
+    n_exits = exit_probs.size(-1)
+    
+    # Per-exit-slot probability stats (diagnose collapse)
+    probs_cpu = exit_probs.detach().cpu().float()
+    print0(f'[EET DIAGNOSTIC] Exit probability distribution across {n_exits} slots:')
+    for slot in range(n_exits):
+        slot_probs = probs_cpu[:, :, slot].numpy().ravel()
+        label = f'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
+        print0(f'  {label}: mean={slot_probs.mean():.6f}  std={slot_probs.std():.6f}  '
+               f'min={slot_probs.min():.6f}  max={slot_probs.max():.6f}')
+    
     # Expected exit layer under soft distribution
-    layer_indices   = torch.arange(exit_probs.size(-1), device=exit_probs.device).float()
+    layer_indices   = torch.arange(n_exits, device=exit_probs.device).float()
     expected_exit   = (exit_probs * layer_indices).sum(dim=-1)  # (B, T)
     
     # Flatten and get frequencies
@@ -61,15 +72,25 @@ def check_router_learned(exit_probs, token_ids, tokenizer, token_freq):
     flat_exit       = expected_exit.view(-1).detach().cpu().numpy()
     flat_freq       = np.array([token_freq.get(id_, 0) for id_ in flat_ids])
     
+    print0(f'[EET DIAGNOSTIC] Mean expected exit layer: {flat_exit.mean():.4f}')
+    print0(f'[EET DIAGNOSTIC] Std expected exit layer:  {flat_exit.std():.6f}')
+    
+    # Guard against constant arrays (std=0 → Spearman is undefined)
+    if flat_exit.std() < 1e-8:
+        print0('[EET DIAGNOSTIC] ⚠ Router output is CONSTANT across all tokens — no structure learned.')
+        print0('[EET DIAGNOSTIC] Router has NOT learned structure yet. Extend Phase 2 or check gradients.')
+        return 0.0
+    
     log_freq        = np.log1p(flat_freq)
+    if log_freq.std() < 1e-8:
+        print0('[EET DIAGNOSTIC] ⚠ Token frequency is constant (freq_table missing?) — cannot compute correlation.')
+        return 0.0
+    
     rho, p          = stats.spearmanr(log_freq, flat_exit)
     
     print0(f'[EET DIAGNOSTIC] Spearman ρ (freq vs expected exit layer): {rho:.4f} (p={p:.4f})')
-    print0(f'[EET DIAGNOSTIC] Mean expected exit layer: {flat_exit.mean():.2f}')
-    print0(f'[EET DIAGNOSTIC] Std expected exit layer: {flat_exit.std():.2f}')
     
     # If rho is negative and significant, router has learned frequency structure
-    # If mean expected exit is still near N_layers/2, router hasn't learned to exit early
     if rho < -0.1 and p < 0.05:
         print0('[EET DIAGNOSTIC] Router has learned frequency-depth structure. Safe to enter Phase 3.')
     else:
@@ -1518,9 +1539,14 @@ while True:
         )
         if step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
-            if hasattr(orig_model, '_last_exit_probs') and hasattr(orig_model, '_last_token_ids'):
-                exit_probs = orig_model._last_exit_probs.cpu()
-                token_ids = orig_model._last_token_ids.cpu()
+            orig_model.eval()
+            with torch.no_grad():
+                # Perform a single forward pass on the current batch (x) with soft routing to populate _last_exit_probs
+                _ = orig_model(x, eet_do_route=True, eet_phase=2, eet_lambda_r=0.0, eet_lambda_e=0.0)
+            
+            if hasattr(orig_model, '_last_exit_probs'):
+                exit_probs = orig_model._last_exit_probs
+                token_ids = x
                 
                 # Load or construct token_freq dictionary from freq_table.pt
                 import os
@@ -1538,7 +1564,9 @@ while True:
                 except Exception as e:
                     print0(f"[EET DIAGNOSTIC] Warning: correlation check failed with error: {e}")
             else:
-                print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during Phase 2 training.")
+                print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during forward pass.")
+            
+            orig_model.train()
 
     # Enable MST diagnostic capture on log steps (last micro-step only)
     _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
@@ -1636,6 +1664,41 @@ while True:
         for j in range(N):
             _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(sub_grad_sq[j] ** 0.5)
         orig_model._cached_grad_norms = _cached_sub_grad_norms
+    # Capture EET router/translator gradient norms BEFORE optimizer step clears them
+    if model_config.use_eet and hasattr(orig_model, 'eet_routers'):
+        _eet_grad_info = {'step': step}
+        # Per-router-layer gradient norms
+        total_router_grad_sq = 0.0
+        n_router_params_with_grad = 0
+        for layer_idx, router in enumerate(orig_model.eet_routers):
+            layer_grad_sq = 0.0
+            layer_n = 0
+            for pname, p in router.named_parameters():
+                if p.grad is not None:
+                    gnorm = float(p.grad.float().norm())
+                    layer_grad_sq += gnorm ** 2
+                    layer_n += 1
+                    _eet_grad_info[f'router_{layer_idx}_{pname}_grad_norm'] = gnorm
+            layer_gnorm = layer_grad_sq ** 0.5
+            _eet_grad_info[f'router_{layer_idx}_total_grad_norm'] = layer_gnorm
+            total_router_grad_sq += layer_grad_sq
+            n_router_params_with_grad += layer_n
+        _eet_grad_info['router_total_grad_norm'] = total_router_grad_sq ** 0.5
+        _eet_grad_info['n_router_params_with_grad'] = n_router_params_with_grad
+        # Translator gradient norms
+        total_trans_grad_sq = 0.0
+        for layer_idx, translator in enumerate(orig_model.eet_translators):
+            layer_grad_sq = 0.0
+            for pname, p in translator.named_parameters():
+                if p.grad is not None:
+                    gnorm = float(p.grad.float().norm())
+                    layer_grad_sq += gnorm ** 2
+                    _eet_grad_info[f'translator_{layer_idx}_{pname}_grad_norm'] = gnorm
+            _eet_grad_info[f'translator_{layer_idx}_total_grad_norm'] = layer_grad_sq ** 0.5
+            total_trans_grad_sq += layer_grad_sq
+        _eet_grad_info['translator_total_grad_norm'] = total_trans_grad_sq ** 0.5
+        # Cache for console logging and file output
+        orig_model._eet_grad_info = _eet_grad_info
     # step the optimizer
     lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
@@ -1681,37 +1744,6 @@ while True:
                         if gn > 1e-12:
                             correction = (gn_mean / gn).clamp(1.0 - ger_lambda, 1.0 + ger_lambda)
                             param.grad.mul_(correction.to(param.grad.dtype))
-        # Log EET gradients during Phase 2 training
-        if model_config.use_eet and master_process:
-            from nanochat.eet import EETPhaseScheduler
-            _eet_sched = EETPhaseScheduler(
-                num_iterations,
-                warmup_frac=model_config.eet_warmup_frac,
-                explore_frac=model_config.eet_explore_frac,
-                reconstruct_lambda=model_config.eet_reconstruct_lambda,
-                efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
-                efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
-            )
-            _eet_phase_info = _eet_sched.get_phase(step)
-            if _eet_phase_info['phase'] == 2:
-                eet_grads = {}
-                for name, param in orig_model.named_parameters():
-                    if ('eet_router' in name or 'eet_translator' in name) and param.grad is not None:
-                        eet_grads[name] = param.grad.float().norm().item()
-                
-                if eet_grads:
-                    import os
-                    run_dir = getattr(args, 'run_dir', None) or '/tmp'
-                    os.makedirs(run_dir, exist_ok=True)
-                    log_path = os.path.join(run_dir, 'eet_gradients.log')
-                    
-                    # Check if this is the first write to write header
-                    file_exists = os.path.exists(log_path)
-                    with open(log_path, 'a') as f:
-                        if not file_exists:
-                            f.write("step\t" + "\t".join(eet_grads.keys()) + "\n")
-                        f.write(f"{step}\t" + "\t".join(f"{v:.6f}" for v in eet_grads.values()) + "\n")
-
         optimizer.step()
     # Fix 1H: update PermutationMoE temperature each step
     if use_research_mode:
@@ -1842,6 +1874,27 @@ while True:
             _eet_active = _eet_diag['active_frac'].item() if hasattr(_eet_diag.get('active_frac', 0), 'item') else _eet_diag.get('active_frac', 1.0)
             _eet_exit = _eet_diag['total_exit_frac'].item() if hasattr(_eet_diag.get('total_exit_frac', 0), 'item') else _eet_diag.get('total_exit_frac', 0.0)
             print0(f"  eet | phase={_eet_phase} | active={_eet_active:.3f} | exit_frac={_eet_exit:.3f}")
+        # EET: Router gradient diagnostics — console print + JSONL log file
+        if model_config.use_eet and hasattr(orig_model, '_eet_grad_info'):
+            _gi = orig_model._eet_grad_info
+            _r_gnorm = _gi.get('router_total_grad_norm', 0.0)
+            _t_gnorm = _gi.get('translator_total_grad_norm', 0.0)
+            _n_with_grad = _gi.get('n_router_params_with_grad', 0)
+            # Per-layer summary
+            per_layer_parts = []
+            for layer_idx in range(len(orig_model.eet_routers)):
+                ln = _gi.get(f'router_{layer_idx}_total_grad_norm', 0.0)
+                per_layer_parts.append(f'L{layer_idx}={ln:.3e}')
+            per_layer_str = ' '.join(per_layer_parts) if per_layer_parts else 'none'
+            print0(f"  eet_grad | ∇router={_r_gnorm:.3e} ∇trans={_t_gnorm:.3e} params_with_grad={_n_with_grad} | {per_layer_str}")
+            # Write full grad info to JSONL log file
+            if master_process:
+                import json
+                _gi['eet_phase'] = _eet_diag.get('phase', 0) if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics') else 0
+                _gi['active_frac'] = _eet_active if model_config.use_eet and hasattr(orig_model, '_eet_diagnostics') else 1.0
+                eet_grad_log_path = os.path.join(checkpoint_dir, "eet_grad_log.jsonl")
+                with open(eet_grad_log_path, 'a') as _ef:
+                    _ef.write(json.dumps(_gi) + '\n')
     if step % 100 == 0:
         log_data = {
             "step": step,

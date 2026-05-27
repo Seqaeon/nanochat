@@ -584,15 +584,15 @@ class EarlyExitGPT(GPT):
             soft_prev_h = torch.zeros_like(x)
             soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
 
-            for loop_idx, (r_i, h_i, prev_h_i) in enumerate(zip(exit_probs_list, candidate_states[:-1], candidate_prev_states[:-1])):
+            for idx, (r_i, h_i, prev_h_i) in enumerate(zip(exit_probs_list, candidate_states[:-1], candidate_prev_states[:-1])):
                 p_exit_i = r_i * p_reach
                 p_exits.append(p_exit_i)
                 soft_h = soft_h + p_exit_i.unsqueeze(-1) * h_i
                 soft_prev_h = soft_prev_h + p_exit_i.unsqueeze(-1) * prev_h_i
-                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + loop_idx + 1) / n_layer)
+                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
                 
                 if loss_variant == 'reconstruct':
-                    block_idx = config.eet_min_exit_layer + loop_idx
+                    block_idx = config.eet_min_exit_layer + idx
                     translated = self.eet_translators[block_idx](h_i.detach())
                     reconstruction_losses.append((translated, p_exit_i))
                     
@@ -603,9 +603,8 @@ class EarlyExitGPT(GPT):
             soft_active = soft_active + p_reach * 1.0
             p_exits.append(p_reach)
             
-            # Save stacked soft exit probabilities for structure diagnostics (detached to break history)
-            self._last_exit_probs = torch.stack(p_exits, dim=-1).detach()
-            self._last_token_ids = idx.detach()
+            # Save stacked soft exit probabilities for structure diagnostics
+            self._last_exit_probs = torch.stack(p_exits, dim=-1)
 
             x = soft_h
             exit_hidden = soft_h
