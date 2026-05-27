@@ -617,12 +617,14 @@ class EarlyExitGPT(GPT):
             # Save stacked soft exit probabilities for structure diagnostics
             self._last_exit_probs = torch.stack(p_exits, dim=-1)
 
-            # DETACH here: LM loss (logits → CE) trains the backbone only, not the router.
-            # Auxiliary losses (entropy_surprise, adversarial, reconstruct) use exit_hidden
-            # which keeps the live gradient path to the router.
-            x = soft_h.detach()
-            exit_hidden = soft_h          # live — aux losses backprop to router
-            prev_exit_hidden = soft_prev_h  # live — aux losses backprop to router
+            # LM loss and efficiency loss both flow to the router through this
+            # compiled graph. The logit clamp in the router ([-5, 5]) prevents
+            # sigmoid saturation, so opposing forces balance rather than collapse:
+            #   - LM loss: "use later layers" (pushes exit probs DOWN)
+            #   - Efficiency loss: "exit early" (pushes exit probs UP)
+            x = soft_h
+            exit_hidden = soft_h
+            prev_exit_hidden = soft_prev_h
             avg_active = soft_active.mean()
             total_exit_frac = 1.0 - avg_active
             n_routed_layers = len(routing_layers)
