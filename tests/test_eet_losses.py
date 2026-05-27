@@ -28,7 +28,7 @@ def test_eet_loss_variants():
     x = torch.randint(0, config.vocab_size, (B, T), device=device)
     y = torch.randint(0, config.vocab_size, (B, T), device=device)
     
-    variants = ['reconstruct', 'entropy_surprise', 'adversarial']
+    variants = ['reconstruct', 'entropy_surprise', 'adversarial', 'quality']
     
     for variant in variants:
         print(f"\n--- Testing EET Loss Variant: {variant} ---")

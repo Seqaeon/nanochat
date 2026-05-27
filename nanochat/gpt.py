@@ -370,12 +370,13 @@ class GPTConfig:
     eet_exit_threshold: float = 0.5                # sigmoid threshold for exit decision
     eet_min_exit_layer: int = 1                    # earliest layer a token can exit at
     # Loss variant selection
-    eet_loss_variant: str = 'reconstruct'           # 'reconstruct' | 'entropy_surprise' | 'adversarial'
+    eet_loss_variant: str = 'reconstruct'           # 'reconstruct' | 'entropy_surprise' | 'adversarial' | 'quality'
     eet_topk_vocab: int = 512                       # vocab approximation for entropy computation
     eet_entropy_lambda: float = 0.3                 # Variant A: entropy loss weight
     eet_surprise_lambda: float = 0.1                # Variant A: surprise loss weight
     eet_adv_lambda: float = 1.0                     # Variant B: adversarial gap weight
     eet_adv_entropy_lambda: float = 0.2             # Variant B: entropy stabilizer weight
+    eet_quality_lambda: float = 1.0                 # REINFORCE quality loss weight
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.

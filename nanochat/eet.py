@@ -244,16 +244,21 @@ class EarlyExitRouter(nn.Module):
         Returns:
             exit_prob: (B, T) in [0, 1]
         """
-        logit = self.net(h).squeeze(-1)  # (B, T)
+        # Compute in float32 for gradient precision — the per-token
+        # differentiation signal (~1e-7) is below bf16 minimum (6e-5).
+        # Router params are float32 (set in init_weights), so this
+        # auto-upcasts h. Cast output back to model dtype.
+        h_f32 = h.float()
+        logit = self.net(h_f32).squeeze(-1)  # (B, T) float32
         if freq_bias is not None and freq_alpha > 0:
-            logit = logit + freq_alpha * freq_bias.to(logit.dtype)
+            logit = logit + freq_alpha * freq_bias.float()
         if pos_bias is not None and pos_beta > 0:
-            logit = logit + pos_beta * pos_bias.to(logit.dtype)
+            logit = logit + pos_beta * pos_bias.float()
         # Clamp logits to prevent sigmoid saturation — ensures gradients always
         # flow regardless of how strongly one loss pushes. sigmoid(-5)=0.007,
         # sigmoid(5)=0.993, so exit probs stay in [0.007, 0.993].
         logit = logit.clamp(-5.0, 5.0)
-        return torch.sigmoid(logit)
+        return torch.sigmoid(logit).to(h.dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +435,11 @@ class EarlyExitGPT(GPT):
                     nn.init.normal_(last_linear.weight, std=0.01)
                     nn.init.constant_(last_linear.bias, 0.0)  # sigmoid(0) = 0.5 — neutral start
 
+        # Keep router params in float32 for gradient precision.
+        # The per-token differentiation signal (~1e-7) rounds to zero in bf16.
+        for router in self.eet_routers:
+            router.float()
+
         # Translators: identity-like init (only when present)
         for translator in self.eet_translators:
             if translator.rank > 0:
@@ -494,7 +504,11 @@ class EarlyExitGPT(GPT):
         pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
 
         # --- Early exit forward pass ---
-        is_soft_training = eet_do_route and self.training and eet_phase == 2
+        # Soft blending only for quality and reconstruct variants.
+        # entropy_surprise and adversarial use hard routing in Phase 2
+        # (they need per-token exit states, not a global blend).
+        soft_variants = ('quality', 'reconstruct')
+        is_soft_training = eet_do_route and self.training and eet_phase == 2 and config.eet_loss_variant in soft_variants
 
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
         frozen_h = torch.zeros_like(x)
@@ -505,7 +519,7 @@ class EarlyExitGPT(GPT):
         loss_variant = config.eet_loss_variant
         blocks = list(self.transformer.h)
         n_layer = len(blocks)
-        need_exit_tracking = (eet_phase == 2 and loss_variant != 'reconstruct')
+        need_exit_tracking = (eet_phase == 2 and loss_variant not in ('reconstruct', 'quality'))
         
         if need_exit_tracking:
             exit_hidden = torch.zeros_like(x)                # (B, T, D)
@@ -696,6 +710,11 @@ class EarlyExitGPT(GPT):
                         exit_hidden, logits, targets, config
                     )
                     loss = loss + variant_loss
+                elif loss_variant == 'quality' and is_soft_training and len(p_exits) > 1:
+                    quality_loss = self._compute_quality_loss(
+                        candidate_states, p_exits, targets, config
+                    )
+                    loss = loss + quality_loss
 
             # --- Efficiency loss (Phase 2 & 3) ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
@@ -862,6 +881,83 @@ class EarlyExitGPT(GPT):
             'lm_full': loss_full.detach(),
         }
         return loss_term, diag
+
+    def _compute_quality_loss(self, candidate_states, p_exits, targets, config):
+        """REINFORCE-style per-layer quality loss.
+
+        For each routing layer i, compute per-token CE loss by projecting h_i
+        through the lm_head. Then use advantage = quality_i - baseline to
+        create a per-token, per-layer gradient signal for the router.
+
+        This provides O(1) gradient to the router (vs ~1e-7 from the soft
+        blending path), enabling per-token exit differentiation.
+
+        Args:
+            candidate_states: list of (B, T, D) normed hidden states at each routing layer + final
+            p_exits: list of (B, T) exit probabilities (len = n_routing_layers + 1, last is p_reach)
+            targets: (B, T) target token ids
+            config: GPTConfig
+        """
+        n_exits = len(p_exits)  # routing_layers + final
+        B, T = targets.shape
+        vocab_size = config.vocab_size
+        softcap = 20
+
+        # Compute per-layer, per-token quality (negative CE loss)
+        # Higher quality = better prediction = safer to exit here
+        flat_targets = targets.reshape(-1)  # (B*T,)
+        valid_mask = (flat_targets != -1)  # (B*T,)
+
+        # Collect per-layer quality: (n_exits, B*T)
+        layer_qualities = []
+        chunk_size = 4096  # chunk B*T to control memory
+        N = B * T
+
+        for state_i in candidate_states:
+            flat_h = state_i.reshape(N, -1)  # (N, D)
+            ce_per_token = torch.zeros(N, dtype=torch.float32, device=flat_h.device)
+
+            for start in range(0, N, chunk_size):
+                end = min(start + chunk_size, N)
+                chunk_h = flat_h[start:end]
+                chunk_logits = self.lm_head(chunk_h)
+                chunk_logits = chunk_logits[..., :vocab_size].float()
+                chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
+                chunk_targets = flat_targets[start:end]
+                chunk_ce = F.cross_entropy(
+                    chunk_logits, chunk_targets,
+                    ignore_index=-1, reduction='none'
+                )  # (chunk,)
+                ce_per_token[start:end] = chunk_ce
+
+            # quality = negative CE (higher = better prediction)
+            quality_i = -ce_per_token.reshape(B, T)  # (B, T)
+            layer_qualities.append(quality_i)
+
+        # Stack: (n_exits, B, T)
+        qualities = torch.stack(layer_qualities, dim=0)  # (n_exits, B, T)
+
+        # Compute baseline: expected quality under current policy (detached)
+        # baseline(t) = Σ_i p_exit(i,t).detach() * quality(i,t)
+        p_stack = torch.stack([p.detach().float() for p in p_exits], dim=0)  # (n_exits, B, T)
+        baseline = (p_stack * qualities).sum(dim=0)  # (B, T)
+
+        # Advantage: how much better is layer i than expected?
+        # advantage(i,t) = quality(i,t) - baseline(t)
+        advantages = qualities - baseline.unsqueeze(0)  # (n_exits, B, T)
+
+        # REINFORCE loss: encourage exiting at layers with positive advantage
+        # Router loss = -Σ_i (p_exit(i) * advantage(i).detach()).mean()
+        # Gradient flows through p_exit_i → router params (REINFORCE trick)
+        # Advantage is detached so gradient doesn't flow through quality computation
+        reinforce_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+        for i, p_exit_i in enumerate(p_exits):
+            adv_i = advantages[i].detach()  # (B, T) — stop gradient
+            # Mask invalid tokens
+            adv_i = adv_i * valid_mask.reshape(B, T).float()
+            reinforce_loss = reinforce_loss - (p_exit_i.float() * adv_i).mean()
+
+        return config.eet_quality_lambda * reinforce_loss
 
     def num_scaling_params(self):
         """Override to include EET params in scaling count without causing assertion errors."""

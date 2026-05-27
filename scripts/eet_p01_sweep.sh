@@ -183,9 +183,33 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --use-eet 1 --eet-frozen-kv 1 \
 #    --eet-router-type mlp2
 
-# EET_P1_10: Variant A — Entropy + Surprise (no translators)
+# EET_P1_10: Variant A — REINFORCE Quality Loss (per-token exit quality signal)
 run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
-    "Variant A: entropy + surprise loss (no reconstruction/translators)" \
+    "Variant A: REINFORCE quality loss (per-token exit differentiation)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-loss-variant quality \
+    --eet-quality-lambda 1.0 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+
+# EET_P1_11: Variant B — Adversarial + Entropy stabilizer (uses hard routing, deprecated)
+# NOTE: adversarial variant uses hard routing in Phase 2 — router gets no gradient.
+# Kept for reference; use quality variant instead.
+#run_experiment "EET_P1_11_VARIANT_B_D${DEPTH}" \
+#    "Variant B: adversarial gap + entropy stabilizer (no reconstruction/translators)" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+#    --eet-loss-variant adversarial \
+#    --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+
+# EET_P1_12: Entropy + Surprise Loss (runs with hard routing in Phase 2)
+run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
+    "Entropy + surprise loss variant (running with hard routing)" \
     --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
@@ -194,71 +218,60 @@ run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
     --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
-# EET_P1_11: Variant B — Adversarial + Entropy stabilizer (no translators)
-run_experiment "EET_P1_11_VARIANT_B_D${DEPTH}" \
-    "Variant B: adversarial gap + entropy stabilizer (no reconstruction/translators)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
-    --eet-loss-variant adversarial \
-    --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
-
 # EET_P1_3: Frozen KV + Frequency Prior (α=0.1)
-run_experiment "EET_P1_3_FREQ_PRIOR_D${DEPTH}" \
-    "Frozen KV + frequency prior (α=0.1)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1
-
+#run_experiment "EET_P1_3_FREQ_PRIOR_D${DEPTH}" \
+#    "Frozen KV + frequency prior (α=0.1)" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1
+#
 # EET_P1_4: Frozen KV + POS Prior (β=0.1)
-run_experiment "EET_P1_4_POS_PRIOR_D${DEPTH}" \
-    "Frozen KV + POS prior (β=0.1)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-pos-prior-beta 0.1
-
+#run_experiment "EET_P1_4_POS_PRIOR_D${DEPTH}" \
+#    "Frozen KV + POS prior (β=0.1)" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-pos-prior-beta 0.1
+#
 # EET_P1_5: Frozen KV + Freq + POS Combined
-run_experiment "EET_P1_5_COMBINED_PRIORS_D${DEPTH}" \
-    "Frozen KV + frequency (α=0.1) + POS (β=0.1) priors" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
-
+#run_experiment "EET_P1_5_COMBINED_PRIORS_D${DEPTH}" \
+#    "Frozen KV + frequency (α=0.1) + POS (β=0.1) priors" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
+#
 # EET_P1_6: Router Architecture Ablation — Linear
-run_experiment "EET_P1_6_ROUTER_LINEAR_D${DEPTH}" \
-    "Frozen KV + combined priors + LINEAR router" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type linear \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
-
+#run_experiment "EET_P1_6_ROUTER_LINEAR_D${DEPTH}" \
+#    "Frozen KV + combined priors + LINEAR router" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type linear \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
+#
 # EET_P1_7: Router Architecture Ablation — MLP1
-run_experiment "EET_P1_7_ROUTER_MLP1_D${DEPTH}" \
-    "Frozen KV + combined priors + MLP1 router" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp1 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
-
+#run_experiment "EET_P1_7_ROUTER_MLP1_D${DEPTH}" \
+#    "Frozen KV + combined priors + MLP1 router" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp1 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1
+#
 # EET_P1_8: Full Pipeline — All priors + 3-phase training with exploration loss
-run_experiment "EET_P1_8_FULL_PIPELINE_D${DEPTH}" \
-    "Full pipeline: frozen KV + freq+POS priors + 3-phase training" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
-    --eet-reconstruct-lambda 1.0 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
-
+#run_experiment "EET_P1_8_FULL_PIPELINE_D${DEPTH}" \
+#    "Full pipeline: frozen KV + freq+POS priors + 3-phase training" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+#    --eet-reconstruct-lambda 1.0 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+#
 # EET_P1_9: Full Pipeline with aggressive efficiency pressure
-run_experiment "EET_P1_9_AGGRESSIVE_D${DEPTH}" \
-    "Full pipeline with stronger efficiency pressure (λ_e: 0.05→0.3)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
-    --eet-reconstruct-lambda 1.0 \
-    --eet-efficiency-lambda-start 0.05 --eet-efficiency-lambda-end 0.3
+#run_experiment "EET_P1_9_AGGRESSIVE_D${DEPTH}" \
+#    "Full pipeline with stronger efficiency pressure (λ_e: 0.05→0.3)" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+#    --eet-reconstruct-lambda 1.0 \
+#    --eet-efficiency-lambda-start 0.05 --eet-efficiency-lambda-end 0.3
 
 
 
