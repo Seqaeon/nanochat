@@ -716,10 +716,17 @@ class EarlyExitGPT(GPT):
                     )
                     loss = loss + variant_loss
                 elif loss_variant == 'quality' and is_soft_training and len(p_exits) > 1:
-                    quality_loss = self._compute_quality_loss(
+                    # Compute advantages OUTSIDE compiled graph (heavy, no gradient needed).
+                    # Returns detached (n_exits, B, T) advantages + (B, T) valid_mask.
+                    adv_tensor, vmask = self._compute_quality_advantages(
                         candidate_states, p_exits, targets, config
                     )
-                    loss = loss + quality_loss
+                    # REINFORCE loss INSIDE compiled graph: gradient flows
+                    # through p_exit_i → router params. Simple ops, compiles fine.
+                    quality_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+                    for qi, p_exit_i in enumerate(p_exits):
+                        quality_loss = quality_loss - (p_exit_i.float() * adv_tensor[qi]).mean()
+                    loss = loss + config.eet_quality_lambda * quality_loss
 
             # --- Efficiency loss (Phase 2 & 3) ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
@@ -887,40 +894,33 @@ class EarlyExitGPT(GPT):
         }
         return loss_term, diag
 
-    def _compute_quality_loss(self, candidate_states, p_exits, targets, config):
-        """REINFORCE-style per-layer quality loss.
+    @torch.compiler.disable
+    def _compute_quality_advantages(self, candidate_states, p_exits, targets, config):
+        """Compute per-layer, per-token advantages for REINFORCE quality loss.
 
-        For each routing layer i, compute per-token CE loss by projecting h_i
-        through the lm_head. Then use advantage = quality_i - baseline to
-        create a per-token, per-layer gradient signal for the router.
+        Runs OUTSIDE torch.compile (heavy lm_head projections + loops that
+        would cause graph breaks or very slow compilation). Returns fully
+        detached tensors that are used as reward signals — no gradient flows
+        through this function.
 
-        This provides O(1) gradient to the router (vs ~1e-7 from the soft
-        blending path), enabling per-token exit differentiation.
-
-        Args:
-            candidate_states: list of (B, T, D) normed hidden states at each routing layer + final
-            p_exits: list of (B, T) exit probabilities (len = n_routing_layers + 1, last is p_reach)
-            targets: (B, T) target token ids
-            config: GPTConfig
+        Returns:
+            advantages: (n_exits, B, T) float32 detached tensor
+            valid_mask: (B, T) float32 detached tensor
         """
-        n_exits = len(p_exits)  # routing_layers + final
         B, T = targets.shape
         vocab_size = config.vocab_size
         softcap = 20
-
-        # Compute per-layer, per-token quality (negative CE loss)
-        # Higher quality = better prediction = safer to exit here
-        flat_targets = targets.reshape(-1)  # (B*T,)
-        valid_mask = (flat_targets != -1)  # (B*T,)
-
-        # Collect per-layer quality: (n_exits, B*T)
-        layer_qualities = []
-        chunk_size = 4096  # chunk B*T to control memory
         N = B * T
+        chunk_size = 4096
 
-        with torch.no_grad():  # Quality scores are reward signals, no gradient needed
+        flat_targets = targets.reshape(-1)  # (B*T,)
+        valid_mask = (flat_targets != -1).float().reshape(B, T)  # (B, T)
+
+        # Compute per-layer quality (negative CE) — no gradient needed
+        layer_qualities = []
+        with torch.no_grad():
             for state_i in candidate_states:
-                flat_h = state_i.reshape(N, -1)  # (N, D)
+                flat_h = state_i.reshape(N, -1)
                 ce_per_token = torch.zeros(N, dtype=torch.float32, device=flat_h.device)
 
                 for start in range(0, N, chunk_size):
@@ -933,38 +933,27 @@ class EarlyExitGPT(GPT):
                     chunk_ce = F.cross_entropy(
                         chunk_logits, chunk_targets,
                         ignore_index=-1, reduction='none'
-                    )  # (chunk,)
+                    )
                     ce_per_token[start:end] = chunk_ce
 
-                # quality = negative CE (higher = better prediction)
-                # Clamp to prevent extreme values from dominating the advantage
-                quality_i = -ce_per_token.reshape(B, T).clamp(-50.0, 0.0)  # (B, T)
+                # quality = negative CE, clamped to prevent extreme values
+                quality_i = -ce_per_token.reshape(B, T).clamp(-50.0, 0.0)
                 layer_qualities.append(quality_i)
 
         # Stack: (n_exits, B, T)
-        qualities = torch.stack(layer_qualities, dim=0)  # (n_exits, B, T)
+        qualities = torch.stack(layer_qualities, dim=0)
 
-        # Compute baseline: expected quality under current policy (detached)
-        # baseline(t) = Σ_i p_exit(i,t).detach() * quality(i,t)
-        p_stack = torch.stack([p.detach().float() for p in p_exits], dim=0)  # (n_exits, B, T)
+        # Baseline: expected quality under current policy
+        p_stack = torch.stack([p.detach().float() for p in p_exits], dim=0)
         baseline = (p_stack * qualities).sum(dim=0)  # (B, T)
 
         # Advantage: how much better is layer i than expected?
-        # advantage(i,t) = quality(i,t) - baseline(t)
         advantages = qualities - baseline.unsqueeze(0)  # (n_exits, B, T)
 
-        # REINFORCE loss: encourage exiting at layers with positive advantage
-        # Router loss = -Σ_i (p_exit(i) * advantage(i).detach()).mean()
-        # Gradient flows through p_exit_i → router params (REINFORCE trick)
-        # Advantage is detached so gradient doesn't flow through quality computation
-        reinforce_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
-        for i, p_exit_i in enumerate(p_exits):
-            adv_i = advantages[i].detach()  # (B, T) — stop gradient
-            # Mask invalid tokens
-            adv_i = adv_i * valid_mask.reshape(B, T).float()
-            reinforce_loss = reinforce_loss - (p_exit_i.float() * adv_i).mean()
+        # Mask invalid tokens and detach everything
+        advantages = (advantages * valid_mask.unsqueeze(0)).detach()
 
-        return config.eet_quality_lambda * reinforce_loss
+        return advantages, valid_mask.detach()
 
     def num_scaling_params(self):
         """Override to include EET params in scaling count without causing assertion errors."""
