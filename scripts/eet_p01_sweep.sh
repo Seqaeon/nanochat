@@ -187,7 +187,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
     "Variant A: entropy + surprise loss (no reconstruction/translators)" \
     --use-eet 1 --eet-frozen-kv 0 \
-    --eet-router-type mlp2 \
+    --eet-router-type linear \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
     --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
     --eet-loss-variant entropy_surprise \

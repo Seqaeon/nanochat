@@ -212,15 +212,15 @@ class EarlyExitRouter(nn.Module):
         elif router_type == 'mlp1':
             self.net = nn.Sequential(
                 Linear(n_embd, hidden, bias=True),
-                nn.ReLU(),
+                nn.LeakyReLU(0.01),
                 Linear(hidden, 1, bias=True),
             )
         elif router_type == 'mlp2':
             self.net = nn.Sequential(
                 Linear(n_embd, hidden, bias=True),
-                nn.ReLU(),
+                nn.LeakyReLU(0.01),
                 Linear(hidden, hidden, bias=True),
-                nn.ReLU(),
+                nn.LeakyReLU(0.01),
                 Linear(hidden, 1, bias=True),
             )
         else:
@@ -248,6 +248,10 @@ class EarlyExitRouter(nn.Module):
             logit = logit + freq_alpha * freq_bias.to(logit.dtype)
         if pos_bias is not None and pos_beta > 0:
             logit = logit + pos_beta * pos_bias.to(logit.dtype)
+        # Clamp logits to prevent sigmoid saturation — ensures gradients always
+        # flow regardless of how strongly one loss pushes. sigmoid(-5)=0.007,
+        # sigmoid(5)=0.993, so exit probs stay in [0.007, 0.993].
+        logit = logit.clamp(-5.0, 5.0)
         return torch.sigmoid(logit)
 
 
@@ -391,15 +395,15 @@ class EarlyExitGPT(GPT):
         # Zero-ing the weights causes the router to collapse to a constant function.
         for router in self.eet_routers:
             if router.router_type == 'linear':
-                # Scale down weights for stable init, mild negative bias
+                # Scale down weights for stable init, neutral bias
                 nn.init.normal_(router.net.weight, std=0.01)
-                nn.init.constant_(router.net.bias, -1.0)  # sigmoid(-1) ≈ 0.27
+                nn.init.constant_(router.net.bias, 0.0)  # sigmoid(0) = 0.5 — neutral start
             else:
                 # Scale down (not zero!) last linear in MLP chain
                 last_linear = list(router.net.modules())[-1]
                 if isinstance(last_linear, (Linear, nn.Linear)):
                     nn.init.normal_(last_linear.weight, std=0.01)
-                    nn.init.constant_(last_linear.bias, -1.0)  # sigmoid(-1) ≈ 0.27
+                    nn.init.constant_(last_linear.bias, 0.0)  # sigmoid(0) = 0.5 — neutral start
 
         # Translators: identity-like init (only when present)
         for translator in self.eet_translators:
