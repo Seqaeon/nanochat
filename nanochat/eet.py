@@ -583,26 +583,18 @@ class EarlyExitGPT(GPT):
         if is_soft_training:
             p_exits = []
             p_reach = torch.ones(B, T, dtype=x.dtype, device=x.device)
-            soft_h = torch.zeros_like(x)           # for LM loss (detached from router)
+            soft_h = torch.zeros_like(x)
+            soft_prev_h = torch.zeros_like(x)
             soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-            # Live-gradient blended states for auxiliary losses (entropy_surprise, adversarial)
-            # These keep p_exit_i live so the variant loss can backprop to the router
-            need_live_aux = loss_variant in ('entropy_surprise', 'adversarial')
-            if need_live_aux:
-                live_exit_h = torch.zeros_like(x)
-                live_prev_h = torch.zeros_like(x)
 
             for idx, (r_i, h_i, prev_h_i) in enumerate(zip(exit_probs_list, candidate_states[:-1], candidate_prev_states[:-1])):
                 p_exit_i = r_i * p_reach
                 p_exits.append(p_exit_i)
-                # Detach exit probs in the LM-loss path (soft_h → logits → CE loss)
-                # so the LM loss can't collapse the router to "never exit".
-                p_exit_i_detached = p_exit_i.detach()
-                soft_h = soft_h + p_exit_i_detached.unsqueeze(-1) * h_i
-                # Auxiliary loss path: live p_exit_i so gradient flows to router
-                if need_live_aux:
-                    live_exit_h = live_exit_h + p_exit_i.unsqueeze(-1) * h_i
-                    live_prev_h = live_prev_h + p_exit_i.unsqueeze(-1) * prev_h_i
+                # Build blended states with LIVE exit probs (gradient flows to router
+                # through auxiliary losses: entropy_surprise, adversarial, reconstruct).
+                # The LM loss path is blocked by detaching at `x = soft_h.detach()` below.
+                soft_h = soft_h + p_exit_i.unsqueeze(-1) * h_i
+                soft_prev_h = soft_prev_h + p_exit_i.unsqueeze(-1) * prev_h_i
                 # Efficiency path: live p_exit_i
                 soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
                 
@@ -613,21 +605,20 @@ class EarlyExitGPT(GPT):
                     
                 p_reach = p_reach * (1.0 - r_i)
 
-            p_reach_detached = p_reach.detach()
-            soft_h = soft_h + p_reach_detached.unsqueeze(-1) * candidate_states[-1]
-            soft_active = soft_active + p_reach * 1.0  # live p_reach for efficiency gradient
-            if need_live_aux:
-                live_exit_h = live_exit_h + p_reach.unsqueeze(-1) * candidate_states[-1]
-                live_prev_h = live_prev_h + p_reach.unsqueeze(-1) * candidate_prev_states[-1]
+            soft_h = soft_h + p_reach.unsqueeze(-1) * candidate_states[-1]
+            soft_prev_h = soft_prev_h + p_reach.unsqueeze(-1) * candidate_prev_states[-1]
+            soft_active = soft_active + p_reach * 1.0
             p_exits.append(p_reach)
             
             # Save stacked soft exit probabilities for structure diagnostics
             self._last_exit_probs = torch.stack(p_exits, dim=-1)
 
-            x = soft_h
-            # For auxiliary losses, use the live-gradient blended states
-            exit_hidden = live_exit_h if need_live_aux else soft_h
-            prev_exit_hidden = live_prev_h if need_live_aux else soft_h
+            # DETACH here: LM loss (logits → CE) trains the backbone only, not the router.
+            # Auxiliary losses (entropy_surprise, adversarial, reconstruct) use exit_hidden
+            # which keeps the live gradient path to the router.
+            x = soft_h.detach()
+            exit_hidden = soft_h          # live — aux losses backprop to router
+            prev_exit_hidden = soft_prev_h  # live — aux losses backprop to router
             avg_active = soft_active.mean()
             total_exit_frac = 1.0 - avg_active
             n_routed_layers = len(routing_layers)
