@@ -1518,13 +1518,9 @@ while True:
         )
         if step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
-            with torch.no_grad():
-                # Perform a single forward pass on the current batch (x) with soft routing to populate _last_exit_probs
-                _ = orig_model(x, eet_do_route=True, eet_phase=2, eet_lambda_r=0.0, eet_lambda_e=0.0)
-            
-            if hasattr(orig_model, '_last_exit_probs'):
-                exit_probs = orig_model._last_exit_probs
-                token_ids = x
+            if hasattr(orig_model, '_last_exit_probs') and hasattr(orig_model, '_last_token_ids'):
+                exit_probs = orig_model._last_exit_probs.cpu()
+                token_ids = orig_model._last_token_ids.cpu()
                 
                 # Load or construct token_freq dictionary from freq_table.pt
                 import os
@@ -1542,7 +1538,7 @@ while True:
                 except Exception as e:
                     print0(f"[EET DIAGNOSTIC] Warning: correlation check failed with error: {e}")
             else:
-                print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during forward pass.")
+                print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during Phase 2 training.")
 
     # Enable MST diagnostic capture on log steps (last micro-step only)
     _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
@@ -1685,6 +1681,37 @@ while True:
                         if gn > 1e-12:
                             correction = (gn_mean / gn).clamp(1.0 - ger_lambda, 1.0 + ger_lambda)
                             param.grad.mul_(correction.to(param.grad.dtype))
+        # Log EET gradients during Phase 2 training
+        if model_config.use_eet and master_process:
+            from nanochat.eet import EETPhaseScheduler
+            _eet_sched = EETPhaseScheduler(
+                num_iterations,
+                warmup_frac=model_config.eet_warmup_frac,
+                explore_frac=model_config.eet_explore_frac,
+                reconstruct_lambda=model_config.eet_reconstruct_lambda,
+                efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
+                efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
+            )
+            _eet_phase_info = _eet_sched.get_phase(step)
+            if _eet_phase_info['phase'] == 2:
+                eet_grads = {}
+                for name, param in orig_model.named_parameters():
+                    if ('eet_router' in name or 'eet_translator' in name) and param.grad is not None:
+                        eet_grads[name] = param.grad.float().norm().item()
+                
+                if eet_grads:
+                    import os
+                    run_dir = getattr(args, 'run_dir', None) or '/tmp'
+                    os.makedirs(run_dir, exist_ok=True)
+                    log_path = os.path.join(run_dir, 'eet_gradients.log')
+                    
+                    # Check if this is the first write to write header
+                    file_exists = os.path.exists(log_path)
+                    with open(log_path, 'a') as f:
+                        if not file_exists:
+                            f.write("step\t" + "\t".join(eet_grads.keys()) + "\n")
+                        f.write(f"{step}\t" + "\t".join(f"{v:.6f}" for v in eet_grads.values()) + "\n")
+
         optimizer.step()
     # Fix 1H: update PermutationMoE temperature each step
     if use_research_mode:
