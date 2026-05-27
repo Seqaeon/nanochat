@@ -565,11 +565,16 @@ class EarlyExitGPT(GPT):
                         pos_beta=config.eet_pos_prior_beta,
                     )
                     exit_probs_list.append(exit_prob_i)
-                    candidate_states.append(norm(x))
-                    candidate_prev_states.append(norm(prev_x_val))
+                    # Detach candidate states: for REINFORCE quality loss, the
+                    # quality scores are reward signals (not differentiable paths).
+                    # Gradients only flow through p_exit_i → router params.
+                    # Keeping these live would create a double backward path
+                    # through the entire model → gradient explosion → NaN.
+                    candidate_states.append(norm(x).detach())
+                    candidate_prev_states.append(norm(prev_x_val).detach())
                 elif i == n_layer - 1:
-                    candidate_states.append(norm(x))
-                    candidate_prev_states.append(norm(prev_x_val))
+                    candidate_states.append(norm(x).detach())
+                    candidate_prev_states.append(norm(prev_x_val).detach())
             else:
                 # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
                 if do_route:
@@ -913,26 +918,28 @@ class EarlyExitGPT(GPT):
         chunk_size = 4096  # chunk B*T to control memory
         N = B * T
 
-        for state_i in candidate_states:
-            flat_h = state_i.reshape(N, -1)  # (N, D)
-            ce_per_token = torch.zeros(N, dtype=torch.float32, device=flat_h.device)
+        with torch.no_grad():  # Quality scores are reward signals, no gradient needed
+            for state_i in candidate_states:
+                flat_h = state_i.reshape(N, -1)  # (N, D)
+                ce_per_token = torch.zeros(N, dtype=torch.float32, device=flat_h.device)
 
-            for start in range(0, N, chunk_size):
-                end = min(start + chunk_size, N)
-                chunk_h = flat_h[start:end]
-                chunk_logits = self.lm_head(chunk_h)
-                chunk_logits = chunk_logits[..., :vocab_size].float()
-                chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
-                chunk_targets = flat_targets[start:end]
-                chunk_ce = F.cross_entropy(
-                    chunk_logits, chunk_targets,
-                    ignore_index=-1, reduction='none'
-                )  # (chunk,)
-                ce_per_token[start:end] = chunk_ce
+                for start in range(0, N, chunk_size):
+                    end = min(start + chunk_size, N)
+                    chunk_h = flat_h[start:end]
+                    chunk_logits = self.lm_head(chunk_h)
+                    chunk_logits = chunk_logits[..., :vocab_size].float()
+                    chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
+                    chunk_targets = flat_targets[start:end]
+                    chunk_ce = F.cross_entropy(
+                        chunk_logits, chunk_targets,
+                        ignore_index=-1, reduction='none'
+                    )  # (chunk,)
+                    ce_per_token[start:end] = chunk_ce
 
-            # quality = negative CE (higher = better prediction)
-            quality_i = -ce_per_token.reshape(B, T)  # (B, T)
-            layer_qualities.append(quality_i)
+                # quality = negative CE (higher = better prediction)
+                # Clamp to prevent extreme values from dominating the advantage
+                quality_i = -ce_per_token.reshape(B, T).clamp(-50.0, 0.0)  # (B, T)
+                layer_qualities.append(quality_i)
 
         # Stack: (n_exits, B, T)
         qualities = torch.stack(layer_qualities, dim=0)  # (n_exits, B, T)
