@@ -54,10 +54,11 @@ class FrequencyPrior(nn.Module):
         cache_path = os.path.join(tokenizer_dir, "freq_table.pt")
         if os.path.exists(cache_path):
             print0(f"[EET] Loading frequency table from {cache_path}")
-            return torch.load(cache_path, weights_only=True)
+            return torch.load(cache_path, weights_only=True, map_location='cpu')
 
         print0(f"[EET] Computing frequency table from training data...")
-        freq = torch.zeros(vocab_size, dtype=torch.float32, device=device)
+        # Explicit device='cpu' to avoid meta device context contamination
+        freq = torch.zeros(vocab_size, dtype=torch.float32, device='cpu')
         try:
             from nanochat.dataset import resolve_data_dir, list_parquet_files
             from nanochat.tokenizer import get_tokenizer
@@ -76,14 +77,13 @@ class FrequencyPrior(nn.Module):
                 # Batched parallel tokenization (tiktoken Rust implementation)
                 all_token_ids_list = tokenizer.encode(texts)
                 
-                # Flatten and count in PyTorch on target device (GPU)
+                # Flatten and count in PyTorch on CPU
                 if all_token_ids_list:
                     flat_np = np.concatenate([np.array(tokens, dtype=np.int32) for tokens in all_token_ids_list])
-                    flat_tokens_t = torch.from_numpy(flat_np).to(device=device, non_blocking=True).long()
+                    flat_tokens_t = torch.from_numpy(flat_np).long()
                     freq += torch.bincount(flat_tokens_t, minlength=vocab_size)[:vocab_size]
             
-            # Copy to CPU before saving to disk
-            freq_cpu = freq.cpu()
+            freq_cpu = freq
             print0(f"[EET] Frequency table computed from {len(shards)} shards")
         except Exception as e:
             print0(f"[EET] Warning: could not compute freq table ({e}), using uniform")
@@ -133,10 +133,11 @@ class POSPrior(nn.Module):
         cache_path = os.path.join(tokenizer_dir, "pos_categories.pt")
         if os.path.exists(cache_path):
             print0(f"[EET] Loading POS categories from {cache_path}")
-            return torch.load(cache_path, weights_only=True)
+            return torch.load(cache_path, weights_only=True, map_location='cpu')
 
         print0(f"[EET] Computing POS categories via spaCy...")
-        pos_scores = torch.full((vocab_size,), 0.5, dtype=torch.float32)  # default: mid
+        # Explicit device='cpu' to avoid meta device context contamination
+        pos_scores = torch.full((vocab_size,), 0.5, dtype=torch.float32, device='cpu')
         try:
             import spacy
             try:
