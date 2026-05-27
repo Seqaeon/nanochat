@@ -504,10 +504,10 @@ class EarlyExitGPT(GPT):
         pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
 
         # --- Early exit forward pass ---
-        # All variants use soft blending in Phase 2 — this provides gradient
-        # to the router through the main LM loss path (CE → soft_h → p_exit_i → router).
-        # Hard routing (Phase 3) is non-differentiable (no STE), so Phase 2
-        # soft blending is the ONLY way the router learns.
+        # Use soft blending during Phase 2 training to provide gradients to the
+        # router and transformer weights. Phase 3 training runs the hard routing
+        # path, but computes parallel soft router probabilities for gradient propagation
+        # (hybrid path) so the router continues learning from quality/efficiency loss.
         is_soft_training = eet_do_route and self.training and eet_phase == 2
 
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
@@ -532,6 +532,8 @@ class EarlyExitGPT(GPT):
             candidate_states = []
             candidate_prev_states = []
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+        else:
+            hard_candidate_states = []
 
         prev_x = x.detach()  # hidden state before first block
 
@@ -581,6 +583,13 @@ class EarlyExitGPT(GPT):
                     x = torch.where(active_mask, x_new, frozen_h)
                 else:
                     x = x_new
+
+                # Collect states for parallel soft loss in Phase 3 training
+                if self.training and eet_phase == 3 and do_route:
+                    if i < n_layer - 1 and i >= config.eet_min_exit_layer:
+                        hard_candidate_states.append(norm(x).detach())
+                    elif i == n_layer - 1:
+                        hard_candidate_states.append(norm(x).detach())
 
                 # Routing decision
                 if i < n_layer - 1 and do_route and i >= config.eet_min_exit_layer:
@@ -684,6 +693,29 @@ class EarlyExitGPT(GPT):
             x = norm(x)
             avg_active = token_active.float().mean()
 
+            # For Phase 3 training: compute parallel soft cumulative exit probabilities
+            # from the collected hard candidate states for gradient propagation.
+            p_exits_soft = []
+            if self.training and eet_phase == 3 and do_route:
+                p_reach = torch.ones(B, T, dtype=x.dtype, device=x.device)
+                routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+                for idx, r_layer_idx in enumerate(routing_layers):
+                    h_layer = hard_candidate_states[idx]
+                    router = self.eet_routers[r_layer_idx]
+                    exit_prob_i = router(
+                        h_layer,
+                        freq_bias=freq_bias, pos_bias=pos_bias,
+                        freq_alpha=config.eet_freq_prior_alpha,
+                        pos_beta=config.eet_pos_prior_beta,
+                    )
+                    p_exits_soft.append(p_reach * exit_prob_i)
+                    p_reach = p_reach * (1.0 - exit_prob_i)
+                p_exits_soft.append(p_reach)
+                
+                # Save stacked soft exit probabilities for diagnostics
+                if len(p_exits_soft) > 0:
+                    self._last_exit_probs = torch.stack(p_exits_soft, dim=-1)
+
         # --- LM head ---
         softcap = 20
         logits = self.lm_head(x)
@@ -697,53 +729,63 @@ class EarlyExitGPT(GPT):
                 ignore_index=-1, reduction=loss_reduction,
             )
 
-            # --- Phase 2 variant losses ---
-            if eet_phase == 2 and loss_reduction == 'mean':
-                if loss_variant == 'reconstruct' and reconstruction_losses:
-                    recon_loss_term = self._compute_reconstruction_loss(
-                        logits, reconstruction_losses, eet_lambda_r, config.vocab_size
-                    )
-                    loss = loss + recon_loss_term
-                elif loss_variant == 'entropy_surprise' and need_exit_tracking:
-                    variant_loss, variant_diag = self._compute_entropy_surprise_loss(
-                        exit_hidden, prev_exit_hidden, config
-                    )
-                    loss = loss + variant_loss
-                elif loss_variant == 'adversarial' and need_exit_tracking:
-                    variant_loss, variant_diag = self._compute_adversarial_loss(
-                        exit_hidden, logits, targets, config
-                    )
-                    loss = loss + variant_loss
-                elif loss_variant == 'quality' and is_soft_training and len(p_exits) > 1:
-                    # Compute advantages OUTSIDE compiled graph (heavy, no gradient needed).
-                    # Returns detached (n_exits, B, T) advantages + (B, T) valid_mask.
-                    adv_tensor, vmask = self._compute_quality_advantages(
-                        candidate_states, p_exits, targets, config
-                    )
-                    # REINFORCE loss INSIDE compiled graph: gradient flows
-                    # through p_exit_i → router params. Simple ops, compiles fine.
-                    quality_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
-                    for qi, p_exit_i in enumerate(p_exits):
-                        quality_loss = quality_loss - (p_exit_i.float() * adv_tensor[qi]).mean()
-                    loss = loss + config.eet_quality_lambda * quality_loss
+            # --- Early Exit Variant/Auxiliary losses (Phase 2 & 3) ---
+            if eet_phase in (2, 3) and loss_reduction == 'mean':
+                if eet_phase == 2:
+                    if loss_variant == 'reconstruct' and reconstruction_losses:
+                        recon_loss_term = self._compute_reconstruction_loss(
+                            logits, reconstruction_losses, eet_lambda_r, config.vocab_size
+                        )
+                        loss = loss + recon_loss_term
+                    elif loss_variant == 'entropy_surprise' and need_exit_tracking:
+                        variant_loss, variant_diag = self._compute_entropy_surprise_loss(
+                            exit_hidden, prev_exit_hidden, config
+                        )
+                        loss = loss + variant_loss
+                    elif loss_variant == 'adversarial' and need_exit_tracking:
+                        variant_loss, variant_diag = self._compute_adversarial_loss(
+                            exit_hidden, logits, targets, config
+                        )
+                        loss = loss + variant_loss
+                        
+                # Quality REINFORCE loss with entropy bonus applies to both Phase 2 and 3
+                if loss_variant == 'quality':
+                    curr_p_exits = p_exits if eet_phase == 2 else p_exits_soft
+                    curr_candidate_states = candidate_states if eet_phase == 2 else hard_candidate_states
+                    
+                    if len(curr_p_exits) > 1:
+                        # Compute advantages OUTSIDE compiled graph (heavy, no gradient needed).
+                        # Returns detached (n_exits, B, T) advantages + (B, T) valid_mask.
+                        adv_tensor, vmask = self._compute_quality_advantages(
+                            curr_candidate_states, curr_p_exits, targets, config
+                        )
+                        # REINFORCE loss: gradient flows through p_exit_i → router params.
+                        quality_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+                        for qi, p_exit_i in enumerate(curr_p_exits):
+                            quality_loss = quality_loss - (p_exit_i.float() * adv_tensor[qi]).mean()
+                        loss = loss + config.eet_quality_lambda * quality_loss
 
-                    # --- Entropy bonus: prevent exit distribution mode collapse ---
-                    # H(p_exit) = -Σ_i p_exit_i * log(p_exit_i + ε)
-                    # Maximizing entropy keeps the exit distribution spread out so
-                    # the quality loss can differentiate tokens once layer quality
-                    # differences emerge. Without this, the efficiency loss
-                    # collapses everything to "exit at layer 0" before the model
-                    # has learned enough for quality differences to exist.
-                    if config.eet_quality_entropy_bonus > 0:
-                        entropy_bonus = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
-                        for p_exit_i in p_exits:
-                            p_f = p_exit_i.float().clamp(min=1e-8)
-                            entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
-                        loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
+                        # --- Entropy bonus: prevent exit distribution mode collapse ---
+                        if config.eet_quality_entropy_bonus > 0:
+                            entropy_bonus = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+                            for p_exit_i in curr_p_exits:
+                                p_f = p_exit_i.float().clamp(min=1e-8)
+                                entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
+                            loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
             # --- Efficiency loss (Phase 2 & 3) ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
-                loss = loss + eet_lambda_e * avg_active
+                if self.training and eet_phase == 3:
+                    # In Phase 3, we use a soft expected active fraction for routing gradient,
+                    # so the efficiency pressure actually backpropagates to the router.
+                    soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
+                    for idx, p_exit_i in enumerate(p_exits_soft[:-1]):
+                        soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
+                    soft_active = soft_active + p_exits_soft[-1] * 1.0
+                    soft_avg_active = soft_active.mean()
+                    loss = loss + eet_lambda_e * soft_avg_active
+                else:
+                    loss = loss + eet_lambda_e * avg_active
 
             # Store diagnostics
             if self.training:

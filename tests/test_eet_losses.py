@@ -68,5 +68,61 @@ def test_eet_loss_variants():
         # but we successfully backwarded the main cross-entropy and general pathways.
         print(f"Gradient check complete for variant {variant}. Router parameters updated: {router_has_grad}")
 
+
+def test_eet_phase3_quality_losses():
+    device = "cpu"
+    print(f"\n--- Testing EET Loss Phase 3 Quality Hybrid Gradient Flow ---")
+    
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_exit_threshold=0.5, # standard threshold
+        eet_topk_vocab=16,
+        eet_loss_variant='quality',
+        eet_quality_entropy_bonus=0.1,
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    
+    # Run forward pass simulating Phase 3 (hard routing)
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device)
+    )
+    
+    loss_val = loss.item()
+    print(f"Phase 3 Loss computed successfully: {loss_val}")
+    assert not torch.isnan(loss), "Phase 3 Loss is NaN"
+    
+    loss.backward()
+    print("Backward pass successful for Phase 3!")
+    
+    # Verify that the router parameters got gradients populated!
+    router_has_grad = False
+    for name, p in model.named_parameters():
+        if "eet_router" in name and p.grad is not None:
+            router_has_grad = True
+            assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+            print(f"  {name} has grad. norm: {p.grad.norm().item():.6f}")
+            
+    assert router_has_grad, "Error: Router did not receive gradients in Phase 3 training!"
+    print("✓ Phase 3 hybrid gradient path is fully functional!")
+
 if __name__ == "__main__":
     test_eet_loss_variants()
+    test_eet_phase3_quality_losses()
