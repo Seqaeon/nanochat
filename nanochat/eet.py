@@ -390,6 +390,30 @@ class EarlyExitGPT(GPT):
         """Initialize base GPT weights + EET-specific parameters."""
         super().init_weights()
 
+        # Re-load prior buffers destroyed by to_empty().
+        # The model init sequence is: meta-device → to_empty(gpu) → init_weights().
+        # to_empty() replaces ALL tensor storage (including registered buffers)
+        # with uninitialized garbage. We must re-load from disk.
+        config = self.config
+        tokenizer_dir = getattr(config, '_tokenizer_dir', None)
+        if tokenizer_dir is None:
+            from nanochat.common import get_base_dir
+            tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
+
+        if self._freq_prior is not None:
+            freq_table = self._freq_prior._load_or_compute(
+                config.vocab_size, tokenizer_dir, 'cpu'
+            )
+            log_freq = torch.log1p(freq_table)
+            log_freq = log_freq / (log_freq.max() + 1e-8)
+            self._freq_prior.freq_bias.copy_(log_freq)
+
+        if self._pos_prior is not None:
+            pos_table = self._pos_prior._load_or_compute(
+                config.vocab_size, tokenizer_dir
+            )
+            self._pos_prior.pos_bias.copy_(pos_table)
+
         # Routers: small-init last layer so routers start with slight "don't exit" bias
         # but KEEP random weights so the output varies across tokens from step 1.
         # Zero-ing the weights causes the router to collapse to a constant function.

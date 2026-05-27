@@ -189,7 +189,7 @@ run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
     --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
     --eet-loss-variant entropy_surprise \
     --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
