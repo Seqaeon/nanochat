@@ -349,6 +349,7 @@ def run_training_sweep(args):
         "--eet-surprise-lambda", str(getattr(args, 'eet_surprise_lambda', 0.1)),
         "--eet-adv-lambda", str(getattr(args, 'eet_adv_lambda', 1.0)),
         "--eet-adv-entropy-lambda", str(getattr(args, 'eet_adv_entropy_lambda', 0.2)),
+        "--eet-quality-lambda", str(getattr(args, 'eet_quality_lambda', 1.0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -891,6 +892,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-surprise-lambda", type=float, default=0.1)
     parser.add_argument("--eet-adv-lambda", type=float, default=1.0)
     parser.add_argument("--eet-adv-entropy-lambda", type=float, default=0.2)
+    parser.add_argument("--eet-quality-lambda", type=float, default=1.0)
 
     args = parser.parse_args()
     
