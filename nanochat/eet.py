@@ -365,25 +365,21 @@ class EarlyExitGPT(GPT):
         else:
             self.eet_translators = nn.ModuleList()  # empty — no wasted params
 
-        # Priors (lazy-loaded, compute on first use)
-        self._freq_prior = None
-        self._pos_prior = None
-        self._priors_initialized = False
-
-    def _ensure_priors(self, device):
-        """Lazy-initialize priors on first forward pass."""
-        if self._priors_initialized:
-            return
-        config = self.config
+        # Priors (eagerly loaded/computed in __init__ to prevent torch.compile graph breaks/OOM)
         tokenizer_dir = getattr(config, '_tokenizer_dir', None)
+        if tokenizer_dir is None:
+            from nanochat.common import get_base_dir
+            tokenizer_dir = os.path.join(get_base_dir(), "tokenizer")
 
         if config.eet_freq_prior_alpha > 0:
-            self._freq_prior = FrequencyPrior(config.vocab_size, tokenizer_dir, device)
-            self._freq_prior.freq_bias = self._freq_prior.freq_bias.to(device)
+            self._freq_prior = FrequencyPrior(config.vocab_size, tokenizer_dir)
+        else:
+            self._freq_prior = None
+
         if config.eet_pos_prior_beta > 0:
             self._pos_prior = POSPrior(config.vocab_size, tokenizer_dir)
-            self._pos_prior.pos_bias = self._pos_prior.pos_bias.to(device)
-        self._priors_initialized = True
+        else:
+            self._pos_prior = None
 
     @torch.no_grad()
     def init_weights(self):
@@ -462,8 +458,6 @@ class EarlyExitGPT(GPT):
         x = norm(x)
         x0 = x  # save for x0 residual
 
-        # --- Lazy-init priors ---
-        self._ensure_priors(x.device)
         freq_bias = self._freq_prior(idx) if self._freq_prior is not None else None
         pos_bias = self._pos_prior(idx) if self._pos_prior is not None else None
 
