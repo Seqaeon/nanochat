@@ -1518,7 +1518,6 @@ while True:
         )
         if step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
-            orig_model.eval()
             with torch.no_grad():
                 # Perform a single forward pass on the current batch (x) with soft routing to populate _last_exit_probs
                 _ = orig_model(x, eet_do_route=True, eet_phase=2, eet_lambda_r=0.0, eet_lambda_e=0.0)
@@ -1544,8 +1543,6 @@ while True:
                     print0(f"[EET DIAGNOSTIC] Warning: correlation check failed with error: {e}")
             else:
                 print0("[EET DIAGNOSTIC] Warning: exit probabilities not captured during forward pass.")
-            
-            orig_model.train()
 
     # Enable MST diagnostic capture on log steps (last micro-step only)
     _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
