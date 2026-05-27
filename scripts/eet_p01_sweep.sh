@@ -172,16 +172,38 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --use-eet 0
 #
 # EET_P1_1: Masked Attention (Option A — exited tokens masked out of attention)
-run_experiment "EET_P1_1_MASKED_D${DEPTH}" \
-    "Option A: masked attention for exited tokens (mlp2 router)" \
-    --use-eet 1 --eet-frozen-kv 0 \
-    --eet-router-type mlp2
+#run_experiment "EET_P1_1_MASKED_D${DEPTH}" \
+#    "Option A: masked attention for exited tokens (mlp2 router)" \
+#    --use-eet 1 --eet-frozen-kv 0 \
+#    --eet-router-type mlp2
 
 # EET_P1_2: Frozen KV Injection (Option B — frozen K/V remain available)
-run_experiment "EET_P1_2_FROZEN_KV_D${DEPTH}" \
-    "Option B: frozen KV injection for exited tokens (mlp2 router)" \
+#run_experiment "EET_P1_2_FROZEN_KV_D${DEPTH}" \
+#    "Option B: frozen KV injection for exited tokens (mlp2 router)" \
+#    --use-eet 1 --eet-frozen-kv 1 \
+#    --eet-router-type mlp2
+
+# EET_P1_10: Variant A — Entropy + Surprise (no translators)
+run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
+    "Variant A: entropy + surprise loss (no reconstruction/translators)" \
     --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+    --eet-loss-variant entropy_surprise \
+    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+
+# EET_P1_11: Variant B — Adversarial + Entropy stabilizer (no translators)
+run_experiment "EET_P1_11_VARIANT_B_D${DEPTH}" \
+    "Variant B: adversarial gap + entropy stabilizer (no reconstruction/translators)" \
+    --use-eet 1 --eet-frozen-kv 1 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
+    --eet-loss-variant adversarial \
+    --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_3: Frozen KV + Frequency Prior (α=0.1)
 run_experiment "EET_P1_3_FREQ_PRIOR_D${DEPTH}" \
@@ -238,27 +260,7 @@ run_experiment "EET_P1_9_AGGRESSIVE_D${DEPTH}" \
     --eet-reconstruct-lambda 1.0 \
     --eet-efficiency-lambda-start 0.05 --eet-efficiency-lambda-end 0.3
 
-# EET_P1_10: Variant A — Entropy + Surprise (no translators)
-run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
-    "Variant A: entropy + surprise loss (no reconstruction/translators)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
-    --eet-loss-variant entropy_surprise \
-    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
-# EET_P1_11: Variant B — Adversarial + Entropy stabilizer (no translators)
-run_experiment "EET_P1_11_VARIANT_B_D${DEPTH}" \
-    "Variant B: adversarial gap + entropy stabilizer (no reconstruction/translators)" \
-    --use-eet 1 --eet-frozen-kv 1 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.15 \
-    --eet-loss-variant adversarial \
-    --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
