@@ -29,6 +29,7 @@ from contextlib import contextmanager
 import torch
 import torch._dynamo
 torch._dynamo.config.cache_size_limit = 1000
+torch._dynamo.config.optimize_ddp = False
 import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
@@ -187,6 +188,12 @@ parser.add_argument("--eet-translator-rank", type=int, default=0, help="EET: Tun
 parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75, help="EET: max fraction of tokens that can exit")
 parser.add_argument("--eet-exit-threshold", type=float, default=0.5, help="EET: sigmoid threshold for exit decision")
 parser.add_argument("--eet-min-exit-layer", type=int, default=1, help="EET: earliest layer a token can exit at")
+parser.add_argument("--eet-loss-variant", type=str, default="reconstruct", choices=["reconstruct", "entropy_surprise", "adversarial"], help="EET: loss variant to use for early exit training")
+parser.add_argument("--eet-topk-vocab", type=int, default=512, help="EET: top-k vocabulary size for cheap entropy calculation")
+parser.add_argument("--eet-entropy-lambda", type=float, default=0.3, help="EET: entropy pressure weight (λ_ent) for entropy_surprise loss")
+parser.add_argument("--eet-surprise-lambda", type=float, default=0.1, help="EET: surprise pressure weight (λ_sur) for entropy_surprise loss")
+parser.add_argument("--eet-adv-lambda", type=float, default=1.0, help="EET: adversarial loss weight (λ_adv) for adversarial loss")
+parser.add_argument("--eet-adv-entropy-lambda", type=float, default=0.2, help="EET: adversarial entropy pressure weight (λ_adv_ent) for adversarial loss")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
