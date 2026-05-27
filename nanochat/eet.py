@@ -350,11 +350,14 @@ class EarlyExitGPT(GPT):
             for _ in range(n_layer - 1)
         ])
 
-        # Per-layer TunedLens translators (for reconstruction loss)
-        self.eet_translators = nn.ModuleList([
-            TunedLensTranslator(n_embd, rank=config.eet_translator_rank)
-            for _ in range(n_layer - 1)
-        ])
+        # Per-layer TunedLens translators — only for 'reconstruct' variant
+        if config.eet_loss_variant == 'reconstruct':
+            self.eet_translators = nn.ModuleList([
+                TunedLensTranslator(n_embd, rank=config.eet_translator_rank)
+                for _ in range(n_layer - 1)
+            ])
+        else:
+            self.eet_translators = nn.ModuleList()  # empty — no wasted params
 
         # Priors (lazy-loaded, compute on first use)
         self._freq_prior = None
@@ -393,7 +396,7 @@ class EarlyExitGPT(GPT):
                     nn.init.zeros_(last_linear.weight)
                     nn.init.constant_(last_linear.bias, -2.0)
 
-        # Translators: identity-like init
+        # Translators: identity-like init (only when present)
         for translator in self.eet_translators:
             if translator.rank > 0:
                 nn.init.zeros_(translator.down.weight)
@@ -467,8 +470,17 @@ class EarlyExitGPT(GPT):
         total_exit_frac = torch.tensor(0.0, device=x.device)
         n_routed_layers = 0
 
+        # Exit-layer tracking for variant losses (A/B)
+        loss_variant = config.eet_loss_variant
         blocks = list(self.transformer.h)
         n_layer = len(blocks)
+        need_exit_tracking = (eet_phase == 2 and loss_variant != 'reconstruct')
+        if need_exit_tracking:
+            exit_hidden = torch.zeros_like(x)                # (B, T, D)
+            exit_layers = torch.full((B, T), n_layer - 1, dtype=torch.long, device=x.device)
+            if loss_variant == 'entropy_surprise':
+                prev_exit_hidden = torch.zeros_like(x)       # for surprise term
+        prev_x = x.detach()  # hidden state before first block
 
         for i, block in enumerate(blocks):
             # Apply per-layer residual scaling
@@ -527,16 +539,22 @@ class EarlyExitGPT(GPT):
                 total_exit_frac = total_exit_frac + exit_mask.float().mean()
                 n_routed_layers += 1
 
-                # Reconstruction loss (Phase 2).
-                # CRITICAL: x.detach() prevents holding full backbone grad graphs for
-                # every layer — primary cause of OOM on long runs / large models.
-                # Translators learn to map detached intermediate states to final-layer
-                # space (standard TunedLens practice: translators train, backbone doesn't
-                # receive gradient from this loss path, avoiding double-penalisation).
+                # Phase 2 loss data collection
                 if eet_phase == 2:
-                    translated = self.eet_translators[i](x.detach())
-                    # Store (translated_h, exit_weight as float) - avoids .any() check
-                    reconstruction_losses.append((translated, exit_mask.float()))
+                    if loss_variant == 'reconstruct':
+                        # TunedLens translator — x.detach() prevents backbone grad
+                        translated = self.eet_translators[i](x.detach())
+                        reconstruction_losses.append((translated, exit_mask.float()))
+                    elif need_exit_tracking:
+                        # Variants A/B: track per-token exit-layer hidden state
+                        exit_hidden = torch.where(exit_mask.unsqueeze(-1), x.detach(), exit_hidden)
+                        exit_layers = torch.where(exit_mask, torch.tensor(i, device=x.device), exit_layers)
+                        if loss_variant == 'entropy_surprise':
+                            prev_exit_hidden = torch.where(exit_mask.unsqueeze(-1), prev_x, prev_exit_hidden)
+
+            # Update prev_x for surprise computation (before residual mixing)
+            if need_exit_tracking:
+                prev_x = x.detach()
 
             # Residual stream mixing
             if self.residual_mixers is not None:
@@ -550,6 +568,13 @@ class EarlyExitGPT(GPT):
         # Unconditional re-integration — no token_active.all() graph break.
         if do_route:
             x = torch.where(token_active.unsqueeze(-1), x, frozen_h)
+
+        # Fill exit_hidden for tokens that never exited (ran all layers)
+        if need_exit_tracking:
+            never_exited = token_active.unsqueeze(-1)  # (B, T, 1)
+            exit_hidden = torch.where(never_exited, x.detach(), exit_hidden)
+            if loss_variant == 'entropy_surprise':
+                prev_exit_hidden = torch.where(never_exited, prev_x, prev_exit_hidden)
 
         x = norm(x)
 
@@ -566,14 +591,25 @@ class EarlyExitGPT(GPT):
                 ignore_index=-1, reduction=loss_reduction,
             )
 
-            # --- Reconstruction loss (Phase 2) ---
-            # Computed in eager mode via @torch.compiler.disable to prevent compiler
-            # upper-bound/static activation pre-allocation for dynamic indexed tensors.
-            if reconstruction_losses and loss_reduction == 'mean':
-                recon_loss_term = self._compute_reconstruction_loss(
-                    logits, reconstruction_losses, eet_lambda_r, config.vocab_size
-                )
-                loss = loss + recon_loss_term
+            # --- Phase 2 variant losses ---
+            # All computed in eager mode via @torch.compiler.disable to prevent
+            # compiler upper-bound static activation pre-allocation.
+            if eet_phase == 2 and loss_reduction == 'mean':
+                if loss_variant == 'reconstruct' and reconstruction_losses:
+                    recon_loss_term = self._compute_reconstruction_loss(
+                        logits, reconstruction_losses, eet_lambda_r, config.vocab_size
+                    )
+                    loss = loss + recon_loss_term
+                elif loss_variant == 'entropy_surprise' and need_exit_tracking:
+                    variant_loss, variant_diag = self._compute_entropy_surprise_loss(
+                        exit_hidden, prev_exit_hidden, config
+                    )
+                    loss = loss + variant_loss
+                elif loss_variant == 'adversarial' and need_exit_tracking:
+                    variant_loss, variant_diag = self._compute_adversarial_loss(
+                        exit_hidden, logits, targets, config
+                    )
+                    loss = loss + variant_loss
 
             # --- Efficiency loss (Phase 2 & 3) ---
             # Penalize tokens that DON'T exit (encourage early exit)
@@ -617,6 +653,123 @@ class EarlyExitGPT(GPT):
             recon_loss = recon_loss + kl_exited.sum() / n_exits
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
+
+    @torch.compiler.disable
+    def _compute_entropy_surprise_loss(self, exit_hidden, prev_exit_hidden, config):
+        """Variant A: Entropy + Surprise loss (eager mode).
+
+        Entropy: topk approximation of vocab entropy at exit-layer hidden states.
+                 Low entropy = confident → safe to exit.
+        Surprise: relative norm of update between exit layer and previous layer.
+                  High surprise = representation still changing → unsafe to exit.
+
+        Returns (loss_term, diagnostics_dict).
+        """
+        # exit_hidden: (B, T, D) — hidden state at each token's exit layer
+        # prev_exit_hidden: (B, T, D) — hidden state at layer before exit
+        B, T, D = exit_hidden.shape
+        topk_vocab = config.eet_topk_vocab
+        unembed = self.lm_head.weight  # (padded_vocab, D)
+
+        # --- Entropy: chunked projection to avoid (B*T, V) peak ---
+        flat_h = exit_hidden.reshape(-1, D)  # (N, D)
+        N = flat_h.shape[0]
+        chunk_size = 8192  # ~1 GB per chunk for V=32768 float32
+        entropies = []
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            # Raw projection — intentionally no layernorm (cheaper, different signal)
+            chunk_logits = flat_h[start:end].float() @ unembed[:config.vocab_size].float().T  # (chunk, V)
+            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values  # (chunk, topk)
+            probs = F.softmax(topk_logits, dim=-1)
+            ent = -(probs * probs.log()).sum(dim=-1)  # (chunk,)
+            entropies.append(ent)
+        entropy_loss = torch.cat(entropies).mean()
+
+        # --- Surprise: relative norm of representation update ---
+        update = exit_hidden - prev_exit_hidden  # (B, T, D)
+        surprise = update.norm(dim=-1) / (prev_exit_hidden.norm(dim=-1) + 1e-8)  # (B, T)
+        surprise_loss = surprise.mean()
+
+        # Entropy: minimize (exit when confident)
+        # Surprise: SUBTRACT (penalize exiting when representation still changing)
+        loss_term = (
+            config.eet_entropy_lambda * entropy_loss
+            - config.eet_surprise_lambda * surprise_loss
+        )
+
+        diag = {
+            'entropy': entropy_loss.detach(),
+            'surprise': surprise_loss.detach(),
+        }
+        return loss_term, diag
+
+    @torch.compiler.disable
+    def _compute_adversarial_loss(self, exit_hidden, full_logits, targets, config):
+        """Variant B: Adversarial gap + Entropy stabilizer (eager mode).
+
+        Adversarial: CE gap between early-exit predictions and full-depth predictions.
+                     Router minimizes quality degradation from early exit.
+        Entropy: same topk entropy as Variant A — stabilizes adversarial signal early.
+
+        Uses single forward pass: exit_hidden from the loop, full_logits already computed.
+        Returns (loss_term, diagnostics_dict).
+        """
+        B, T, D = exit_hidden.shape
+        topk_vocab = config.eet_topk_vocab
+        unembed = self.lm_head.weight  # (padded_vocab, D)
+        vocab_size = config.vocab_size
+        softcap = 20
+
+        # --- Adversarial: early-exit LM loss vs full-depth LM loss ---
+        # Compute early-exit logits via chunked norm + lm_head projection
+        flat_h = exit_hidden.reshape(-1, D)  # (N, D)
+        N = flat_h.shape[0]
+        chunk_size = 8192
+        early_logits_chunks = []
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            h_normed = norm(flat_h[start:end])  # apply same layernorm as real forward
+            chunk_logits = self.lm_head(h_normed)  # (chunk, padded_V)
+            chunk_logits = chunk_logits[..., :vocab_size].float()
+            chunk_logits = softcap * torch.tanh(chunk_logits / softcap)
+            early_logits_chunks.append(chunk_logits)
+        early_logits = torch.cat(early_logits_chunks, dim=0)  # (B*T, V)
+
+        # CE losses
+        flat_targets = targets.reshape(-1)  # (B*T,)
+        loss_early = F.cross_entropy(early_logits, flat_targets, ignore_index=-1)
+        loss_full = F.cross_entropy(
+            full_logits.detach().view(-1, full_logits.size(-1)),
+            flat_targets, ignore_index=-1,
+        )
+
+        # Gap: how much worse is early exit vs full depth? Clamp at 0 (no reward for being better)
+        adversarial_loss = (loss_early - loss_full).clamp(min=0)
+
+        # --- Entropy stabilizer (same as Variant A, cheap signal) ---
+        entropies = []
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk_logits = flat_h[start:end].float() @ unembed[:vocab_size].float().T
+            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values
+            probs = F.softmax(topk_logits, dim=-1)
+            ent = -(probs * probs.log()).sum(dim=-1)
+            entropies.append(ent)
+        entropy_loss = torch.cat(entropies).mean()
+
+        loss_term = (
+            config.eet_adv_lambda * adversarial_loss
+            + config.eet_adv_entropy_lambda * entropy_loss
+        )
+
+        diag = {
+            'adversarial': adversarial_loss.detach(),
+            'entropy': entropy_loss.detach(),
+            'lm_early': loss_early.detach(),
+            'lm_full': loss_full.detach(),
+        }
+        return loss_term, diag
 
     def num_scaling_params(self):
         """Override to include EET params in scaling count without causing assertion errors."""

@@ -740,6 +740,12 @@ def build_model_meta(depth):
         eet_max_frozen_kv_frac=getattr(args, 'eet_max_frozen_kv_frac', 0.75),
         eet_exit_threshold=getattr(args, 'eet_exit_threshold', 0.5),
         eet_min_exit_layer=getattr(args, 'eet_min_exit_layer', 1),
+        eet_loss_variant=getattr(args, 'eet_loss_variant', 'reconstruct'),
+        eet_topk_vocab=int(getattr(args, 'eet_topk_vocab', 512)),
+        eet_entropy_lambda=float(getattr(args, 'eet_entropy_lambda', 0.3)),
+        eet_surprise_lambda=float(getattr(args, 'eet_surprise_lambda', 0.1)),
+        eet_adv_lambda=float(getattr(args, 'eet_adv_lambda', 1.0)),
+        eet_adv_entropy_lambda=float(getattr(args, 'eet_adv_entropy_lambda', 0.2)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

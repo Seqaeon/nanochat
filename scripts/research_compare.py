@@ -343,6 +343,12 @@ def run_training_sweep(args):
         "--eet-max-frozen-kv-frac", str(getattr(args, 'eet_max_frozen_kv_frac', 0.75)),
         "--eet-exit-threshold", str(getattr(args, 'eet_exit_threshold', 0.5)),
         "--eet-min-exit-layer", str(getattr(args, 'eet_min_exit_layer', 1)),
+        "--eet-loss-variant", str(getattr(args, 'eet_loss_variant', 'reconstruct')),
+        "--eet-topk-vocab", str(getattr(args, 'eet_topk_vocab', 512)),
+        "--eet-entropy-lambda", str(getattr(args, 'eet_entropy_lambda', 0.3)),
+        "--eet-surprise-lambda", str(getattr(args, 'eet_surprise_lambda', 0.1)),
+        "--eet-adv-lambda", str(getattr(args, 'eet_adv_lambda', 1.0)),
+        "--eet-adv-entropy-lambda", str(getattr(args, 'eet_adv_entropy_lambda', 0.2)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -879,6 +885,12 @@ if __name__ == "__main__":
     parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75)
     parser.add_argument("--eet-exit-threshold", type=float, default=0.5)
     parser.add_argument("--eet-min-exit-layer", type=int, default=1)
+    parser.add_argument("--eet-loss-variant", type=str, default="reconstruct")
+    parser.add_argument("--eet-topk-vocab", type=int, default=512)
+    parser.add_argument("--eet-entropy-lambda", type=float, default=0.3)
+    parser.add_argument("--eet-surprise-lambda", type=float, default=0.1)
+    parser.add_argument("--eet-adv-lambda", type=float, default=1.0)
+    parser.add_argument("--eet-adv-entropy-lambda", type=float, default=0.2)
 
     args = parser.parse_args()
     

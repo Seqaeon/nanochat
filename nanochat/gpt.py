@@ -369,6 +369,13 @@ class GPTConfig:
     eet_max_frozen_kv_frac: float = 0.75           # safety cap: max fraction of tokens that can exit
     eet_exit_threshold: float = 0.5                # sigmoid threshold for exit decision
     eet_min_exit_layer: int = 1                    # earliest layer a token can exit at
+    # Loss variant selection
+    eet_loss_variant: str = 'reconstruct'           # 'reconstruct' | 'entropy_surprise' | 'adversarial'
+    eet_topk_vocab: int = 512                       # vocab approximation for entropy computation
+    eet_entropy_lambda: float = 0.3                 # Variant A: entropy loss weight
+    eet_surprise_lambda: float = 0.1                # Variant A: surprise loss weight
+    eet_adv_lambda: float = 1.0                     # Variant B: adversarial gap weight
+    eet_adv_entropy_lambda: float = 0.2             # Variant B: entropy stabilizer weight
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -465,6 +472,9 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_efficiency_lambda_start", "eet_efficiency_lambda_end",
     "eet_translator_rank", "eet_max_frozen_kv_frac",
     "eet_exit_threshold", "eet_min_exit_layer",
+    "eet_loss_variant", "eet_topk_vocab",
+    "eet_entropy_lambda", "eet_surprise_lambda",
+    "eet_adv_lambda", "eet_adv_entropy_lambda",
 }
 
 

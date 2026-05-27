@@ -332,7 +332,9 @@ while [[ $# -gt 0 ]]; do
         --eet-warmup-frac|--eet-explore-frac|--eet-reconstruct-lambda|\
         --eet-efficiency-lambda-start|--eet-efficiency-lambda-end|\
         --eet-translator-rank|--eet-max-frozen-kv-frac|\
-        --eet-exit-threshold|--eet-min-exit-layer)
+        --eet-exit-threshold|--eet-min-exit-layer|\
+        --eet-loss-variant|--eet-topk-vocab|--eet-entropy-lambda|\
+        --eet-surprise-lambda|--eet-adv-lambda|--eet-adv-entropy-lambda)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
