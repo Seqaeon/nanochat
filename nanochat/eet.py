@@ -648,8 +648,9 @@ class EarlyExitGPT(GPT):
             
             # Compute KL divergence on exited tokens
             t_probs = F.softmax(exited_target_logits, dim=-1)
+            t_log_probs = F.log_softmax(exited_target_logits, dim=-1)
             e_log_probs = F.log_softmax(trans_logits, dim=-1)
-            kl_exited = (t_probs * (t_probs.log() - e_log_probs)).sum(-1)
+            kl_exited = (t_probs * (t_log_probs - e_log_probs)).sum(-1)
             recon_loss = recon_loss + kl_exited.sum() / n_exits
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
@@ -682,7 +683,8 @@ class EarlyExitGPT(GPT):
             chunk_logits = flat_h[start:end].float() @ unembed[:config.vocab_size].float().T  # (chunk, V)
             topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values  # (chunk, topk)
             probs = F.softmax(topk_logits, dim=-1)
-            ent = -(probs * probs.log()).sum(dim=-1)  # (chunk,)
+            log_probs = F.log_softmax(topk_logits, dim=-1)
+            ent = -(probs * log_probs).sum(dim=-1)  # (chunk,)
             entropies.append(ent)
         entropy_loss = torch.cat(entropies).mean()
 
@@ -754,7 +756,8 @@ class EarlyExitGPT(GPT):
             chunk_logits = flat_h[start:end].float() @ unembed[:vocab_size].float().T
             topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values
             probs = F.softmax(topk_logits, dim=-1)
-            ent = -(probs * probs.log()).sum(dim=-1)
+            log_probs = F.log_softmax(topk_logits, dim=-1)
+            ent = -(probs * log_probs).sum(dim=-1)
             entropies.append(ent)
         entropy_loss = torch.cat(entropies).mean()
 
