@@ -189,7 +189,7 @@ run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
     --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.0 \
     --eet-loss-variant entropy_surprise \
     --eet-commitment-beta 0.1 \
     --eet-global-router 1 \
