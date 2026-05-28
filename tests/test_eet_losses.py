@@ -454,6 +454,55 @@ def test_eet_freq_efficiency_and_diversity():
     print("✓ Frequency-scaled efficiency + exit diversity pressure fully functional!")
 
 
+def test_eet_sigmoid_temp_annealing():
+    """Verify that sigmoid temperature annealing produces expected soft vs sharp behavior."""
+    from nanochat.eet import EarlyExitRouter
+    device = "cpu"
+    print(f"\nRunning sigmoid temperature annealing test on {device}...")
+    
+    router = EarlyExitRouter(n_embd=16, router_type='linear').to(device)
+    
+    # Create fake hidden state
+    h = torch.randn(2, 4, 16, device=device)
+    
+    # Under high temp (e.g. 10.0), sigmoid should be closer to 0.5 (flatter)
+    p_high = router(h, temp=10.0)
+    dev_high = torch.abs(p_high - 0.5).mean().item()
+    print(f"  Mean deviation from 0.5 under High Temp (10.0): {dev_high:.4f}")
+    
+    # Under low temp (e.g. 0.1), sigmoid should be pushed closer to 0.0 or 1.0 (sharper)
+    p_low = router(h, temp=0.1)
+    dev_low = torch.abs(p_low - 0.5).mean().item()
+    print(f"  Mean deviation from 0.5 under Low Temp (0.1):  {dev_low:.4f}")
+    
+    assert dev_low > dev_high, "Low temperature should sharpen decisions (larger deviation from 0.5)"
+    
+    # E2E forward test
+    config = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_loss_variant='entropy_surprise',
+        eet_gumbel_temp_start=5.0,
+        eet_gumbel_temp_end=0.1,
+    )
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    x = torch.randint(0, config.vocab_size, (2, 8), device=device)
+    y = torch.randint(0, config.vocab_size, (2, 8), device=device)
+    
+    # Run with low temp
+    loss_low_temp = model(x, y, eet_do_route=True, eet_phase=2, eet_gumbel_temp=0.1)
+    assert not torch.isnan(loss_low_temp), "E2E forward with low temp failed"
+    
+    # Run with high temp
+    loss_high_temp = model(x, y, eet_do_route=True, eet_phase=2, eet_gumbel_temp=10.0)
+    assert not torch.isnan(loss_high_temp), "E2E forward with high temp failed"
+    
+    print("✓ Sigmoid temperature annealing is functional and correct!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -461,4 +510,5 @@ if __name__ == "__main__":
     test_eet_layer_weighted_routing()
     test_eet_global_router()
     test_eet_freq_efficiency_and_diversity()
+    test_eet_sigmoid_temp_annealing()
 

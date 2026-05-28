@@ -298,7 +298,8 @@ class EarlyExitRouter(nn.Module):
                 freq_bias: torch.Tensor = None,
                 pos_bias: torch.Tensor = None,
                 freq_alpha: float = 0.0,
-                pos_beta: float = 0.0) -> torch.Tensor:
+                pos_beta: float = 0.0,
+                temp: float = 1.0) -> torch.Tensor:
         """Compute exit probability for each token.
 
         Args:
@@ -307,6 +308,7 @@ class EarlyExitRouter(nn.Module):
             pos_bias: POS prior (B, T), higher = more likely to exit
             freq_alpha: weight for frequency prior
             pos_beta: weight for POS prior
+            temp: temperature for sigmoid annealing
 
         Returns:
             exit_prob: (B, T) in [0, 1]
@@ -321,6 +323,11 @@ class EarlyExitRouter(nn.Module):
             logit = logit + freq_alpha * freq_bias.float()
         if pos_bias is not None and pos_beta > 0:
             logit = logit + pos_beta * pos_bias.float()
+        
+        # Apply temperature scaling if not 1.0
+        if temp != 1.0:
+            logit = logit / temp
+            
         # Clamp logits to prevent sigmoid saturation — ensures gradients always
         # flow regardless of how strongly one loss pushes. sigmoid(-5)=0.007,
         # sigmoid(5)=0.993, so exit probs stay in [0.007, 0.993].
@@ -730,7 +737,11 @@ class EarlyExitGPT(GPT):
                 else:
                     routing_weights = soft_weights
             elif is_soft_training or is_layer_weighted:
-                routing_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
+                if is_soft_training:
+                    temp_val = eet_gumbel_temp.item() if isinstance(eet_gumbel_temp, torch.Tensor) else eet_gumbel_temp
+                    routing_weights = torch.softmax(router_logits.float() / temp_val, dim=-1).to(x0.dtype)
+                else:
+                    routing_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
                 soft_weights = routing_weights
             else:
                 # Hard routing (Phase 3 or inference)
@@ -1024,11 +1035,13 @@ class EarlyExitGPT(GPT):
                     x = x_new
                     
                     if i in routing_layers:
+                        temp_val = eet_gumbel_temp.item() if isinstance(eet_gumbel_temp, torch.Tensor) else eet_gumbel_temp
                         exit_prob_i = self.eet_routers[i](
                             x.detach() if self.training else x,
                             freq_bias=freq_bias, pos_bias=pos_bias,
                             freq_alpha=config.eet_freq_prior_alpha,
                             pos_beta=config.eet_pos_prior_beta,
+                            temp=temp_val if is_soft_training else 1.0
                         )
                         exit_probs_list.append(exit_prob_i)
                         candidate_states.append(norm(x))

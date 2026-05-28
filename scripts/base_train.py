@@ -1621,21 +1621,14 @@ while True:
             is_global_router = getattr(model_config, 'eet_global_router', False)
             bypass_phases = use_gumbel or is_layer_weighted
 
-            # Phase 3: Freeze routers and translators, they are already trained
-            # Note: in Gumbel and layer_weighted modes, routers are never frozen
-            if _eet_phase_info['phase'] == 3 and not bypass_phases:
-                for param in orig_model.eet_routers.parameters():
-                    param.requires_grad = False
-                for param in orig_model.eet_translators.parameters():
-                    param.requires_grad = False
-            else:
-                for param in orig_model.eet_routers.parameters():
-                    param.requires_grad = True
-                for param in orig_model.eet_translators.parameters():
-                    param.requires_grad = True
+            # Ensure routers and translators remain trainable throughout all phases
+            for param in orig_model.eet_routers.parameters():
+                param.requires_grad = True
+            for param in orig_model.eet_translators.parameters():
+                param.requires_grad = True
 
             eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
-            if use_gumbel:
+            if model_config.eet_gumbel_temp_start > 0.0:
                 t_start = model_config.eet_gumbel_temp_start
                 t_end = model_config.eet_gumbel_temp_end
                 progress = min(max(step / max(num_iterations, 1), 0.0), 1.0)
