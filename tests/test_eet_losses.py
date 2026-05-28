@@ -402,6 +402,12 @@ def test_eet_global_router():
                 assert (p == 0.0).all(), f"Error: Router bias {name} was not zero-initialized! Value: {p}"
                 print(f"  [Init Validation] Router bias {name} is correctly zero-initialized!")
                 
+    # Test out-of-line calibrate_token_difficulty with 3-tuple batch
+    dummy_batches = [(x, y, {"state": 123})]
+    model_ceg.calibrate_token_difficulty(dummy_batches)
+    assert model_ceg.eet_current_phase == 2, "Error: current phase should be 2 after calibration!"
+    assert (model_ceg.token_difficulty >= 0.0).all(), "Error: token difficulties were not populated correctly!"
+    
     model_ceg.zero_grad(set_to_none=True)
     loss_ceg = model_ceg(
         x, y,

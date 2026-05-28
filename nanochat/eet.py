@@ -676,9 +676,9 @@ class EarlyExitGPT(GPT):
         
         # We run the dense model to compute logits and per-token CE
         self.eval()  # ensure eval mode for stability
-        for idx, targets in calibration_batches:
-            idx = idx.to(device)
-            targets = targets.to(device)
+        for batch in calibration_batches:
+            idx = batch[0].to(device)
+            targets = batch[1].to(device)
             
             # Forward pass as dense
             logits = super().forward(idx, None)  # (B, T, V)
