@@ -1418,7 +1418,7 @@ class EarlyExitGPT(GPT):
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
     def _compute_entropy_surprise_loss(self, exit_hidden, prev_exit_hidden, config):
-        """Variant A: Entropy + Surprise loss (compile-friendly).
+        """Variant A: Entropy + Surprise loss (compile-friendly, memory-efficient).
 
         Entropy: topk approximation of vocab entropy at exit-layer hidden states.
                  Low entropy = confident → safe to exit.
@@ -1431,15 +1431,20 @@ class EarlyExitGPT(GPT):
         # prev_exit_hidden: (B, T, D) — hidden state at layer before exit
         B, T, D = exit_hidden.shape
         topk_vocab = min(config.eet_topk_vocab, config.vocab_size)
-        unembed = self.lm_head.weight  # (padded_vocab, D)
+        # Detach unembed: gradient flows through exit_hidden → routing_weights → router only
+        unembed = self.lm_head.weight[:config.vocab_size].float().detach()  # (V, D)
 
-        # --- Entropy: single vectorized matmul (N=B*T is small & static during training) ---
-        flat_h = exit_hidden.reshape(-1, D)  # (N, D)
-        logits_full = flat_h.float() @ unembed[:config.vocab_size].float().T  # (N, V)
-        topk_logits = logits_full.topk(topk_vocab, dim=-1).values  # (N, topk)
-        log_probs = F.log_softmax(topk_logits, dim=-1)
-        probs = log_probs.exp()
-        entropy_loss = -(probs * log_probs).sum(dim=-1).mean()
+        # --- Entropy: chunked to cap peak at ~1 GB, scalar accumulation for compile ---
+        flat_h = exit_hidden.reshape(-1, D).float()  # (N, D)
+        N = flat_h.shape[0]
+        chunk_size = 8192
+        entropy_sum = flat_h.new_zeros(())
+        for start in range(0, N, chunk_size):
+            chunk_logits = flat_h[start:start + chunk_size] @ unembed.T  # (C, V)
+            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values   # (C, topk)
+            log_p = F.log_softmax(topk_logits, dim=-1)
+            entropy_sum = entropy_sum - (log_p.exp() * log_p).sum()
+        entropy_loss = entropy_sum / N
 
         # --- Surprise: relative norm of representation update ---
         update = exit_hidden - prev_exit_hidden  # (B, T, D)
