@@ -744,6 +744,7 @@ class EarlyExitGPT(GPT):
                 soft_weights = routing_weights
             else:
                 # Hard routing (Phase 3 or inference)
+                soft_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
                 exit_layer_hard = router_logits.argmax(dim=-1)
                 hard_weights = torch.zeros_like(router_logits)
                 hard_weights.scatter_(
@@ -751,8 +752,11 @@ class EarlyExitGPT(GPT):
                     exit_layer_hard.unsqueeze(-1),
                     1.0
                 )
-                routing_weights = hard_weights.to(x0.dtype)
-                soft_weights = routing_weights
+                if self.training:
+                    routing_weights = hard_weights.to(x0.dtype) - soft_weights.detach() + soft_weights
+                else:
+                    routing_weights = hard_weights.to(x0.dtype)
+                    soft_weights = routing_weights
                 
             # Collect states densely
             candidate_states = []

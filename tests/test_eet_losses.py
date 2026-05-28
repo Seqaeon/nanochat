@@ -336,6 +336,45 @@ def test_eet_global_router():
     assert router_has_grad, "Error: Global Router did not receive gradients in Layer-Weighted mode!"
     assert backbone_has_grad, "Error: Backbone did not receive gradients in Layer-Weighted mode!"
     print("✓ Global Upfront Router with Layer-Weighted loss is fully functional!")
+    
+    # Test 3: Global Router + Phase 3 Hard Routing + Gradient Verification (STE)
+    config_p3 = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_commitment_beta=0.1,
+        eet_loss_variant='entropy_surprise',
+        eet_global_router=True,
+    )
+    
+    model_p3 = EarlyExitGPT(config_p3).to(device)
+    model_p3.train()
+    
+    model_p3.zero_grad(set_to_none=True)
+    loss_p3 = model_p3(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+        eet_lambda_r=torch.tensor(0.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device)
+    )
+    
+    assert not torch.isnan(loss_p3), "Global Router Phase 3 is NaN"
+    loss_p3.backward()
+    
+    router_has_grad_p3 = False
+    for name, p in model_p3.named_parameters():
+        if "eet_router" in name and p.grad is not None:
+            router_has_grad_p3 = True
+            assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+            print(f"  [Phase 3 STE] Router {name} has grad. norm: {p.grad.norm().item():.6f}")
+            
+    assert router_has_grad_p3, "Error: Global Router did not receive gradients in Phase 3 Hard Routing mode!"
+    print("✓ Global Upfront Router with Phase 3 STE and efficiency loss is fully functional!")
 
 
 def test_eet_freq_efficiency_and_diversity():
