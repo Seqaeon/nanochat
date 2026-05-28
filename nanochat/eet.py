@@ -662,7 +662,7 @@ class EarlyExitGPT(GPT):
                 gumbel_noise = -torch.log(
                     -torch.log(torch.rand_like(all_logits.float()).clamp(1e-9)) + 1e-9
                 )
-                noisy_logits = (all_logits.float() + gumbel_noise) / float(eet_gumbel_temp)
+                noisy_logits = (all_logits.float() + gumbel_noise) / eet_gumbel_temp
                 soft_weights = torch.softmax(noisy_logits, dim=-1).to(x.dtype)  # (B, T, n_exits)
                 
                 if config.eet_gumbel_hard:

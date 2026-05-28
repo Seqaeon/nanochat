@@ -1610,9 +1610,13 @@ while True:
             )
             _eet_phase_info = _eet_sched.get_phase(step)
             
+            use_gumbel = getattr(model_config, 'eet_gumbel_temp_start', 0.0) > 0.0
+            is_layer_weighted = (model_config.eet_loss_variant == 'layer_weighted')
+            bypass_phases = use_gumbel or is_layer_weighted
+
             # Phase 3: Freeze routers and translators, they are already trained
-            # Note: in layer_weighted mode, routers are never frozen
-            if _eet_phase_info['phase'] == 3 and model_config.eet_loss_variant != 'layer_weighted':
+            # Note: in Gumbel and layer_weighted modes, routers are never frozen
+            if _eet_phase_info['phase'] == 3 and not bypass_phases:
                 for param in orig_model.eet_routers.parameters():
                     param.requires_grad = False
                 for param in orig_model.eet_translators.parameters():
@@ -1624,16 +1628,19 @@ while True:
                     param.requires_grad = True
 
             eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
-            if getattr(model_config, 'eet_gumbel_temp_start', 0.0) > 0.0:
+            if use_gumbel:
                 t_start = model_config.eet_gumbel_temp_start
                 t_end = model_config.eet_gumbel_temp_end
                 progress = min(max(step / max(num_iterations, 1), 0.0), 1.0)
                 temp_val = t_start * ((t_end / t_start) ** progress)
                 eet_gumbel_temp_tensor = torch.tensor(temp_val, device=x.device, dtype=torch.float32)
 
+            eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
+            eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
+
             loss = model(x, y,
-                         eet_do_route=_eet_phase_info['do_route'],
-                         eet_phase=_eet_phase_info['phase'],
+                         eet_do_route=eet_do_route,
+                         eet_phase=eet_phase,
                          eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
                          eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
                          eet_gumbel_temp=eet_gumbel_temp_tensor)
