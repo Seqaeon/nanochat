@@ -1417,9 +1417,8 @@ class EarlyExitGPT(GPT):
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
-    @torch.compiler.disable
     def _compute_entropy_surprise_loss(self, exit_hidden, prev_exit_hidden, config):
-        """Variant A: Entropy + Surprise loss (eager mode).
+        """Variant A: Entropy + Surprise loss (compile-friendly).
 
         Entropy: topk approximation of vocab entropy at exit-layer hidden states.
                  Low entropy = confident → safe to exit.
@@ -1434,21 +1433,13 @@ class EarlyExitGPT(GPT):
         topk_vocab = min(config.eet_topk_vocab, config.vocab_size)
         unembed = self.lm_head.weight  # (padded_vocab, D)
 
-        # --- Entropy: chunked projection to avoid (B*T, V) peak ---
+        # --- Entropy: single vectorized matmul (N=B*T is small & static during training) ---
         flat_h = exit_hidden.reshape(-1, D)  # (N, D)
-        N = flat_h.shape[0]
-        chunk_size = 8192  # ~1 GB per chunk for V=32768 float32
-        entropies = []
-        for start in range(0, N, chunk_size):
-            end = min(start + chunk_size, N)
-            # Raw projection — intentionally no layernorm (cheaper, different signal)
-            chunk_logits = flat_h[start:end].float() @ unembed[:config.vocab_size].float().T  # (chunk, V)
-            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values  # (chunk, topk)
-            probs = F.softmax(topk_logits, dim=-1)
-            log_probs = F.log_softmax(topk_logits, dim=-1)
-            ent = -(probs * log_probs).sum(dim=-1)  # (chunk,)
-            entropies.append(ent)
-        entropy_loss = torch.cat(entropies).mean()
+        logits_full = flat_h.float() @ unembed[:config.vocab_size].float().T  # (N, V)
+        topk_logits = logits_full.topk(topk_vocab, dim=-1).values  # (N, topk)
+        log_probs = F.log_softmax(topk_logits, dim=-1)
+        probs = log_probs.exp()
+        entropy_loss = -(probs * log_probs).sum(dim=-1).mean()
 
         # --- Surprise: relative norm of representation update ---
         update = exit_hidden - prev_exit_hidden  # (B, T, D)
