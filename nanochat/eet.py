@@ -562,6 +562,12 @@ class EarlyExitGPT(GPT):
         else:
             self._pos_prior = None
 
+        # Accumulators for Phase 1 dense token cross-entropy calibration
+        self.register_buffer('token_ce_sum', torch.zeros(config.vocab_size, dtype=torch.float32))
+        self.register_buffer('token_ce_count', torch.zeros(config.vocab_size, dtype=torch.float32))
+        self.register_buffer('token_difficulty', torch.zeros(config.vocab_size, dtype=torch.float32))
+        self.register_buffer('eet_phase_tracker', torch.tensor([1], dtype=torch.int32))
+
     @torch.no_grad()
     def init_weights(self):
         """Initialize base GPT weights + EET-specific parameters."""
@@ -620,6 +626,32 @@ class EarlyExitGPT(GPT):
                 nn.init.zeros_(translator.proj.weight)
                 nn.init.zeros_(translator.proj.bias)
 
+    @torch.no_grad()
+    def finalize_token_difficulty(self):
+        """Finalizes the token difficulty lookup tensor using DDP-all-reduced sums/counts if available."""
+        import torch.distributed as dist
+        
+        # If in distributed setting, all-reduce the accumulated sums and counts across all ranks
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(self.token_ce_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(self.token_ce_count, op=dist.ReduceOp.SUM)
+            
+        avg_ce = self.token_ce_sum / (self.token_ce_count + 1e-8)
+        observed_mask = (self.token_ce_count > 0)
+        
+        if observed_mask.any():
+            observed_ce = avg_ce[observed_mask]
+            min_ce = observed_ce.min()
+            max_ce = observed_ce.max()
+            norm_ce = (avg_ce - min_ce) / (max_ce - min_ce + 1e-8)
+            norm_ce = norm_ce.clamp(0.0, 1.0)
+            # Unobserved tokens get default 1.0 (safest: max difficulty, exit late)
+            norm_ce[~observed_mask] = 1.0
+            self.token_difficulty.copy_(norm_ce)
+        else:
+            # Fallback to all ones if no tokens observed
+            self.token_difficulty.fill_(1.0)
+
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
                 eet_gumbel_temp=1.0):
@@ -637,19 +669,50 @@ class EarlyExitGPT(GPT):
 
         do_route = eet_do_route
 
+        # Check transition from Phase 1 to Phase 2/3
+        current_phase = self.eet_phase_tracker[0].item()
+        if eet_phase in {2, 3} and current_phase == 1:
+            self.finalize_token_difficulty()
+            self.eet_phase_tracker[0] = eet_phase
+
         # Phase 1 (no routing): delegate to parent GPT.forward() to get the
         # exact same torch.compile graph as dense — avoiding OOM from the
         # compiler generating a less memory-efficient graph for the EET
         # forward's additional dead-code paths (frozen_h, reconstruction, etc.)
         if not do_route:
-            loss_or_logits = super().forward(idx, targets, kv_cache, loss_reduction)
-            if self.training and targets is not None:
+            if self.training and targets is not None and eet_phase == 1:
+                # Get logits
+                logits = super().forward(idx, None, kv_cache)
+                # Compute loss ourselves
+                per_token_ce = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.view(-1),
+                    ignore_index=-1, reduction='none'
+                )
+                valid_mask = (targets != -1)
+                loss = per_token_ce[valid_mask.view(-1)].mean()
+                
+                # Update calibration buffers
+                with torch.no_grad():
+                    valid_targets = targets[valid_mask]
+                    valid_ce = per_token_ce.view(targets.shape)[valid_mask]
+                    self.token_ce_sum.index_add_(0, valid_targets, valid_ce.float())
+                    self.token_ce_count.index_add_(0, valid_targets, torch.ones_like(valid_targets, dtype=torch.float32))
+                
                 self._eet_diagnostics = {
                     'phase': eet_phase,
                     'active_frac': torch.tensor(1.0, device=idx.device),
                     'total_exit_frac': torch.tensor(0.0, device=idx.device),
                 }
-            return loss_or_logits
+                return loss
+            else:
+                loss_or_logits = super().forward(idx, targets, kv_cache, loss_reduction)
+                if self.training and targets is not None:
+                    self._eet_diagnostics = {
+                        'phase': eet_phase,
+                        'active_frac': torch.tensor(1.0, device=idx.device),
+                        'total_exit_frac': torch.tensor(0.0, device=idx.device),
+                    }
+                return loss_or_logits
 
         # --- Standard GPT embedding ---
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
@@ -1502,16 +1565,9 @@ class EarlyExitGPT(GPT):
         device = targets.device
 
         # --- Depth-matching loss: teach router easy→early, hard→late ---
-        # Per-token CE from existing logits (no extra matmul)
-        per_token_ce = F.cross_entropy(
-            logits.detach().view(-1, logits.size(-1)), targets.view(-1),
-            ignore_index=-1, reduction='none',
-        ).view(B, T)  # (B, T)
-
-        # Normalize within batch to [0, 1]: easiest=0, hardest=1
-        ce_min = per_token_ce.min()
-        ce_range = (per_token_ce.max() - ce_min).clamp(min=1e-8)
-        target_depth = (per_token_ce - ce_min) / ce_range  # (B, T) in [0, 1], detached
+        # Target depth derived from frozen Phase 1 dense CE difficulty mapping
+        safe_targets = targets.clamp(min=0, max=config.vocab_size - 1)
+        target_depth = self.token_difficulty[safe_targets]  # (B, T) in [0, 1]
 
         # Router's expected exit depth in [0, 1]
         exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
