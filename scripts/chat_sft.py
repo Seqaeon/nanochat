@@ -475,12 +475,18 @@ while True:
             group["momentum"] = muon_momentum
     if scaler is not None:
         scaler.unscale_(optimizer)
+        # Clip early-exit router gradients specifically to keep routing updates slow and stable
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         if is_ddp_initialized():
             for v in scaler._found_inf_per_device(optimizer).values():
                 dist.all_reduce(v, op=dist.ReduceOp.MAX)
         scaler.step(optimizer)
         scaler.update()
     else:
+        # Clip early-exit router gradients specifically to keep routing updates slow and stable
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         optimizer.step()
     model.zero_grad(set_to_none=True)
     synchronize()

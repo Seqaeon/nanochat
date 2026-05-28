@@ -1753,6 +1753,9 @@ while True:
             group["weight_decay"] = muon_weight_decay
     if scaler is not None:
         scaler.unscale_(optimizer)
+        # Clip early-exit router gradients specifically to keep routing updates slow and stable
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         # In distributed training, all ranks must agree on whether to skip the step.
         # Each rank may independently encounter inf/nan gradients, so we all-reduce
         # the found_inf flag (MAX = if any rank found inf, all ranks skip).
@@ -1762,6 +1765,9 @@ while True:
         scaler.step(optimizer)
         scaler.update()
     else:
+        # Clip early-exit router gradients specifically to keep routing updates slow and stable
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         # Fix 4C: gradient clipping before optimizer step (protects against large gradients
         # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
         if args.max_grad_norm > 0:
