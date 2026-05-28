@@ -47,6 +47,7 @@ def compute_layer_loss(h_k, p_k, targets, lm_head, config, eet_quality_lambda):
     return combined_k.mean(), (loss_k * p_k.detach()).mean(), (loss_k.detach() * p_k).mean()
 
 
+@torch.compiler.disable
 def compute_efficiency_and_diversity(p_exits, n_exits, freq_bias, config, eet_lambda_e):
     """Compute per-token frequency-scaled efficiency loss + exit diversity pressure.
     
@@ -1303,6 +1304,7 @@ class EarlyExitGPT(GPT):
         else:
             return logits
 
+    @torch.compiler.disable
     def _compute_layer_weighted_loss(self, all_layer_norms, exit_probs_per_layer, targets, config, eet_lambda_e, freq_bias=None):
         """
         Direction 2: Per-Token Layer-Weighted Loss.
@@ -1347,6 +1349,7 @@ class EarlyExitGPT(GPT):
             'expected_exit': eff_diag['expected_exit'],
         }
 
+    @torch.compiler.disable
     def _compute_commitment_loss(self, all_layer_norms, exit_probs, beta=0.25):
         """
         Direction 3: Commitment Loss.
