@@ -8351,6 +8351,11 @@ class GPT(nn.Module):
         else:
             # Regular Block: split standard struct parameters from MoE router parameters
             gate_param_ids = set()
+            # EET early-exit routers
+            for name, p in self.named_parameters():
+                if "eet_router" in name:
+                    (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                    gate_param_ids.add(id(p))
             for m in self.transformer.h.modules():
                 # MoNE_MLP router
                 if isinstance(m, MoNE_MLP) and getattr(m, 'router', None) is not None:
