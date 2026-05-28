@@ -206,6 +206,32 @@ run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
     --eet-quality-entropy-bonus 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
+# EET_P1_13: Gumbel-Softmax routing with temperature annealing and commitment loss
+run_experiment "EET_P1_13_GUMBEL_D${DEPTH}" \
+    "Gumbel-Softmax routing with annealing (2.0->0.5) and commitment loss (beta=0.1)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-loss-variant quality \
+    --eet-quality-lambda 1.0 \
+    --eet-quality-entropy-bonus 0.1 \
+    --eet-gumbel-temp-start 2.0 --eet-gumbel-temp-end 0.5 --eet-gumbel-hard 1 \
+    --eet-commitment-beta 0.1 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+
+# EET_P1_14: Per-Token Layer-Weighted Loss with commitment loss
+run_experiment "EET_P1_14_LAYER_WEIGHTED_D${DEPTH}" \
+    "Per-Token Layer-Weighted Loss with commitment loss (beta=0.1, co-adaptive training)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-loss-variant layer_weighted \
+    --eet-commitment-beta 0.1 \
+    --eet-quality-entropy-bonus 0.1 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+
 # EET_P1_11: Variant B — Adversarial + Entropy stabilizer (uses hard routing, deprecated)
 # NOTE: adversarial variant uses hard routing in Phase 2 — router gets no gradient.
 # Kept for reference; use quality variant instead.

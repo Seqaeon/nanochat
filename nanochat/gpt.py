@@ -378,6 +378,11 @@ class GPTConfig:
     eet_adv_entropy_lambda: float = 0.2             # Variant B: entropy stabilizer weight
     eet_quality_lambda: float = 1.0                 # REINFORCE quality loss weight
     eet_quality_entropy_bonus: float = 0.1           # entropy bonus to prevent exit distribution collapse
+    # New paradigms
+    eet_gumbel_temp_start: float = 0.0             # > 0 means use Gumbel-Softmax
+    eet_gumbel_temp_end: float = 0.0
+    eet_gumbel_hard: int = 1                       # 1=straight-through estimator, 0=soft blending
+    eet_commitment_beta: float = 0.1               # commitment loss scale (Direction 3)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -477,6 +482,8 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_loss_variant", "eet_topk_vocab",
     "eet_entropy_lambda", "eet_surprise_lambda",
     "eet_adv_lambda", "eet_adv_entropy_lambda",
+    "eet_gumbel_temp_start", "eet_gumbel_temp_end", "eet_gumbel_hard",
+    "eet_commitment_beta",
 }
 
 

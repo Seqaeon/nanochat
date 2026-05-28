@@ -123,6 +123,124 @@ def test_eet_phase3_quality_losses():
     assert router_has_grad, "Error: Router did not receive gradients in Phase 3 training!"
     print("✓ Phase 3 hybrid gradient path is fully functional!")
 
+def test_eet_gumbel_routing():
+    device = "cpu"
+    print(f"\n--- Testing EET Gumbel-Softmax Routing with Annealing & Commitment ---")
+    
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_gumbel_temp_start=2.0,
+        eet_gumbel_temp_end=0.5,
+        eet_gumbel_hard=True,
+        eet_commitment_beta=0.1,
+        eet_loss_variant='quality',
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    
+    # Run forward pass with Gumbel temp 1.5
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device),
+        eet_gumbel_temp=1.5
+    )
+    
+    loss_val = loss.item()
+    print(f"Gumbel Loss computed successfully: {loss_val}")
+    assert not torch.isnan(loss), "Gumbel Loss is NaN"
+    
+    loss.backward()
+    print("Backward pass successful for Gumbel!")
+    
+    # Verify that the router parameters got gradients populated!
+    router_has_grad = False
+    for name, p in model.named_parameters():
+        if "eet_router" in name and p.grad is not None:
+            router_has_grad = True
+            assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+            print(f"  {name} has grad. norm: {p.grad.norm().item():.6f}")
+            
+    assert router_has_grad, "Error: Router did not receive gradients in Gumbel training!"
+    print("✓ Gumbel-Softmax routing path is fully functional!")
+
+
+def test_eet_layer_weighted_routing():
+    device = "cpu"
+    print(f"\n--- Testing EET Per-Token Layer-Weighted Loss & Commitment ---")
+    
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_commitment_beta=0.1,
+        eet_loss_variant='layer_weighted',
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    
+    # Run forward pass simulating layer-weighted loss
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device)
+    )
+    
+    loss_val = loss.item()
+    print(f"Layer-Weighted Loss computed successfully: {loss_val}")
+    assert not torch.isnan(loss), "Layer-Weighted Loss is NaN"
+    
+    loss.backward()
+    print("Backward pass successful for Layer-Weighted!")
+    
+    # Verify that BOTH the router parameters and backbone got gradients populated!
+    router_has_grad = False
+    backbone_has_grad = False
+    for name, p in model.named_parameters():
+        if p.grad is not None:
+            if "eet_router" in name:
+                router_has_grad = True
+                assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+                print(f"  Router {name} has grad. norm: {p.grad.norm().item():.6f}")
+            elif "transformer.h.0" in name:
+                backbone_has_grad = True
+                assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+                print(f"  Backbone {name} has grad. norm: {p.grad.norm().item():.6f}")
+            
+    assert router_has_grad, "Error: Router did not receive gradients in Layer-Weighted training!"
+    assert backbone_has_grad, "Error: Backbone did not receive gradients in Layer-Weighted training!"
+    print("✓ Per-Token Layer-Weighted routing path is fully functional!")
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
+    test_eet_gumbel_routing()
+    test_eet_layer_weighted_routing()

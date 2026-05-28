@@ -265,7 +265,7 @@ parser.add_argument("--eet-translator-rank", type=int, default=0, help="EET: Tun
 parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75, help="EET: max fraction of tokens that can exit")
 parser.add_argument("--eet-exit-threshold", type=float, default=0.5, help="EET: sigmoid threshold for exit decision")
 parser.add_argument("--eet-min-exit-layer", type=int, default=1, help="EET: earliest layer a token can exit at")
-parser.add_argument("--eet-loss-variant", type=str, default="reconstruct", choices=["reconstruct", "entropy_surprise", "adversarial", "quality"], help="EET: loss variant to use for early exit training")
+parser.add_argument("--eet-loss-variant", type=str, default="reconstruct", choices=["reconstruct", "entropy_surprise", "adversarial", "quality", "layer_weighted"], help="EET: loss variant to use for early exit training")
 parser.add_argument("--eet-topk-vocab", type=int, default=512, help="EET: top-k vocabulary size for cheap entropy calculation")
 parser.add_argument("--eet-entropy-lambda", type=float, default=0.3, help="EET: entropy pressure weight (λ_ent) for entropy_surprise loss")
 parser.add_argument("--eet-surprise-lambda", type=float, default=0.1, help="EET: surprise pressure weight (λ_sur) for entropy_surprise loss")
@@ -273,6 +273,10 @@ parser.add_argument("--eet-adv-lambda", type=float, default=1.0, help="EET: adve
 parser.add_argument("--eet-adv-entropy-lambda", type=float, default=0.2, help="EET: adversarial entropy pressure weight (λ_adv_ent) for adversarial loss")
 parser.add_argument("--eet-quality-lambda", type=float, default=1.0, help="EET: REINFORCE quality loss weight for quality variant")
 parser.add_argument("--eet-quality-entropy-bonus", type=float, default=0.1, help="EET: entropy bonus coefficient to prevent exit distribution collapse")
+parser.add_argument("--eet-gumbel-temp-start", type=float, default=0.0, help="EET: Gumbel-Softmax starting temperature (0=disabled)")
+parser.add_argument("--eet-gumbel-temp-end", type=float, default=0.1, help="EET: Gumbel-Softmax ending temperature")
+parser.add_argument("--eet-gumbel-hard", type=int, default=1, choices=[0, 1], help="EET: enable Straight-Through Estimator for Gumbel")
+parser.add_argument("--eet-commitment-beta", type=float, default=0.1, help="EET: commitment loss weight beta (0=disabled)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -834,6 +838,10 @@ def build_model_meta(depth):
         eet_adv_entropy_lambda=float(getattr(args, 'eet_adv_entropy_lambda', 0.2)),
         eet_quality_lambda=float(getattr(args, 'eet_quality_lambda', 1.0)),
         eet_quality_entropy_bonus=float(getattr(args, 'eet_quality_entropy_bonus', 0.1)),
+        eet_gumbel_temp_start=float(getattr(args, 'eet_gumbel_temp_start', 0.0)),
+        eet_gumbel_temp_end=float(getattr(args, 'eet_gumbel_temp_end', 0.1)),
+        eet_gumbel_hard=bool(getattr(args, 'eet_gumbel_hard', 1)),
+        eet_commitment_beta=float(getattr(args, 'eet_commitment_beta', 0.1)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1603,7 +1611,8 @@ while True:
             _eet_phase_info = _eet_sched.get_phase(step)
             
             # Phase 3: Freeze routers and translators, they are already trained
-            if _eet_phase_info['phase'] == 3:
+            # Note: in layer_weighted mode, routers are never frozen
+            if _eet_phase_info['phase'] == 3 and model_config.eet_loss_variant != 'layer_weighted':
                 for param in orig_model.eet_routers.parameters():
                     param.requires_grad = False
                 for param in orig_model.eet_translators.parameters():
@@ -1614,11 +1623,20 @@ while True:
                 for param in orig_model.eet_translators.parameters():
                     param.requires_grad = True
 
+            eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
+            if getattr(model_config, 'eet_gumbel_temp_start', 0.0) > 0.0:
+                t_start = model_config.eet_gumbel_temp_start
+                t_end = model_config.eet_gumbel_temp_end
+                progress = min(max(step / max(num_iterations, 1), 0.0), 1.0)
+                temp_val = t_start * ((t_end / t_start) ** progress)
+                eet_gumbel_temp_tensor = torch.tensor(temp_val, device=x.device, dtype=torch.float32)
+
             loss = model(x, y,
                          eet_do_route=_eet_phase_info['do_route'],
                          eet_phase=_eet_phase_info['phase'],
                          eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
-                         eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32))
+                         eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
+                         eet_gumbel_temp=eet_gumbel_temp_tensor)
         else:
             loss = model(x, y)
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
