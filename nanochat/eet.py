@@ -47,6 +47,52 @@ def compute_layer_loss(h_k, p_k, targets, lm_head, config, eet_quality_lambda):
     return combined_k.mean(), (loss_k * p_k.detach()).mean(), (loss_k.detach() * p_k).mean()
 
 
+def compute_efficiency_and_diversity(p_exits, n_exits, freq_bias, config, eet_lambda_e):
+    """Compute per-token frequency-scaled efficiency loss + exit diversity pressure.
+    
+    Returns (total_loss, diagnostics_dict) where:
+      - efficiency_loss: per-token weighted expected exit depth
+      - diversity_loss: negative std of per-token expected exit (forces token differentiation)
+      
+    Memory efficient: only creates (B, T) intermediates, no vocab-sized tensors.
+    """
+    device = p_exits[0].device
+    layer_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
+    
+    # Compute per-token expected exit layer: (B, T)
+    expected_exit = sum(
+        p_exits[k] * layer_indices[k]
+        for k in range(n_exits)
+    )
+    
+    freq_alpha = getattr(config, 'eet_freq_efficiency_alpha', 0.0)
+    diversity_lambda = getattr(config, 'eet_diversity_lambda', 0.0)
+    
+    # --- Per-token frequency-scaled efficiency ---
+    if freq_alpha > 0 and freq_bias is not None:
+        # freq_bias is (B, T), values in [0, 1] where 1 = most frequent
+        # Scale: frequent tokens get (1 + alpha) weight, rare tokens get ~1.0 weight
+        freq_weight = 1.0 + freq_alpha * freq_bias.float()  # (B, T)
+        efficiency_loss = (expected_exit * freq_weight).mean() / n_exits
+    else:
+        efficiency_loss = expected_exit.mean() / n_exits
+    
+    total_loss = eet_lambda_e * efficiency_loss
+    
+    diag = {'efficiency': efficiency_loss, 'expected_exit': expected_exit.mean()}
+    
+    # --- Exit diversity pressure ---
+    if diversity_lambda > 0:
+        # Penalize low variance in expected exit depth across tokens
+        # Negative std = we want to MAXIMIZE variance (minimize negative std)
+        exit_std = expected_exit.std()
+        diversity_loss = -exit_std
+        total_loss = total_loss + diversity_lambda * diversity_loss
+        diag['diversity'] = exit_std
+    
+    return total_loss, diag
+
+
 
 # ---------------------------------------------------------------------------
 # Routing Priors
@@ -748,14 +794,10 @@ class EarlyExitGPT(GPT):
                         )
                         loss_accumulator = loss_accumulator + loss_k_mean
                         
-                    layer_indices = torch.arange(len(p_exits), device=targets.device, dtype=torch.float32)
-                    expected_exit = sum(
-                        p_exits[k] * layer_indices[k]
-                        for k in range(len(p_exits))
-                    ).mean()
-                    efficiency_loss = expected_exit / len(p_exits)
-                    
-                    loss = loss_accumulator + eet_lambda_e * efficiency_loss
+                    eff_div_loss, _ = compute_efficiency_and_diversity(
+                        p_exits, len(p_exits), freq_bias, config, eet_lambda_e
+                    )
+                    loss = loss_accumulator + eff_div_loss
                 else:
                     logits = self.lm_head(x_final)
                     logits = logits[..., :config.vocab_size].float()
@@ -782,6 +824,13 @@ class EarlyExitGPT(GPT):
                                     p_f = p_exit_i.float().clamp(min=1e-8)
                                     entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                                 loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
+
+                    # Efficiency + diversity for global router quality path
+                    if loss_reduction == 'mean':
+                        eff_div_loss, _ = compute_efficiency_and_diversity(
+                            p_exits, len(p_exits), freq_bias, config, eet_lambda_e
+                        )
+                        loss = loss + eff_div_loss
                                 
                 if getattr(config, 'eet_commitment_beta', 0.0) > 0:
                     commit_loss = self._compute_commitment_loss(
@@ -1132,7 +1181,8 @@ class EarlyExitGPT(GPT):
         if targets is not None:
             if is_layer_weighted:
                 loss, loss_diags = self._compute_layer_weighted_loss(
-                    all_layer_norms, exit_probs_per_layer, targets, config, eet_lambda_e
+                    all_layer_norms, exit_probs_per_layer, targets, config, eet_lambda_e,
+                    freq_bias=freq_bias
                 )
                 if getattr(config, 'eet_commitment_beta', 0.0) > 0:
                     commit_loss = self._compute_commitment_loss(
@@ -1218,17 +1268,18 @@ class EarlyExitGPT(GPT):
                             entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                         loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
-            # --- Efficiency loss ---
+            # --- Efficiency loss + diversity pressure ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
                 if self.training and eet_phase == 3 and not use_gumbel:
-                    soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-                    for idx, p_exit_i in enumerate(p_exits_soft[:-1]):
-                        soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
-                    soft_active = soft_active + p_exits_soft[-1] * 1.0
-                    soft_avg_active = soft_active.mean()
-                    loss = loss + eet_lambda_e * soft_avg_active
+                    eff_div_loss, _ = compute_efficiency_and_diversity(
+                        p_exits_soft, len(p_exits_soft), freq_bias, config, eet_lambda_e
+                    )
+                    loss = loss + eff_div_loss
                 else:
-                    loss = loss + eet_lambda_e * avg_active
+                    eff_div_loss, _ = compute_efficiency_and_diversity(
+                        p_exits, len(p_exits), freq_bias, config, eet_lambda_e
+                    )
+                    loss = loss + eff_div_loss
 
             # Store diagnostics
             if self.training:
@@ -1242,7 +1293,7 @@ class EarlyExitGPT(GPT):
         else:
             return logits
 
-    def _compute_layer_weighted_loss(self, all_layer_norms, exit_probs_per_layer, targets, config, eet_lambda_e):
+    def _compute_layer_weighted_loss(self, all_layer_norms, exit_probs_per_layer, targets, config, eet_lambda_e, freq_bias=None):
         """
         Direction 2: Per-Token Layer-Weighted Loss.
         Each layer contributes to next-token prediction weighted by its exit probability.
@@ -1273,21 +1324,17 @@ class EarlyExitGPT(GPT):
             total_backbone_loss_val = total_backbone_loss_val + backbone_loss_mean
             total_router_loss_val = total_router_loss_val + router_loss_mean
             
-        # Differentiable expected exit layer index (efficiency loss)
-        layer_indices = torch.arange(len(p_exits), device=targets.device, dtype=torch.float32)
-        expected_exit = sum(
-            p_exits[k] * layer_indices[k]
-            for k in range(len(p_exits))
-        ).mean()
-        efficiency_loss = expected_exit / len(p_exits)
-        
-        loss = loss_accumulator + eet_lambda_e * efficiency_loss
+        # Frequency-scaled efficiency + diversity pressure
+        eff_div_loss, eff_diag = compute_efficiency_and_diversity(
+            p_exits, len(p_exits), freq_bias, config, eet_lambda_e
+        )
+        loss = loss_accumulator + eff_div_loss
         
         return loss, {
             'weighted_lm': total_backbone_loss_val,
             'router': total_router_loss_val,
-            'efficiency': efficiency_loss,
-            'expected_exit': expected_exit,
+            'efficiency': eff_diag['efficiency'],
+            'expected_exit': eff_diag['expected_exit'],
         }
 
     def _compute_commitment_loss(self, all_layer_norms, exit_probs, beta=0.25):

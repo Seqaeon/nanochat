@@ -1619,7 +1619,7 @@ while True:
             use_gumbel = getattr(model_config, 'eet_gumbel_temp_start', 0.0) > 0.0
             is_layer_weighted = (model_config.eet_loss_variant == 'layer_weighted')
             is_global_router = getattr(model_config, 'eet_global_router', False)
-            bypass_phases = use_gumbel or is_layer_weighted or is_global_router
+            bypass_phases = use_gumbel or is_layer_weighted
 
             # Phase 3: Freeze routers and translators, they are already trained
             # Note: in Gumbel and layer_weighted modes, routers are never frozen

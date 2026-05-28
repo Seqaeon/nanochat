@@ -338,10 +338,127 @@ def test_eet_global_router():
     print("✓ Global Upfront Router with Layer-Weighted loss is fully functional!")
 
 
+def test_eet_freq_efficiency_and_diversity():
+    """Test per-token frequency-scaled efficiency loss and exit diversity pressure."""
+    from nanochat.eet import compute_efficiency_and_diversity
+    device = "cpu"
+    print(f"\nRunning frequency-scaled efficiency & diversity pressure test on {device}...")
+    
+    B, T, n_exits = 4, 16, 5
+    
+    # Create fake p_exits that sum to ~1 per token
+    raw = torch.randn(B, T, n_exits).softmax(dim=-1)
+    p_exits = [raw[:, :, k] for k in range(n_exits)]
+    
+    # Create fake freq_bias: half tokens are high-freq, half low-freq
+    freq_bias = torch.zeros(B, T)
+    freq_bias[:, :T//2] = 0.9   # high frequency
+    freq_bias[:, T//2:] = 0.1   # low frequency
+    
+    # Test 1: Uniform efficiency (baseline, no freq scaling, no diversity)
+    config_baseline = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_freq_efficiency_alpha=0.0,
+        eet_diversity_lambda=0.0,
+    )
+    eet_lambda_e = torch.tensor(0.1)
+    
+    loss_baseline, diag_baseline = compute_efficiency_and_diversity(
+        p_exits, n_exits, freq_bias, config_baseline, eet_lambda_e
+    )
+    assert not torch.isnan(loss_baseline), "Baseline efficiency loss is NaN"
+    print(f"  Baseline efficiency loss: {loss_baseline.item():.6f}")
+    print(f"  Expected exit: {diag_baseline['expected_exit'].item():.4f}")
+    
+    # Test 2: With freq scaling (alpha=2.0)
+    config_freq = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_freq_efficiency_alpha=2.0,
+        eet_diversity_lambda=0.0,
+    )
+    
+    loss_freq, diag_freq = compute_efficiency_and_diversity(
+        p_exits, n_exits, freq_bias, config_freq, eet_lambda_e
+    )
+    assert not torch.isnan(loss_freq), "Freq-scaled efficiency loss is NaN"
+    assert loss_freq > loss_baseline, \
+        f"Freq-scaled loss ({loss_freq.item():.6f}) should be > baseline ({loss_baseline.item():.6f}) since freq_weight > 1"
+    print(f"  Freq-scaled efficiency loss: {loss_freq.item():.6f} (> baseline ✓)")
+    
+    # Test 3: With diversity pressure (lambda=0.1)
+    config_div = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_freq_efficiency_alpha=0.0,
+        eet_diversity_lambda=0.1,
+    )
+    
+    loss_div, diag_div = compute_efficiency_and_diversity(
+        p_exits, n_exits, freq_bias, config_div, eet_lambda_e
+    )
+    assert not torch.isnan(loss_div), "Diversity-augmented loss is NaN"
+    assert 'diversity' in diag_div, "Diversity diagnostic missing"
+    print(f"  Diversity-augmented loss: {loss_div.item():.6f}")
+    print(f"  Exit std (diversity): {diag_div['diversity'].item():.4f}")
+    
+    # Test 4: Gradient check — diversity loss should flow back through p_exits
+    p_exits_grad = [p.clone().requires_grad_(True) for p in p_exits]
+    config_both = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_freq_efficiency_alpha=2.0,
+        eet_diversity_lambda=0.1,
+    )
+    loss_both, _ = compute_efficiency_and_diversity(
+        p_exits_grad, n_exits, freq_bias, config_both, eet_lambda_e
+    )
+    loss_both.backward()
+    
+    grads_ok = all(p.grad is not None and not torch.isnan(p.grad).any() for p in p_exits_grad)
+    assert grads_ok, "Gradients through freq-scaled efficiency + diversity are invalid"
+    print(f"  Combined loss: {loss_both.item():.6f} — gradients flow correctly ✓")
+    
+    # Test 5: End-to-end with a real model using layer_weighted + freq scaling + diversity
+    config_e2e = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_loss_variant='layer_weighted',
+        eet_commitment_beta=0.1,
+        eet_freq_efficiency_alpha=2.0,
+        eet_diversity_lambda=0.1,
+    )
+    model = EarlyExitGPT(config_e2e).to(device)
+    model.train()
+    
+    x = torch.randint(0, config_e2e.vocab_size, (2, 8), device=device)
+    y = torch.randint(0, config_e2e.vocab_size, (2, 8), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    loss = model(x, y, eet_do_route=True, eet_phase=2,
+                 eet_lambda_r=torch.tensor(1.0, device=device),
+                 eet_lambda_e=torch.tensor(0.1, device=device))
+    
+    assert not torch.isnan(loss), "E2E layer_weighted + freq + diversity loss is NaN"
+    loss.backward()
+    
+    router_has_grad = any(
+        p.grad is not None and p.grad.norm() > 0
+        for name, p in model.named_parameters() if "eet_router" in name
+    )
+    assert router_has_grad, "Router should have gradients with freq-scaled efficiency + diversity"
+    print(f"  E2E loss: {loss.item():.6f} — router receives differentiated gradients ✓")
+    
+    print("✓ Frequency-scaled efficiency + exit diversity pressure fully functional!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
     test_eet_gumbel_routing()
     test_eet_layer_weighted_routing()
     test_eet_global_router()
+    test_eet_freq_efficiency_and_diversity()
 

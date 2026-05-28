@@ -191,8 +191,10 @@ run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
     --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
     --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
     --eet-loss-variant entropy_surprise \
+    --eet-commitment-beta 0.1 \
     --eet-global-router 1 \
     --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
+    --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_10: Variant A — REINFORCE Quality Loss + Entropy Bonus
@@ -277,6 +279,35 @@ run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
 #    --eet-global-router 1 \
 #    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 #
+
+# EET_P1_17: Gumbel-Softmax + Freq-Scaled Efficiency + Diversity Pressure
+# Tests whether per-token frequency-weighted efficiency and exit diversity
+# breaks the uniform exit depth equilibrium that plagued all previous variants.
+#run_experiment "EET_P1_17_GUMBEL_FREQDIV_D${DEPTH}" \
+#    "Gumbel-Softmax with freq-scaled efficiency (α=2.0) + diversity pressure (λ=0.1)" \
+#    --use-eet 1 --eet-frozen-kv 0 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+#    --eet-loss-variant quality \
+#    --eet-quality-lambda 1.0 \
+#    --eet-quality-entropy-bonus 0.1 \
+#    --eet-gumbel-temp-start 5.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+#    --eet-commitment-beta 0.1 \
+#    --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+#
+# EET_P1_18: Layer-Weighted + Freq-Scaled Efficiency + Diversity Pressure
+#run_experiment "EET_P1_18_LW_FREQDIV_D${DEPTH}" \
+#    "Layer-Weighted with freq-scaled efficiency (α=2.0) + diversity pressure (λ=0.1)" \
+#    --use-eet 1 --eet-frozen-kv 0 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+#    --eet-loss-variant layer_weighted \
+#    --eet-commitment-beta 0.1 \
+#    --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_11: Variant B — Adversarial + Entropy stabilizer (uses hard routing, deprecated)
 # NOTE: adversarial variant uses hard routing in Phase 2 — router gets no gradient.
