@@ -355,6 +355,7 @@ def run_training_sweep(args):
         "--eet-gumbel-temp-end", str(getattr(args, 'eet_gumbel_temp_end', 0.1)),
         "--eet-gumbel-hard", str(getattr(args, 'eet_gumbel_hard', 1)),
         "--eet-commitment-beta", str(getattr(args, 'eet_commitment_beta', 0.1)),
+        "--eet-global-router", str(getattr(args, 'eet_global_router', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -903,6 +904,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-gumbel-temp-end", type=float, default=0.1)
     parser.add_argument("--eet-gumbel-hard", type=int, default=1, choices=[0, 1])
     parser.add_argument("--eet-commitment-beta", type=float, default=0.1)
+    parser.add_argument("--eet-global-router", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
     

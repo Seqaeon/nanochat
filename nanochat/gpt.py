@@ -383,6 +383,7 @@ class GPTConfig:
     eet_gumbel_temp_end: float = 0.0
     eet_gumbel_hard: int = 1                       # 1=straight-through estimator, 0=soft blending
     eet_commitment_beta: float = 0.1               # commitment loss scale (Direction 3)
+    eet_global_router: bool = False                # upfront single global exit router
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -483,7 +484,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_entropy_lambda", "eet_surprise_lambda",
     "eet_adv_lambda", "eet_adv_entropy_lambda",
     "eet_gumbel_temp_start", "eet_gumbel_temp_end", "eet_gumbel_hard",
-    "eet_commitment_beta",
+    "eet_commitment_beta", "eet_global_router",
 }
 
 

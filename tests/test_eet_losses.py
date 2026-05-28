@@ -239,8 +239,109 @@ def test_eet_layer_weighted_routing():
     assert backbone_has_grad, "Error: Backbone did not receive gradients in Layer-Weighted training!"
     print("✓ Per-Token Layer-Weighted routing path is fully functional!")
 
+
+def test_eet_global_router():
+    device = "cpu"
+    print(f"\n--- Testing EET Global Upfront Exit Router ---")
+    
+    # Test 1: Global Router + Gumbel-Softmax + Quality Loss
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_gumbel_temp_start=2.0,
+        eet_gumbel_temp_end=0.5,
+        eet_gumbel_hard=True,
+        eet_commitment_beta=0.1,
+        eet_loss_variant='quality',
+        eet_global_router=True,
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device),
+        eet_gumbel_temp=1.5
+    )
+    
+    assert not torch.isnan(loss), "Global Router + Quality Loss is NaN"
+    loss.backward()
+    
+    router_has_grad = False
+    for name, p in model.named_parameters():
+        if "eet_router" in name and p.grad is not None:
+            router_has_grad = True
+            assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+            print(f"  [Quality] Router {name} has grad. norm: {p.grad.norm().item():.6f}")
+            
+    assert router_has_grad, "Error: Global Router did not receive gradients in Quality mode!"
+    print("✓ Global Upfront Router with Gumbel/Quality is fully functional!")
+    
+    # Test 2: Global Router + Layer-Weighted Loss
+    config_lw = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_commitment_beta=0.1,
+        eet_loss_variant='layer_weighted',
+        eet_global_router=True,
+    )
+    
+    model_lw = EarlyExitGPT(config_lw).to(device)
+    model_lw.train()
+    
+    model_lw.zero_grad(set_to_none=True)
+    loss_lw = model_lw(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device)
+    )
+    
+    assert not torch.isnan(loss_lw), "Global Router + Layer-Weighted Loss is NaN"
+    loss_lw.backward()
+    
+    router_has_grad = False
+    backbone_has_grad = False
+    for name, p in model_lw.named_parameters():
+        if p.grad is not None:
+            if "eet_router" in name:
+                router_has_grad = True
+                assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+                print(f"  [Layer-Weighted] Router {name} has grad. norm: {p.grad.norm().item():.6f}")
+            elif "transformer.h.0" in name:
+                backbone_has_grad = True
+                assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+                print(f"  [Layer-Weighted] Backbone {name} has grad. norm: {p.grad.norm().item():.6f}")
+                
+    assert router_has_grad, "Error: Global Router did not receive gradients in Layer-Weighted mode!"
+    assert backbone_has_grad, "Error: Backbone did not receive gradients in Layer-Weighted mode!"
+    print("✓ Global Upfront Router with Layer-Weighted loss is fully functional!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
     test_eet_gumbel_routing()
     test_eet_layer_weighted_routing()
+    test_eet_global_router()
+
