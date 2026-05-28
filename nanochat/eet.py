@@ -25,6 +25,27 @@ import torch.nn.functional as F
 
 from nanochat.common import COMPUTE_DTYPE, print0
 from nanochat.gpt import GPT, GPTConfig, Linear, Block, norm, has_ve
+from torch.utils.checkpoint import checkpoint
+
+
+def compute_layer_loss(h_k, p_k, targets, lm_head, config, eet_quality_lambda):
+    """Checkpointed helper to calculate lm_head projection and cross entropy at layer k.
+    Saves massive VRAM by avoiding storing large logits tensors in forward activations.
+    """
+    logits_k = lm_head(h_k)
+    logits_k = logits_k[..., :config.vocab_size].float()
+    logits_k = 20 * torch.tanh(logits_k / 20)
+    
+    loss_k = F.cross_entropy(
+        logits_k.view(-1, logits_k.size(-1)),
+        targets.view(-1),
+        ignore_index=-1,
+        reduction='none'
+    ).view(h_k.size(0), h_k.size(1))
+    
+    combined_k = loss_k * p_k.detach() + eet_quality_lambda * (loss_k.detach() * p_k)
+    return combined_k.mean(), (loss_k * p_k.detach()).mean(), (loss_k.detach() * p_k).mean()
+
 
 
 # ---------------------------------------------------------------------------
@@ -720,19 +741,12 @@ class EarlyExitGPT(GPT):
                     # Global Layer Weighted Loss
                     loss_accumulator = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
                     for k, (h_k, p_k) in enumerate(zip(candidate_states, p_exits)):
-                        logits_k = self.lm_head(h_k)
-                        logits_k = logits_k[..., :config.vocab_size].float()
-                        logits_k = 20 * torch.tanh(logits_k / 20)
-                        
-                        loss_k = F.cross_entropy(
-                            logits_k.view(-1, logits_k.size(-1)),
-                            targets.view(-1),
-                            ignore_index=-1,
-                            reduction='none'
-                        ).view(B, T)
-                        
-                        combined_k = loss_k * p_k.detach() + config.eet_quality_lambda * (loss_k.detach() * p_k)
-                        loss_accumulator = loss_accumulator + combined_k.mean()
+                        loss_k_mean, _, _ = checkpoint(
+                            compute_layer_loss,
+                            h_k, p_k, targets, self.lm_head, config, config.eet_quality_lambda,
+                            use_reentrant=False
+                        )
+                        loss_accumulator = loss_accumulator + loss_k_mean
                         
                     layer_indices = torch.arange(len(p_exits), device=targets.device, dtype=torch.float32)
                     expected_exit = sum(
@@ -1249,32 +1263,15 @@ class EarlyExitGPT(GPT):
         total_router_loss_val = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
         
         for k, (h_k, p_k) in enumerate(zip(all_layer_norms, p_exits)):
-            # Backbone prediction and loss at layer k
-            logits_k = self.lm_head(h_k)
-            logits_k = logits_k[..., :config.vocab_size].float()
-            # Apply logit softcap
-            logits_k = 20 * torch.tanh(logits_k / 20)
-            
-            loss_k = F.cross_entropy(
-                logits_k.view(-1, logits_k.size(-1)),
-                targets.view(-1),
-                ignore_index=-1,
-                reduction='none'
-            ).view(B, T)
-            
-            # Use gradient separation formula to optimize both backbone and router in a single pass:
-            # - Backbone gets gradients from: loss_k * p_k.detach()
-            # - Router gets gradients from: config.eet_quality_lambda * loss_k.detach() * p_k
-            combined_k = loss_k * p_k.detach() + config.eet_quality_lambda * (loss_k.detach() * p_k)
-            loss_accumulator = loss_accumulator + combined_k.mean()
-            
-            # Diagnostics tracking
-            total_backbone_loss_val = total_backbone_loss_val + (loss_k * p_k.detach()).mean()
-            total_router_loss_val = total_router_loss_val + (loss_k.detach() * p_k).mean()
-            
-            # Explicitly free memory
-            del logits_k
-            del loss_k
+            # Backbone prediction and loss at layer k computed using activation checkpointing
+            loss_k_mean, backbone_loss_mean, router_loss_mean = checkpoint(
+                compute_layer_loss,
+                h_k, p_k, targets, self.lm_head, config, config.eet_quality_lambda,
+                use_reentrant=False
+            )
+            loss_accumulator = loss_accumulator + loss_k_mean
+            total_backbone_loss_val = total_backbone_loss_val + backbone_loss_mean
+            total_router_loss_val = total_router_loss_val + router_loss_mean
             
         # Differentiable expected exit layer index (efficiency loss)
         layer_indices = torch.arange(len(p_exits), device=targets.device, dtype=torch.float32)

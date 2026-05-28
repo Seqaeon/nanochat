@@ -336,7 +336,7 @@ while [[ $# -gt 0 ]]; do
         --eet-loss-variant|--eet-topk-vocab|--eet-entropy-lambda|\
         --eet-surprise-lambda|--eet-adv-lambda|--eet-adv-entropy-lambda|\
         --eet-quality-lambda|--eet-quality-entropy-bonus|\
-        --eet-gumbel-temp-start|--eet-gumbel-temp-end|--eet-gumbel-hard|--eet-commitment-beta)
+        --eet-gumbel-temp-start|--eet-gumbel-temp-end|--eet-gumbel-hard|--eet-commitment-beta|--eet-global-router)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
