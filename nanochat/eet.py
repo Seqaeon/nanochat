@@ -567,6 +567,16 @@ class EarlyExitGPT(GPT):
         self.register_buffer('token_ce_count', torch.zeros(config.vocab_size, dtype=torch.float32))
         self.register_buffer('token_difficulty', torch.zeros(config.vocab_size, dtype=torch.float32))
         self.register_buffer('eet_phase_tracker', torch.tensor([1], dtype=torch.int32))
+        self.eet_current_phase = 1
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
+        # Restore eet_current_phase from loaded buffer
+        tracker_key = prefix + 'eet_phase_tracker'
+        if tracker_key in state_dict:
+            self.eet_current_phase = int(state_dict[tracker_key][0].item())
 
     @torch.no_grad()
     def init_weights(self):
@@ -670,9 +680,9 @@ class EarlyExitGPT(GPT):
         do_route = eet_do_route
 
         # Check transition from Phase 1 to Phase 2/3
-        current_phase = self.eet_phase_tracker[0].item()
-        if eet_phase in {2, 3} and current_phase == 1:
+        if eet_phase in {2, 3} and self.eet_current_phase == 1:
             self.finalize_token_difficulty()
+            self.eet_current_phase = eet_phase
             self.eet_phase_tracker[0] = eet_phase
 
         # Phase 1 (no routing): delegate to parent GPT.forward() to get the
