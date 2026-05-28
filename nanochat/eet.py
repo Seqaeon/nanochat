@@ -992,6 +992,7 @@ class EarlyExitGPT(GPT):
         """
         Direction 2: Per-Token Layer-Weighted Loss.
         Each layer contributes to next-token prediction weighted by its exit probability.
+        Bypasses standard routing by computing expected loss over all candidate exit points in a memory-efficient single loop.
         """
         B, T = targets.shape
         
@@ -1003,7 +1004,9 @@ class EarlyExitGPT(GPT):
             p_reach = p_reach * (1.0 - p_exit_i)
         p_exits.append(p_reach)
         
-        total_weighted_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+        loss_accumulator = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+        total_backbone_loss_val = 0.0
+        total_router_loss_val = 0.0
         
         for k, (h_k, p_k) in enumerate(zip(all_layer_norms, p_exits)):
             # Backbone prediction and loss at layer k
@@ -1019,28 +1022,19 @@ class EarlyExitGPT(GPT):
                 reduction='none'
             ).view(B, T)
             
-            # Backbone gets gradients from LM loss weighted by detached exit probability
-            weight_k = p_k.detach()
-            weighted = (loss_k * weight_k).mean()
-            total_weighted_loss = total_weighted_loss + weighted
+            # Use gradient separation formula to optimize both backbone and router in a single pass:
+            # - Backbone gets gradients from: loss_k * p_k.detach()
+            # - Router gets gradients from: config.eet_quality_lambda * loss_k.detach() * p_k
+            combined_k = loss_k * p_k.detach() + config.eet_quality_lambda * (loss_k.detach() * p_k)
+            loss_accumulator = loss_accumulator + combined_k.mean()
             
-        # --- Router training signal ---
-        # Router is trained to minimize expected loss across layers
-        router_loss = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
-        
-        for k, (h_k, p_k) in enumerate(zip(all_layer_norms, p_exits)):
-            logits_k = self.lm_head(h_k.detach())  # detach h_k to train router, not backbone
-            logits_k = logits_k[..., :config.vocab_size].float()
-            logits_k = 20 * torch.tanh(logits_k / 20)
+            # Diagnostics tracking
+            total_backbone_loss_val += (loss_k * p_k.detach()).mean().item()
+            total_router_loss_val += (loss_k.detach() * p_k).mean().item()
             
-            loss_k = F.cross_entropy(
-                logits_k.view(-1, logits_k.size(-1)),
-                targets.view(-1),
-                ignore_index=-1,
-                reduction='none'
-            ).view(B, T).detach()  # detach loss values
-            
-            router_loss = router_loss + (p_k * loss_k).mean()
+            # Explicitly free memory
+            del logits_k
+            del loss_k
             
         # Differentiable expected exit layer index (efficiency loss)
         layer_indices = torch.arange(len(p_exits), device=targets.device, dtype=torch.float32)
@@ -1050,11 +1044,11 @@ class EarlyExitGPT(GPT):
         ).mean()
         efficiency_loss = expected_exit / len(p_exits)
         
-        loss = total_weighted_loss + config.eet_quality_lambda * router_loss + eet_lambda_e * efficiency_loss
+        loss = loss_accumulator + eet_lambda_e * efficiency_loss
         
         return loss, {
-            'weighted_lm': total_weighted_loss.item(),
-            'router': router_loss.item(),
+            'weighted_lm': total_backbone_loss_val,
+            'router': total_router_loss_val,
             'efficiency': efficiency_loss.item(),
             'expected_exit': expected_exit.item(),
         }

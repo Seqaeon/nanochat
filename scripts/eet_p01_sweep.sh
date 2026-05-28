@@ -216,7 +216,7 @@ run_experiment "EET_P1_13_GUMBEL_D${DEPTH}" \
     --eet-loss-variant quality \
     --eet-quality-lambda 1.0 \
     --eet-quality-entropy-bonus 0.1 \
-    --eet-gumbel-temp-start 2.0 --eet-gumbel-temp-end 0.5 --eet-gumbel-hard 1 \
+    --eet-gumbel-temp-start 5.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
     --eet-commitment-beta 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
