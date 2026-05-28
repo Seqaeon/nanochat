@@ -270,9 +270,17 @@ def main():
             print0(f"Adjusted split_tokens to {args.split_tokens} (must be divisible by {tokens_per_step})")
         steps = args.split_tokens // tokens_per_step
 
+        use_eet = False
+        if not is_hf_model and hasattr(model, 'config') and getattr(model.config, 'use_eet', False):
+            use_eet = True
+
         for split_name in ["train", "val"]:
             loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
-            bpb = evaluate_bpb(model, loader, steps, token_bytes)
+            eval_kwargs = {}
+            if use_eet:
+                eval_kwargs['eet_do_route'] = True
+                eval_kwargs['eet_phase'] = 3
+            bpb = evaluate_bpb(model, loader, steps, token_bytes, **eval_kwargs)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")
 
