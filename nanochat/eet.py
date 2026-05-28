@@ -324,9 +324,8 @@ class EarlyExitRouter(nn.Module):
         if pos_bias is not None and pos_beta > 0:
             logit = logit + pos_beta * pos_bias.float()
         
-        # Apply temperature scaling if not 1.0
-        if temp != 1.0:
-            logit = logit / temp
+        # Apply temperature scaling
+        logit = logit / temp
             
         # Clamp logits to prevent sigmoid saturation — ensures gradients always
         # flow regardless of how strongly one loss pushes. sigmoid(-5)=0.007,
@@ -738,8 +737,7 @@ class EarlyExitGPT(GPT):
                     routing_weights = soft_weights
             elif is_soft_training or is_layer_weighted:
                 if is_soft_training:
-                    temp_val = eet_gumbel_temp.item() if isinstance(eet_gumbel_temp, torch.Tensor) else eet_gumbel_temp
-                    routing_weights = torch.softmax(router_logits.float() / temp_val, dim=-1).to(x0.dtype)
+                    routing_weights = torch.softmax(router_logits.float() / eet_gumbel_temp, dim=-1).to(x0.dtype)
                 else:
                     routing_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
                 soft_weights = routing_weights
@@ -1035,13 +1033,12 @@ class EarlyExitGPT(GPT):
                     x = x_new
                     
                     if i in routing_layers:
-                        temp_val = eet_gumbel_temp.item() if isinstance(eet_gumbel_temp, torch.Tensor) else eet_gumbel_temp
                         exit_prob_i = self.eet_routers[i](
                             x.detach() if self.training else x,
                             freq_bias=freq_bias, pos_bias=pos_bias,
                             freq_alpha=config.eet_freq_prior_alpha,
                             pos_beta=config.eet_pos_prior_beta,
-                            temp=temp_val if is_soft_training else 1.0
+                            temp=eet_gumbel_temp if is_soft_training else 1.0
                         )
                         exit_probs_list.append(exit_prob_i)
                         candidate_states.append(norm(x))
