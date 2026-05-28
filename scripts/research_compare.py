@@ -358,6 +358,7 @@ def run_training_sweep(args):
         "--eet-global-router", str(getattr(args, 'eet_global_router', 0)),
         "--eet-freq-efficiency-alpha", str(getattr(args, 'eet_freq_efficiency_alpha', 0.0)),
         "--eet-diversity-lambda", str(getattr(args, 'eet_diversity_lambda', 0.0)),
+        "--eet-ce-guided-lambda", str(getattr(args, 'eet_ce_guided_lambda', 1.0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -909,6 +910,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-global-router", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-freq-efficiency-alpha", type=float, default=0.0)
     parser.add_argument("--eet-diversity-lambda", type=float, default=0.0)
+    parser.add_argument("--eet-ce-guided-lambda", type=float, default=1.0)
 
     args = parser.parse_args()
     

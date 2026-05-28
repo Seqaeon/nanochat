@@ -370,7 +370,7 @@ class GPTConfig:
     eet_exit_threshold: float = 0.5                # sigmoid threshold for exit decision
     eet_min_exit_layer: int = 1                    # earliest layer a token can exit at
     # Loss variant selection
-    eet_loss_variant: str = 'reconstruct'           # 'reconstruct' | 'entropy_surprise' | 'adversarial' | 'quality'
+    eet_loss_variant: str = 'reconstruct'           # 'reconstruct' | 'entropy_surprise' | 'adversarial' | 'quality' | 'ce_guided'
     eet_topk_vocab: int = 512                       # vocab approximation for entropy computation
     eet_entropy_lambda: float = 0.3                 # Variant A: entropy loss weight
     eet_surprise_lambda: float = 0.1                # Variant A: surprise loss weight
@@ -386,6 +386,7 @@ class GPTConfig:
     eet_global_router: bool = False                # upfront single global exit router
     eet_freq_efficiency_alpha: float = 0.0         # per-token frequency-scaled efficiency (0=uniform, >0=frequent tokens penalized more)
     eet_diversity_lambda: float = 0.0              # exit diversity pressure: penalizes uniform exit depth across tokens
+    eet_ce_guided_lambda: float = 1.0              # CE-guided routing loss weight (loss_variant='ce_guided')
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -487,7 +488,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_adv_lambda", "eet_adv_entropy_lambda",
     "eet_gumbel_temp_start", "eet_gumbel_temp_end", "eet_gumbel_hard",
     "eet_commitment_beta", "eet_global_router",
-    "eet_freq_efficiency_alpha", "eet_diversity_lambda",
+    "eet_freq_efficiency_alpha", "eet_diversity_lambda", "eet_ce_guided_lambda",
 }
 
 

@@ -759,15 +759,12 @@ class EarlyExitGPT(GPT):
                 
             # Collect states densely
             candidate_states = []
-            candidate_prev_states = []
             for i, block in enumerate(blocks):
                 x0_w = self.x0_lambdas[i]
                 if self._use_residual_decay and self.depth_decay_raw is not None:
                     decay_base = torch.sigmoid(self.depth_decay_raw)
                     x0_w = x0_w * (decay_base ** i)
                 x_input = self.resid_lambdas[i] * x + x0_w * x0
-                
-                prev_x_val = x_input
                 
                 ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
                 x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
@@ -780,14 +777,10 @@ class EarlyExitGPT(GPT):
                 
                 if i in routing_layers or i == n_layer - 1:
                     candidate_states.append(norm(x))
-                    candidate_prev_states.append(norm(prev_x_val))
             
             # Blend hidden states using routing weights
             stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
             x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
-            
-            prev_stacked = torch.stack(candidate_prev_states, dim=2)  # (B, T, n_exits, D)
-            prev_exit_hidden = (routing_weights.unsqueeze(-1) * prev_stacked).sum(dim=2)  # (B, T, D)
             
             p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
             self._last_exit_probs = torch.stack(p_exits, dim=-1)
@@ -846,7 +839,12 @@ class EarlyExitGPT(GPT):
                                 loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
                     elif loss_variant == 'entropy_surprise' and loss_reduction == 'mean':
                         variant_loss, variant_diag = self._compute_entropy_surprise_loss(
-                            x_final, prev_exit_hidden, config
+                            x_final, stacked, config, routing_weights=routing_weights
+                        )
+                        loss = loss + variant_loss
+                    elif loss_variant == 'ce_guided' and loss_reduction == 'mean':
+                        variant_loss, variant_diag = self._compute_ce_guided_loss(
+                            logits, targets, stacked, routing_weights, config
                         )
                         loss = loss + variant_loss
                     elif loss_variant == 'reconstruct' and loss_reduction == 'mean':
@@ -1417,36 +1415,50 @@ class EarlyExitGPT(GPT):
             
         return eet_lambda_r * recon_loss / max(len(reconstruction_losses), 1)
 
-    def _compute_entropy_surprise_loss(self, exit_hidden, prev_exit_hidden, config):
-        """Variant A: Entropy + Surprise loss (compile-friendly, memory-efficient).
+    @torch.compiler.disable
+    def _compute_entropy_surprise_loss(self, exit_hidden, prev_exit_hidden_or_stacked, config,
+                                       routing_weights=None):
+        """Variant A: Entropy + Surprise loss (eager mode, memory-efficient chunking).
 
         Entropy: topk approximation of vocab entropy at exit-layer hidden states.
                  Low entropy = confident → safe to exit.
         Surprise: relative norm of update between exit layer and previous layer.
                   High surprise = representation still changing → unsafe to exit.
 
+        For global router: pass stacked=(B,T,n_exits,D) + routing_weights=(B,T,n_exits).
+        For per-layer router: pass prev_exit_hidden=(B,T,D), routing_weights=None.
+
         Returns (loss_term, diagnostics_dict).
         """
-        # exit_hidden: (B, T, D) — hidden state at each token's exit layer
-        # prev_exit_hidden: (B, T, D) — hidden state at layer before exit
         B, T, D = exit_hidden.shape
         topk_vocab = min(config.eet_topk_vocab, config.vocab_size)
-        # Detach unembed: gradient flows through exit_hidden → routing_weights → router only
-        unembed = self.lm_head.weight[:config.vocab_size].float().detach()  # (V, D)
+        unembed = self.lm_head.weight  # (padded_vocab, D)
 
-        # --- Entropy: chunked to cap peak at ~1 GB, scalar accumulation for compile ---
-        flat_h = exit_hidden.reshape(-1, D).float()  # (N, D)
+        # --- Entropy: chunked projection to cap peak at ~1 GB ---
+        flat_h = exit_hidden.reshape(-1, D)  # (N, D)
         N = flat_h.shape[0]
         chunk_size = 8192
-        entropy_sum = flat_h.new_zeros(())
+        entropy_sum = torch.tensor(0.0, device=exit_hidden.device, dtype=torch.float32)
         for start in range(0, N, chunk_size):
-            chunk_logits = flat_h[start:start + chunk_size] @ unembed.T  # (C, V)
-            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values   # (C, topk)
+            end = min(start + chunk_size, N)
+            chunk_logits = flat_h[start:end].float() @ unembed[:config.vocab_size].float().T
+            topk_logits = chunk_logits.topk(topk_vocab, dim=-1).values
             log_p = F.log_softmax(topk_logits, dim=-1)
             entropy_sum = entropy_sum - (log_p.exp() * log_p).sum()
         entropy_loss = entropy_sum / N
 
         # --- Surprise: relative norm of representation update ---
+        if routing_weights is not None:
+            # Global router path: compute surprise from consecutive candidate states
+            # prev_exit_hidden_or_stacked is stacked (B, T, n_exits, D)
+            stacked = prev_exit_hidden_or_stacked
+            # Shift: prev for exit i is exit i-1 (first exit uses itself → surprise=0)
+            prev_stacked = torch.cat([stacked[:, :, :1], stacked[:, :, :-1]], dim=2)
+            prev_exit_hidden = (routing_weights.unsqueeze(-1) * prev_stacked).sum(dim=2)
+        else:
+            # Per-layer router path: prev_exit_hidden passed directly
+            prev_exit_hidden = prev_exit_hidden_or_stacked
+
         update = exit_hidden - prev_exit_hidden  # (B, T, D)
         surprise = update.norm(dim=-1) / (prev_exit_hidden.norm(dim=-1) + 1e-8)  # (B, T)
         surprise_loss = surprise.mean()
@@ -1461,6 +1473,78 @@ class EarlyExitGPT(GPT):
         diag = {
             'entropy': entropy_loss.detach(),
             'surprise': surprise_loss.detach(),
+        }
+        return loss_term, diag
+
+    def _compute_ce_guided_loss(self, logits, targets, stacked, routing_weights, config):
+        """CE-Guided Routing Loss (compile-friendly, zero extra memory).
+
+        Uses the per-token cross-entropy loss (already computed from logits) as a
+        direct teaching signal for the router:
+          - Low CE → token is easy → should exit early (target_depth ≈ 0)
+          - High CE → token is hard → should exit late  (target_depth ≈ 1)
+
+        Plus a surprise component from consecutive candidate states in `stacked`
+        (already stored) measuring representation stability across exits.
+
+        Args:
+            logits:          (B, T, V) — LM head output (already computed)
+            targets:         (B, T)   — target token IDs
+            stacked:         (B, T, n_exits, D) — candidate exit states (already stored)
+            routing_weights: (B, T, n_exits) — router's soft/hard exit weights
+            config:          GPTConfig
+
+        Returns (loss_term, diagnostics_dict).
+        """
+        B, T = targets.shape
+        n_exits = routing_weights.shape[-1]
+        device = targets.device
+
+        # --- Depth-matching loss: teach router easy→early, hard→late ---
+        # Per-token CE from existing logits (no extra matmul)
+        per_token_ce = F.cross_entropy(
+            logits.detach().view(-1, logits.size(-1)), targets.view(-1),
+            ignore_index=-1, reduction='none',
+        ).view(B, T)  # (B, T)
+
+        # Normalize within batch to [0, 1]: easiest=0, hardest=1
+        ce_min = per_token_ce.min()
+        ce_range = (per_token_ce.max() - ce_min).clamp(min=1e-8)
+        target_depth = (per_token_ce - ce_min) / ce_range  # (B, T) in [0, 1], detached
+
+        # Router's expected exit depth in [0, 1]
+        exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
+        exit_indices = exit_indices / max(n_exits - 1, 1)  # normalize to [0, 1]
+        expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)  # (B, T)
+
+        # Mask out ignored tokens (target == -1)
+        valid_mask = (targets != -1).float()  # (B, T)
+        n_valid = valid_mask.sum().clamp(min=1.0)
+
+        depth_loss = ((expected_depth - target_depth) ** 2 * valid_mask).sum() / n_valid
+
+        # --- Surprise: representation stability from consecutive exits ---
+        # stacked: (B, T, n_exits, D) — already stored, no extra allocation
+        # Per-exit surprise: how much each exit changes vs the previous exit
+        exit_norms = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)  # (B, T, n_exits-1)
+        diffs = (stacked[:, :, 1:] - stacked[:, :, :-1]).norm(dim=-1)  # (B, T, n_exits-1)
+        per_exit_surprise = diffs / exit_norms  # (B, T, n_exits-1)
+
+        # Weight by routing weights (later exits' surprise matters more if router selects them)
+        weighted_surprise = (routing_weights[:, :, 1:].float() * per_exit_surprise).sum(dim=-1)  # (B, T)
+        surprise_loss = (weighted_surprise * valid_mask).sum() / n_valid
+
+        # Combined: depth-matching + surprise penalty
+        loss_term = (
+            config.eet_ce_guided_lambda * depth_loss
+            + config.eet_surprise_lambda * surprise_loss
+        )
+
+        diag = {
+            'depth_loss': depth_loss.detach(),
+            'surprise': surprise_loss.detach(),
+            'target_depth_mean': target_depth.mean().detach(),
+            'expected_depth_mean': expected_depth.mean().detach(),
         }
         return loss_term, diag
 

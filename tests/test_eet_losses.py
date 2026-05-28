@@ -376,8 +376,8 @@ def test_eet_global_router():
     assert router_has_grad_p3, "Error: Global Router did not receive gradients in Phase 3 Hard Routing mode!"
     print("✓ Global Upfront Router with Phase 3 STE and efficiency loss is fully functional!")
 
-    # Test 4: Global Router + Phase 2 Soft Blending + Entropy-Surprise Loss + Bias Zero-Init Validation
-    config_es = GPTConfig(
+    # Test 4: Global Router + Phase 2 Soft Blending + CE-Guided Loss + Bias Zero-Init Validation
+    config_ceg = GPTConfig(
         n_head=2,
         n_kv_head=2,
         n_embd=16,
@@ -386,24 +386,24 @@ def test_eet_global_router():
         use_eet=True,
         eet_min_exit_layer=0,
         eet_commitment_beta=0.1,
-        eet_loss_variant='entropy_surprise',
+        eet_loss_variant='ce_guided',
         eet_global_router=True,
     )
     
-    model_es = EarlyExitGPT(config_es).to(device)
-    model_es.init_weights()
-    model_es.train()
+    model_ceg = EarlyExitGPT(config_ceg).to(device)
+    model_ceg.init_weights()
+    model_ceg.train()
     
     # Verify that the last linear layer of the global router has a bias initialized to exactly 0.0
-    for name, p in model_es.named_parameters():
+    for name, p in model_ceg.named_parameters():
         if "eet_router" in name and "bias" in name:
             # Check only the final layer bias in mlp chain
             if "net.4.bias" in name or "net.bias" in name:
                 assert (p == 0.0).all(), f"Error: Router bias {name} was not zero-initialized! Value: {p}"
                 print(f"  [Init Validation] Router bias {name} is correctly zero-initialized!")
                 
-    model_es.zero_grad(set_to_none=True)
-    loss_es = model_es(
+    model_ceg.zero_grad(set_to_none=True)
+    loss_ceg = model_ceg(
         x, y,
         eet_do_route=True,
         eet_phase=2,
@@ -411,18 +411,18 @@ def test_eet_global_router():
         eet_lambda_e=torch.tensor(0.1, device=device)
     )
     
-    assert not torch.isnan(loss_es), "Global Router Phase 2 Entropy Surprise is NaN"
-    loss_es.backward()
+    assert not torch.isnan(loss_ceg), "Global Router Phase 2 CE-Guided is NaN"
+    loss_ceg.backward()
     
-    router_has_grad_es = False
-    for name, p in model_es.named_parameters():
+    router_has_grad_ceg = False
+    for name, p in model_ceg.named_parameters():
         if "eet_router" in name and p.grad is not None:
-            router_has_grad_es = True
+            router_has_grad_ceg = True
             assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
-            print(f"  [Entropy-Surprise Phase 2] Router {name} has grad. norm: {p.grad.norm().item():.6f}")
+            print(f"  [CE-Guided Phase 2] Router {name} has grad. norm: {p.grad.norm().item():.6f}")
             
-    assert router_has_grad_es, "Error: Global Router did not receive gradients in Phase 2 Entropy Surprise mode!"
-    print("✓ Global Upfront Router with Phase 2 Entropy Surprise is fully functional!")
+    assert router_has_grad_ceg, "Error: Global Router did not receive gradients in Phase 2 CE-Guided mode!"
+    print("✓ Global Upfront Router with Phase 2 CE-Guided is fully functional!")
 
 
 def test_eet_freq_efficiency_and_diversity():
