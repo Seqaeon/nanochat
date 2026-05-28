@@ -662,6 +662,47 @@ class EarlyExitGPT(GPT):
             # Fallback to all ones if no tokens observed
             self.token_difficulty.fill_(1.0)
 
+    @torch.no_grad()
+    def calibrate_token_difficulty(self, calibration_batches):
+        """Runs one forward pass over a set of calibration batches to compute and freeze the token difficulty lookup.
+        
+        Runs in eager mode without mutating training compile graphs.
+        """
+        device = next(self.parameters()).device
+        
+        # Reset local sums and counts
+        self.token_ce_sum.zero_()
+        self.token_ce_count.zero_()
+        
+        # We run the dense model to compute logits and per-token CE
+        self.eval()  # ensure eval mode for stability
+        for idx, targets in calibration_batches:
+            idx = idx.to(device)
+            targets = targets.to(device)
+            
+            # Forward pass as dense
+            logits = super().forward(idx, None)  # (B, T, V)
+            
+            # Compute per-token CE
+            per_token_ce = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1),
+                ignore_index=-1, reduction='none'
+            )  # (B*T,)
+            
+            # Accumulate
+            valid_mask = (targets.view(-1) != -1)
+            valid_targets = targets.view(-1)[valid_mask]
+            valid_ce = per_token_ce[valid_mask]
+            self.token_ce_sum.index_add_(0, valid_targets, valid_ce.float())
+            self.token_ce_count.index_add_(0, valid_targets, torch.ones_like(valid_targets, dtype=torch.float32))
+            
+        self.train()  # restore train mode
+        
+        # Finalize (includes all-reduce if in DDP)
+        self.finalize_token_difficulty()
+        self.eet_current_phase = 2
+        self.eet_phase_tracker[0] = 2
+
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
                 eet_gumbel_temp=1.0):
@@ -679,50 +720,19 @@ class EarlyExitGPT(GPT):
 
         do_route = eet_do_route
 
-        # Check transition from Phase 1 to Phase 2/3
-        if eet_phase in {2, 3} and self.eet_current_phase == 1:
-            self.finalize_token_difficulty()
-            self.eet_current_phase = eet_phase
-            self.eet_phase_tracker[0] = eet_phase
-
         # Phase 1 (no routing): delegate to parent GPT.forward() to get the
         # exact same torch.compile graph as dense — avoiding OOM from the
         # compiler generating a less memory-efficient graph for the EET
         # forward's additional dead-code paths (frozen_h, reconstruction, etc.)
         if not do_route:
-            if self.training and targets is not None and eet_phase == 1:
-                # Get logits
-                logits = super().forward(idx, None, kv_cache)
-                # Compute loss ourselves
-                per_token_ce = F.cross_entropy(
-                    logits.view(-1, logits.size(-1)), targets.view(-1),
-                    ignore_index=-1, reduction='none'
-                )
-                valid_mask = (targets != -1)
-                loss = per_token_ce[valid_mask.view(-1)].mean()
-                
-                # Update calibration buffers
-                with torch.no_grad():
-                    valid_targets = targets[valid_mask]
-                    valid_ce = per_token_ce.view(targets.shape)[valid_mask]
-                    self.token_ce_sum.index_add_(0, valid_targets, valid_ce.float())
-                    self.token_ce_count.index_add_(0, valid_targets, torch.ones_like(valid_targets, dtype=torch.float32))
-                
+            loss_or_logits = super().forward(idx, targets, kv_cache, loss_reduction)
+            if self.training and targets is not None:
                 self._eet_diagnostics = {
                     'phase': eet_phase,
                     'active_frac': torch.tensor(1.0, device=idx.device),
                     'total_exit_frac': torch.tensor(0.0, device=idx.device),
                 }
-                return loss
-            else:
-                loss_or_logits = super().forward(idx, targets, kv_cache, loss_reduction)
-                if self.training and targets is not None:
-                    self._eet_diagnostics = {
-                        'phase': eet_phase,
-                        'active_frac': torch.tensor(1.0, device=idx.device),
-                        'total_exit_frac': torch.tensor(0.0, device=idx.device),
-                    }
-                return loss_or_logits
+            return loss_or_logits
 
         # --- Standard GPT embedding ---
         T0 = 0 if kv_cache is None else kv_cache.get_pos()

@@ -1644,6 +1644,21 @@ while True:
             eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
             eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
 
+            # Check for transition from Phase 1 to Phase 2/3 for ce_guided routing calibration
+            if (model_config.eet_loss_variant == 'ce_guided' and 
+                eet_phase in {2, 3} and 
+                hasattr(orig_model, 'eet_current_phase') and 
+                orig_model.eet_current_phase == 1):
+                # Trigger calibration
+                print0("[EET] Transitioning to Phase 2. Running one-time token difficulty calibration...")
+                # We draw a small set of batches from the training loader
+                calibration_batches = []
+                for _ in range(32): # draw 32 calibration batches
+                    calibration_batches.append(next(train_loader))
+                # Run the calibration in eager mode
+                orig_model.calibrate_token_difficulty(calibration_batches)
+                print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
+
             loss = model(x, y,
                          eet_do_route=eet_do_route,
                          eet_phase=eet_phase,
