@@ -278,6 +278,8 @@ parser.add_argument("--eet-gumbel-temp-end", type=float, default=0.1, help="EET:
 parser.add_argument("--eet-gumbel-hard", type=int, default=1, choices=[0, 1], help="EET: enable Straight-Through Estimator for Gumbel")
 parser.add_argument("--eet-commitment-beta", type=float, default=0.1, help="EET: commitment loss weight beta (0=disabled)")
 parser.add_argument("--eet-global-router", type=int, default=0, choices=[0, 1], help="EET: use an upfront single global exit router predicting exit layer distribution")
+parser.add_argument("--eet-freq-efficiency-alpha", type=float, default=0.0, help="EET: per-token frequency-scaled efficiency loss (0=uniform, >0=frequent tokens penalized more for late exits)")
+parser.add_argument("--eet-diversity-lambda", type=float, default=0.0, help="EET: exit diversity pressure - penalizes uniform exit depth across tokens (0=disabled)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -844,6 +846,8 @@ def build_model_meta(depth):
         eet_gumbel_hard=bool(getattr(args, 'eet_gumbel_hard', 1)),
         eet_commitment_beta=float(getattr(args, 'eet_commitment_beta', 0.1)),
         eet_global_router=bool(getattr(args, 'eet_global_router', 0)),
+        eet_freq_efficiency_alpha=float(getattr(args, 'eet_freq_efficiency_alpha', 0.0)),
+        eet_diversity_lambda=float(getattr(args, 'eet_diversity_lambda', 0.0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

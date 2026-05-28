@@ -384,6 +384,8 @@ class GPTConfig:
     eet_gumbel_hard: int = 1                       # 1=straight-through estimator, 0=soft blending
     eet_commitment_beta: float = 0.1               # commitment loss scale (Direction 3)
     eet_global_router: bool = False                # upfront single global exit router
+    eet_freq_efficiency_alpha: float = 0.0         # per-token frequency-scaled efficiency (0=uniform, >0=frequent tokens penalized more)
+    eet_diversity_lambda: float = 0.0              # exit diversity pressure: penalizes uniform exit depth across tokens
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -485,6 +487,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_adv_lambda", "eet_adv_entropy_lambda",
     "eet_gumbel_temp_start", "eet_gumbel_temp_end", "eet_gumbel_hard",
     "eet_commitment_beta", "eet_global_router",
+    "eet_freq_efficiency_alpha", "eet_diversity_lambda",
 }
 
 
