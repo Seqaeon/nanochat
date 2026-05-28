@@ -681,7 +681,7 @@ class EarlyExitGPT(GPT):
                 stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
                 x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
                 
-                p_exits = [routing_weights[:, :, k] for k in range(routing_weights.size(-1))]
+                p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
                 self._last_exit_probs = torch.stack(p_exits, dim=-1)
                 
                 # Diagnostics
@@ -1005,8 +1005,8 @@ class EarlyExitGPT(GPT):
         p_exits.append(p_reach)
         
         loss_accumulator = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
-        total_backbone_loss_val = 0.0
-        total_router_loss_val = 0.0
+        total_backbone_loss_val = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+        total_router_loss_val = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
         
         for k, (h_k, p_k) in enumerate(zip(all_layer_norms, p_exits)):
             # Backbone prediction and loss at layer k
@@ -1029,8 +1029,8 @@ class EarlyExitGPT(GPT):
             loss_accumulator = loss_accumulator + combined_k.mean()
             
             # Diagnostics tracking
-            total_backbone_loss_val += (loss_k * p_k.detach()).mean().item()
-            total_router_loss_val += (loss_k.detach() * p_k).mean().item()
+            total_backbone_loss_val = total_backbone_loss_val + (loss_k * p_k.detach()).mean()
+            total_router_loss_val = total_router_loss_val + (loss_k.detach() * p_k).mean()
             
             # Explicitly free memory
             del logits_k
@@ -1049,8 +1049,8 @@ class EarlyExitGPT(GPT):
         return loss, {
             'weighted_lm': total_backbone_loss_val,
             'router': total_router_loss_val,
-            'efficiency': efficiency_loss.item(),
-            'expected_exit': expected_exit.item(),
+            'efficiency': efficiency_loss,
+            'expected_exit': expected_exit,
         }
 
     def _compute_commitment_loss(self, all_layer_norms, exit_probs, beta=0.25):
