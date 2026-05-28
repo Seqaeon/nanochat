@@ -112,8 +112,8 @@ EET_COMMON="--models base \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 \
-  --warmdown-ratio 0.65 \
-  --final-lr-frac 0.05 \
+  --warmdown-ratio 0.5 \
+  --final-lr-frac 0.2 \
   --research-dim -1 \
   --target-tokens -1 \
   --target-active-params 0 \
@@ -184,15 +184,16 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --eet-router-type mlp2
 
 # EET_P1_12: Entropy + Surprise Loss (runs with hard routing in Phase 2)
-#run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
-#    "Entropy + surprise loss variant (running with hard routing)" \
-#    --use-eet 1 --eet-frozen-kv 0 \
-#    --eet-router-type mlp2 \
-#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
-#    --eet-loss-variant entropy_surprise \
-#    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
-#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
+    "Entropy + surprise loss variant (running with hard routing)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+    --eet-loss-variant entropy_surprise \
+    --eet-global-router 1 \
+    --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
+    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_10: Variant A — REINFORCE Quality Loss + Entropy Bonus
 #run_experiment "EET_P1_10_VARIANT_A_D${DEPTH}" \
@@ -252,29 +253,29 @@ run_experiment "EET_P1_15_GLOBAL_ROUTER_GUMBEL_D${DEPTH}" \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_14: Per-Token Layer-Weighted Loss with commitment loss
-run_experiment "EET_P1_14_LAYER_WEIGHTED_D${DEPTH}" \
-    "Per-Token Layer-Weighted Loss with commitment loss (beta=0.1, co-adaptive training)" \
-    --use-eet 1 --eet-frozen-kv 0 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
-    --eet-loss-variant layer_weighted \
-    --eet-commitment-beta 0.1 \
-    --eet-quality-entropy-bonus 0.1 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
-
+#run_experiment "EET_P1_14_LAYER_WEIGHTED_D${DEPTH}" \
+#    "Per-Token Layer-Weighted Loss with commitment loss (beta=0.1, co-adaptive training)" \
+#    --use-eet 1 --eet-frozen-kv 0 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+#    --eet-loss-variant layer_weighted \
+#    --eet-commitment-beta 0.1 \
+#    --eet-quality-entropy-bonus 0.1 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+#
 # EET_P1_16: Upfront Global Exit Router with Per-Token Layer-Weighted Loss + Commitment Loss
-run_experiment "EET_P1_16_GLOBAL_ROUTER_LW_D${DEPTH}" \
-    "Upfront Global Exit Router with Per-Token Layer-Weighted Loss and commitment loss (beta=0.1)" \
-    --use-eet 1 --eet-frozen-kv 0 \
-    --eet-router-type mlp2 \
-    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
-    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
-    --eet-loss-variant layer_weighted \
-    --eet-commitment-beta 0.1 \
-    --eet-global-router 1 \
-    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
-
+#run_experiment "EET_P1_16_GLOBAL_ROUTER_LW_D${DEPTH}" \
+#    "Upfront Global Exit Router with Per-Token Layer-Weighted Loss and commitment loss (beta=0.1)" \
+#    --use-eet 1 --eet-frozen-kv 0 \
+#    --eet-router-type mlp2 \
+#    --eet-freq-prior-alpha 0.1 --eet-pos-prior-beta 0.1 \
+#    --eet-warmup-frac 0.02 --eet-explore-frac 0.50 \
+#    --eet-loss-variant layer_weighted \
+#    --eet-commitment-beta 0.1 \
+#    --eet-global-router 1 \
+#    --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
+#
 
 # EET_P1_11: Variant B — Adversarial + Entropy stabilizer (uses hard routing, deprecated)
 # NOTE: adversarial variant uses hard routing in Phase 2 — router gets no gradient.
