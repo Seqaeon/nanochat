@@ -194,7 +194,6 @@ run_experiment "EET_P1_12_ENTROPY_SURPRISE_D${DEPTH}" \
     --eet-commitment-beta 0.1 \
     --eet-global-router 1 \
     --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 \
-    --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \
     --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1
 
 # EET_P1_10: Variant A — REINFORCE Quality Loss + Entropy Bonus
