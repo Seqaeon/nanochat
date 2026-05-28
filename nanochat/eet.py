@@ -759,12 +759,15 @@ class EarlyExitGPT(GPT):
                 
             # Collect states densely
             candidate_states = []
+            candidate_prev_states = []
             for i, block in enumerate(blocks):
                 x0_w = self.x0_lambdas[i]
                 if self._use_residual_decay and self.depth_decay_raw is not None:
                     decay_base = torch.sigmoid(self.depth_decay_raw)
                     x0_w = x0_w * (decay_base ** i)
                 x_input = self.resid_lambdas[i] * x + x0_w * x0
+                
+                prev_x_val = x_input
                 
                 ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
                 x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
@@ -777,10 +780,14 @@ class EarlyExitGPT(GPT):
                 
                 if i in routing_layers or i == n_layer - 1:
                     candidate_states.append(norm(x))
+                    candidate_prev_states.append(norm(prev_x_val))
             
             # Blend hidden states using routing weights
             stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
             x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
+            
+            prev_stacked = torch.stack(candidate_prev_states, dim=2)  # (B, T, n_exits, D)
+            prev_exit_hidden = (routing_weights.unsqueeze(-1) * prev_stacked).sum(dim=2)  # (B, T, D)
             
             p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
             self._last_exit_probs = torch.stack(p_exits, dim=-1)
@@ -837,6 +844,23 @@ class EarlyExitGPT(GPT):
                                     p_f = p_exit_i.float().clamp(min=1e-8)
                                     entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                                 loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
+                    elif loss_variant == 'entropy_surprise' and loss_reduction == 'mean':
+                        variant_loss, variant_diag = self._compute_entropy_surprise_loss(
+                            x_final, prev_exit_hidden, config
+                        )
+                        loss = loss + variant_loss
+                    elif loss_variant == 'reconstruct' and loss_reduction == 'mean':
+                        reconstruction_losses = []
+                        for idx, p_exit_i in enumerate(p_exits[:-1]):
+                            block_idx = config.eet_min_exit_layer + idx
+                            h_i = candidate_states[idx]
+                            translated = self.eet_translators[block_idx](h_i.detach())
+                            reconstruction_losses.append((translated, p_exit_i))
+                        
+                        recon_loss_term = self._compute_reconstruction_loss(
+                            logits, reconstruction_losses, eet_lambda_r, config.vocab_size
+                        )
+                        loss = loss + recon_loss_term
 
                     # Efficiency + diversity for global router quality path
                     if loss_reduction == 'mean':
@@ -1407,7 +1431,7 @@ class EarlyExitGPT(GPT):
         # exit_hidden: (B, T, D) — hidden state at each token's exit layer
         # prev_exit_hidden: (B, T, D) — hidden state at layer before exit
         B, T, D = exit_hidden.shape
-        topk_vocab = config.eet_topk_vocab
+        topk_vocab = min(config.eet_topk_vocab, config.vocab_size)
         unembed = self.lm_head.weight  # (padded_vocab, D)
 
         # --- Entropy: chunked projection to avoid (B*T, V) peak ---
