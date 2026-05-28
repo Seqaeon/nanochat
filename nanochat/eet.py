@@ -47,7 +47,6 @@ def compute_layer_loss(h_k, p_k, targets, lm_head, config, eet_quality_lambda):
     return combined_k.mean(), (loss_k * p_k.detach()).mean(), (loss_k.detach() * p_k).mean()
 
 
-@torch.compiler.disable
 def compute_efficiency_and_diversity(p_exits, n_exits, freq_bias, config, eet_lambda_e):
     """Compute per-token frequency-scaled efficiency loss + exit diversity pressure.
     
