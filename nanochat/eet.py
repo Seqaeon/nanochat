@@ -327,10 +327,9 @@ class EarlyExitRouter(nn.Module):
         # Apply temperature scaling
         logit = logit / temp
             
-        # Clamp logits to prevent sigmoid saturation — ensures gradients always
-        # flow regardless of how strongly one loss pushes. sigmoid(-5)=0.007,
-        # sigmoid(5)=0.993, so exit probs stay in [0.007, 0.993].
-        logit = logit.clamp(-5.0, 5.0)
+        # Soft-clamp logits to prevent sigmoid saturation while keeping gradients flowing.
+        # tanh ensures exit probs stay strictly in (0.0067, 0.9933) with non-zero derivative.
+        logit = 5.0 * torch.tanh(logit / 5.0)
         return torch.sigmoid(logit).to(h.dtype)
 
     def get_logit(self, h: torch.Tensor,
@@ -345,7 +344,8 @@ class EarlyExitRouter(nn.Module):
             logit = logit + freq_alpha * freq_bias.float().unsqueeze(-1)
         if pos_bias is not None and pos_beta > 0:
             logit = logit + pos_beta * pos_bias.float().unsqueeze(-1)
-        logit = logit.clamp(-5.0, 5.0)
+        # Soft-clamp logits to keep gradients flowing under extreme activations
+        logit = 5.0 * torch.tanh(logit / 5.0)
         return logit.to(h.dtype)
 
 
@@ -416,7 +416,8 @@ class GlobalExitRouter(nn.Module):
             decay = 1.0 - exit_indices / max(n_exits - 1, 1)
             logits = logits + pos_beta * pos_bias.float().unsqueeze(-1) * decay
 
-        logits = logits.clamp(-5.0, 5.0)
+        # Soft-clamp logits to keep gradients flowing under extreme activations
+        logits = 5.0 * torch.tanh(logits / 5.0)
         return logits.to(h.dtype)
 
 
