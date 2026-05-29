@@ -1665,12 +1665,15 @@ class EarlyExitGPT(GPT):
         # --- Direct classification loss on router logits ---
         if router_logits is not None:
             with torch.no_grad():
-                # Bin per-token CE into n_exits difficulty classes via quantiles
+                # Bin per-token CE into n_exits difficulty bins via z-score + sigmoid
+                # (compile-friendly: no torch.quantile or torch.bucketize)
                 valid_ce = per_token_ce[targets != -1]
-                if valid_ce.numel() > n_exits:
-                    quantiles = torch.linspace(0, 1, n_exits + 1, device=device)[1:-1]
-                    boundaries = torch.quantile(valid_ce.float(), quantiles)
-                    target_exit = torch.bucketize(per_token_ce, boundaries)  # (B, T) in [0, n_exits-1]
+                if valid_ce.numel() > 1:
+                    ce_mean = valid_ce.mean()
+                    ce_std = valid_ce.std().clamp(min=0.1)
+                    # sigmoid maps z-scores to [0, 1], scale to [0, n_exits-1]
+                    normalized = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
+                    target_exit = (normalized * n_exits).long().clamp(0, n_exits - 1)
                 else:
                     target_exit = torch.zeros(B, T, device=device, dtype=torch.long)
                 # Mask ignored tokens
