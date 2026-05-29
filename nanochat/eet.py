@@ -825,7 +825,9 @@ class EarlyExitGPT(GPT):
 
         blocks = list(self.transformer.h)
         n_layer = len(blocks)
-        need_exit_tracking = (eet_phase == 2 and loss_variant not in ('reconstruct', 'quality') and not is_layer_weighted)
+        is_global_router = getattr(config, 'eet_global_router', False)
+        need_exit_tracking = (eet_phase == 2 and not is_global_router and
+                              loss_variant not in ('reconstruct', 'quality', 'ce_guided') and not is_layer_weighted)
         
         if need_exit_tracking:
             exit_hidden = torch.zeros_like(x)                # (B, T, D)
@@ -835,7 +837,6 @@ class EarlyExitGPT(GPT):
 
         prev_x = x.detach()  # hidden state before first block
 
-        is_global_router = getattr(config, 'eet_global_router', False)
         if is_global_router:
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
             n_exits = len(routing_layers) + 1
