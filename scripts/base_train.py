@@ -2014,6 +2014,50 @@ print0(f"Total training time: {total_training_time/60:.2f}m")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
+# EET: Print comprehensive final router diagnostics at the end of the run
+if model_config.use_eet:
+    print0("\n================================================================================")
+    print0("[EET FINAL ROUTER DIAGNOSTICS]")
+    print0("================================================================================")
+    
+    if hasattr(orig_model, '_last_exit_probs') and orig_model._last_exit_probs is not None:
+        exit_probs = orig_model._last_exit_probs.detach().cpu().float() # (B, T, n_exits)
+        n_exits = exit_probs.size(-1)
+        
+        # 1. Compute argmax exit layer for every token in the batch
+        argmax_exits = exit_probs.argmax(dim=-1).numpy().ravel() # (B * T,)
+        total_tokens_evaluated = len(argmax_exits)
+        
+        print0(f"Analyzed {total_tokens_evaluated:,} tokens from the final training batch:")
+        print0("Actual hard exit (argmax) layer distribution:")
+        for slot in range(n_exits):
+            count = (argmax_exits == slot).sum()
+            pct = (count / max(total_tokens_evaluated, 1)) * 100
+            label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
+            print0(f"  {label:12s}: {pct:6.2f}% ({count:,} tokens)")
+            
+        # 2. Print soft probability stats per slot to see if they are distinct or collapsed
+        print0("\nSoft exit probability stats per slot:")
+        for slot in range(n_exits):
+            slot_probs = exit_probs[:, :, slot].numpy().ravel()
+            label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
+            print0(f"  {label:12s}: mean={slot_probs.mean():.6f} std={slot_probs.std():.6f} min={slot_probs.min():.6f} max={slot_probs.max():.6f}")
+            
+        # 3. Print mean and std of expected exit layer
+        layer_indices = torch.arange(n_exits).float()
+        expected_exit = (exit_probs * layer_indices).sum(dim=-1).numpy().ravel()
+        print0(f"\nMean expected exit layer (soft): {expected_exit.mean():.4f}")
+        print0(f"Std expected exit layer (soft):  {expected_exit.std():.6f}")
+        
+        # 4. Warn if completely collapsed
+        if expected_exit.std() < 1e-6:
+            print0("\n[EET WARNING] ⚠ ROUTER COLLAPSE DETECTED: The router outputs are constant across all tokens!")
+        else:
+            print0("\n[EET INFO] ✓ Router has learned token-dependent exit behavior!")
+    else:
+        print0("[EET FINAL DIAGNOSTIC] Warning: No router exit probabilities captured during the run.")
+    print0("================================================================================\n")
+
 # MST: write per-run summary row to mst_results.csv
 if _mst_tracker is not None:
     sp = orig_model.num_scaling_params() if hasattr(orig_model, 'num_scaling_params') else {}
