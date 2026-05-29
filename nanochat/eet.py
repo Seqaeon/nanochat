@@ -1619,25 +1619,23 @@ class EarlyExitGPT(GPT):
         return loss_term, diag
 
     def _compute_ce_guided_loss(self, logits, targets, stacked, routing_weights, config):
-        """CE-Guided Routing Loss — online per-token CE as difficulty signal.
+        """CE-Guided Routing Loss — representation instability as difficulty signal.
 
-        Instead of a frozen per-token-type difficulty lookup (which requires Phase 1
-        calibration and ignores context), this uses the model's own per-token
-        cross-entropy loss from the current forward pass:
-          - Low CE → token is easy in this context → exit early (target_depth ≈ 0)
-          - High CE → token is hard in this context → exit late  (target_depth ≈ 1)
+        Uses the relative change in hidden states across candidate exit layers as a
+        fully dynamic, zero-extra-memory difficulty signal:
+          - Representations stabilize quickly → easy → exit early (target_depth ≈ 0)
+          - Representations keep changing     → hard → exit late  (target_depth ≈ 1)
 
-        Advantages over frozen lookup:
+        This directly measures processing need rather than prediction quality:
           - No calibration needed (works with warmup_frac=0.0)
-          - Context-dependent ("bank" is easy in "go to the bank", hard in "river bank")
-          - Dynamic — adapts as the model trains (early: everything hard; late: common easy)
-          - Self-correcting — if router exits a hard token too early, CE is high,
-            loss pushes routing deeper next time
+          - Context-dependent (same token type gets different difficulty in different contexts)
+          - Zero extra memory (uses stacked states already in memory, no vocab-sized tensors)
+          - Self-correcting (unstable reps → route deeper → more processing → reps stabilize)
 
-        Plus a surprise component measuring representation stability across exits.
+        Plus a surprise component that penalizes routing to exits with high instability.
 
         Args:
-            logits:          (B, T, V) — LM head output (already computed)
+            logits:          (B, T, V) — LM head output (unused for difficulty, kept for API compat)
             targets:         (B, T)   — target token IDs
             stacked:         (B, T, n_exits, D) — candidate exit states (already stored)
             routing_weights: (B, T, n_exits) — router's soft/hard exit weights
@@ -1649,40 +1647,45 @@ class EarlyExitGPT(GPT):
         n_exits = routing_weights.shape[-1]
         device = targets.device
 
-        # --- Online difficulty from per-token CE (no calibration needed) ---
-        # Detach logits so no circular gradients flow through target_depth → routing_weights
-        per_token_ce = F.cross_entropy(
-            logits.detach().reshape(-1, logits.size(-1)), targets.reshape(-1),
-            ignore_index=-1, reduction='none'
-        ).reshape(B, T)  # (B, T)
+        # --- Target depth from representation instability (zero extra memory) ---
+        # Measures how much each token's hidden state changes between consecutive exits.
+        # torch.no_grad() prevents circular gradients: we only want to teach the router
+        # (through expected_depth), not modify transformer blocks through target_depth.
+        with torch.no_grad():
+            # Relative change between consecutive exit states: (B, T, n_exits-1)
+            change_norms = (stacked[:, :, 1:] - stacked[:, :, :-1]).norm(dim=-1)
+            exit_norms = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)
+            relative_change = change_norms / exit_norms  # (B, T, n_exits-1)
 
-        valid_mask = (targets != -1).float()  # (B, T)
-        n_valid = valid_mask.sum().clamp(min=1.0)
+            # Per-token instability: mean relative change across all exit transitions
+            instability = relative_change.mean(dim=-1)  # (B, T)
 
-        # Normalize CE to [0, 1] target depth via z-score + sigmoid.
-        # Sigmoid(z-score) is robust to the absolute scale of CE values,
-        # naturally maps batch-median difficulty to 0.5, and adapts as the model trains.
-        valid_ce = per_token_ce[targets != -1]
-        if valid_ce.numel() > 1:
-            ce_mean = valid_ce.mean()
-            ce_std = valid_ce.std().clamp(min=0.1)
-            target_depth = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
-        else:
-            target_depth = torch.full((B, T), 0.5, device=device, dtype=per_token_ce.dtype)
+            # Normalize to [0, 1] via z-score + sigmoid
+            valid_mask_bool = (targets != -1)
+            valid_inst = instability[valid_mask_bool]
+            if valid_inst.numel() > 1:
+                inst_mean = valid_inst.mean()
+                inst_std = valid_inst.std().clamp(min=1e-4)
+                target_depth = torch.sigmoid((instability - inst_mean) / inst_std)
+            else:
+                target_depth = torch.full((B, T), 0.5, device=device, dtype=instability.dtype)
 
         # Router's expected exit depth in [0, 1]
         exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
         exit_indices = exit_indices / max(n_exits - 1, 1)  # normalize to [0, 1]
         expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)  # (B, T)
 
+        valid_mask = (targets != -1).float()  # (B, T)
+        n_valid = valid_mask.sum().clamp(min=1.0)
+
         depth_loss = ((expected_depth - target_depth) ** 2 * valid_mask).sum() / n_valid
 
-        # --- Surprise: representation stability from consecutive exits ---
+        # --- Surprise: penalize routing to exits where representations are still changing ---
+        # (complementary to depth target: depth says WHERE, surprise says AVOID unstable points)
         # stacked: (B, T, n_exits, D) — already stored, no extra allocation
-        # Per-exit surprise: how much each exit changes vs the previous exit
-        exit_norms = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)  # (B, T, n_exits-1)
+        exit_norms_s = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)  # (B, T, n_exits-1)
         diffs = (stacked[:, :, 1:] - stacked[:, :, :-1]).norm(dim=-1)  # (B, T, n_exits-1)
-        per_exit_surprise = diffs / exit_norms  # (B, T, n_exits-1)
+        per_exit_surprise = diffs / exit_norms_s  # (B, T, n_exits-1)
 
         # Weight by routing weights (later exits' surprise matters more if router selects them)
         weighted_surprise = (routing_weights[:, :, 1:].float() * per_exit_surprise).sum(dim=-1)  # (B, T)
