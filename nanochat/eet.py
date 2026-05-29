@@ -468,7 +468,10 @@ class EETPhaseScheduler:
                  efficiency_lambda_end: float = 0.1):
         self.total_steps = max(total_steps, 1)
         self.warmup_end = int(warmup_frac * self.total_steps)
-        self.explore_end = self.warmup_end + int(explore_frac * self.total_steps)
+        if warmup_frac + explore_frac >= 1.0:
+            self.explore_end = self.total_steps
+        else:
+            self.explore_end = self.warmup_end + int(explore_frac * self.total_steps)
         self.reconstruct_lambda = reconstruct_lambda
         self.efficiency_lambda_start = efficiency_lambda_start
         self.efficiency_lambda_end = efficiency_lambda_end

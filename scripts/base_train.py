@@ -1583,7 +1583,8 @@ while True:
             efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
             efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
         )
-        if step == _eet_sched.explore_end:
+        # Only run the Phase 3 transition diagnostic when there actually is a Phase 3
+        if _eet_sched.explore_end < num_iterations and step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
             orig_model.train()  # must be training=True so do_route = eet_do_route and self.training → True
             with torch.no_grad():
@@ -1612,59 +1613,61 @@ while True:
             # torch.compile from generating a single graph covering all phases
             # (which pre-allocates buffers for reconstruction loss etc.)
             from nanochat.eet import EETPhaseScheduler
-            _eet_sched = EETPhaseScheduler(
+            _eet_phase_info = EETPhaseScheduler(
                 num_iterations,
                 warmup_frac=model_config.eet_warmup_frac,
                 explore_frac=model_config.eet_explore_frac,
                 reconstruct_lambda=model_config.eet_reconstruct_lambda,
                 efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
                 efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
-            )
-            _eet_phase_info = _eet_sched.get_phase(step)
-            
+            ).get_phase(step)
+
             use_gumbel = getattr(model_config, 'eet_gumbel_temp_start', 0.0) > 0.0
             is_layer_weighted = (model_config.eet_loss_variant == 'layer_weighted')
-            is_global_router = getattr(model_config, 'eet_global_router', False)
             bypass_phases = use_gumbel or is_layer_weighted
-
-            # Ensure routers and translators remain trainable throughout all phases
-            for param in orig_model.eet_routers.parameters():
-                param.requires_grad = True
-            for param in orig_model.eet_translators.parameters():
-                param.requires_grad = True
-
-            eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
-            if model_config.eet_gumbel_temp_start > 0.0:
-                t_start = model_config.eet_gumbel_temp_start
-                t_end = model_config.eet_gumbel_temp_end
-                progress = min(max(step / max(num_iterations, 1), 0.0), 1.0)
-                temp_val = t_start * ((t_end / t_start) ** progress)
-                eet_gumbel_temp_tensor = torch.tensor(temp_val, device=x.device, dtype=torch.float32)
 
             eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
             eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
 
-            # Check for transition from Phase 1 to Phase 2/3 for ce_guided routing calibration
-            if (model_config.eet_loss_variant == 'ce_guided' and 
-                eet_phase in {2, 3} and 
-                hasattr(orig_model, 'eet_current_phase') and 
-                orig_model.eet_current_phase == 1):
-                # Trigger calibration
-                print0("[EET] Transitioning to Phase 2. Running one-time token difficulty calibration...")
-                # We draw a small set of batches from the training loader
-                calibration_batches = []
-                for _ in range(32): # draw 32 calibration batches
-                    calibration_batches.append(next(train_loader))
-                # Run the calibration in eager mode
-                orig_model.calibrate_token_difficulty(calibration_batches)
-                print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
+            if eet_phase == 1 and not bypass_phases:
+                # Phase 1: take the EXACT same code path as non-EET dense training.
+                # No extra kwargs, no tensor allocations, no requires_grad loops.
+                # This ensures torch.compile generates the identical graph as dense.
+                loss = model(x, y)
+            else:
+                # Phase 2/3: full EET forward with routing
 
-            loss = model(x, y,
-                         eet_do_route=eet_do_route,
-                         eet_phase=eet_phase,
-                         eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
-                         eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
-                         eet_gumbel_temp=eet_gumbel_temp_tensor)
+                # Check for transition from Phase 1 to Phase 2/3 for ce_guided routing calibration
+                if (model_config.eet_loss_variant == 'ce_guided' and 
+                    hasattr(orig_model, 'eet_current_phase') and 
+                    orig_model.eet_current_phase == 1):
+                    print0("[EET] Transitioning to Phase 2. Running one-time token difficulty calibration...")
+                    calibration_batches = []
+                    for _ in range(32):
+                        calibration_batches.append(next(train_loader))
+                    orig_model.calibrate_token_difficulty(calibration_batches)
+                    print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
+
+                # Ensure routers and translators remain trainable
+                for param in orig_model.eet_routers.parameters():
+                    param.requires_grad = True
+                for param in orig_model.eet_translators.parameters():
+                    param.requires_grad = True
+
+                eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
+                if model_config.eet_gumbel_temp_start > 0.0:
+                    t_start = model_config.eet_gumbel_temp_start
+                    t_end = model_config.eet_gumbel_temp_end
+                    progress = min(max(step / max(num_iterations, 1), 0.0), 1.0)
+                    temp_val = t_start * ((t_end / t_start) ** progress)
+                    eet_gumbel_temp_tensor = torch.tensor(temp_val, device=x.device, dtype=torch.float32)
+
+                loss = model(x, y,
+                             eet_do_route=eet_do_route,
+                             eet_phase=eet_phase,
+                             eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
+                             eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
+                             eet_gumbel_temp=eet_gumbel_temp_tensor)
         else:
             loss = model(x, y)
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
@@ -1723,7 +1726,7 @@ while True:
             _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(sub_grad_sq[j] ** 0.5)
         orig_model._cached_grad_norms = _cached_sub_grad_norms
     # Capture EET router/translator gradient norms BEFORE optimizer step clears them
-    if model_config.use_eet and hasattr(orig_model, 'eet_routers'):
+    if model_config.use_eet and hasattr(orig_model, 'eet_routers') and eet_phase >= 2:
         _eet_grad_info = {'step': step}
         # Per-router-layer gradient norms
         total_router_grad_sq = 0.0
@@ -1769,7 +1772,7 @@ while True:
     if scaler is not None:
         scaler.unscale_(optimizer)
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
-        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
             torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         # In distributed training, all ranks must agree on whether to skip the step.
         # Each rank may independently encounter inf/nan gradients, so we all-reduce
@@ -1781,7 +1784,7 @@ while True:
         scaler.update()
     else:
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
-        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None:
+        if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
             torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
         # Fix 4C: gradient clipping before optimizer step (protects against large gradients
         # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
