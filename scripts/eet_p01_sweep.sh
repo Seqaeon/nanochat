@@ -206,7 +206,6 @@ run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
     --eet-commitment-beta 0.1 \
-    --eet-quality-entropy-bonus 0.1 \
     --eet-global-router 1 \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
     --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \

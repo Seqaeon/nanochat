@@ -1643,8 +1643,12 @@ while True:
                     orig_model.eet_current_phase == 1):
                     # Skip calibration if we never had a Phase 1 dense training warmup (e.g. warmup-frac 0.0)
                     if _eet_sched.warmup_end == 0:
+                        # Set token_difficulty to 0.5 (neutral) instead of leaving at 0.0 (all-easy),
+                        # which would cause the CE-guided loss to collapse all routing to earliest exit.
+                        orig_model.token_difficulty.fill_(0.5)
                         orig_model.eet_current_phase = eet_phase
                         orig_model.eet_phase_tracker[0] = eet_phase
+                        print0(f"[EET] No Phase 1 warmup — token difficulty set to neutral (0.5). Entering Phase {eet_phase} directly.")
                     else:
                         print0(f"[EET] Transitioning to Phase {eet_phase}. Running one-time token difficulty calibration...")
                         calibration_batches = []
@@ -1737,41 +1741,8 @@ while True:
         for j in range(N):
             _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(sub_grad_sq[j] ** 0.5)
         orig_model._cached_grad_norms = _cached_sub_grad_norms
-    # Capture EET router/translator gradient norms BEFORE optimizer step clears them
-    if model_config.use_eet and hasattr(orig_model, 'eet_routers') and eet_phase >= 2:
-        _eet_grad_info = {'step': step}
-        # Per-router-layer gradient norms
-        total_router_grad_sq = 0.0
-        n_router_params_with_grad = 0
-        for layer_idx, router in enumerate(orig_model.eet_routers):
-            layer_grad_sq = 0.0
-            layer_n = 0
-            for pname, p in router.named_parameters():
-                if p.grad is not None:
-                    gnorm = float(p.grad.float().norm())
-                    layer_grad_sq += gnorm ** 2
-                    layer_n += 1
-                    _eet_grad_info[f'router_{layer_idx}_{pname}_grad_norm'] = gnorm
-            layer_gnorm = layer_grad_sq ** 0.5
-            _eet_grad_info[f'router_{layer_idx}_total_grad_norm'] = layer_gnorm
-            total_router_grad_sq += layer_grad_sq
-            n_router_params_with_grad += layer_n
-        _eet_grad_info['router_total_grad_norm'] = total_router_grad_sq ** 0.5
-        _eet_grad_info['n_router_params_with_grad'] = n_router_params_with_grad
-        # Translator gradient norms
-        total_trans_grad_sq = 0.0
-        for layer_idx, translator in enumerate(orig_model.eet_translators):
-            layer_grad_sq = 0.0
-            for pname, p in translator.named_parameters():
-                if p.grad is not None:
-                    gnorm = float(p.grad.float().norm())
-                    layer_grad_sq += gnorm ** 2
-                    _eet_grad_info[f'translator_{layer_idx}_{pname}_grad_norm'] = gnorm
-            _eet_grad_info[f'translator_{layer_idx}_total_grad_norm'] = layer_grad_sq ** 0.5
-            total_trans_grad_sq += layer_grad_sq
-        _eet_grad_info['translator_total_grad_norm'] = total_trans_grad_sq ** 0.5
-        # Cache for console logging and file output
-        orig_model._eet_grad_info = _eet_grad_info
+    # Placeholder: EET gradient diagnostics are captured AFTER clipping (see below)
+    _eet_grad_pending = model_config.use_eet and hasattr(orig_model, 'eet_routers') and eet_phase >= 2
     # step the optimizer
     lrm = get_lr_multiplier_onecycle(step) if use_research_scheduler else get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
@@ -1798,6 +1769,41 @@ while True:
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
         if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
             torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
+    # Capture EET router/translator gradient norms AFTER clipping so logged values
+    # reflect what the optimizer actually sees (not the raw pre-clip norms)
+    if _eet_grad_pending:
+        _eet_grad_info = {'step': step}
+        total_router_grad_sq = 0.0
+        n_router_params_with_grad = 0
+        for layer_idx, router in enumerate(orig_model.eet_routers):
+            layer_grad_sq = 0.0
+            layer_n = 0
+            for pname, p in router.named_parameters():
+                if p.grad is not None:
+                    gnorm = float(p.grad.float().norm())
+                    layer_grad_sq += gnorm ** 2
+                    layer_n += 1
+                    _eet_grad_info[f'router_{layer_idx}_{pname}_grad_norm'] = gnorm
+            layer_gnorm = layer_grad_sq ** 0.5
+            _eet_grad_info[f'router_{layer_idx}_total_grad_norm'] = layer_gnorm
+            total_router_grad_sq += layer_grad_sq
+            n_router_params_with_grad += layer_n
+        _eet_grad_info['router_total_grad_norm'] = total_router_grad_sq ** 0.5
+        _eet_grad_info['n_router_params_with_grad'] = n_router_params_with_grad
+        total_trans_grad_sq = 0.0
+        for layer_idx, translator in enumerate(orig_model.eet_translators):
+            layer_grad_sq = 0.0
+            for pname, p in translator.named_parameters():
+                if p.grad is not None:
+                    gnorm = float(p.grad.float().norm())
+                    layer_grad_sq += gnorm ** 2
+                    _eet_grad_info[f'translator_{layer_idx}_{pname}_grad_norm'] = gnorm
+            _eet_grad_info[f'translator_{layer_idx}_total_grad_norm'] = layer_grad_sq ** 0.5
+            total_trans_grad_sq += layer_grad_sq
+        _eet_grad_info['translator_total_grad_norm'] = total_trans_grad_sq ** 0.5
+        orig_model._eet_grad_info = _eet_grad_info
+    # Resume non-scaler optimizer step logic (Fix 4C, GER, optimizer.step)
+    if scaler is None:
         # Fix 4C: gradient clipping before optimizer step (protects against large gradients
         # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
         if args.max_grad_norm > 0:
