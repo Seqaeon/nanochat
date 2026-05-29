@@ -1619,15 +1619,22 @@ class EarlyExitGPT(GPT):
         return loss_term, diag
 
     def _compute_ce_guided_loss(self, logits, targets, stacked, routing_weights, config):
-        """CE-Guided Routing Loss (compile-friendly, zero extra memory).
+        """CE-Guided Routing Loss — online per-token CE as difficulty signal.
 
-        Uses the per-token cross-entropy loss (already computed from logits) as a
-        direct teaching signal for the router:
-          - Low CE → token is easy → should exit early (target_depth ≈ 0)
-          - High CE → token is hard → should exit late  (target_depth ≈ 1)
+        Instead of a frozen per-token-type difficulty lookup (which requires Phase 1
+        calibration and ignores context), this uses the model's own per-token
+        cross-entropy loss from the current forward pass:
+          - Low CE → token is easy in this context → exit early (target_depth ≈ 0)
+          - High CE → token is hard in this context → exit late  (target_depth ≈ 1)
 
-        Plus a surprise component from consecutive candidate states in `stacked`
-        (already stored) measuring representation stability across exits.
+        Advantages over frozen lookup:
+          - No calibration needed (works with warmup_frac=0.0)
+          - Context-dependent ("bank" is easy in "go to the bank", hard in "river bank")
+          - Dynamic — adapts as the model trains (early: everything hard; late: common easy)
+          - Self-correcting — if router exits a hard token too early, CE is high,
+            loss pushes routing deeper next time
+
+        Plus a surprise component measuring representation stability across exits.
 
         Args:
             logits:          (B, T, V) — LM head output (already computed)
@@ -1642,19 +1649,31 @@ class EarlyExitGPT(GPT):
         n_exits = routing_weights.shape[-1]
         device = targets.device
 
-        # --- Depth-matching loss: teach router easy→early, hard→late ---
-        # Target depth derived from frozen Phase 1 dense CE difficulty mapping
-        safe_targets = targets.clamp(min=0, max=config.vocab_size - 1)
-        target_depth = self.token_difficulty[safe_targets]  # (B, T) in [0, 1]
+        # --- Online difficulty from per-token CE (no calibration needed) ---
+        # Detach logits so no circular gradients flow through target_depth → routing_weights
+        per_token_ce = F.cross_entropy(
+            logits.detach().reshape(-1, logits.size(-1)), targets.reshape(-1),
+            ignore_index=-1, reduction='none'
+        ).reshape(B, T)  # (B, T)
+
+        valid_mask = (targets != -1).float()  # (B, T)
+        n_valid = valid_mask.sum().clamp(min=1.0)
+
+        # Normalize CE to [0, 1] target depth via z-score + sigmoid.
+        # Sigmoid(z-score) is robust to the absolute scale of CE values,
+        # naturally maps batch-median difficulty to 0.5, and adapts as the model trains.
+        valid_ce = per_token_ce[targets != -1]
+        if valid_ce.numel() > 1:
+            ce_mean = valid_ce.mean()
+            ce_std = valid_ce.std().clamp(min=0.1)
+            target_depth = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
+        else:
+            target_depth = torch.full((B, T), 0.5, device=device, dtype=per_token_ce.dtype)
 
         # Router's expected exit depth in [0, 1]
         exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
         exit_indices = exit_indices / max(n_exits - 1, 1)  # normalize to [0, 1]
         expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)  # (B, T)
-
-        # Mask out ignored tokens (target == -1)
-        valid_mask = (targets != -1).float()  # (B, T)
-        n_valid = valid_mask.sum().clamp(min=1.0)
 
         depth_loss = ((expected_depth - target_depth) ** 2 * valid_mask).sum() / n_valid
 
