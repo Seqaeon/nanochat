@@ -1583,8 +1583,8 @@ while True:
             efficiency_lambda_start=model_config.eet_efficiency_lambda_start,
             efficiency_lambda_end=model_config.eet_efficiency_lambda_end,
         )
-        # Only run the Phase 3 transition diagnostic when there actually is a Phase 3
-        if _eet_sched.explore_end < num_iterations and step == _eet_sched.explore_end:
+        # Only run the Phase 3 transition diagnostic when there actually is a Phase 3 and we had an exploration phase
+        if _eet_sched.explore_end < num_iterations and _eet_sched.explore_end > _eet_sched.warmup_end and step == _eet_sched.explore_end:
             print0(f"\n[EET DIAGNOSTIC] Step {step:05d}: Running router structure check before entering Phase 3...")
             orig_model.train()  # must be training=True so do_route = eet_do_route and self.training → True
             with torch.no_grad():
@@ -1641,11 +1641,11 @@ while True:
                 if (model_config.eet_loss_variant == 'ce_guided' and 
                     hasattr(orig_model, 'eet_current_phase') and 
                     orig_model.eet_current_phase == 1):
-                    print0("[EET] Transitioning to Phase 2. Running one-time token difficulty calibration...")
+                    print0(f"[EET] Transitioning to Phase {eet_phase}. Running one-time token difficulty calibration...")
                     calibration_batches = []
                     for _ in range(32):
                         calibration_batches.append(next(train_loader))
-                    orig_model.calibrate_token_difficulty(calibration_batches)
+                    orig_model.calibrate_token_difficulty(calibration_batches, target_phase=eet_phase)
                     print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
 
                 # Ensure routers and translators remain trainable

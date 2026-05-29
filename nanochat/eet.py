@@ -666,12 +666,15 @@ class EarlyExitGPT(GPT):
             self.token_difficulty.fill_(1.0)
 
     @torch.no_grad()
-    def calibrate_token_difficulty(self, calibration_batches):
+    def calibrate_token_difficulty(self, calibration_batches, target_phase=2):
         """Runs one forward pass over a set of calibration batches to compute and freeze the token difficulty lookup.
         
-        Runs in eager mode without mutating training compile graphs.
+        Runs in eager mode with micro-batching to guarantee OOM-free calibration.
         """
         device = next(self.parameters()).device
+        
+        # Free up cache memory before starting calibration
+        torch.cuda.empty_cache()
         
         # Reset local sums and counts
         self.token_ce_sum.zero_()
@@ -680,31 +683,38 @@ class EarlyExitGPT(GPT):
         # We run the dense model to compute logits and per-token CE
         self.eval()  # ensure eval mode for stability
         for batch in calibration_batches:
-            idx = batch[0].to(device)
-            targets = batch[1].to(device)
+            idx_full = batch[0].to(device)
+            targets_full = batch[1].to(device)
             
-            # Forward pass as dense
-            logits = super().forward(idx, None)  # (B, T, V)
-            
-            # Compute per-token CE
-            per_token_ce = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), targets.view(-1),
-                ignore_index=-1, reduction='none'
-            )  # (B*T,)
-            
-            # Accumulate
-            valid_mask = (targets.view(-1) != -1)
-            valid_targets = targets.view(-1)[valid_mask]
-            valid_ce = per_token_ce[valid_mask]
-            self.token_ce_sum.index_add_(0, valid_targets, valid_ce.float())
-            self.token_ce_count.index_add_(0, valid_targets, torch.ones_like(valid_targets, dtype=torch.float32))
-            
+            # Chunk the batch size to 1 to avoid OOM from large (B, T, V) logits tensors
+            B = idx_full.size(0)
+            for chunk_start in range(B):
+                idx = idx_full[chunk_start : chunk_start + 1]
+                targets = targets_full[chunk_start : chunk_start + 1]
+                
+                # Forward pass as dense
+                logits = super().forward(idx, None)  # (1, T, V) — extremely memory light!
+                
+                # Compute per-token CE
+                per_token_ce = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.view(-1),
+                    ignore_index=-1, reduction='none'
+                )  # (T,)
+                
+                # Accumulate
+                valid_mask = (targets.view(-1) != -1)
+                valid_targets = targets.view(-1)[valid_mask]
+                valid_ce = per_token_ce[valid_mask]
+                self.token_ce_sum.index_add_(0, valid_targets, valid_ce.float())
+                self.token_ce_count.index_add_(0, valid_targets, torch.ones_like(valid_targets, dtype=torch.float32))
+                
         self.train()  # restore train mode
+        torch.cuda.empty_cache()  # free up logits memory
         
         # Finalize (includes all-reduce if in DDP)
         self.finalize_token_difficulty()
-        self.eet_current_phase = 2
-        self.eet_phase_tracker[0] = 2
+        self.eet_current_phase = target_phase
+        self.eet_phase_tracker[0] = target_phase
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
