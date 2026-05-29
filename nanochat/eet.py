@@ -719,6 +719,9 @@ class EarlyExitGPT(GPT):
         loss_variant = config.eet_loss_variant
 
         do_route = eet_do_route
+        if not self.training and config.use_eet and self.eet_current_phase in {2, 3}:
+            do_route = True
+            eet_phase = 3
 
         # Phase 1 (no routing): delegate to parent GPT.forward() to get the
         # exact same torch.compile graph as dense — avoiding OOM from the
