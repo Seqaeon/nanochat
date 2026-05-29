@@ -258,6 +258,34 @@ class POSPrior(nn.Module):
 # Exit Router (3 variants)
 # ---------------------------------------------------------------------------
 
+class AttentionRouter(nn.Module):
+    """Lightweight self-attention router that allows tokens to observe surrounding context 
+    before making exit routing decisions.
+    """
+    def __init__(self, n_embd: int, out_dim: int, n_heads: int = 4):
+        super().__init__()
+        self.n_heads = n_heads
+        self.q_proj = nn.Linear(n_embd, n_embd, bias=True)
+        self.k_proj = nn.Linear(n_embd, n_embd, bias=True)
+        self.v_proj = nn.Linear(n_embd, n_embd, bias=True)
+        self.out_proj = nn.Linear(n_embd, out_dim, bias=True)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Input shape: (B, T, C)
+        B, T, C = x.size()
+        
+        # Self-attention projections
+        q = self.q_proj(x).view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2) # (B, nh, T, hs)
+        k = self.k_proj(x).view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2)
+        v = self.v_proj(x).view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2)
+        
+        # Causal attention using scaled dot product attention (highly optimized in modern PyTorch)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # Concat heads
+        
+        return self.out_proj(y)
+
+
 class EarlyExitRouter(nn.Module):
     """Per-layer exit router producing per-token exit probability.
 
@@ -265,6 +293,7 @@ class EarlyExitRouter(nn.Module):
       'linear': Single linear projection d → 1
       'mlp1':   d → hidden → 1 (one hidden layer + ReLU)
       'mlp2':   d → hidden → hidden → 1 (two hidden layers + ReLU)
+      'attention' / 'attn': Multi-head causal self-attention + linear projection d → 1
 
     Adds frequency and POS prior biases to the raw logit before sigmoid.
     """
@@ -291,6 +320,8 @@ class EarlyExitRouter(nn.Module):
                 nn.LeakyReLU(0.01),
                 Linear(hidden, 1, bias=True),
             )
+        elif router_type in ('attention', 'attn'):
+            self.net = AttentionRouter(n_embd, 1)
         else:
             raise ValueError(f"Unknown router type: {router_type}")
 
@@ -350,12 +381,13 @@ class EarlyExitRouter(nn.Module):
 
 
 class GlobalExitRouter(nn.Module):
-    """Upfront single exit router predicting exit layer distribution from input embeddings.
+    """Upfront global router that maps initial sequence embeddings directly to exit predictions.
 
     Three architecture variants:
       'linear': Single linear projection d → n_exits
       'mlp1':   d → hidden → n_exits (one hidden layer + LeakyReLU)
       'mlp2':   d → hidden → hidden → n_exits (two hidden layers + LeakyReLU)
+      'attention' / 'attn': Multi-head causal self-attention + linear projection d → n_exits
     """
 
     def __init__(self, n_embd: int, n_exits: int, router_type: str = 'mlp2',
@@ -380,6 +412,8 @@ class GlobalExitRouter(nn.Module):
                 nn.LeakyReLU(0.01),
                 Linear(hidden, n_exits, bias=True),
             )
+        elif router_type in ('attention', 'attn'):
+            self.net = AttentionRouter(n_embd, n_exits)
         else:
             raise ValueError(f"Unknown router type: {router_type}")
 
@@ -966,6 +1000,14 @@ class EarlyExitGPT(GPT):
                             p_exits, len(p_exits), freq_bias, config, eet_lambda_e
                         )
                         loss = loss + eff_div_loss
+                        
+                    # Quality entropy bonus for any routing loss variant (e.g. ce_guided) to encourage diverse routing
+                    if getattr(config, 'eet_quality_entropy_bonus', 0.0) > 0 and loss_reduction == 'mean':
+                        entropy_bonus = torch.tensor(0.0, device=targets.device, dtype=torch.float32)
+                        for p_exit_i in p_exits:
+                            p_f = p_exit_i.float().clamp(min=1e-8)
+                            entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
+                        loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
                                 
                 if getattr(config, 'eet_commitment_beta', 0.0) > 0:
                     commit_loss = self._compute_commitment_loss(

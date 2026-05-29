@@ -881,7 +881,7 @@ if __name__ == "__main__":
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")
-    parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2"])
+    parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2", "attention", "attn"])
     parser.add_argument("--eet-router-hidden", type=int, default=0)
     parser.add_argument("--eet-freq-prior-alpha", type=float, default=0.0)
     parser.add_argument("--eet-pos-prior-beta", type=float, default=0.0)

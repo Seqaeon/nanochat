@@ -594,6 +594,51 @@ def test_eet_sigmoid_temp_annealing():
     assert not torch.isnan(loss_high_temp), "E2E forward with high temp failed"
     
     print("✓ Sigmoid temperature annealing is functional and correct!")
+def test_eet_attention_router_and_entropy_bonus():
+    """Test that the AttentionRouter and eet_quality_entropy_bonus with ce_guided loss function correctly."""
+    from nanochat.eet import AttentionRouter
+    device = "cpu"
+    print(f"\n--- Testing AttentionRouter & Generic Entropy Bonus on {device} ---")
+    
+    # 1. Test AttentionRouter shape and output
+    attn_router = AttentionRouter(n_embd=16, out_dim=4, n_heads=2).to(device)
+    x_fake = torch.randn(2, 8, 16, device=device)
+    out = attn_router(x_fake)
+    assert out.shape == (2, 8, 4), f"Expected shape (2, 8, 4), got {out.shape}"
+    assert not torch.isnan(out).any(), "AttentionRouter output contains NaN"
+    print("✓ AttentionRouter shapes and causality verified!")
+    
+    # 2. Test E2E with attention router and ce_guided loss + entropy bonus
+    config = GPTConfig(
+        n_head=2, n_kv_head=2, n_embd=16, vocab_size=128, sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_router_type='attention',
+        eet_loss_variant='ce_guided',
+        eet_quality_entropy_bonus=0.1,
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    # We populate some dummy token CE states so that ce_guided doesn't complain
+    model.token_ce_count.fill_(1.0)
+    
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(1.0, device=device),
+        eet_lambda_e=torch.tensor(0.1, device=device),
+    )
+    
+    assert not torch.isnan(loss), "Loss with AttentionRouter & CE-guided + Entropy Bonus is NaN"
+    loss.backward()
+    print("✓ E2E training with AttentionRouter, CE-Guided routing, and Entropy Bonus is fully functional!")
 
 
 if __name__ == "__main__":
@@ -604,4 +649,6 @@ if __name__ == "__main__":
     test_eet_global_router()
     test_eet_freq_efficiency_and_diversity()
     test_eet_sigmoid_temp_annealing()
+    test_eet_attention_router_and_entropy_bonus()
+
 

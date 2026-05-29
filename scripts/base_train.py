@@ -251,7 +251,7 @@ parser.add_argument("--mst-sub-layers", type=int, default=1,
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
-parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2"], help="EET: exit router architecture")
+parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2", "attention", "attn"], help="EET: exit router architecture")
 parser.add_argument("--eet-router-hidden", type=int, default=0, help="EET: router MLP hidden dim (0=n_embd//4)")
 parser.add_argument("--eet-freq-prior-alpha", type=float, default=0.0, help="EET: frequency prior weight (0=disabled)")
 parser.add_argument("--eet-pos-prior-beta", type=float, default=0.0, help="EET: POS prior weight (0=disabled)")
@@ -1641,12 +1641,17 @@ while True:
                 if (model_config.eet_loss_variant == 'ce_guided' and 
                     hasattr(orig_model, 'eet_current_phase') and 
                     orig_model.eet_current_phase == 1):
-                    print0(f"[EET] Transitioning to Phase {eet_phase}. Running one-time token difficulty calibration...")
-                    calibration_batches = []
-                    for _ in range(32):
-                        calibration_batches.append(next(train_loader))
-                    orig_model.calibrate_token_difficulty(calibration_batches, target_phase=eet_phase)
-                    print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
+                    # Skip calibration if we never had a Phase 1 dense training warmup (e.g. warmup-frac 0.0)
+                    if _eet_sched.warmup_end == 0:
+                        orig_model.eet_current_phase = eet_phase
+                        orig_model.eet_phase_tracker[0] = eet_phase
+                    else:
+                        print0(f"[EET] Transitioning to Phase {eet_phase}. Running one-time token difficulty calibration...")
+                        calibration_batches = []
+                        for _ in range(32):
+                            calibration_batches.append(next(train_loader))
+                        orig_model.calibrate_token_difficulty(calibration_batches, target_phase=eet_phase)
+                        print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
 
                 # Ensure routers and translators remain trainable
                 for param in orig_model.eet_routers.parameters():
