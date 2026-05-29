@@ -280,9 +280,9 @@ def main():
             if use_eet:
                 eval_kwargs['eet_do_route'] = True
                 eval_kwargs['eet_phase'] = 3
-            bpb = evaluate_bpb(model, loader, steps, token_bytes, **eval_kwargs)
+            bpb, val_loss = evaluate_bpb(model, loader, steps, token_bytes, **eval_kwargs)
             bpb_results[split_name] = bpb
-            print0(f"{split_name} bpb: {bpb:.6f}")
+            print0(f"{split_name} bpb: {bpb:.6f} | val_loss: {val_loss:.6f}")
 
     # --- CORE evaluation ---
     if 'core' in eval_modes:

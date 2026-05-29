@@ -1466,11 +1466,12 @@ while True:
             if args.use_eet:
                 eval_kwargs['eet_do_route'] = True
                 eval_kwargs['eet_phase'] = 3
-            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes, **eval_kwargs)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
+            val_bpb, val_loss = evaluate_bpb(model, val_loader, eval_steps, token_bytes, **eval_kwargs)
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f} | val_loss: {val_loss:.6f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
-            min_val_loss = val_bpb * math.log(2)  # bpb → nats/byte → loss proxy
+        if val_loss < min_val_loss:
+            min_val_loss = val_loss
         if _mst_tracker is not None:
             _mst_tracker.record_val(step, val_bpb)
         wandb_run.log({
