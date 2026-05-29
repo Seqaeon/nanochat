@@ -990,7 +990,8 @@ class EarlyExitGPT(GPT):
                         loss = loss + variant_loss
                     elif loss_variant == 'ce_guided' and loss_reduction == 'mean':
                         variant_loss, variant_diag = self._compute_ce_guided_loss(
-                            per_token_ce, targets, stacked, routing_weights, config
+                            per_token_ce, targets, stacked, routing_weights, config,
+                            router_logits=router_logits,
                         )
                         loss = loss + variant_loss
                     elif loss_variant == 'reconstruct' and loss_reduction == 'mean':
@@ -1007,7 +1008,10 @@ class EarlyExitGPT(GPT):
                         loss = loss + recon_loss_term
 
                     # Efficiency + diversity for global router quality path
-                    if loss_reduction == 'mean':
+                    # Skip for ce_guided: the CE classification loss already routes
+                    # easy→early, hard→late. Efficiency pressure creates a coherent
+                    # "always exit early" signal that overwhelms per-token differentiation.
+                    if loss_reduction == 'mean' and loss_variant != 'ce_guided':
                         eff_div_loss, _ = compute_efficiency_and_diversity(
                             p_exits, len(p_exits), freq_bias, config, eet_lambda_e
                         )
@@ -1630,61 +1634,60 @@ class EarlyExitGPT(GPT):
         }
         return loss_term, diag
 
-    def _compute_ce_guided_loss(self, per_token_ce, targets, stacked, routing_weights, config):
-        """CE-Guided Routing Loss — online per-token CE as difficulty signal.
+    def _compute_ce_guided_loss(self, per_token_ce, targets, stacked, routing_weights, config,
+                                 router_logits=None):
+        """CE-Guided Routing Loss — direct classification on router logits.
 
-        Uses per-token cross-entropy (already computed from the main loss, zero extra
-        memory) as a fully dynamic, context-dependent difficulty signal:
-          - Low CE → easy in this context → exit early (target_depth ≈ 0)
-          - High CE → hard in this context → exit late  (target_depth ≈ 1)
+        Bypasses the softmax Jacobian bottleneck that causes router collapse.
+        Instead of: router_logits → softmax → expected_depth → MSE (gradients cancel),
+        uses:       router_logits → F.cross_entropy(target_exit_bin) (gradients ~0.86/logit).
 
-        The per_token_ce tensor is DETACHED — no backward graph through the difficulty
-        target. Gradients only flow through expected_depth (teaches the router).
+        Per-token CE is binned into n_exits difficulty classes via quantiles.
+        F.cross_entropy gradient = softmax(logits) - one_hot(target), which is:
+          - Large (~0.86 per logit vs ~1e-6 through expected_depth)
+          - Per-token (different targets → different gradient directions)
+          - Non-cancelling (doesn't average away in shared weights)
 
         Args:
-            per_token_ce:    (B, T) — detached per-token CE from main loss (already computed)
+            per_token_ce:    (B, T) — detached per-token CE from main loss
             targets:         (B, T) — target token IDs
             stacked:         (B, T, n_exits, D) — candidate exit states
             routing_weights: (B, T, n_exits) — router's soft/hard exit weights
             config:          GPTConfig
-
-        Returns (loss_term, diagnostics_dict).
+            router_logits:   (B, T, n_exits) — raw router logits (before softmax)
         """
         B, T = targets.shape
         n_exits = routing_weights.shape[-1]
         device = targets.device
-
-        # --- Target depth from per-token CE (detached, zero extra memory) ---
-        # Normalize to [0, 1] via z-score + sigmoid: robust to CE scale shifts
-        valid_mask = (targets != -1).float()  # (B, T)
+        valid_mask = (targets != -1).float()
         n_valid = valid_mask.sum().clamp(min=1.0)
-        valid_ce = per_token_ce[targets != -1]
-        if valid_ce.numel() > 1:
-            ce_mean = valid_ce.mean()
-            ce_std = valid_ce.std().clamp(min=0.1)
-            target_depth = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
+
+        # --- Direct classification loss on router logits ---
+        if router_logits is not None:
+            with torch.no_grad():
+                # Bin per-token CE into n_exits difficulty classes via quantiles
+                valid_ce = per_token_ce[targets != -1]
+                if valid_ce.numel() > n_exits:
+                    quantiles = torch.linspace(0, 1, n_exits + 1, device=device)[1:-1]
+                    boundaries = torch.quantile(valid_ce.float(), quantiles)
+                    target_exit = torch.bucketize(per_token_ce, boundaries)  # (B, T) in [0, n_exits-1]
+                else:
+                    target_exit = torch.zeros(B, T, device=device, dtype=torch.long)
+                # Mask ignored tokens
+                target_exit = target_exit * (targets != -1).long()
+
+            # F.cross_entropy directly on router logits — bypasses softmax Jacobian
+            depth_loss = F.cross_entropy(
+                router_logits.float().view(-1, n_exits),
+                target_exit.view(-1),
+                ignore_index=-100,  # won't match any valid target_exit
+                reduction='none',
+            )
+            # Mask and average over valid tokens only
+            depth_loss = (depth_loss.view(B, T) * valid_mask).sum() / n_valid
         else:
-            target_depth = torch.full((B, T), 0.5, device=device, dtype=per_token_ce.dtype)
-
-        # Router's expected exit depth in [0, 1]
-        exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
-        exit_indices = exit_indices / max(n_exits - 1, 1)
-        expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)  # (B, T)
-
-        # --- Depth loss: negative Pearson correlation ---
-        # MSE loss fails because per-token gradients cancel when summed over shared
-        # router weights (half push shallow, half push deep → net ~zero).
-        # Correlation loss gradient is ∝ (target_i - mean_target), which pushes
-        # easy and hard tokens in OPPOSITE directions without cancellation.
-        # When router is near-constant, gradient auto-amplifies (1/router_std).
-        exp_flat = (expected_depth * valid_mask).view(-1)
-        tgt_flat = (target_depth * valid_mask).view(-1)
-        exp_c = exp_flat - (exp_flat.sum() / n_valid)
-        tgt_c = tgt_flat - (tgt_flat.sum() / n_valid)
-        exp_norm = exp_c.norm().clamp(min=1e-4)
-        tgt_norm = tgt_c.norm().clamp(min=1e-4)
-        correlation = (exp_c * tgt_c).sum() / (exp_norm * tgt_norm)
-        depth_loss = 1.0 - correlation  # minimize → maximize correlation
+            # Fallback: no router_logits available (e.g. layer-weighted path)
+            depth_loss = torch.tensor(0.0, device=device)
 
         # --- Surprise: representation stability from consecutive exits ---
         exit_norms = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)
@@ -1698,6 +1701,15 @@ class EarlyExitGPT(GPT):
             config.eet_ce_guided_lambda * depth_loss
             + config.eet_surprise_lambda * surprise_loss
         )
+
+        # Diagnostics
+        with torch.no_grad():
+            exit_indices = torch.arange(n_exits, device=device, dtype=torch.float32)
+            exit_indices = exit_indices / max(n_exits - 1, 1)
+            expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)
+            ce_mean = per_token_ce[targets != -1].mean() if (targets != -1).any() else per_token_ce.mean()
+            ce_std = per_token_ce[targets != -1].std() if (targets != -1).any() else torch.tensor(0.0)
+            target_depth = torch.sigmoid((per_token_ce - ce_mean) / ce_std.clamp(min=0.1))
 
         diag = {
             'depth_loss': depth_loss.detach(),

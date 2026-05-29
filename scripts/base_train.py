@@ -1756,7 +1756,7 @@ while True:
         scaler.unscale_(optimizer)
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
         if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
-            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=10.0)
         # In distributed training, all ranks must agree on whether to skip the step.
         # Each rank may independently encounter inf/nan gradients, so we all-reduce
         # the found_inf flag (MAX = if any rank found inf, all ranks skip).
@@ -1768,7 +1768,7 @@ while True:
     else:
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
         if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
-            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=10.0)
     # Capture EET router/translator gradient norms AFTER clipping so logged values
     # reflect what the optimizer actually sees (not the raw pre-clip norms)
     if _eet_grad_pending:
