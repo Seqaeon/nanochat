@@ -281,6 +281,7 @@ parser.add_argument("--eet-global-router", type=int, default=0, choices=[0, 1], 
 parser.add_argument("--eet-freq-efficiency-alpha", type=float, default=0.0, help="EET: per-token frequency-scaled efficiency loss (0=uniform, >0=frequent tokens penalized more for late exits)")
 parser.add_argument("--eet-diversity-lambda", type=float, default=0.0, help="EET: exit diversity pressure - penalizes uniform exit depth across tokens (0=disabled)")
 parser.add_argument("--eet-ce-guided-lambda", type=float, default=1.0, help="EET: CE-guided routing loss weight (loss_variant='ce_guided')")
+parser.add_argument("--eet-router-lr-mult", type=float, default=5.0, help="EET: Router LR multiplier relative to gate_lr (default 5.0). Higher = faster router learning.")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -850,6 +851,7 @@ def build_model_meta(depth):
         eet_freq_efficiency_alpha=float(getattr(args, 'eet_freq_efficiency_alpha', 0.0)),
         eet_diversity_lambda=float(getattr(args, 'eet_diversity_lambda', 0.0)),
         eet_ce_guided_lambda=float(getattr(args, 'eet_ce_guided_lambda', 1.0)),
+        eet_router_lr_mult=float(getattr(args, 'eet_router_lr_mult', 5.0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1287,6 +1289,7 @@ if not resuming:
     step = 0
     val_bpb = None
     min_val_bpb = float("inf")
+    min_val_loss = float("inf")
     smooth_train_loss = 0 # EMA of training loss
     total_training_time = 0 # total wall-clock time of training
     last_periodic_ckpt_step = -1 # step of the last periodic (non-final) checkpoint saved
@@ -1467,6 +1470,7 @@ while True:
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+            min_val_loss = val_bpb * math.log(2)  # bpb → nats/byte → loss proxy
         if _mst_tracker is not None:
             _mst_tracker.record_val(step, val_bpb)
         wandb_run.log({
@@ -2031,6 +2035,7 @@ print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
+    print0(f"Minimum validation loss (nats/byte): {min_val_loss:.6f}")
 
 # EET: Print comprehensive final router diagnostics at the end of the run
 if model_config.use_eet:

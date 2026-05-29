@@ -387,6 +387,7 @@ class GPTConfig:
     eet_freq_efficiency_alpha: float = 0.0         # per-token frequency-scaled efficiency (0=uniform, >0=frequent tokens penalized more)
     eet_diversity_lambda: float = 0.0              # exit diversity pressure: penalizes uniform exit depth across tokens
     eet_ce_guided_lambda: float = 1.0              # CE-guided routing loss weight (loss_variant='ce_guided')
+    eet_router_lr_mult: float = 5.0                # Router LR multiplier (relative to gate_lr). Routers need higher LR to break symmetry.
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -8235,6 +8236,8 @@ class GPT(nn.Module):
         struct_matrix_params = []  # 2D struct params → normal Muon
         struct_adamw_params  = []  # 1D struct params → normal AdamW
         ckr_gate_adamw_params = []  # 13b: CKR gate params → dedicated conservative AdamW
+        eet_router_matrix_params = []  # EET router 2D params → dedicated high-LR Muon
+        eet_router_adamw_params  = []  # EET router 1D params → dedicated high-LR AdamW
 
         def _sort_ctx_stream_params(stream):
             """Route SelectiveContextStream/MultiScaleContext params to gate groups."""
@@ -8351,10 +8354,12 @@ class GPT(nn.Module):
         else:
             # Regular Block: split standard struct parameters from MoE router parameters
             gate_param_ids = set()
-            # EET early-exit routers
+            # EET early-exit routers → dedicated group (NOT gate group)
+            eet_router_matrix_params = []
+            eet_router_adamw_params = []
             for name, p in self.named_parameters():
                 if "eet_router" in name:
-                    (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
+                    (eet_router_matrix_params if p.ndim == 2 else eet_router_adamw_params).append(p)
                     gate_param_ids.add(id(p))
             for m in self.transformer.h.modules():
                 # MoNE_MLP router
@@ -8420,7 +8425,8 @@ class GPT(nn.Module):
             p19_scalar_params.append(self.depth_decay_raw)
         all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                       embedding_params + lm_head_params + value_embeds_params +
-                      resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
+                      resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params +
+                      eet_router_matrix_params + eet_router_adamw_params)
 
         # Safety catch-all: route any uncovered params (e.g. lokr_route_proj when
         # use_context=False, which is gated inside gate_parameters()) to struct groups.
@@ -8436,7 +8442,8 @@ class GPT(nn.Module):
             research_adamw_params = gate_adamw_params + struct_adamw_params  # recompute with new entries
             all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                           embedding_params + lm_head_params + value_embeds_params +
-                          resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params)
+                          resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params +
+                          eet_router_matrix_params + eet_router_adamw_params)
 
         assert len(list(self.parameters())) == len(all_params), (
             f"Parameter count mismatch even after catch-all: model has "
@@ -8487,6 +8494,23 @@ class GPT(nn.Module):
                 lr=embedding_lr * dmodel_lr_scale * 0.5,  # conservative: half of embedding LR
                 betas=(0.9, 0.999),  # high β₂ for slow, stable adaptation
                 eps=1e-10, weight_decay=0.0,  # no decay on positional params
+            ))
+        # EET router params: dedicated group with configurable LR multiplier
+        # Routers need higher LR than gate params to break the constant-function
+        # equilibrium (MoE literature: gating networks need 2-10× higher LR).
+        eet_router_lr_mult = getattr(self.config, 'eet_router_lr_mult', 5.0)
+        eet_router_lr = matrix_lr * gate_lr_scale * eet_router_lr_mult
+        if eet_router_matrix_params:
+            for shape in sorted({p.shape for p in eet_router_matrix_params}):
+                group_params = [p for p in eet_router_matrix_params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=eet_router_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
+        if eet_router_adamw_params:
+            param_groups.append(dict(
+                kind='adamw', params=eet_router_adamw_params, lr=eet_router_lr,
+                betas=adam_betas, eps=1e-10, weight_decay=0.0,
             ))
         # Phase 19: GPT-level scalar params (mixer gammas, depth decay, etc.)
         if p19_scalar_params:
