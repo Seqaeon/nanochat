@@ -1671,7 +1671,20 @@ class EarlyExitGPT(GPT):
         exit_indices = exit_indices / max(n_exits - 1, 1)
         expected_depth = (routing_weights.float() * exit_indices).sum(dim=-1)  # (B, T)
 
-        depth_loss = ((expected_depth - target_depth) ** 2 * valid_mask).sum() / n_valid
+        # --- Depth loss: negative Pearson correlation ---
+        # MSE loss fails because per-token gradients cancel when summed over shared
+        # router weights (half push shallow, half push deep → net ~zero).
+        # Correlation loss gradient is ∝ (target_i - mean_target), which pushes
+        # easy and hard tokens in OPPOSITE directions without cancellation.
+        # When router is near-constant, gradient auto-amplifies (1/router_std).
+        exp_flat = (expected_depth * valid_mask).view(-1)
+        tgt_flat = (target_depth * valid_mask).view(-1)
+        exp_c = exp_flat - (exp_flat.sum() / n_valid)
+        tgt_c = tgt_flat - (tgt_flat.sum() / n_valid)
+        exp_norm = exp_c.norm().clamp(min=1e-4)
+        tgt_norm = tgt_c.norm().clamp(min=1e-4)
+        correlation = (exp_c * tgt_c).sum() / (exp_norm * tgt_norm)
+        depth_loss = 1.0 - correlation  # minimize → maximize correlation
 
         # --- Surprise: representation stability from consecutive exits ---
         exit_norms = stacked[:, :, :-1].norm(dim=-1).clamp(min=1e-8)
