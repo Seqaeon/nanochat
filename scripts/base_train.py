@@ -1670,6 +1670,13 @@ while True:
                              eet_gumbel_temp=eet_gumbel_temp_tensor)
         else:
             loss = model(x, y)
+            
+        # Capture the final training step probabilities on the last micro-step of the final training step
+        if model_config.use_eet and (last_step or step == num_iterations - 1) and micro_step == grad_accum_steps - 1:
+            if hasattr(orig_model, '_last_exit_probs') and orig_model._last_exit_probs is not None:
+                orig_model._final_train_exit_probs = orig_model._last_exit_probs.detach().cpu().clone()
+                orig_model._final_train_tokens = x.detach().cpu().clone()
+                
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = False
         if is_dp:
@@ -2020,8 +2027,8 @@ if model_config.use_eet:
     print0("[EET FINAL ROUTER DIAGNOSTICS]")
     print0("================================================================================")
     
-    if hasattr(orig_model, '_last_exit_probs') and orig_model._last_exit_probs is not None:
-        exit_probs = orig_model._last_exit_probs.detach().cpu().float() # (B, T, n_exits)
+    if hasattr(orig_model, '_final_train_exit_probs') and orig_model._final_train_exit_probs is not None:
+        exit_probs = orig_model._final_train_exit_probs.detach().cpu().float() # (B, T, n_exits)
         n_exits = exit_probs.size(-1)
         
         # 1. Compute argmax exit layer for every token in the batch
@@ -2055,7 +2062,7 @@ if model_config.use_eet:
         else:
             print0("\n[EET INFO] ✓ Router has learned token-dependent exit behavior!")
     else:
-        print0("[EET FINAL DIAGNOSTIC] Warning: No router exit probabilities captured during the run.")
+        print0("[EET FINAL DIAGNOSTIC] Warning: No router exit probabilities captured during training steps.")
     print0("================================================================================\n")
 
 # MST: write per-run summary row to mst_results.csv
