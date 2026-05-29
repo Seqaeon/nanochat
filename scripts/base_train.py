@@ -1756,7 +1756,7 @@ while True:
         scaler.unscale_(optimizer)
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
         if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
-            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=1.0)
         # In distributed training, all ranks must agree on whether to skip the step.
         # Each rank may independently encounter inf/nan gradients, so we all-reduce
         # the found_inf flag (MAX = if any rank found inf, all ranks skip).
@@ -1768,7 +1768,7 @@ while True:
     else:
         # Clip early-exit router gradients specifically to keep routing updates slow and stable
         if hasattr(orig_model, 'eet_routers') and orig_model.eet_routers is not None and eet_phase >= 2:
-            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=0.1)
+            torch.nn.utils.clip_grad_norm_(orig_model.eet_routers.parameters(), max_norm=1.0)
     # Capture EET router/translator gradient norms AFTER clipping so logged values
     # reflect what the optimizer actually sees (not the raw pre-clip norms)
     if _eet_grad_pending:
@@ -2068,8 +2068,10 @@ if model_config.use_eet:
         print0(f"Std expected exit layer (soft):  {expected_exit.std():.6f}")
         
         # 4. Warn if completely collapsed
-        if expected_exit.std() < 1e-6:
-            print0("\n[EET WARNING] ⚠ ROUTER COLLAPSE DETECTED: The router outputs are constant across all tokens!")
+        if expected_exit.std() < 0.01:
+            print0(f"\n[EET WARNING] ⚠ ROUTER COLLAPSE: std={expected_exit.std():.6f} — router is near-constant across all tokens.")
+        elif expected_exit.std() < 0.1:
+            print0(f"\n[EET WARNING] ⚠ LOW DIFFERENTIATION: std={expected_exit.std():.6f} — router is barely differentiating tokens.")
         else:
             print0("\n[EET INFO] ✓ Router has learned token-dependent exit behavior!")
     else:

@@ -644,20 +644,19 @@ class EarlyExitGPT(GPT):
             )
             self._pos_prior.register_buffer('pos_bias', pos_table.to(target_device))
 
-        # Routers: small-init last layer so routers start with slight "don't exit" bias
-        # but KEEP random weights so the output varies across tokens from step 1.
-        # Zero-ing the weights causes the router to collapse to a constant function.
+        # Routers: init with enough scale so output VARIES across tokens from step 1.
+        # std=0.01 was too small — produced ~0.001 output variation → constant softmax.
+        # std=0.1 gives ~0.01 softmax variation → enough for argmax to differentiate.
         for router in self.eet_routers:
             if router.router_type == 'linear':
-                # Scale down weights for stable init, neutral bias
-                nn.init.normal_(router.net.weight, std=0.01)
-                nn.init.constant_(router.net.bias, 0.0)  # sigmoid(0) = 0.5 — neutral start
+                nn.init.normal_(router.net.weight, std=0.1)
+                nn.init.constant_(router.net.bias, 0.0)
             else:
-                # Scale down (not zero!) last linear in MLP chain
+                # Scale last linear in MLP chain
                 last_linear = list(router.net.modules())[-1]
                 if isinstance(last_linear, (Linear, nn.Linear)):
-                    nn.init.normal_(last_linear.weight, std=0.01)
-                    nn.init.constant_(last_linear.bias, 0.0)  # sigmoid(0) = 0.5 — neutral start
+                    nn.init.normal_(last_linear.weight, std=0.1)
+                    nn.init.constant_(last_linear.bias, 0.0)
 
         # Keep router params in float32 for gradient precision.
         # The per-token differentiation signal (~1e-7) rounds to zero in bf16.
