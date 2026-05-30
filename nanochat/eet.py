@@ -561,8 +561,10 @@ class EarlyExitGPT(GPT):
         # Exit router(s) setup
         if getattr(config, 'eet_global_router', False):
             # Upfront single global exit router
+            # n_exits = len(routing_layers): the final layer is NOT an exit point —
+            # it always processes all tokens regardless of exit decision.
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
-            n_exits = len(routing_layers) + 1
+            n_exits = len(routing_layers)
             self.eet_routers = nn.ModuleList([
                 GlobalExitRouter(n_embd, n_exits, router_type=config.eet_router_type,
                                  hidden_dim=router_hidden)
@@ -848,7 +850,7 @@ class EarlyExitGPT(GPT):
 
         if is_global_router:
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
-            n_exits = len(routing_layers) + 1
+            n_exits = len(routing_layers)  # final layer is NOT an exit — it always runs
             
             # Predict exit logits upfront from input embedding x0
             global_router = self.eet_routers[0]
@@ -914,14 +916,16 @@ class EarlyExitGPT(GPT):
                 
                 override_mask = (torch.rand(B, T, device=x0.device) < p_override).unsqueeze(-1)
                 forced = torch.zeros_like(routing_weights)
-                forced[:, :, -1] = 1.0
+                forced[:, :, -1] = 1.0  # force to deepest intermediate exit
                 
                 routing_weights = torch.where(override_mask, forced, routing_weights)
                 soft_weights = torch.where(override_mask, forced, soft_weights)
                 
-            # Collect states densely
+            # Run layers 0 to n_layer-2 densely, collect raw states at routing layers
             candidate_states = []
             for i, block in enumerate(blocks):
+                if i == n_layer - 1:
+                    break  # final layer runs AFTER exit selection
                 x0_w = self.x0_lambdas[i]
                 if self._use_residual_decay and self.depth_decay_raw is not None:
                     decay_base = torch.sigmoid(self.depth_decay_raw)
@@ -937,25 +941,44 @@ class EarlyExitGPT(GPT):
                     x_new = x_new + gamma * mixed
                 x = x_new
                 
-                if i in routing_layers or i == n_layer - 1:
-                    candidate_states.append(norm(x))
+                if i in routing_layers:
+                    candidate_states.append(x)  # raw hidden state (not norm)
             
-            # Blend hidden states using routing weights
+            # Select exit representation via routing weights
             stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
-            x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
+            x_exit = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
+            
+            # --- ALWAYS run final layer on all tokens ---
+            final_idx = n_layer - 1
+            x0_w_final = self.x0_lambdas[final_idx]
+            if self._use_residual_decay and self.depth_decay_raw is not None:
+                decay_base = torch.sigmoid(self.depth_decay_raw)
+                x0_w_final = x0_w_final * (decay_base ** final_idx)
+            x_final_input = self.resid_lambdas[final_idx] * x_exit + x0_w_final * x0
+            
+            ve_final = self.value_embeds[str(final_idx)](idx).to(x_final_input.dtype) if str(final_idx) in self.value_embeds else None
+            x_final_raw = blocks[final_idx](x_final_input, ve_final, cos_sin, self.window_sizes[final_idx], kv_cache)
+            
+            if self.residual_mixers is not None:
+                gamma = self.residual_mix_gamma[final_idx].to(x_final_raw.dtype)
+                mixed = self.residual_mixers[final_idx](x_final_raw.transpose(1, 2)).transpose(1, 2)
+                x_final_raw = x_final_raw + gamma * mixed
+            
+            x_final = norm(x_final_raw)  # final norm before lm_head
             
             p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
             self._last_exit_probs = torch.stack(p_exits, dim=-1)
             
-            # Diagnostics
+            # Diagnostics — all tokens go through final layer
             exit_layer_hard = routing_weights.argmax(dim=-1).float()
-            soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-            for slot_idx, p_exit_i in enumerate(p_exits[:-1]):
-                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + slot_idx + 1) / n_layer)
-            soft_active = soft_active + p_exits[-1] * 1.0
+            soft_active = torch.zeros(B, T, dtype=x_final.dtype, device=x_final.device)
+            for slot_idx, p_exit_i in enumerate(p_exits):
+                # Token at slot k uses layers 0..min_exit+k, then final layer
+                layers_used = config.eet_min_exit_layer + slot_idx + 2  # +1 for exit layer, +1 for final
+                soft_active = soft_active + p_exit_i * (layers_used / n_layer)
             
             avg_active = soft_active.mean()
-            total_exit_frac = (exit_layer_hard < len(routing_layers)).float().mean()
+            total_exit_frac = (exit_layer_hard < n_exits - 1).float().mean()  # fraction exiting before deepest
             
             if targets is not None:
                 if loss_variant == 'layer_weighted':
@@ -1063,7 +1086,7 @@ class EarlyExitGPT(GPT):
                         loss = loss + variant_loss
                     elif loss_variant == 'reconstruct' and loss_reduction == 'mean':
                         reconstruction_losses = []
-                        for idx, p_exit_i in enumerate(p_exits[:-1]):
+                        for idx, p_exit_i in enumerate(p_exits):
                             block_idx = config.eet_min_exit_layer + idx
                             h_i = candidate_states[idx]
                             translated = self.eet_translators[block_idx](h_i.detach())

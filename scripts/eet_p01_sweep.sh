@@ -223,7 +223,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # EET_P1_22: CE-Guided + Loss scaling by exit depth (Option 2: EMA Inverse Freq)
 run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
-    --use-eet 1 --eet-frozen-kv 1 \
+    --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
