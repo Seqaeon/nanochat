@@ -438,7 +438,7 @@ parser.add_argument("--scale-basis-size", type=int, default=1, choices=[0, 1], h
 parser.add_argument("--perm-expert-mode", type=str, default="low_rank", choices=["full", "low_rank", "factored"], help="PermutationMoE expert mode: 'full' (original D×D), 'low_rank', or 'factored' (Fix 1D)")
 parser.add_argument("--perm-rank", type=int, default=16, help="rank divisor for 'low_rank' mode or block size for 'factored' mode (Fix 1D)")
 # Fix 4C: gradient clipping
-parser.add_argument("--max-grad-norm", type=float, default=10.0, help="gradient norm clip threshold (-1 to disable, Fix 4C)")
+parser.add_argument("--max-grad-norm", type=float, default=1.0, help="gradient norm clip threshold (-1 to disable, Fix 4C)")
 # Fix 1H: PermutationMoE temperature scheduling
 parser.add_argument("--perm-temp-start", type=float, default=5.0, help="initial PermutationMoE temperature (decays to 1.0 over first 50%% of training, Fix 1H)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
@@ -1803,8 +1803,9 @@ while True:
     if scaler is None:
         # Fix 4C: gradient clipping before optimizer step (protects against large gradients
         # in adaptive gate pathways early in training, e.g. PermutationMoE, RemixedLinear)
-        if args.max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(orig_model.parameters(), args.max_grad_norm)
+        clip_val = 10.0 if (model_config.use_eet and args.max_grad_norm == 1.0) else args.max_grad_norm
+        if clip_val > 0:
+            torch.nn.utils.clip_grad_norm_(orig_model.parameters(), clip_val)
         # 19F: Gradient Equilibrium Regularization (gradient modifier)
         # Equalizes per-block gradient norms to prevent gradient starvation/domination
         ger_lambda = float(getattr(args, 'p19_grad_equilibrium', 0.0))
