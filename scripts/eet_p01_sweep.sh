@@ -224,7 +224,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
     --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 1 \
-    --eet-router-type mlp \
+    --eet-router-type mlp1 \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
     --eet-global-router 1 \
