@@ -225,7 +225,7 @@ run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
     --use-eet 1 --eet-frozen-kv 0 \
     --eet-router-type mlp2 \
-    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-warmup-frac 1.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
     --eet-global-router 1 \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
