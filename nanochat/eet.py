@@ -22,8 +22,9 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 
-from nanochat.common import COMPUTE_DTYPE, print0
+from nanochat.common import COMPUTE_DTYPE, print0, is_ddp_initialized
 from nanochat.gpt import GPT, GPTConfig, Linear, Block, norm, has_ve
 from torch.utils.checkpoint import checkpoint
 
@@ -583,6 +584,14 @@ class EarlyExitGPT(GPT):
         else:
             self.eet_translators = nn.ModuleList()  # empty — no wasted params
 
+        # Setup n_exits and exit_freq_ema buffer for token-wise loss depth-weighting
+        self.n_exits = n_exits if getattr(config, 'eet_global_router', False) else n_layer
+        if getattr(config, 'eet_depth_weight_type', 'none') == 'ema':
+            self.register_buffer(
+                'exit_freq_ema',
+                torch.ones(self.n_exits) / self.n_exits
+            )
+
         # Priors (eagerly loaded/computed in __init__ to prevent torch.compile graph breaks/OOM)
         tokenizer_dir = getattr(config, '_tokenizer_dir', None)
         if tokenizer_dir is None:
@@ -922,8 +931,8 @@ class EarlyExitGPT(GPT):
             # Diagnostics
             exit_layer_hard = routing_weights.argmax(dim=-1).float()
             soft_active = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-            for idx, p_exit_i in enumerate(p_exits[:-1]):
-                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
+            for slot_idx, p_exit_i in enumerate(p_exits[:-1]):
+                soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + slot_idx + 1) / n_layer)
             soft_active = soft_active + p_exits[-1] * 1.0
             
             avg_active = soft_active.mean()
@@ -959,7 +968,45 @@ class EarlyExitGPT(GPT):
                         )  # (B*T,)
                         # Mask ignored tokens for proper mean
                         valid_mask_flat = (targets.view(-1) != -1).float()
-                        loss = (per_token_ce_flat * valid_mask_flat).sum() / valid_mask_flat.sum().clamp(min=1.0)
+
+                        dw_type = getattr(config, 'eet_depth_weight_type', 'none')
+                        if dw_type != 'none':
+                            # 1. Get exit depth for every token in the batch
+                            exit_depth = routing_weights.argmax(dim=-1)  # (B, T)
+                            exit_depth_flat = exit_depth.view(-1)  # (B*T,)
+
+                            # 2. Update EMA buffer if using 'ema' strategy and training
+                            if dw_type == 'ema' and self.training:
+                                with torch.no_grad():
+                                    for k in range(self.n_exits):
+                                        freq_k = (exit_depth_flat == k).float().mean()
+                                        if is_ddp_initialized():
+                                            dist.all_reduce(freq_k, op=dist.ReduceOp.SUM)
+                                            freq_k = freq_k / dist.get_world_size()
+                                        self.exit_freq_ema[k] = 0.99 * self.exit_freq_ema[k] + 0.01 * freq_k
+
+                            # 3. Compute depth weighting
+                            if dw_type == 'linear':
+                                max_w = getattr(config, 'eet_depth_weight_max', 2.5)
+                                depth_weight_flat = 1.0 + (exit_depth_flat.float() / (self.n_exits - 1)) * (max_w - 1.0)
+                            elif dw_type == 'ema':
+                                raw_w = 1.0 / self.exit_freq_ema.clamp(min=0.05)
+                                norm_w = raw_w / raw_w.mean()
+                                depth_weight_flat = norm_w[exit_depth_flat]
+                            elif dw_type == 'sqrt':
+                                layer_indices = torch.arange(self.n_exits, device=idx.device).float()
+                                raw_layer_w = torch.sqrt(layer_indices + 1.0)
+                                norm_layer_w = raw_layer_w / raw_layer_w.mean()
+                                depth_weight_flat = norm_layer_w[exit_depth_flat]
+                            else:
+                                depth_weight_flat = torch.ones_like(exit_depth_flat, dtype=torch.float32)
+
+                            # 4. Multiply with per-token cross entropy before reduction
+                            weighted_ce = per_token_ce_flat * depth_weight_flat.detach()
+                            loss = (weighted_ce * valid_mask_flat).sum() / valid_mask_flat.sum().clamp(min=1.0)
+                        else:
+                            loss = (per_token_ce_flat * valid_mask_flat).sum() / valid_mask_flat.sum().clamp(min=1.0)
+
                         per_token_ce = per_token_ce_flat.detach().view(targets.shape)  # (B, T) — detached, no grad
                     else:
                         loss = F.cross_entropy(

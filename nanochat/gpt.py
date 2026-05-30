@@ -388,6 +388,8 @@ class GPTConfig:
     eet_diversity_lambda: float = 0.0              # exit diversity pressure: penalizes uniform exit depth across tokens
     eet_ce_guided_lambda: float = 1.0              # CE-guided routing loss weight (loss_variant='ce_guided')
     eet_router_lr_mult: float = 5.0                # Router LR multiplier (relative to gate_lr). Routers need higher LR to break symmetry.
+    eet_depth_weight_type: str = 'none'            # Token CE loss weighting type by exit depth ('none', 'linear', 'ema', 'sqrt')
+    eet_depth_weight_max: float = 2.5              # Maximum weighting factor for deep tokens in linear strategy
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -490,6 +492,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_gumbel_temp_start", "eet_gumbel_temp_end", "eet_gumbel_hard",
     "eet_commitment_beta", "eet_global_router",
     "eet_freq_efficiency_alpha", "eet_diversity_lambda", "eet_ce_guided_lambda",
+    "eet_depth_weight_type", "eet_depth_weight_max",
 }
 
 

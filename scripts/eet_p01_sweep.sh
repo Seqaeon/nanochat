@@ -208,6 +208,42 @@ run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
     --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 
 
+# EET_P1_21: CE-Guided + Loss scaling by exit depth (Option 1: Linear, max=2.5)
+run_experiment "EET_P1_21_CEG_LINEAR_D${DEPTH}" \
+    "CE-guided routing with linear loss scaling by exit depth (max=2.5)" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type linear --eet-depth-weight-max 2.5
+
+# EET_P1_22: CE-Guided + Loss scaling by exit depth (Option 2: EMA Inverse Freq)
+run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
+    "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type ema
+
+# EET_P1_23: CE-Guided + Loss scaling by exit depth (Option 3: Square Root)
+run_experiment "EET_P1_23_CEG_SQRT_D${DEPTH}" \
+    "CE-guided routing with square root loss scaling by exit depth" \
+    --use-eet 1 --eet-frozen-kv 0 \
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type sqrt
+
 
 #run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \
 #run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \

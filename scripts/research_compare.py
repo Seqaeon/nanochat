@@ -360,6 +360,8 @@ def run_training_sweep(args):
         "--eet-diversity-lambda", str(getattr(args, 'eet_diversity_lambda', 0.0)),
         "--eet-ce-guided-lambda", str(getattr(args, 'eet_ce_guided_lambda', 1.0)),
         "--eet-router-lr-mult", str(getattr(args, 'eet_router_lr_mult', 5.0)),
+        "--eet-depth-weight-type", str(getattr(args, 'eet_depth_weight_type', 'none')),
+        "--eet-depth-weight-max", str(getattr(args, 'eet_depth_weight_max', 2.5)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -913,6 +915,8 @@ if __name__ == "__main__":
     parser.add_argument("--eet-diversity-lambda", type=float, default=0.0)
     parser.add_argument("--eet-ce-guided-lambda", type=float, default=1.0)
     parser.add_argument("--eet-router-lr-mult", type=float, default=5.0)
+    parser.add_argument("--eet-depth-weight-type", type=str, default="none", choices=["none", "linear", "ema", "sqrt"])
+    parser.add_argument("--eet-depth-weight-max", type=float, default=2.5)
 
     args = parser.parse_args()
     

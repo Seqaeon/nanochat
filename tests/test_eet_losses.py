@@ -641,6 +641,63 @@ def test_eet_attention_router_and_entropy_bonus():
     print("✓ E2E training with AttentionRouter, CE-Guided routing, and Entropy Bonus is fully functional!")
 
 
+def test_eet_loss_depth_weighting():
+    """Verify that all three exit-depth loss weighting strategies compute losses and flow gradients correctly."""
+    device = "cpu"
+    print(f"\n--- Testing EET Loss Depth Weighting (Linear, EMA, Sqrt) on {device} ---")
+
+    B, T = 2, 8
+    x = torch.randint(0, 128, (B, T), device=device)
+    y = torch.randint(0, 128, (B, T), device=device)
+
+    for strategy in ['linear', 'ema', 'sqrt']:
+        print(f"  Testing strategy: {strategy}")
+        config = GPTConfig(
+            n_head=2,
+            n_kv_head=2,
+            n_embd=16,
+            vocab_size=128,
+            sequence_len=32,
+            use_eet=True,
+            eet_min_exit_layer=0,
+            eet_loss_variant='ce_guided',
+            eet_global_router=True,
+            eet_depth_weight_type=strategy,
+            eet_depth_weight_max=3.0,
+        )
+
+        model = EarlyExitGPT(config).to(device)
+        model.train()
+
+        if strategy == 'ema':
+            assert hasattr(model, 'exit_freq_ema'), "exit_freq_ema buffer not registered on model for 'ema' strategy"
+            assert model.exit_freq_ema.shape == (model.n_exits,), "exit_freq_ema buffer shape mismatch"
+
+        model.zero_grad(set_to_none=True)
+        loss = model(
+            x, y,
+            eet_do_route=True,
+            eet_phase=2,
+            eet_lambda_r=torch.tensor(1.0, device=device),
+            eet_lambda_e=torch.tensor(0.1, device=device),
+        )
+
+        assert not torch.isnan(loss), f"Loss is NaN under strategy {strategy}"
+        loss.backward()
+
+        # Check router gradient presence
+        router_has_grad = False
+        for name, p in model.named_parameters():
+            if "eet_router" in name and p.grad is not None:
+                router_has_grad = True
+                assert not torch.isnan(p.grad).any(), f"NaN gradient in {name} under strategy {strategy}"
+
+        assert router_has_grad, f"Router did not receive gradients under strategy {strategy}"
+        print(f"  ✓ Strategy {strategy} fully verified!")
+
+    print("✓ All EET loss depth-weighting strategies function flawlessly!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -650,5 +707,6 @@ if __name__ == "__main__":
     test_eet_freq_efficiency_and_diversity()
     test_eet_sigmoid_temp_annealing()
     test_eet_attention_router_and_entropy_bonus()
+    test_eet_loss_depth_weighting()
 
 
