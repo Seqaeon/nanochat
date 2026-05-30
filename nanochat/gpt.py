@@ -390,6 +390,9 @@ class GPTConfig:
     eet_router_lr_mult: float = 5.0                # Router LR multiplier (relative to gate_lr). Routers need higher LR to break symmetry.
     eet_depth_weight_type: str = 'none'            # Token CE loss weighting type by exit depth ('none', 'linear', 'ema', 'sqrt')
     eet_depth_weight_max: float = 2.5              # Maximum weighting factor for deep tokens in linear strategy
+    eet_use_override: int = 0                      # 1 = use stochastic depth override, 0 = disabled
+    eet_override_prob_start: float = 0.5           # initial override probability during training
+    eet_override_prob_end: float = 0.1             # final/minimum override probability
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -493,6 +496,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_commitment_beta", "eet_global_router",
     "eet_freq_efficiency_alpha", "eet_diversity_lambda", "eet_ce_guided_lambda",
     "eet_depth_weight_type", "eet_depth_weight_max",
+    "eet_use_override", "eet_override_prob_start", "eet_override_prob_end",
 }
 
 

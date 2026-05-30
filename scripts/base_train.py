@@ -284,6 +284,9 @@ parser.add_argument("--eet-ce-guided-lambda", type=float, default=1.0, help="EET
 parser.add_argument("--eet-router-lr-mult", type=float, default=5.0, help="EET: Router LR multiplier relative to gate_lr (default 5.0). Higher = faster router learning.")
 parser.add_argument("--eet-depth-weight-type", type=str, default="none", choices=["none", "linear", "ema", "sqrt"], help="EET: Token-wise CE loss weighting by exit depth")
 parser.add_argument("--eet-depth-weight-max", type=float, default=2.5, help="EET: Maximum weighting factor for deep tokens in linear strategy")
+parser.add_argument("--eet-use-override", type=int, default=0, choices=[0, 1], help="EET: 1 = enable stochastic depth override, 0 = disabled")
+parser.add_argument("--eet-override-prob-start", type=float, default=0.5, help="EET: initial override probability during training")
+parser.add_argument("--eet-override-prob-end", type=float, default=0.1, help="EET: minimum/terminal override probability during training")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -856,6 +859,9 @@ def build_model_meta(depth):
         eet_router_lr_mult=float(getattr(args, 'eet_router_lr_mult', 5.0)),
         eet_depth_weight_type=str(getattr(args, 'eet_depth_weight_type', 'none')),
         eet_depth_weight_max=float(getattr(args, 'eet_depth_weight_max', 2.5)),
+        eet_use_override=int(getattr(args, 'eet_use_override', 0)),
+        eet_override_prob_start=float(getattr(args, 'eet_override_prob_start', 0.5)),
+        eet_override_prob_end=float(getattr(args, 'eet_override_prob_end', 0.1)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1672,12 +1678,17 @@ while True:
                     temp_val = t_start * ((t_end / t_start) ** progress)
                     eet_gumbel_temp_tensor = torch.tensor(temp_val, device=x.device, dtype=torch.float32)
 
+                eet_step_tensor = torch.tensor(step, device=x.device, dtype=torch.float32)
+                eet_total_steps_tensor = torch.tensor(num_iterations, device=x.device, dtype=torch.float32)
+
                 loss = model(x, y,
                              eet_do_route=eet_do_route,
                              eet_phase=eet_phase,
                              eet_lambda_r=torch.tensor(_eet_phase_info['lambda_r'], device=x.device, dtype=torch.float32),
                              eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
-                             eet_gumbel_temp=eet_gumbel_temp_tensor)
+                             eet_gumbel_temp=eet_gumbel_temp_tensor,
+                             eet_step=eet_step_tensor,
+                             eet_total_steps=eet_total_steps_tensor)
         else:
             loss = model(x, y)
             

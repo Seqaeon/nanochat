@@ -698,6 +698,94 @@ def test_eet_loss_depth_weighting():
     print("✓ All EET loss depth-weighting strategies function flawlessly!")
 
 
+def test_eet_stochastic_override():
+    device = "cpu"
+    print("\nRunning EET Stochastic Depth Override test...")
+    
+    # 1. Create a tiny EET config with override enabled
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_loss_variant='ce_guided',
+        eet_global_router=True,
+        eet_use_override=1,
+        eet_override_prob_start=0.8,
+        eet_override_prob_end=0.2,
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    # Step 0 (prob should be start = 0.8)
+    model.zero_grad(set_to_none=True)
+    loss_0 = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(0.0, device=device),
+        eet_lambda_e=torch.tensor(0.0, device=device),
+        eet_gumbel_temp=1.0,
+        eet_step=torch.tensor(0, device=device, dtype=torch.float32),
+        eet_total_steps=torch.tensor(100, device=device, dtype=torch.float32),
+    )
+    assert not torch.isnan(loss_0), "Loss at step 0 is NaN"
+    loss_0.backward()
+    
+    has_grad = False
+    for name, p in model.named_parameters():
+        if p.grad is not None:
+            has_grad = True
+            assert not torch.isnan(p.grad).any()
+    assert has_grad, "No gradients were generated!"
+
+    # Step 100 (progress is 1.0, prob should be end = 0.2)
+    model.zero_grad(set_to_none=True)
+    loss_100 = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(0.0, device=device),
+        eet_lambda_e=torch.tensor(0.0, device=device),
+        eet_gumbel_temp=1.0,
+        eet_step=torch.tensor(100, device=device, dtype=torch.float32),
+        eet_total_steps=torch.tensor(100, device=device, dtype=torch.float32),
+    )
+    assert not torch.isnan(loss_100), "Loss at step 100 is NaN"
+    loss_100.backward()
+
+    # Verify that when override probability is forced to 1.0, all tokens go to final layer
+    config.eet_override_prob_start = 1.0
+    config.eet_override_prob_end = 1.0
+    
+    model.zero_grad(set_to_none=True)
+    _ = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=2,
+        eet_lambda_r=torch.tensor(0.0, device=device),
+        eet_lambda_e=torch.tensor(0.0, device=device),
+        eet_gumbel_temp=1.0,
+        eet_step=torch.tensor(0, device=device, dtype=torch.float32),
+        eet_total_steps=torch.tensor(100, device=device, dtype=torch.float32),
+    )
+    
+    last_probs = model._last_exit_probs
+    assert last_probs is not None
+    final_slot_probs = last_probs[:, :, -1]
+    assert torch.allclose(final_slot_probs, torch.ones_like(final_slot_probs)), "Overridden tokens did not all go to final layer!"
+
+    print("✓ Stochastic Depth Override verified successfully!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -708,5 +796,6 @@ if __name__ == "__main__":
     test_eet_sigmoid_temp_annealing()
     test_eet_attention_router_and_entropy_bonus()
     test_eet_loss_depth_weighting()
+    test_eet_stochastic_override()
 
 

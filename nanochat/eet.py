@@ -760,7 +760,7 @@ class EarlyExitGPT(GPT):
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
-                eet_gumbel_temp=1.0):
+                eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1):
         """Forward pass with early exit routing.
 
         Phase scheduling is done OUTSIDE this method (in base_train.py) to
@@ -899,6 +899,25 @@ class EarlyExitGPT(GPT):
                 else:
                     routing_weights = hard_weights.to(x0.dtype)
                     soft_weights = routing_weights
+                
+            if self.training and getattr(config, 'eet_use_override', 0) == 1:
+                step_val = eet_step
+                total_val = eet_total_steps
+                if not isinstance(step_val, torch.Tensor):
+                    step_val = torch.tensor(step_val, device=x0.device, dtype=torch.float32)
+                if not isinstance(total_val, torch.Tensor):
+                    total_val = torch.tensor(total_val, device=x0.device, dtype=torch.float32)
+                progress = step_val.float() / torch.clamp(total_val.float(), min=1.0)
+                p_start = getattr(config, 'eet_override_prob_start', 0.5)
+                p_end = getattr(config, 'eet_override_prob_end', 0.1)
+                p_override = torch.maximum(torch.tensor(p_end, device=x0.device), torch.tensor(p_start, device=x0.device) * (1.0 - progress))
+                
+                override_mask = (torch.rand(B, T, device=x0.device) < p_override).unsqueeze(-1)
+                forced = torch.zeros_like(routing_weights)
+                forced[:, :, -1] = 1.0
+                
+                routing_weights = torch.where(override_mask, forced, routing_weights)
+                soft_weights = torch.where(override_mask, forced, soft_weights)
                 
             # Collect states densely
             candidate_states = []
@@ -1220,6 +1239,25 @@ class EarlyExitGPT(GPT):
                     routing_weights = hard_weights - soft_weights.detach() + soft_weights
                 else:
                     routing_weights = soft_weights
+                    
+                if self.training and getattr(config, 'eet_use_override', 0) == 1:
+                    step_val = eet_step
+                    total_val = eet_total_steps
+                    if not isinstance(step_val, torch.Tensor):
+                        step_val = torch.tensor(step_val, device=x.device, dtype=torch.float32)
+                    if not isinstance(total_val, torch.Tensor):
+                        total_val = torch.tensor(total_val, device=x.device, dtype=torch.float32)
+                    progress = step_val.float() / torch.clamp(total_val.float(), min=1.0)
+                    p_start = getattr(config, 'eet_override_prob_start', 0.5)
+                    p_end = getattr(config, 'eet_override_prob_end', 0.1)
+                    p_override = torch.maximum(torch.tensor(p_end, device=x.device), torch.tensor(p_start, device=x.device) * (1.0 - progress))
+                    
+                    override_mask = (torch.rand(B, T, device=x.device) < p_override).unsqueeze(-1)
+                    forced = torch.zeros_like(routing_weights)
+                    forced[:, :, -1] = 1.0
+                    
+                    routing_weights = torch.where(override_mask, forced, routing_weights)
+                    soft_weights = torch.where(override_mask, forced, soft_weights)
                     
                 # Blend hidden states
                 stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
