@@ -438,7 +438,7 @@ parser.add_argument("--scale-basis-size", type=int, default=1, choices=[0, 1], h
 parser.add_argument("--perm-expert-mode", type=str, default="low_rank", choices=["full", "low_rank", "factored"], help="PermutationMoE expert mode: 'full' (original D×D), 'low_rank', or 'factored' (Fix 1D)")
 parser.add_argument("--perm-rank", type=int, default=16, help="rank divisor for 'low_rank' mode or block size for 'factored' mode (Fix 1D)")
 # Fix 4C: gradient clipping
-parser.add_argument("--max-grad-norm", type=float, default=1.0, help="gradient norm clip threshold (-1 to disable, Fix 4C)")
+parser.add_argument("--max-grad-norm", type=float, default=10.0, help="gradient norm clip threshold (-1 to disable, Fix 4C)")
 # Fix 1H: PermutationMoE temperature scheduling
 parser.add_argument("--perm-temp-start", type=float, default=5.0, help="initial PermutationMoE temperature (decays to 1.0 over first 50%% of training, Fix 1H)")
 parser.add_argument("--research-onecycle", type=int, default=1, choices=[0, 1], help="for research runs: 1=use OneCycle LR schedule, 0=fallback to base warmup/flat/warmdown")
@@ -1055,8 +1055,13 @@ def disable_fp8(model):
         for parent, attr_name, fp8_module in fp8_locations:
             setattr(parent, attr_name, fp8_module)
 
-# -----------------------------------------------------------------------------
-# Compile the model
+# Disable requires_grad for EET parameters during Phase 1 warmup
+# to avoid DDP find_unused_parameters overhead and match dense speed perfectly.
+if model_config.use_eet:
+    for param in model.eet_routers.parameters():
+        param.requires_grad = False
+    for param in model.eet_translators.parameters():
+        param.requires_grad = False
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 model = wrap_model(model, parallel_type=args.parallel, compile=args.compile, device=device)

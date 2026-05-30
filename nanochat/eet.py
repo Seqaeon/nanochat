@@ -778,8 +778,8 @@ class EarlyExitGPT(GPT):
             if self.training and targets is not None:
                 self._eet_diagnostics = {
                     'phase': eet_phase,
-                    'active_frac': torch.tensor(1.0, device=idx.device),
-                    'total_exit_frac': torch.tensor(0.0, device=idx.device),
+                    'active_frac': 1.0,
+                    'total_exit_frac': 0.0,
                 }
             return loss_or_logits
 
