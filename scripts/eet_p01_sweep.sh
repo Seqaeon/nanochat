@@ -206,7 +206,6 @@ run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \
     --eet-loss-variant ce_guided \
     --eet-global-router 1 \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
-    --eet-freq-efficiency-alpha 2.0 --eet-diversity-lambda 0.1 \
     --eet-gumbel-temp-start 2.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 
 
 
