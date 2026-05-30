@@ -1631,10 +1631,14 @@ while True:
             is_layer_weighted = (model_config.eet_loss_variant == 'layer_weighted')
             bypass_phases = use_gumbel or is_layer_weighted
 
-            eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
-            eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
+            if _eet_phase_info['phase'] == 1:
+                eet_do_route = False
+                eet_phase = 1
+            else:
+                eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
+                eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
 
-            if eet_phase == 1 and not bypass_phases:
+            if eet_phase == 1:
                 # Phase 1: take the EXACT same code path as non-EET dense training.
                 # No extra kwargs, no tensor allocations, no requires_grad loops.
                 # This ensures torch.compile generates the identical graph as dense.
