@@ -329,6 +329,7 @@ def run_training_sweep(args):
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
+        "--eet-reenter-final", str(getattr(args, 'eet_reenter_final', 0)),
         "--eet-router-type", str(getattr(args, 'eet_router_type', 'mlp2')),
         "--eet-router-hidden", str(getattr(args, 'eet_router_hidden', 0)),
         "--eet-freq-prior-alpha", str(getattr(args, 'eet_freq_prior_alpha', 0.0)),

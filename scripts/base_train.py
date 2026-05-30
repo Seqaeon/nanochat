@@ -287,6 +287,7 @@ parser.add_argument("--eet-depth-weight-max", type=float, default=2.5, help="EET
 parser.add_argument("--eet-use-override", type=int, default=0, choices=[0, 1], help="EET: 1 = enable stochastic depth override, 0 = disabled")
 parser.add_argument("--eet-override-prob-start", type=float, default=0.5, help="EET: initial override probability during training")
 parser.add_argument("--eet-override-prob-end", type=float, default=0.1, help="EET: minimum/terminal override probability during training")
+parser.add_argument("--eet-reenter-final", type=int, default=0, choices=[0, 1], help="EET: force exited tokens to re-enter and be processed by the final layer (1/0)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -826,6 +827,7 @@ def build_model_meta(depth):
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
+        eet_reenter_final=bool(getattr(args, 'eet_reenter_final', 0)),
         eet_router_type=getattr(args, 'eet_router_type', 'mlp2'),
         eet_router_hidden=getattr(args, 'eet_router_hidden', 0),
         eet_freq_prior_alpha=getattr(args, 'eet_freq_prior_alpha', 0.0),
@@ -973,12 +975,14 @@ if args.step_loss_file and master_process:
     # Fresh file per run.
     with open(args.step_loss_file, "w", encoding="utf-8"):
         pass
+eet_ever_routed = False
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after the copy
+    eet_ever_routed = meta_data.get("eet_ever_routed", False)
 
 # -----------------------------------------------------------------------------
 # FP8 training initialization and management (this has to be done before torch.compile)
@@ -1479,8 +1483,12 @@ while True:
         with disable_fp8(model):
             eval_kwargs = {}
             if args.use_eet:
-                eval_kwargs['eet_do_route'] = True
-                eval_kwargs['eet_phase'] = 3
+                if eet_ever_routed:
+                    eval_kwargs['eet_do_route'] = True
+                    eval_kwargs['eet_phase'] = 3
+                else:
+                    eval_kwargs['eet_do_route'] = False
+                    eval_kwargs['eet_phase'] = 1
             val_bpb, val_loss = evaluate_bpb(model, val_loader, eval_steps, token_bytes, **eval_kwargs)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f} | val_loss: {val_loss:.6f}")
         if val_bpb < min_val_bpb:
@@ -1547,6 +1555,7 @@ while True:
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": model_config_kwargs,
+                "eet_ever_routed": eet_ever_routed,
                 "user_config": user_config, # inputs to the training script
                 "device_batch_size": args.device_batch_size,
                 "max_seq_len": args.max_seq_len,
@@ -1648,6 +1657,8 @@ while True:
 
             eet_do_route = _eet_phase_info['do_route']
             eet_phase = _eet_phase_info['phase']
+            if eet_do_route:
+                eet_ever_routed = True
 
             if eet_phase == 1:
                 # Phase 1: take the EXACT same code path as non-EET dense training.

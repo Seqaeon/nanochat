@@ -1356,7 +1356,16 @@ class EarlyExitGPT(GPT):
             # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
             hard_candidate_states = []
             
+            n_kv_head = self.transformer.h[0].attn.n_kv_head
+            head_dim = self.transformer.h[0].attn.head_dim
+            frozen_k = torch.zeros(B, T, n_kv_head, head_dim, device=x.device, dtype=x.dtype)
+            frozen_v = torch.zeros(B, T, n_kv_head, head_dim, device=x.device, dtype=x.dtype)
+            
             for i, block in enumerate(blocks):
+                # Layer 8 Reentry variant: force all tokens to re-enter at the final layer
+                if i == n_layer - 1 and getattr(config, 'eet_reenter_final', False) and do_route:
+                    token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
+                
                 x0_w = self.x0_lambdas[i]
                 if self._use_residual_decay and self.depth_decay_raw is not None:
                     decay_base = torch.sigmoid(self.depth_decay_raw)
@@ -1365,7 +1374,15 @@ class EarlyExitGPT(GPT):
                 
                 prev_x_val = x_input
                 ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
-                x_new = block(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
+                
+                block_active = token_active if do_route else None
+                x_new = block(
+                    x_input, ve, cos_sin, self.window_sizes[i], kv_cache,
+                    token_active=block_active,
+                    eet_frozen_kv=config.eet_frozen_kv,
+                    frozen_k=frozen_k,
+                    frozen_v=frozen_v
+                )
 
                 active_mask = token_active.unsqueeze(-1)
                 x = torch.where(active_mask, x_new, frozen_h) if do_route else x_new
@@ -1397,6 +1414,13 @@ class EarlyExitGPT(GPT):
                         x.detach(),
                         frozen_h,
                     )
+                    
+                    # Capture computed keys and values for newly exited tokens
+                    if config.eet_frozen_kv:
+                        exit_mask_expanded = exit_mask.unsqueeze(-1).unsqueeze(-1) # (B, T, 1, 1)
+                        frozen_k = torch.where(exit_mask_expanded, block.attn._last_k, frozen_k)
+                        frozen_v = torch.where(exit_mask_expanded, block.attn._last_v, frozen_v)
+
                     token_active = token_active & ~exit_mask
                     total_exit_frac = total_exit_frac + exit_mask.float().mean()
                     n_routed_layers += 1

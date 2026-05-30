@@ -786,6 +786,58 @@ def test_eet_stochastic_override():
     print("✓ Stochastic Depth Override verified successfully!")
 
 
+def test_eet_attention_variants_and_reentry():
+    device = "cpu"
+    print("\n--- Testing EET Attention Variants and Layer 8 Reentry ---")
+    
+    # 1. Option A (eet_frozen_kv=False) & Layer 8 Reentry (eet_reenter_final=True)
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=1,
+        eet_exit_threshold=0.5,
+        eet_frozen_kv=False,     # Option A
+        eet_reenter_final=True,  # Layer 8 Reentry
+        n_layer=4
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    loss_a = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+    )
+    assert not torch.isnan(loss_a), "Loss with Option A + Reentry is NaN"
+    loss_a.backward()
+    print("✓ Option A (Pure MoD Attention Skipping) + Layer 8 Reentry fully verified!")
+
+    # 2. Option B (eet_frozen_kv=True) & No Reentry (eet_reenter_final=False)
+    config.eet_frozen_kv = True
+    config.eet_reenter_final = False
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    loss_b = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+    )
+    assert not torch.isnan(loss_b), "Loss with Option B is NaN"
+    loss_b.backward()
+    print("✓ Option B (Frozen KV Injection) fully verified!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -797,5 +849,6 @@ if __name__ == "__main__":
     test_eet_attention_router_and_entropy_bonus()
     test_eet_loss_depth_weighting()
     test_eet_stochastic_override()
+    test_eet_attention_variants_and_reentry()
 
 

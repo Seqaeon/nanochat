@@ -278,8 +278,13 @@ def main():
             loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
             eval_kwargs = {}
             if use_eet:
-                eval_kwargs['eet_do_route'] = True
-                eval_kwargs['eet_phase'] = 3
+                ever_routed = meta.get("eet_ever_routed", True) if not is_hf_model else True
+                if ever_routed:
+                    eval_kwargs['eet_do_route'] = True
+                    eval_kwargs['eet_phase'] = 3
+                else:
+                    eval_kwargs['eet_do_route'] = False
+                    eval_kwargs['eet_phase'] = 1
             bpb, val_loss = evaluate_bpb(model, loader, steps, token_bytes, **eval_kwargs)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f} | val_loss: {val_loss:.6f}")

@@ -354,6 +354,7 @@ class GPTConfig:
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
+    eet_reenter_final: bool = False                # True = force exited tokens to re-enter and be processed by the final layer
     eet_router_type: str = 'mlp2'                  # 'linear', 'mlp1', 'mlp2' — exit router architecture
     eet_router_hidden: int = 0                     # router MLP hidden dim (0 = n_embd // 4)
     eet_freq_prior_alpha: float = 0.0              # weight of frequency-based exit bias (0=disabled)
@@ -497,6 +498,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_freq_efficiency_alpha", "eet_diversity_lambda", "eet_ce_guided_lambda",
     "eet_depth_weight_type", "eet_depth_weight_max",
     "eet_use_override", "eet_override_prob_start", "eet_override_prob_end",
+    "eet_reenter_final",
 }
 
 
@@ -5889,7 +5891,7 @@ class CausalSelfAttention(nn.Module):
             logits = logits.masked_fill(mask == 0, float('-inf'))
         return F.softmax(logits, dim=-1).to(x.dtype)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, token_active=None, eet_frozen_kv=False, frozen_k=None, frozen_v=None):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
@@ -5926,11 +5928,39 @@ class CausalSelfAttention(nn.Module):
             scale = F.softplus(self.attn_logit_scale).to(q.dtype)  # (n_head,)
             q = q * scale.view(1, 1, self.n_head, 1)  # broadcast: (1, 1, H, 1)
 
+        # If Option B: frozen KV injection
+        if token_active is not None and eet_frozen_kv and frozen_k is not None and frozen_v is not None:
+            active_mask = token_active.unsqueeze(-1).unsqueeze(-1)  # (B, T, 1, 1)
+            k = torch.where(active_mask, k, frozen_k)
+            v = torch.where(active_mask, v, frozen_v)
+
+        # Cache actual computed/injected keys and values
+        self._last_k = k
+        self._last_v = v
+
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
             # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), causal=True, window_size=window_size)
+            if token_active is not None:
+                # Build custom attention mask
+                causal_mask = torch.tril(torch.ones(T, T, device=x.device, dtype=torch.bool))
+                active_queries = token_active.unsqueeze(1).unsqueeze(3)  # (B, 1, T, 1)
+                
+                if not eet_frozen_kv:
+                    # Option A: Active queries attend ONLY to active keys (complete skip)
+                    active_keys = token_active.unsqueeze(1).unsqueeze(2)  # (B, 1, 1, T)
+                    combined_mask = causal_mask.unsqueeze(0).unsqueeze(1) & active_keys & active_queries
+                else:
+                    # Option B: Active queries attend to active + frozen keys
+                    combined_mask = causal_mask.unsqueeze(0).unsqueeze(1) & active_queries
+                
+                y = F.scaled_dot_product_attention(
+                    q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                    attn_mask=combined_mask
+                ).transpose(1, 2)
+            else:
+                y = flash_attn.flash_attn_func(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), causal=True, window_size=window_size)
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
@@ -7329,7 +7359,7 @@ class Block(nn.Module):
         # 19J: Training-time weight noise epsilon
         self._weight_noise_eps = float(getattr(config, 'p19_weight_noise', 0.0))
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, token_active=None, eet_frozen_kv=False, frozen_k=None, frozen_v=None):
         norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
         norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
         # 19J: Weight noise — add isotropic noise to key weights during training
@@ -7338,7 +7368,9 @@ class Block(nn.Module):
             for p in self.mlp.parameters():
                 if p.ndim == 2:  # only perturb weight matrices, not biases
                     p.data.add_(eps * torch.randn_like(p))
-        attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache,
+                             token_active=token_active, eet_frozen_kv=eet_frozen_kv,
+                             frozen_k=frozen_k, frozen_v=frozen_v)
         # 20I: If ADWI, extract per-head norms from attention output for FFN routing
         if isinstance(self.mlp, AttnDerivedMLP):
             _B, _T, _ = attn_out.shape
