@@ -465,19 +465,37 @@ run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
 run_experiment "EET_P1_25_OPTION_A_D${DEPTH}" \
     "Option A: pure MoD attention skipping for exited tokens (mlp2 router)" \
     --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
-    --eet-router-type mlp2
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type ema
 
 # EET_P1_26: Option B — Frozen KV Injection (no reentry)
 run_experiment "EET_P1_26_OPTION_B_D${DEPTH}" \
     "Option B: frozen KV injection for exited tokens (mlp2 router)" \
     --use-eet 1 --eet-frozen-kv 1 --eet-reenter-final 0 \
-    --eet-router-type mlp2
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type ema
 
 # EET_P1_27: Layer 8 Reentry (Option A + Final Layer Reentry)
 run_experiment "EET_P1_27_REENTER_L8_D${DEPTH}" \
     "Option A + Layer 8 Reentry: exited tokens re-enter and are processed by the final layer" \
     --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 1 \
-    --eet-router-type mlp2
+    --eet-router-type mlp2 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-loss-variant ce_guided \
+    --eet-global-router 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type ema
 
 
 
