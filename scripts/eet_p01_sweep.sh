@@ -201,7 +201,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 run_experiment "EET_P1_19_CE_GUIDED_D${DEPTH}" \
     "CE-guided routing loss variant (running with soft/hard routing, zero memory)" \
     --use-eet 1 --eet-frozen-kv 0 \
-    --eet-router-type mlp2 \
+    --eet-router-type attention \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
     --eet-global-router 1 \
