@@ -61,7 +61,7 @@ def check_router_learned(exit_probs, token_ids, orig_model):
     print0(f'[EET DIAGNOSTIC] Exit probability distribution across {n_exits} slots:')
     for slot in range(n_exits):
         slot_probs = probs_cpu[:, :, slot].numpy().ravel()
-        label = f'exit_{slot}'
+        label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
         print0(f'  {label}: mean={slot_probs.mean():.6f}  std={slot_probs.std():.6f}  '
                f'min={slot_probs.min():.6f}  max={slot_probs.max():.6f}')
     
@@ -2065,14 +2065,14 @@ if model_config.use_eet:
         for slot in range(n_exits):
             count = (argmax_exits == slot).sum()
             pct = (count / max(total_tokens_evaluated, 1)) * 100
-            label = f'exit_{slot}'
+            label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
             print0(f"  {label:12s}: {pct:6.2f}% ({count:,} tokens)")
             
         # 2. Print soft probability stats per slot to see if they are distinct or collapsed
         print0("\nSoft exit probability stats per slot:")
         for slot in range(n_exits):
             slot_probs = exit_probs[:, :, slot].numpy().ravel()
-            label = f'exit_{slot}'
+            label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
             print0(f"  {label:12s}: mean={slot_probs.mean():.6f} std={slot_probs.std():.6f} min={slot_probs.min():.6f} max={slot_probs.max():.6f}")
             
         # 3. Print mean and std of expected exit layer
