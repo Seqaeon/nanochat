@@ -338,7 +338,7 @@ while [[ $# -gt 0 ]]; do
         --eet-quality-lambda|--eet-quality-entropy-bonus|\
         --eet-gumbel-temp-start|--eet-gumbel-temp-end|--eet-gumbel-hard|--eet-commitment-beta|--eet-global-router|\
         --eet-freq-efficiency-alpha|--eet-diversity-lambda|--eet-ce-guided-lambda|--eet-depth-weight-type|--eet-depth-weight-max|\
-        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final)
+        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final|--eet-compute-skip|--eet-target-active-frac)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

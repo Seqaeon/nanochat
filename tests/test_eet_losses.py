@@ -838,6 +838,54 @@ def test_eet_attention_variants_and_reentry():
     print("✓ Option B (Frozen KV Injection) fully verified!")
 
 
+def test_eet_compute_skip_fixed_capacity():
+    device = "cpu"
+    print("\n--- Testing EET MoD-style Compute-Level Exit (Gather/Scatter, static-capacity) ---")
+
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=1,
+        eet_frozen_kv=False,      # Option A / Attention masking logic
+        eet_reenter_final=True,   # Layer 8 Reentry
+        eet_compute_skip=True,    # Enable gather/scatter compute skipping!
+        eet_target_active_frac=0.25, # Target fraction
+        n_layer=4
+    )
+
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+
+    # 1. Forward run
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+    )
+    assert not torch.isnan(loss), "Loss with compute skip is NaN"
+
+    # 2. Backward run
+    loss.backward()
+
+    # 3. Verify gradients are propagated correctly through the network params
+    for name, p in model.named_parameters():
+        if p.requires_grad:
+            # eet_routers.0 and translators are unused in Phase 3
+            if "eet_routers.0" in name or "eet_translators" in name:
+                continue
+            assert p.grad is not None, f"Parameter {name} did not receive any gradients!"
+
+    print("✓ MoD-style compute skip with fixed-capacity top-K is fully verified with gradients!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -850,5 +898,7 @@ if __name__ == "__main__":
     test_eet_loss_depth_weighting()
     test_eet_stochastic_override()
     test_eet_attention_variants_and_reentry()
+    test_eet_compute_skip_fixed_capacity()
+
 
 

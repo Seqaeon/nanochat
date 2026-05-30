@@ -394,6 +394,9 @@ class GPTConfig:
     eet_use_override: int = 0                      # 1 = use stochastic depth override, 0 = disabled
     eet_override_prob_start: float = 0.5           # initial override probability during training
     eet_override_prob_end: float = 0.1             # final/minimum override probability
+    # MoD-style fixed-capacity compute skipping
+    eet_compute_skip: bool = False                 # True = gather/scatter active tokens for real FLOP savings
+    eet_target_active_frac: float = 0.125          # fraction of tokens still active at deepest routable layer (geometric decay)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -499,6 +502,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_depth_weight_type", "eet_depth_weight_max",
     "eet_use_override", "eet_override_prob_start", "eet_override_prob_end",
     "eet_reenter_final",
+    "eet_compute_skip", "eet_target_active_frac",
 }
 
 
