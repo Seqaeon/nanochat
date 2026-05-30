@@ -1631,12 +1631,8 @@ while True:
             is_layer_weighted = (model_config.eet_loss_variant == 'layer_weighted')
             bypass_phases = use_gumbel or is_layer_weighted
 
-            if _eet_phase_info['phase'] == 1:
-                eet_do_route = False
-                eet_phase = 1
-            else:
-                eet_do_route = True if bypass_phases else _eet_phase_info['do_route']
-                eet_phase = 2 if bypass_phases else _eet_phase_info['phase']
+            eet_do_route = _eet_phase_info['do_route']
+            eet_phase = _eet_phase_info['phase']
 
             if eet_phase == 1:
                 # Phase 1: take the EXACT same code path as non-EET dense training.
@@ -1646,25 +1642,12 @@ while True:
             else:
                 # Phase 2/3: full EET forward with routing
 
-                # Check for transition from Phase 1 to Phase 2/3 for ce_guided routing calibration
-                if (model_config.eet_loss_variant == 'ce_guided' and 
-                    hasattr(orig_model, 'eet_current_phase') and 
+                # Check for transition from Phase 1 to Phase 2/3
+                if (hasattr(orig_model, 'eet_current_phase') and 
                     orig_model.eet_current_phase == 1):
-                    # Skip calibration if we never had a Phase 1 dense training warmup (e.g. warmup-frac 0.0)
-                    if _eet_sched.warmup_end == 0:
-                        # Set token_difficulty to 0.5 (neutral) instead of leaving at 0.0 (all-easy),
-                        # which would cause the CE-guided loss to collapse all routing to earliest exit.
-                        orig_model.token_difficulty.fill_(0.5)
-                        orig_model.eet_current_phase = eet_phase
-                        orig_model.eet_phase_tracker[0] = eet_phase
-                        print0(f"[EET] No Phase 1 warmup — token difficulty set to neutral (0.5). Entering Phase {eet_phase} directly.")
-                    else:
-                        print0(f"[EET] Transitioning to Phase {eet_phase}. Running one-time token difficulty calibration...")
-                        calibration_batches = []
-                        for _ in range(32):
-                            calibration_batches.append(next(train_loader))
-                        orig_model.calibrate_token_difficulty(calibration_batches, target_phase=eet_phase)
-                        print0("[EET] Calibration completed successfully! Difficulty lookup is now frozen.")
+                    orig_model.eet_current_phase = eet_phase
+                    orig_model.eet_phase_tracker[0] = eet_phase
+                    print0(f"[EET] Transitioning from Phase 1 (Dense Warmup) to Phase {eet_phase} (Routing active).")
 
                 # Ensure routers and translators remain trainable
                 for param in orig_model.eet_routers.parameters():
