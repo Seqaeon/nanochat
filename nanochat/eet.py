@@ -1529,30 +1529,20 @@ class EarlyExitGPT(GPT):
                         is_active = is_active_next
                         active_idx = active_idx_next
                     else:
-                        # Re-gather updated states for active tokens
-                        x_for_router = torch.gather(x, 1, idx3.expand(-1, -1, C))
-
-                        # Gather freq/pos bias for active tokens if present
-                        fb_act = None
-                        pb_act = None
-                        if freq_bias is not None:
-                            fb_act = torch.gather(freq_bias, 1, active_idx)
-                        if pos_bias is not None:
-                            pb_act = torch.gather(pos_bias, 1, active_idx)
-
-                        exit_prob = self.eet_routers[i](
-                            x_for_router.detach() if self.training else x_for_router,
-                            freq_bias=fb_act, pos_bias=pb_act,
+                        # Run router on the FULL hidden state x (which has static shape B, T, C)
+                        # and detach it to prevent router gradients from flowing to backbone
+                        exit_prob_full = self.eet_routers[i](
+                            norm(x).detach() if self.training else norm(x),
+                            freq_bias=freq_bias, pos_bias=pos_bias,
                             freq_alpha=config.eet_freq_prior_alpha,
                             pos_beta=config.eet_pos_prior_beta,
-                        )  # (B, K_cur)
-
-                        # Scatter exit_prob to full sequence length (B, T)
-                        exit_prob_full = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-                        exit_prob_full = exit_prob_full.scatter(1, active_idx, exit_prob)
+                        )  # (B, T)
 
                         p_exits_soft.append(p_reach * exit_prob_full)
                         p_reach = p_reach * (1.0 - exit_prob_full)
+
+                        # Gather the exit probability only for active tokens to make the top-K decision
+                        exit_prob = torch.gather(exit_prob_full, 1, active_idx)  # (B, K_cur)
 
                         # Top-K by continue score (lowest exit prob stays)
                         continue_score = 1.0 - exit_prob  # (B, K_cur)
