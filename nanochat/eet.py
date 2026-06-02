@@ -847,7 +847,7 @@ class EarlyExitGPT(GPT):
 
         prev_x = x.detach()  # hidden state before first block
 
-        if is_global_router:
+        if is_global_router and not compute_skip:
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
             n_exits = len(routing_layers) + 1
             
@@ -1385,6 +1385,79 @@ class EarlyExitGPT(GPT):
             p_reach = torch.ones(B, T, dtype=x.dtype, device=x.device)
             is_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
 
+            candidate_states = []
+            hard_candidate_states = []
+
+            if is_global_router:
+                # Upfront single global exit router
+                global_router = self.eet_routers[0]
+                router_logits = global_router(
+                    x0,
+                    freq_bias=freq_bias,
+                    pos_bias=pos_bias,
+                    freq_alpha=config.eet_freq_prior_alpha,
+                    pos_beta=config.eet_pos_prior_beta
+                )  # (B, T, n_exits)
+                
+                # Gumbel vs Standard Soft vs Hard
+                if use_gumbel:
+                    gumbel_noise = -torch.log(
+                        -torch.log(torch.rand_like(router_logits.float()).clamp(1e-9)) + 1e-9
+                    )
+                    noisy_logits = (router_logits.float() + gumbel_noise) / eet_gumbel_temp
+                    soft_weights = torch.softmax(noisy_logits, dim=-1).to(x0.dtype)  # (B, T, n_exits)
+                    
+                    if config.eet_gumbel_hard:
+                        hard_weights = torch.zeros_like(soft_weights)
+                        hard_weights.scatter_(
+                            -1,
+                            soft_weights.argmax(dim=-1, keepdim=True),
+                            1.0
+                        )
+                        routing_weights = hard_weights - soft_weights.detach() + soft_weights
+                    else:
+                        routing_weights = soft_weights
+                elif is_soft_training or is_layer_weighted:
+                    if is_soft_training:
+                        routing_weights = torch.softmax(router_logits.float() / eet_gumbel_temp, dim=-1).to(x0.dtype)
+                    else:
+                        routing_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
+                    soft_weights = routing_weights
+                else:
+                    # Hard routing (Phase 3 or inference)
+                    soft_weights = torch.softmax(router_logits.float(), dim=-1).to(x0.dtype)
+                    exit_layer_hard = router_logits.argmax(dim=-1)
+                    hard_weights = torch.zeros_like(router_logits)
+                    hard_weights.scatter_(
+                        -1,
+                        exit_layer_hard.unsqueeze(-1),
+                        1.0
+                    )
+                    if self.training:
+                        routing_weights = hard_weights.to(x0.dtype) - soft_weights.detach() + soft_weights
+                    else:
+                        routing_weights = hard_weights.to(x0.dtype)
+                        soft_weights = routing_weights
+
+                if self.training and getattr(config, 'eet_use_override', 0) == 1:
+                    step_val = eet_step
+                    total_val = eet_total_steps
+                    if not isinstance(step_val, torch.Tensor):
+                        step_val = torch.tensor(step_val, device=x0.device, dtype=torch.float32)
+                    if not isinstance(total_val, torch.Tensor):
+                        total_val = torch.tensor(total_val, device=x0.device, dtype=torch.float32)
+                    progress = step_val.float() / torch.clamp(total_val.float(), min=1.0)
+                    p_start = getattr(config, 'eet_override_prob_start', 0.5)
+                    p_end = getattr(config, 'eet_override_prob_end', 0.1)
+                    p_override = torch.maximum(torch.tensor(p_end, device=x0.device), torch.tensor(p_start, device=x0.device) * (1.0 - progress))
+                    
+                    override_mask = (torch.rand(B, T, device=x0.device) < p_override).unsqueeze(-1)
+                    forced = torch.zeros_like(routing_weights)
+                    forced[:, :, -1] = 1.0
+                    
+                    routing_weights = torch.where(override_mask, forced, routing_weights)
+                    soft_weights = torch.where(override_mask, forced, soft_weights)
+
             for i, block in enumerate(blocks):
                 # --- Layer 8 Reentry: restore all tokens at final layer ---
                 if i == n_layer - 1 and getattr(config, 'eet_reenter_final', False):
@@ -1428,48 +1501,72 @@ class EarlyExitGPT(GPT):
                     mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
                     x = x + gamma * mixed
 
+                if i in routing_set or i == n_layer - 1:
+                    state_to_append = norm(x)
+                    candidate_states.append(state_to_append.detach())
+                    hard_candidate_states.append(state_to_append.detach())
+
                 # --- Routing: top-K tokens stay, rest exit ---
                 if i in routing_set and rl_counter < n_rl:
                     K_next = capacities[rl_counter]
 
-                    # Re-gather updated states for active tokens
-                    x_for_router = torch.gather(x, 1, idx3.expand(-1, -1, C))
+                    if is_global_router:
+                        # Soft/hard probabilities for the current exit slot
+                        p_exits_soft.append(soft_weights[:, :, rl_counter])
+                        p_exits.append(routing_weights[:, :, rl_counter])
 
-                    # Gather freq/pos bias for active tokens if present
-                    fb_act = None
-                    pb_act = None
-                    if freq_bias is not None:
-                        fb_act = torch.gather(freq_bias, 1, active_idx)
-                    if pos_bias is not None:
-                        pb_act = torch.gather(pos_bias, 1, active_idx)
+                        # The probability/weight of continuing past routing layer rl_counter
+                        continue_score_full = routing_weights[:, :, rl_counter + 1:].sum(dim=-1)
+                        continue_score = torch.gather(continue_score_full, 1, active_idx)  # (B, K_cur)
 
-                    exit_prob = self.eet_routers[i](
-                        x_for_router.detach() if self.training else x_for_router,
-                        freq_bias=fb_act, pos_bias=pb_act,
-                        freq_alpha=config.eet_freq_prior_alpha,
-                        pos_beta=config.eet_pos_prior_beta,
-                    )  # (B, K_cur)
+                        # Top-K by continue score (highest continue score stays)
+                        _, topk_local = continue_score.topk(K_next, dim=-1, largest=True, sorted=False)
+                        topk_local, _ = topk_local.sort(dim=-1)  # preserve causal order
 
-                    # Scatter exit_prob to full sequence length (B, T)
-                    exit_prob_full = torch.zeros(B, T, dtype=x.dtype, device=x.device)
-                    exit_prob_full = exit_prob_full.scatter(1, active_idx, exit_prob)
+                        active_idx_next = torch.gather(active_idx, 1, topk_local)  # (B, K_next)
+                        is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
 
-                    p_exits_soft.append(p_reach * exit_prob_full)
-                    p_reach = p_reach * (1.0 - exit_prob_full)
+                        is_active = is_active_next
+                        active_idx = active_idx_next
+                    else:
+                        # Re-gather updated states for active tokens
+                        x_for_router = torch.gather(x, 1, idx3.expand(-1, -1, C))
 
-                    # Top-K by continue score (lowest exit prob stays)
-                    continue_score = 1.0 - exit_prob  # (B, K_cur)
-                    _, topk_local = continue_score.topk(K_next, dim=-1, largest=True, sorted=False)
-                    topk_local, _ = topk_local.sort(dim=-1)  # preserve causal order
+                        # Gather freq/pos bias for active tokens if present
+                        fb_act = None
+                        pb_act = None
+                        if freq_bias is not None:
+                            fb_act = torch.gather(freq_bias, 1, active_idx)
+                        if pos_bias is not None:
+                            pb_act = torch.gather(pos_bias, 1, active_idx)
 
-                    # Map local indices back to global positions
-                    active_idx_next = torch.gather(active_idx, 1, topk_local)  # (B, K_next)
-                    is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
-                    exit_hard = is_active & ~is_active_next
-                    p_exits.append(exit_hard.float())
+                        exit_prob = self.eet_routers[i](
+                            x_for_router.detach() if self.training else x_for_router,
+                            freq_bias=fb_act, pos_bias=pb_act,
+                            freq_alpha=config.eet_freq_prior_alpha,
+                            pos_beta=config.eet_pos_prior_beta,
+                        )  # (B, K_cur)
 
-                    is_active = is_active_next
-                    active_idx = active_idx_next
+                        # Scatter exit_prob to full sequence length (B, T)
+                        exit_prob_full = torch.zeros(B, T, dtype=x.dtype, device=x.device)
+                        exit_prob_full = exit_prob_full.scatter(1, active_idx, exit_prob)
+
+                        p_exits_soft.append(p_reach * exit_prob_full)
+                        p_reach = p_reach * (1.0 - exit_prob_full)
+
+                        # Top-K by continue score (lowest exit prob stays)
+                        continue_score = 1.0 - exit_prob  # (B, K_cur)
+                        _, topk_local = continue_score.topk(K_next, dim=-1, largest=True, sorted=False)
+                        topk_local, _ = topk_local.sort(dim=-1)  # preserve causal order
+
+                        # Map local indices back to global positions
+                        active_idx_next = torch.gather(active_idx, 1, topk_local)  # (B, K_next)
+                        is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
+                        exit_hard = is_active & ~is_active_next
+                        p_exits.append(exit_hard.float())
+
+                        is_active = is_active_next
+                        active_idx = active_idx_next
 
                     n_exited = K_cur - K_next
                     total_exit_frac = total_exit_frac + (n_exited / T)
@@ -1478,9 +1575,13 @@ class EarlyExitGPT(GPT):
                     rl_counter += 1
 
             # x now has: active positions with latest block outputs, exited positions with frozen states
-            # Add final layer exit probabilities
-            p_exits_soft.append(p_reach)
-            p_exits.append(is_active.float())
+            if is_global_router:
+                p_exits_soft.append(soft_weights[:, :, -1])
+                p_exits.append(routing_weights[:, :, -1])
+            else:
+                p_exits_soft.append(p_reach)
+                p_exits.append(is_active.float())
+
             if len(p_exits_soft) > 0:
                 self._last_exit_probs = torch.stack(p_exits_soft, dim=-1)
 

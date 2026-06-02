@@ -886,6 +886,57 @@ def test_eet_compute_skip_fixed_capacity():
     print("✓ MoD-style compute skip with fixed-capacity top-K is fully verified with gradients!")
 
 
+def test_eet_global_router_compute_skip():
+    device = "cpu"
+    print("\n--- Testing EET Global Router with Compute Skipping ---")
+
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=1,
+        eet_frozen_kv=False,
+        eet_reenter_final=True,
+        eet_compute_skip=True,
+        eet_target_active_frac=0.25,
+        eet_global_router=True,
+        eet_loss_variant='ce_guided',
+        eet_ce_guided_lambda=1.0,
+        n_layer=4
+    )
+
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+
+    # 1. Forward run
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+    )
+    assert not torch.isnan(loss), "Loss with global router compute skip is NaN"
+
+    # 2. Backward run
+    loss.backward()
+
+    # 3. Verify gradients are propagated correctly through the global router and backbone
+    for name, p in model.named_parameters():
+        if p.requires_grad:
+            # translators are unused in Phase 3
+            if "eet_translators" in name:
+                continue
+            assert p.grad is not None, f"Parameter {name} did not receive any gradients!"
+
+    print("✓ Global router with MoD compute skip is fully verified with gradients!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -899,6 +950,8 @@ if __name__ == "__main__":
     test_eet_stochastic_override()
     test_eet_attention_variants_and_reentry()
     test_eet_compute_skip_fixed_capacity()
+    test_eet_global_router_compute_skip()
+
 
 
 
