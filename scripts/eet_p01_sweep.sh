@@ -227,7 +227,7 @@ run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     --eet-router-type mlp1 \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
     --eet-loss-variant ce_guided \
-    --eet-global-router 0 \
+    --eet-global-router 1 \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \
     --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
     --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10
