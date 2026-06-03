@@ -1525,6 +1525,9 @@ class EarlyExitGPT(GPT):
                 for ef in routing_exit_fracs:
                     survivor -= ef
                     capacities.append(max(1, int(survivor * T)))
+                
+                # Store target fractions distribution (slots + final layer)
+                self._last_target_fractions = routing_exit_fracs + [1.0 - sum(routing_exit_fracs)]
 
             else:
                 # Per-layer router fallback: same fixed schedule logic, no global soft_weights
@@ -1557,6 +1560,7 @@ class EarlyExitGPT(GPT):
                 for ef in routing_exit_fracs:
                     survivor -= ef
                     capacities.append(max(1, int(survivor * T)))
+                self._last_target_fractions = routing_exit_fracs + [1.0 - sum(routing_exit_fracs)]
 
             # Pre-allocate x_final to store the representation of each token at the moment of exit.
             # Start x_final as a copy of x0. When a token exits, we scatter its latest state from x_active into x_final.
@@ -1674,7 +1678,10 @@ class EarlyExitGPT(GPT):
                         # Formula: x = x_input + w * (x_out - x_input)
                         #   w=1 → full block output (token should continue)
                         #   w=0 → skip block (token should have exited)
-                        cw_full = 1.0 - routing_weights[:, :, rl_counter]           # (B, T) with STE grad
+                        rw = routing_weights[:, :, rl_counter]
+                        if not getattr(config, 'eet_router_task_grad', True):
+                            rw = rw.detach()
+                        cw_full = 1.0 - rw           # (B, T) with STE grad (if enabled)
                         cw_active = torch.gather(cw_full, 1, active_idx)            # (B, K_cur)
                         cw_kept = torch.gather(cw_active, 1, keep_local)            # (B, K_next)
                         x_input_kept = torch.gather(x_input, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
@@ -1993,6 +2000,16 @@ class EarlyExitGPT(GPT):
                         p_exits, len(p_exits), freq_bias, config, eet_lambda_e
                     )
                     loss = loss + eff_div_loss
+
+                # Capacity Alignment / Load-Balancing Loss
+                cal_lambda = getattr(config, 'eet_capacity_alignment_lambda', 0.0)
+                if self.training and cal_lambda > 0 and hasattr(self, '_last_target_fractions'):
+                    target_dist = torch.tensor(self._last_target_fractions, device=loss.device, dtype=torch.float32)
+                    curr_probs = p_exits_soft if (eet_phase == 3 and not use_gumbel) else p_exits
+                    if len(curr_probs) == len(target_dist):
+                        mean_probs = torch.stack([p.mean().float() for p in curr_probs])
+                        capacity_loss = F.mse_loss(mean_probs, target_dist)
+                        loss = loss + cal_lambda * capacity_loss.to(loss.dtype)
 
             # Store diagnostics
             if self.training:

@@ -399,6 +399,9 @@ class GPTConfig:
     eet_target_active_frac: float = 0.125          # fraction of tokens still active at deepest routable layer (geometric decay)
     eet_capacity_schedule: str = 'bell'            # capacity schedule ('uniform' | 'linear' | 'geometric' | 'bell')
     eet_exit_fracs: list[float] | None = None      # custom per-slot exit fractions override (comma-separated list of floats)
+    eet_capacity_alignment_lambda: float = 0.0     # weight for load-balancing/capacity alignment loss (0=disabled)
+    eet_router_task_grad: bool = True              # allow task loss gradients to propagate to router through continue weights
+
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -506,6 +509,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_reenter_final",
     "eet_compute_skip", "eet_target_active_frac",
     "eet_capacity_schedule", "eet_exit_fracs",
+    "eet_capacity_alignment_lambda", "eet_router_task_grad",
 }
 
 
