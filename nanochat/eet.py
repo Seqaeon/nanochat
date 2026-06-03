@@ -758,38 +758,6 @@ class EarlyExitGPT(GPT):
         self.eet_current_phase = target_phase
         self.eet_phase_tracker[0] = target_phase
 
-    @staticmethod
-    @torch.compiler.disable
-    def _derive_capacities(soft_weights: torch.Tensor, n_rl: int, T: int, target_frac: float) -> list:
-        """Compute per-exit-slot token capacities from the router's predicted distribution.
-
-        Returns a plain Python list of ints so torch.compile can use them as
-        static arguments to topk() without graph breaks.
-
-        Decorated @torch.compiler.disable so dynamo never traces into this
-        function — the .item() / int() calls stay in eager mode.
-
-        Args:
-            soft_weights: (B, T, n_exits) softmax weights from global router
-            n_rl:         number of routing (non-final) exit slots
-            T:            sequence length
-            target_frac:  minimum survivor fraction (floor on capacity)
-
-        Returns:
-            capacities: list of n_rl Python ints, cap[k] = active tokens after exit k
-        """
-        with torch.no_grad():
-            # Mean exit fraction per slot over batch and sequence
-            mean_exit_frac = soft_weights.float().mean(dim=(0, 1))  # (n_exits,)
-            # Cumulative survivors: fraction still active after each routing slot
-            cum_exited = mean_exit_frac.cumsum(dim=0)               # (n_exits,)
-            survivors = (1.0 - cum_exited[:-1]).clamp(min=target_frac / max(n_rl, 1))
-            capacities = [
-                max(1, int(survivors[k].item() * T))
-                for k in range(n_rl)
-            ]
-        return capacities
-
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
                 eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1):
@@ -856,6 +824,19 @@ class EarlyExitGPT(GPT):
         # (hybrid path) so the router continues learning from quality/efficiency loss.
         use_gumbel = (config.eet_gumbel_temp_start > 0.0)
         compute_skip = getattr(config, 'eet_compute_skip', False)
+        is_global_router = getattr(config, 'eet_global_router', False)
+
+        # Global router and compute_skip are designed to work together.
+        # The global router produces per-slot weights upfront; compute_skip
+        # uses those weights to physically drop tokens layer-by-layer.
+        # Without compute_skip the global router falls back to soft blending
+        # (no actual compute savings). Force it on and warn if misconfigured.
+        if is_global_router and not compute_skip and do_route:
+            print0("[EET] WARNING: eet_global_router=True but eet_compute_skip=False. "
+                   "Global router requires compute_skip for hard token dropping. "
+                   "Set eet_compute_skip=True in config. Enabling automatically.")
+            compute_skip = True
+
         is_soft_training = (eet_do_route and self.training and eet_phase == 2) or (use_gumbel and eet_do_route and self.training and not compute_skip)
         is_layer_weighted = (loss_variant == 'layer_weighted')
 
@@ -867,7 +848,6 @@ class EarlyExitGPT(GPT):
 
         blocks = list(self.transformer.h)
         n_layer = len(blocks)
-        is_global_router = getattr(config, 'eet_global_router', False)
         need_exit_tracking = (eet_phase == 2 and not is_global_router and
                               loss_variant not in ('reconstruct', 'quality', 'ce_guided') and not is_layer_weighted)
         
@@ -1487,25 +1467,69 @@ class EarlyExitGPT(GPT):
                     routing_weights = torch.where(override_mask, forced, routing_weights)
                     soft_weights = torch.where(override_mask, forced, soft_weights)
 
-                # --- Derive capacities from router's predicted exit distribution ---
-                # soft_weights: (B, T, n_exits). Mean over batch+tokens gives predicted
-                # fraction of tokens at each exit slot. Capacities are cumulative survivors:
-                # cap[k] = tokens still active AFTER exit slot k fires.
-                # This makes the top-K budget match what the router actually predicts,
-                # so e.g. if router says 18% exit at slot 1, cap[0] = int(0.82 * T).
+                # --- Fixed capacities (compile-stable, config-driven) ---
+                # Capacities are pure Python ints computed from config scalars only —
+                # no tensor .item() calls, no per-batch data. This means torch.compile
+                # sees the same K values every step and never recompiles.
                 #
-                # COMPILE NOTE: .item() / int() break the torch.compile graph.
-                # _derive_capacities is decorated @torch.compiler.disable so dynamo
-                # never traces into it — it returns plain Python ints that the
-                # compiled loop can use as static topk() arguments.
-                capacities = self._derive_capacities(soft_weights, n_rl, T, target_frac)
+                # eet_capacity_schedule: 'uniform' | 'linear' | 'geometric'
+                #   uniform:   equal tokens exit at every slot
+                #   linear:    exits ramp up linearly (fewer early, more late)
+                #   geometric: exits ramp geometrically (mirrors old behaviour but fixed)
+                #
+                # Per-slot exit fractions can be overridden via eet_exit_fracs:
+                #   a list of n_exits floats (including final layer) that sum to ~1.0.
+                #   e.g. [0.00, 0.18, 0.28, 0.20, 0.15, 0.12, 0.07]
+                exit_fracs_cfg = getattr(config, 'eet_exit_fracs', None)
+                if exit_fracs_cfg is not None and len(exit_fracs_cfg) == n_rl + 1:
+                    # User-supplied per-slot fractions (must cover routing slots + final)
+                    routing_exit_fracs = list(exit_fracs_cfg[:n_rl])
+                else:
+                    schedule = getattr(config, 'eet_capacity_schedule', 'linear')
+                    if schedule == 'uniform':
+                        # Equal fraction exits at every routing slot
+                        per_slot = (1.0 - target_frac) / n_rl
+                        routing_exit_fracs = [per_slot] * n_rl
+                    elif schedule == 'linear':
+                        # Ramp up: earlier slots exit less, later slots exit more
+                        # weights[k] = k+1, normalized so they sum to (1-target_frac)
+                        weights = [k + 1 for k in range(n_rl)]
+                        total_w = sum(weights)
+                        routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
+                    else:  # geometric
+                        # Each slot exits a fixed fraction of *remaining* tokens
+                        # such that after n_rl slots, target_frac remain.
+                        per_slot_frac = 1.0 - target_frac ** (1.0 / n_rl)
+                        routing_exit_fracs = [per_slot_frac] * n_rl
+
+                # Convert to cumulative survivor capacities (Python ints)
+                survivor = 1.0
+                capacities = []
+                for ef in routing_exit_fracs:
+                    survivor -= ef
+                    capacities.append(max(1, int(survivor * T)))
 
             else:
-                # Per-layer router: use linear decay as fallback (pure Python, no graph break)
-                for rl_idx in range(n_rl):
-                    frac = 1.0 - (rl_idx + 1) * (1.0 - target_frac) / n_rl
-                    cap = max(1, int(frac * T))
-                    capacities.append(cap)
+                # Per-layer router fallback: same fixed schedule logic, no global soft_weights
+                exit_fracs_cfg = getattr(config, 'eet_exit_fracs', None)
+                if exit_fracs_cfg is not None and len(exit_fracs_cfg) == n_rl + 1:
+                    routing_exit_fracs = list(exit_fracs_cfg[:n_rl])
+                else:
+                    schedule = getattr(config, 'eet_capacity_schedule', 'linear')
+                    if schedule == 'uniform':
+                        per_slot = (1.0 - target_frac) / n_rl
+                        routing_exit_fracs = [per_slot] * n_rl
+                    elif schedule == 'linear':
+                        weights = [k + 1 for k in range(n_rl)]
+                        total_w = sum(weights)
+                        routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
+                    else:  # geometric
+                        per_slot_frac = 1.0 - target_frac ** (1.0 / n_rl)
+                        routing_exit_fracs = [per_slot_frac] * n_rl
+                survivor = 1.0
+                for ef in routing_exit_fracs:
+                    survivor -= ef
+                    capacities.append(max(1, int(survivor * T)))
 
             for i, block in enumerate(blocks):
                 # --- Layer 8 Reentry: restore all tokens at final layer ---
@@ -1574,29 +1598,23 @@ class EarlyExitGPT(GPT):
                         p_exits_soft.append(soft_weights[:, :, rl_counter])
                         p_exits.append(routing_weights[:, :, rl_counter])
 
-                        # Rank active tokens by their preference to EXIT at this slot.
-                        # exit_score[b, k] = soft_weights[b, global_pos, rl_counter]
-                        # We DROP the top K_exit tokens (highest exit score), keeping the rest.
-                        # This is equivalent to keeping the K_next with lowest exit score,
-                        # but semantically cleaner: "who wants to leave here most?"
-                        K_exit = K_cur - K_next
-                        exit_score_full = soft_weights[:, :, rl_counter]  # (B, T)
-                        exit_score = torch.gather(exit_score_full, 1, active_idx)  # (B, K_cur)
+                        # --- Cumulative exit score for priority carry-over ---
+                        # A token that strongly wanted to exit at slot 0 but was crowded
+                        # out should get first priority at slot 1. We achieve this by
+                        # scoring each active token as: sum of soft_weights[0..rl_counter].
+                        # This is the router's total mass placed on "exit at or before now",
+                        # so a token that wanted early exit accumulates score across slots.
+                        # Tokens with the highest cumulative score exit here; survivors
+                        # carry their accumulated preference into the next slot naturally
+                        # (their score will grow further if they keep wanting to exit).
+                        cum_exit_score_full = soft_weights[:, :, :rl_counter + 1].sum(dim=-1)  # (B, T)
+                        cum_exit_score = torch.gather(cum_exit_score_full, 1, active_idx)       # (B, K_cur)
 
-                        # Top K_exit by exit score → those tokens exit
-                        _, exit_local = exit_score.topk(K_exit, dim=-1, largest=True, sorted=False)
-                        # Build a mask over active_idx positions that are exiting
-                        exit_local_mask = torch.zeros(B, K_cur, dtype=torch.bool, device=x.device)
-                        exit_local_mask.scatter_(1, exit_local, True)
-                        # Keep the rest (those NOT in top-K_exit)
-                        keep_local_mask = ~exit_local_mask
-                        # Re-gather active indices for survivors (preserving order)
-                        # We need sorted indices for causal correctness
-                        # Re-gather survivors in causal order via topk on the 0/1 keep mask
-                        keep_scores = keep_local_mask.float()  # (B, K_cur) 0/1
-                        _, keep_sorted = keep_scores.topk(K_next, dim=-1, largest=True, sorted=False)
-                        keep_sorted, _ = keep_sorted.sort(dim=-1)  # causal order
-                        active_idx_next = torch.gather(active_idx, 1, keep_sorted)  # (B, K_next)
+                        # Keep the K_next tokens with the LOWEST cumulative exit desire
+                        # (i.e. those who most want to stay). Causal order preserved via sort.
+                        _, keep_local = cum_exit_score.topk(K_next, dim=-1, largest=False, sorted=False)
+                        keep_local, _ = keep_local.sort(dim=-1)
+                        active_idx_next = torch.gather(active_idx, 1, keep_local)  # (B, K_next)
                         is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
 
                         is_active = is_active_next
