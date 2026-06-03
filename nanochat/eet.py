@@ -1487,9 +1487,12 @@ class EarlyExitGPT(GPT):
                 #   a list of n_exits floats (including final layer) that sum to ~1.0.
                 #   e.g. [0.00, 0.18, 0.28, 0.20, 0.15, 0.12, 0.07]
                 exit_fracs_cfg = getattr(config, 'eet_exit_fracs', None)
-                if exit_fracs_cfg is not None and len(exit_fracs_cfg) == n_rl + 1:
-                    # User-supplied per-slot fractions (must cover routing slots + final)
+                if exit_fracs_cfg is not None and len(exit_fracs_cfg) in (n_rl, n_rl + 1):
+                    # User-supplied per-slot fractions (n_rl routing slots, optionally + final)
                     routing_exit_fracs = list(exit_fracs_cfg[:n_rl])
+                elif exit_fracs_cfg is not None:
+                    print0(f"[EET] WARNING: eet_exit_fracs has {len(exit_fracs_cfg)} values "
+                           f"but need {n_rl} or {n_rl+1} (n_rl={n_rl}). Falling back to schedule.")
                 else:
                     schedule = getattr(config, 'eet_capacity_schedule', 'linear')
                     if schedule == 'uniform':
@@ -1518,8 +1521,11 @@ class EarlyExitGPT(GPT):
             else:
                 # Per-layer router fallback: same fixed schedule logic, no global soft_weights
                 exit_fracs_cfg = getattr(config, 'eet_exit_fracs', None)
-                if exit_fracs_cfg is not None and len(exit_fracs_cfg) == n_rl + 1:
+                if exit_fracs_cfg is not None and len(exit_fracs_cfg) in (n_rl, n_rl + 1):
                     routing_exit_fracs = list(exit_fracs_cfg[:n_rl])
+                elif exit_fracs_cfg is not None:
+                    print0(f"[EET] WARNING: eet_exit_fracs has {len(exit_fracs_cfg)} values "
+                           f"but need {n_rl} or {n_rl+1} (n_rl={n_rl}). Falling back to schedule.")
                 else:
                     schedule = getattr(config, 'eet_capacity_schedule', 'linear')
                     if schedule == 'uniform':
