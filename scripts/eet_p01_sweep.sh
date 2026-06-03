@@ -167,9 +167,9 @@ echo "  Depth: ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # EET_P1_0: Dense baseline (control — standard GPT, no early exit)
-run_experiment "EET_P1_0_DENSE_D${DEPTH}" \
-    "Dense baseline (standard GPT, no early exit — control)" \
-    --use-eet 0
+#run_experiment "EET_P1_0_DENSE_D${DEPTH}" \
+#    "Dense baseline (standard GPT, no early exit — control)" \
+#    --use-eet 0
 #
 # EET_P1_1: Masked Attention (Option A — exited tokens masked out of attention)
 #run_experiment "EET_P1_1_MASKED_D${DEPTH}" \
