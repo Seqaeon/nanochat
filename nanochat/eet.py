@@ -825,20 +825,25 @@ class EarlyExitGPT(GPT):
         use_gumbel = (config.eet_gumbel_temp_start > 0.0)
         compute_skip = getattr(config, 'eet_compute_skip', False)
         is_global_router = getattr(config, 'eet_global_router', False)
-
-        # Global router and compute_skip are designed to work together.
-        # The global router produces per-slot weights upfront; compute_skip
-        # uses those weights to physically drop tokens layer-by-layer.
-        # Without compute_skip the global router falls back to soft blending
-        # (no actual compute savings). Force it on and warn if misconfigured.
-        if is_global_router and not compute_skip and do_route:
-            print0("[EET] WARNING: eet_global_router=True but eet_compute_skip=False. "
-                   "Global router requires compute_skip for hard token dropping. "
-                   "Set eet_compute_skip=True in config. Enabling automatically.")
-            compute_skip = True
-
+        # Compute is_soft_training first so the auto-enable checks below can reference it
         is_soft_training = (eet_do_route and self.training and eet_phase == 2) or (use_gumbel and eet_do_route and self.training and not compute_skip)
         is_layer_weighted = (loss_variant == 'layer_weighted')
+
+        # Global router requires compute_skip to physically drop tokens.
+        # Without it the code falls through to soft blending (no compute savings).
+        if is_global_router and not compute_skip and do_route:
+            print0("[EET] WARNING: eet_global_router=True but eet_compute_skip=False. "
+                   "Enabling compute_skip automatically.")
+            compute_skip = True
+
+        # The threshold-based hard-exit path never drops tokens at init (fresh router
+        # outputs ~0, never crosses eet_exit_threshold). compute_skip uses rank-based
+        # top-K which always drops exactly the right number of tokens regardless of
+        # router magnitude. Auto-enable whenever we're doing hard routing.
+        if do_route and not compute_skip and not is_soft_training and not is_layer_weighted:
+            print0("[EET] WARNING: eet_compute_skip=False with hard routing. "
+                   "Enabling automatically — set eet_compute_skip=True in config to suppress.")
+            compute_skip = True
 
         token_active = torch.ones(B, T, dtype=torch.bool, device=x.device)
         frozen_h = torch.zeros_like(x)
