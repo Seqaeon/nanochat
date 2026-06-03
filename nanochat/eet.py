@@ -1678,14 +1678,15 @@ class EarlyExitGPT(GPT):
                         # Formula: x = x_input + w * (x_out - x_input)
                         #   w=1 → full block output (token should continue)
                         #   w=0 → skip block (token should have exited)
-                        rw = routing_weights[:, :, rl_counter]
-                        if not getattr(config, 'eet_router_task_grad', True):
-                            rw = rw.detach()
-                        cw_full = 1.0 - rw           # (B, T) with STE grad (if enabled)
-                        cw_active = torch.gather(cw_full, 1, active_idx)            # (B, K_cur)
-                        cw_kept = torch.gather(cw_active, 1, keep_local)            # (B, K_next)
-                        x_input_kept = torch.gather(x_input, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
-                        x_active = x_input_kept + cw_kept.unsqueeze(-1) * (x_active_kept - x_input_kept)
+                        if getattr(config, 'eet_router_task_grad', True):
+                            rw = routing_weights[:, :, rl_counter]
+                            cw_full = 1.0 - rw           # (B, T) with STE grad
+                            cw_active = torch.gather(cw_full, 1, active_idx)            # (B, K_cur)
+                            cw_kept = torch.gather(cw_active, 1, keep_local)            # (B, K_next)
+                            x_input_kept = torch.gather(x_input, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
+                            x_active = x_input_kept + cw_kept.unsqueeze(-1) * (x_active_kept - x_input_kept)
+                        else:
+                            x_active = x_active_kept
 
                         is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
                         is_active = is_active_next

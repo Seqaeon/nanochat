@@ -62,12 +62,12 @@ for i, block in enumerate(model_skip.transformer.h):
 del model_skip
 torch.cuda.empty_cache() if device == "cuda" else None
 
-# === Test 2: Profile compute_skip (compiled) ===
+# === Test 2: Profile compute_skip WITH task grad (eet_router_task_grad=True) ===
 print("\n" + "=" * 70)
-print("TEST 2: Compiled compute_skip=True (global router, ce_guided)")
+print("TEST 2: Compiled compute_skip WITH task grad (eet_router_task_grad=True)")
 print("=" * 70)
 
-model_a = EarlyExitGPT(make_config(eet_compute_skip=True)).to(device)
+model_a = EarlyExitGPT(make_config(eet_compute_skip=True, eet_router_task_grad=True)).to(device)
 model_a.train()
 model_a_c = torch.compile(model_a)
 
@@ -85,21 +85,18 @@ for _ in range(N):
     loss.backward()
     model_a.zero_grad()
 if device == "cuda": torch.cuda.synchronize()
-dt_skip = (time.perf_counter() - t0) / N * 1000
-print(f"  compute_skip + global_router: {dt_skip:.1f} ms/step")
+dt_skip_grad = (time.perf_counter() - t0) / N * 1000
+print(f"  compute_skip + task_grad=True: {dt_skip_grad:.1f} ms/step")
 
 del model_a, model_a_c
 torch.cuda.empty_cache() if device == "cuda" else None
 
-# === Test 3: Profile dense (no compute skip, per-layer routers) ===
+# === Test 3: Profile compute_skip WITHOUT task grad (eet_router_task_grad=False) ===
 print("\n" + "=" * 70)
-print("TEST 3: Compiled dense masking path (per-layer routers)")
+print("TEST 3: Compiled compute_skip WITHOUT task grad (eet_router_task_grad=False)")
 print("=" * 70)
 
-model_b = EarlyExitGPT(make_config(
-    eet_compute_skip=False, eet_global_router=False,
-    eet_gumbel_temp_start=0.0,  # no gumbel for dense path
-)).to(device)
+model_b = EarlyExitGPT(make_config(eet_compute_skip=True, eet_router_task_grad=False)).to(device)
 model_b.train()
 model_b_c = torch.compile(model_b)
 
@@ -116,13 +113,40 @@ for _ in range(N):
     loss.backward()
     model_b.zero_grad()
 if device == "cuda": torch.cuda.synchronize()
-dt_dense = (time.perf_counter() - t0) / N * 1000
-print(f"  dense masking path: {dt_dense:.1f} ms/step")
+dt_skip_nograd = (time.perf_counter() - t0) / N * 1000
+print(f"  compute_skip + task_grad=False (optimized): {dt_skip_nograd:.1f} ms/step")
 
-print(f"\n  Ratio: compute_skip is {dt_skip/dt_dense:.2f}x vs dense")
-if dt_skip < dt_dense:
-    print(f"  ✓ Compute skip is {dt_dense/dt_skip:.2f}x FASTER")
-else:
-    print(f"  ✗ Compute skip is {dt_skip/dt_dense:.2f}x SLOWER")
+del model_b, model_b_c
+torch.cuda.empty_cache() if device == "cuda" else None
+
+# === Test 4: Profile TRUE Dense Baseline (use_eet=False) ===
+print("\n" + "=" * 70)
+print("TEST 4: Compiled TRUE Dense Baseline (use_eet=False)")
+print("=" * 70)
+
+model_dense = EarlyExitGPT(make_config(use_eet=False)).to(device)
+model_dense.train()
+model_dense_c = torch.compile(model_dense)
+
+print("Warming up...")
+for _ in range(3):
+    loss = model_dense_c(x, y)
+    loss.backward()
+    model_dense.zero_grad()
+
+if device == "cuda": torch.cuda.synchronize()
+t0 = time.perf_counter()
+for _ in range(N):
+    loss = model_dense_c(x, y)
+    loss.backward()
+    model_dense.zero_grad()
+if device == "cuda": torch.cuda.synchronize()
+dt_dense = (time.perf_counter() - t0) / N * 1000
+print(f"  true dense baseline: {dt_dense:.1f} ms/step")
+
+print(f"\nSummary of Step Times (B={B}, T={T}, C={384}, layers={n_layer}):")
+print(f"  True Dense Baseline              : {dt_dense:.1f} ms")
+print(f"  Compute Skip (task_grad=True)    : {dt_skip_grad:.1f} ms (ratio vs dense: {dt_skip_grad/dt_dense:.2f}x)")
+print(f"  Compute Skip (task_grad=False)   : {dt_skip_nograd:.1f} ms (ratio vs dense: {dt_skip_nograd/dt_dense:.2f}x)")
 
 print("\nDone!")
