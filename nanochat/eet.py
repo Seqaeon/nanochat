@@ -1633,14 +1633,28 @@ class EarlyExitGPT(GPT):
                         exit_local = sorted_idx[:, K_next:]
                         exit_local, _ = torch.sort(exit_local, dim=-1)
 
-                        # Exiting tokens: scatter their final state into x_final
+                        # Exiting tokens: scatter their FULL (unweighted) state into x_final
                         exit_idx_global = torch.gather(active_idx, 1, exit_local)
                         x_exited = torch.gather(x_active, 1, exit_local.unsqueeze(-1).expand(-1, -1, C))
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active
                         active_idx_next = torch.gather(active_idx, 1, keep_local)  # (B, K_next)
-                        x_active = torch.gather(x_active, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
+                        x_active_kept = torch.gather(x_active, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
+
+                        # MoD-style score weighting: multiply the block's contribution by
+                        # the continue weight from routing_weights (STE version) so that
+                        # the task loss gradient can flow back to the router.
+                        # Without this, top-K is non-differentiable and the router only
+                        # gets signal from the efficiency loss (causing collapse).
+                        # Formula: x = x_input + w * (x_out - x_input)
+                        #   w=1 → full block output (token should continue)
+                        #   w=0 → skip block (token should have exited)
+                        cw_full = 1.0 - routing_weights[:, :, rl_counter]           # (B, T) with STE grad
+                        cw_active = torch.gather(cw_full, 1, active_idx)            # (B, K_cur)
+                        cw_kept = torch.gather(cw_active, 1, keep_local)            # (B, K_next)
+                        x_input_kept = torch.gather(x_input, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
+                        x_active = x_input_kept + cw_kept.unsqueeze(-1) * (x_active_kept - x_input_kept)
 
                         is_active_next = torch.zeros(B, T, dtype=torch.bool, device=x.device).scatter(1, active_idx_next, True)
                         is_active = is_active_next
