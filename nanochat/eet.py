@@ -1917,8 +1917,11 @@ class EarlyExitGPT(GPT):
                                 entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                             loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
-            # Gumbel auxiliary loss: uses REINFORCE quality loss & entropy bonus continuously
-            if use_gumbel and loss_reduction == 'mean':
+            # Gumbel auxiliary loss: uses REINFORCE quality loss & entropy bonus continuously.
+            # Skip under compute_skip — candidate_states require expensive full-sequence
+            # scatter+norm at every routing layer, and _compute_quality_advantages runs
+            # the LM head on each candidate, negating all compute savings.
+            if use_gumbel and loss_reduction == 'mean' and not compute_skip:
                 if len(p_exits) > 1:
                     adv_tensor, vmask = self._compute_quality_advantages(
                         candidate_states, p_exits, targets, config
