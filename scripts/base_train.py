@@ -2087,7 +2087,12 @@ if model_config.use_eet:
         n_blocks = len(active_counts)
         n_rl = len(capacities)
 
-        print0(f"Enforced physical exit distribution (T={T}, {n_blocks} blocks, {n_rl} routing slots):")
+        B = 1
+        if hasattr(orig_model, '_final_train_exit_probs') and orig_model._final_train_exit_probs is not None:
+            B = orig_model._final_train_exit_probs.size(0)
+
+        total_tokens = B * T
+        print0(f"Enforced physical exit distribution ({total_tokens:,} tokens, B={B}, T={T}, {n_blocks} blocks, {n_rl} routing slots):")
         # Compute per-slot exit counts from active_counts
         # active_counts[i] = K_cur at block i (before block runs)
         # Exit at slot k = active_counts[routing_block_k] - active_counts[routing_block_k+1]
@@ -2102,11 +2107,11 @@ if model_config.use_eet:
             exited = k_before - k_after
             pct = (exited / T) * 100
             label = f'exit_{slot}'
-            print0(f"  {label:12s}: {pct:6.2f}% ({exited:,} tokens) [capacity: {capacities[slot]:,}]")
+            print0(f"  {label:12s}: {pct:6.2f}% ({exited * B:,} tokens) [capacity: {capacities[slot] * B:,}]")
         # Final layer
         final_active = active_counts[-1]
         final_pct = (final_active / T) * 100
-        print0(f"  {'final_layer':12s}: {final_pct:6.2f}% ({final_active:,} tokens active)")
+        print0(f"  {'final_layer':12s}: {final_pct:6.2f}% ({final_active * B:,} tokens active)")
 
         # Enforced active fraction
         enforced_active = sum(active_counts) / (n_blocks * T)

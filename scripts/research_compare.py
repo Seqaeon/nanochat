@@ -370,6 +370,8 @@ def run_training_sweep(args):
         "--eet-use-override", str(getattr(args, 'eet_use_override', 0)),
         "--eet-override-prob-start", str(getattr(args, 'eet_override_prob_start', 0.5)),
         "--eet-override-prob-end", str(getattr(args, 'eet_override_prob_end', 0.1)),
+        "--eet-capacity-alignment-lambda", str(getattr(args, 'eet_capacity_alignment_lambda', 0.0)),
+        "--eet-router-task-grad", str(getattr(args, 'eet_router_task_grad', 1)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -933,6 +935,8 @@ if __name__ == "__main__":
     parser.add_argument("--eet-use-override", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-override-prob-start", type=float, default=0.5)
     parser.add_argument("--eet-override-prob-end", type=float, default=0.1)
+    parser.add_argument("--eet-capacity-alignment-lambda", type=float, default=0.0)
+    parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1])
 
     args = parser.parse_args()
     
