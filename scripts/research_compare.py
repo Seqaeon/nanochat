@@ -332,7 +332,7 @@ def run_training_sweep(args):
         "--eet-reenter-final", str(getattr(args, 'eet_reenter_final', 0)),
         "--eet-compute-skip", str(getattr(args, 'eet_compute_skip', 0)),
         "--eet-target-active-frac", str(getattr(args, 'eet_target_active_frac', 0.125)),
-        "--eet-capacity-schedule", str(getattr(args, 'eet_capacity_schedule', 'linear')),
+        "--eet-capacity-schedule", str(getattr(args, 'eet_capacity_schedule', 'bell')),
         "--eet-exit-fracs", str(getattr(args, 'eet_exit_fracs', '')),
         "--eet-router-type", str(getattr(args, 'eet_router_type', 'mlp2')),
         "--eet-router-hidden", str(getattr(args, 'eet_router_hidden', 0)),
@@ -895,7 +895,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-reenter-final", type=int, default=0, choices=[0, 1], help="EET: force exited tokens to re-enter and be processed by the final layer (1) or not (0)")
     parser.add_argument("--eet-compute-skip", type=int, default=0, choices=[0, 1], help="EET: enable compute-level skipping of intermediate blocks (1/0)")
     parser.add_argument("--eet-target-active-frac", type=float, default=0.125, help="EET: target active token fraction at the deepest routable layer")
-    parser.add_argument("--eet-capacity-schedule", type=str, default="linear", choices=["uniform", "linear", "geometric"])
+    parser.add_argument("--eet-capacity-schedule", type=str, default="bell", choices=["uniform", "linear", "geometric", "bell"])
     parser.add_argument("--eet-exit-fracs", type=str, default="")
     parser.add_argument("--eet-router-type", type=str, default="mlp2", choices=["linear", "mlp1", "mlp2", "attention", "attn"])
     parser.add_argument("--eet-router-hidden", type=int, default=0)

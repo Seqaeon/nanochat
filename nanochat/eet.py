@@ -1494,7 +1494,7 @@ class EarlyExitGPT(GPT):
                     print0(f"[EET] WARNING: eet_exit_fracs has {len(exit_fracs_cfg)} values "
                            f"but need {n_rl} or {n_rl+1} (n_rl={n_rl}). Falling back to schedule.")
                 else:
-                    schedule = getattr(config, 'eet_capacity_schedule', 'linear')
+                    schedule = getattr(config, 'eet_capacity_schedule', 'bell')
                     if schedule == 'uniform':
                         # Equal fraction exits at every routing slot
                         per_slot = (1.0 - target_frac) / n_rl
@@ -1503,6 +1503,14 @@ class EarlyExitGPT(GPT):
                         # Ramp up: earlier slots exit less, later slots exit more
                         # weights[k] = k+1, normalized so they sum to (1-target_frac)
                         weights = [k + 1 for k in range(n_rl)]
+                        total_w = sum(weights)
+                        routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
+                    elif schedule == 'bell':
+                        import math
+                        # Symmetric Gaussian distribution centered in the middle of the routing layers
+                        mid = (n_rl - 1) / 2.0
+                        sigma = max(1.0, n_rl / 4.0)
+                        weights = [math.exp(-((k - mid) / sigma) ** 2) for k in range(n_rl)]
                         total_w = sum(weights)
                         routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
                     else:  # geometric
@@ -1527,12 +1535,19 @@ class EarlyExitGPT(GPT):
                     print0(f"[EET] WARNING: eet_exit_fracs has {len(exit_fracs_cfg)} values "
                            f"but need {n_rl} or {n_rl+1} (n_rl={n_rl}). Falling back to schedule.")
                 else:
-                    schedule = getattr(config, 'eet_capacity_schedule', 'linear')
+                    schedule = getattr(config, 'eet_capacity_schedule', 'bell')
                     if schedule == 'uniform':
                         per_slot = (1.0 - target_frac) / n_rl
                         routing_exit_fracs = [per_slot] * n_rl
                     elif schedule == 'linear':
                         weights = [k + 1 for k in range(n_rl)]
+                        total_w = sum(weights)
+                        routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
+                    elif schedule == 'bell':
+                        import math
+                        mid = (n_rl - 1) / 2.0
+                        sigma = max(1.0, n_rl / 4.0)
+                        weights = [math.exp(-((k - mid) / sigma) ** 2) for k in range(n_rl)]
                         total_w = sum(weights)
                         routing_exit_fracs = [w / total_w * (1.0 - target_frac) for w in weights]
                     else:  # geometric

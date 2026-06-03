@@ -397,7 +397,7 @@ class GPTConfig:
     # MoD-style fixed-capacity compute skipping
     eet_compute_skip: bool = False                 # True = gather/scatter active tokens for real FLOP savings
     eet_target_active_frac: float = 0.125          # fraction of tokens still active at deepest routable layer (geometric decay)
-    eet_capacity_schedule: str = 'linear'          # capacity schedule ('uniform' | 'linear' | 'geometric')
+    eet_capacity_schedule: str = 'bell'            # capacity schedule ('uniform' | 'linear' | 'geometric' | 'bell')
     eet_exit_fracs: list[float] | None = None      # custom per-slot exit fractions override (comma-separated list of floats)
 
 
