@@ -1716,6 +1716,10 @@ while True:
             if hasattr(orig_model, '_last_exit_probs') and orig_model._last_exit_probs is not None:
                 orig_model._final_train_exit_probs = orig_model._last_exit_probs.detach().cpu().clone()
                 orig_model._final_train_tokens = x.detach().cpu().clone()
+            if hasattr(orig_model, '_last_enforced_capacities'):
+                orig_model._final_enforced_capacities = list(orig_model._last_enforced_capacities)
+                orig_model._final_active_counts = list(orig_model._last_active_counts)
+                orig_model._final_T = orig_model._last_T
                 
         if _mst_diag_this_step and micro_step == grad_accum_steps - 1:
             orig_model._diag_enabled = False
@@ -2072,10 +2076,10 @@ if model_config.use_eet:
     print0("================================================================================")
 
     # 1. Enforced physical capacity distribution (what actually happened with tokens)
-    if hasattr(orig_model, '_last_enforced_capacities') and hasattr(orig_model, '_last_active_counts'):
-        capacities = orig_model._last_enforced_capacities
-        active_counts = orig_model._last_active_counts
-        T = orig_model._last_T
+    if hasattr(orig_model, '_final_enforced_capacities') and hasattr(orig_model, '_final_active_counts'):
+        capacities = orig_model._final_enforced_capacities
+        active_counts = orig_model._final_active_counts
+        T = orig_model._final_T
         n_blocks = len(active_counts)
         n_rl = len(capacities)
 
