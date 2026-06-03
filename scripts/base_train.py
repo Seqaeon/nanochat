@@ -2070,37 +2070,74 @@ if model_config.use_eet:
     print0("\n================================================================================")
     print0("[EET FINAL ROUTER DIAGNOSTICS]")
     print0("================================================================================")
-    
+
+    # 1. Enforced physical capacity distribution (what actually happened with tokens)
+    if hasattr(orig_model, '_last_enforced_capacities') and hasattr(orig_model, '_last_active_counts'):
+        capacities = orig_model._last_enforced_capacities
+        active_counts = orig_model._last_active_counts
+        T = orig_model._last_T
+        n_blocks = len(active_counts)
+        n_rl = len(capacities)
+
+        print0(f"Enforced physical exit distribution (T={T}, {n_blocks} blocks, {n_rl} routing slots):")
+        # Compute per-slot exit counts from active_counts
+        # active_counts[i] = K_cur at block i (before block runs)
+        # Exit at slot k = active_counts[routing_block_k] - active_counts[routing_block_k+1]
+        for slot in range(n_rl):
+            # Block index for this routing slot: warmup block is 0, routing slots are 1..n_rl
+            block_idx = slot + 1  # after warmup
+            k_before = active_counts[block_idx]
+            if block_idx + 1 < n_blocks:
+                k_after = active_counts[block_idx + 1]
+            else:
+                k_after = active_counts[-1]  # last block's active count
+            exited = k_before - k_after
+            pct = (exited / T) * 100
+            label = f'exit_{slot}'
+            print0(f"  {label:12s}: {pct:6.2f}% ({exited:,} tokens) [capacity: {capacities[slot]:,}]")
+        # Final layer
+        final_active = active_counts[-1]
+        final_pct = (final_active / T) * 100
+        print0(f"  {'final_layer':12s}: {final_pct:6.2f}% ({final_active:,} tokens active)")
+
+        # Enforced active fraction
+        enforced_active = sum(active_counts) / (n_blocks * T)
+        enforced_exit = 1.0 - (active_counts[-1] / T)
+        print0(f"\nEnforced active fraction: {enforced_active:.3f} (exit_frac={enforced_exit:.3f})")
+    else:
+        print0("(No enforced capacity data available — compute_skip may not have been enabled)")
+
+    # 2. Soft probability diagnostics (router's learned preferences)
     if hasattr(orig_model, '_final_train_exit_probs') and orig_model._final_train_exit_probs is not None:
         exit_probs = orig_model._final_train_exit_probs.detach().cpu().float() # (B, T, n_exits)
         n_exits = exit_probs.size(-1)
-        
-        # 1. Compute argmax exit layer for every token in the batch
-        argmax_exits = exit_probs.argmax(dim=-1).numpy().ravel() # (B * T,)
+
+        # Argmax exit layer for every token
+        argmax_exits = exit_probs.argmax(dim=-1).numpy().ravel()
         total_tokens_evaluated = len(argmax_exits)
-        
-        print0(f"Analyzed {total_tokens_evaluated:,} tokens from the final training batch:")
-        print0("Actual hard exit (argmax) layer distribution:")
+
+        print0(f"\nRouter soft probability diagnostics ({total_tokens_evaluated:,} tokens):")
+        print0("Router preferred exit (argmax of soft probs):")
         for slot in range(n_exits):
             count = (argmax_exits == slot).sum()
             pct = (count / max(total_tokens_evaluated, 1)) * 100
             label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
             print0(f"  {label:12s}: {pct:6.2f}% ({count:,} tokens)")
-            
-        # 2. Print soft probability stats per slot to see if they are distinct or collapsed
+
+        # Soft probability stats per slot
         print0("\nSoft exit probability stats per slot:")
         for slot in range(n_exits):
             slot_probs = exit_probs[:, :, slot].numpy().ravel()
             label = 'final_layer' if slot == n_exits - 1 else f'exit_{slot}'
             print0(f"  {label:12s}: mean={slot_probs.mean():.6f} std={slot_probs.std():.6f} min={slot_probs.min():.6f} max={slot_probs.max():.6f}")
-            
-        # 3. Print mean and std of expected exit layer
+
+        # Mean and std of expected exit layer
         layer_indices = torch.arange(n_exits).float()
         expected_exit = (exit_probs * layer_indices).sum(dim=-1).numpy().ravel()
         print0(f"\nMean expected exit layer (soft): {expected_exit.mean():.4f}")
         print0(f"Std expected exit layer (soft):  {expected_exit.std():.6f}")
-        
-        # 4. Warn if completely collapsed
+
+        # Collapse warnings
         if expected_exit.std() < 0.01:
             print0(f"\n[EET WARNING] ⚠ ROUTER COLLAPSE: std={expected_exit.std():.6f} — router is near-constant across all tokens.")
         elif expected_exit.std() < 0.1:
@@ -2108,7 +2145,7 @@ if model_config.use_eet:
         else:
             print0("\n[EET INFO] ✓ Router has learned token-dependent exit behavior!")
     else:
-        print0("[EET FINAL DIAGNOSTIC] Warning: No router exit probabilities captured during training steps.")
+        print0("\n[EET FINAL DIAGNOSTIC] Warning: No router exit probabilities captured during training steps.")
     print0("================================================================================\n")
 
 # MST: write per-run summary row to mst_results.csv

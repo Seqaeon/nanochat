@@ -1621,8 +1621,11 @@ class EarlyExitGPT(GPT):
 
                 x_active = x_out
 
-                # Construct state for diagnostics/commitment loss if needed at this layer
-                if i in routing_set or i == n_layer - 1:
+                # Construct state for commitment/quality loss if needed at this layer.
+                # Skip in Phase 3 compute_skip when not needed — the scatter+norm is expensive
+                # (full B,T,C operation) and runs at every routing layer for no benefit.
+                need_candidate_states = is_soft_training or loss_variant == 'quality'
+                if need_candidate_states and (i in routing_set or i == n_layer - 1):
                     x_at_layer_i = x_final.scatter(1, idx3.expand(-1, -1, C), x_active)
                     state_to_append = norm(x_at_layer_i)
                     candidate_states.append(state_to_append.detach())
@@ -1749,6 +1752,11 @@ class EarlyExitGPT(GPT):
             # Diagnostics: compute average active tokens across all layers (including final layer)
             avg_active = sum(active_counts) / (n_layer * T)
             total_exit_frac = (1.0 - (K_before_reentry / T)) * n_rl
+
+            # Store enforced capacity info for final diagnostics
+            self._last_enforced_capacities = capacities  # list of K values per routing slot
+            self._last_active_counts = active_counts      # list of K values per block
+            self._last_T = T
 
         else:
             # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
