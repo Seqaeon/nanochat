@@ -108,7 +108,15 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         doc_batch, (pq_idx, rg_idx, epoch) = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token, num_threads=tokenizer_threads)
         for tokens in token_lists:
-            doc_buffer.append(tokens)
+            if len(tokens) > row_capacity:
+                # First chunk (starts with bos_token prepended by tokenizer.encode)
+                doc_buffer.append(tokens[:row_capacity])
+                # Subsequent chunks (we prepend bos_token, so content size is row_capacity - 1)
+                for idx in range(row_capacity, len(tokens), row_capacity - 1):
+                    chunk = [bos_token] + tokens[idx:idx + row_capacity - 1]
+                    doc_buffer.append(chunk)
+            else:
+                doc_buffer.append(tokens)
 
     # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
     # This gives us contiguous views and a single HtoD transfer
