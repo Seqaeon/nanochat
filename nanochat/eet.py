@@ -1391,6 +1391,7 @@ class EarlyExitGPT(GPT):
             # Start with all tokens active (sorted indices)
             active_idx = torch.arange(T, device=x.device).unsqueeze(0).expand(B, -1).contiguous()  # (B, T)
             K_cur = T
+            K_before_reentry = T
             rl_counter = 0  # index into capacities / routing_layers
 
             # Track soft and hard exit probabilities for efficiency loss and diagnostics
@@ -1546,6 +1547,9 @@ class EarlyExitGPT(GPT):
             active_counts = []
 
             for i, block in enumerate(blocks):
+                if i == n_layer - 1:
+                    K_before_reentry = K_cur
+
                 # --- Layer 8 Reentry: restore all tokens at final layer ---
                 if i == n_layer - 1 and getattr(config, 'eet_reenter_final', False):
                     # Scatter current active tokens into x_final before resetting active_idx
@@ -1612,17 +1616,20 @@ class EarlyExitGPT(GPT):
                         p_exits_soft.append(soft_weights[:, :, rl_counter])
                         p_exits.append(routing_weights[:, :, rl_counter])
 
-                        cum_exit_score_full = soft_weights[:, :, :rl_counter + 1].sum(dim=-1)  # (B, T)
-                        cum_exit_score = torch.gather(cum_exit_score_full, 1, active_idx)       # (B, K_cur)
+                        # Use per-slot exit probability directly (no cumulative scoring).
+                        # This is the same pattern as the per-layer MoD router:
+                        # higher exit_score → token wants to exit → lower continue_score.
+                        exit_score_full = soft_weights[:, :, rl_counter]                        # (B, T)
+                        exit_score = torch.gather(exit_score_full, 1, active_idx)                # (B, K_cur)
+                        continue_score = 1.0 - exit_score                                       # (B, K_cur)
 
-                        # Sort to separate continuing and exiting tokens
-                        _, sorted_idx = torch.sort(cum_exit_score, dim=-1)
-                        
-                        # Lowest score stays
+                        _, sorted_idx = torch.sort(continue_score, dim=-1, descending=True)
+
+                        # Highest continue score stays
                         keep_local = sorted_idx[:, :K_next]
                         keep_local, _ = torch.sort(keep_local, dim=-1)
-                        
-                        # Highest score exits
+
+                        # Lowest continue score exits
                         exit_local = sorted_idx[:, K_next:]
                         exit_local, _ = torch.sort(exit_local, dim=-1)
 
@@ -1706,7 +1713,7 @@ class EarlyExitGPT(GPT):
             n_routed_layers = n_rl
             # Diagnostics: compute average active tokens across all layers (including final layer)
             avg_active = sum(active_counts) / (n_layer * T)
-            total_exit_frac = (1.0 - (K_cur / T)) * n_rl
+            total_exit_frac = (1.0 - (K_before_reentry / T)) * n_rl
 
         else:
             # --- Hard Early Exit path (Phase 3 / Eval / Inference) ---
