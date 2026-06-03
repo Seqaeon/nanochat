@@ -758,6 +758,38 @@ class EarlyExitGPT(GPT):
         self.eet_current_phase = target_phase
         self.eet_phase_tracker[0] = target_phase
 
+    @staticmethod
+    @torch.compiler.disable
+    def _derive_capacities(soft_weights: torch.Tensor, n_rl: int, T: int, target_frac: float) -> list:
+        """Compute per-exit-slot token capacities from the router's predicted distribution.
+
+        Returns a plain Python list of ints so torch.compile can use them as
+        static arguments to topk() without graph breaks.
+
+        Decorated @torch.compiler.disable so dynamo never traces into this
+        function — the .item() / int() calls stay in eager mode.
+
+        Args:
+            soft_weights: (B, T, n_exits) softmax weights from global router
+            n_rl:         number of routing (non-final) exit slots
+            T:            sequence length
+            target_frac:  minimum survivor fraction (floor on capacity)
+
+        Returns:
+            capacities: list of n_rl Python ints, cap[k] = active tokens after exit k
+        """
+        with torch.no_grad():
+            # Mean exit fraction per slot over batch and sequence
+            mean_exit_frac = soft_weights.float().mean(dim=(0, 1))  # (n_exits,)
+            # Cumulative survivors: fraction still active after each routing slot
+            cum_exited = mean_exit_frac.cumsum(dim=0)               # (n_exits,)
+            survivors = (1.0 - cum_exited[:-1]).clamp(min=target_frac / max(n_rl, 1))
+            capacities = [
+                max(1, int(survivors[k].item() * T))
+                for k in range(n_rl)
+            ]
+        return capacities
+
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
                 eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1):
@@ -1461,19 +1493,15 @@ class EarlyExitGPT(GPT):
                 # cap[k] = tokens still active AFTER exit slot k fires.
                 # This makes the top-K budget match what the router actually predicts,
                 # so e.g. if router says 18% exit at slot 1, cap[0] = int(0.82 * T).
-                with torch.no_grad():
-                    mean_exit_frac = soft_weights.float().mean(dim=(0, 1))  # (n_exits,)
-                    # cumulative fraction still active after each exit point
-                    # survivors[k] = 1 - sum(mean_exit_frac[0..k])
-                    cum_exited = mean_exit_frac.cumsum(dim=0)  # (n_exits,)
-                    # We only need routing slots (all but the last = final layer slot)
-                    survivors = (1.0 - cum_exited[:-1]).clamp(min=target_frac / n_rl)
-                    for rl_idx in range(n_rl):
-                        cap = max(1, int(survivors[rl_idx].item() * T))
-                        capacities.append(cap)
+                #
+                # COMPILE NOTE: .item() / int() break the torch.compile graph.
+                # _derive_capacities is decorated @torch.compiler.disable so dynamo
+                # never traces into it — it returns plain Python ints that the
+                # compiled loop can use as static topk() arguments.
+                capacities = self._derive_capacities(soft_weights, n_rl, T, target_frac)
 
             else:
-                # Per-layer router: use linear decay as fallback
+                # Per-layer router: use linear decay as fallback (pure Python, no graph break)
                 for rl_idx in range(n_rl):
                     frac = 1.0 - (rl_idx + 1) * (1.0 - target_frac) / n_rl
                     cap = max(1, int(frac * T))
