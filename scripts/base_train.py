@@ -290,6 +290,8 @@ parser.add_argument("--eet-override-prob-end", type=float, default=0.1, help="EE
 parser.add_argument("--eet-reenter-final", type=int, default=0, choices=[0, 1], help="EET: force exited tokens to re-enter and be processed by the final layer (1/0)")
 parser.add_argument("--eet-compute-skip", type=int, default=0, choices=[0, 1], help="EET: enable compute-level skipping of intermediate blocks (1/0)")
 parser.add_argument("--eet-target-active-frac", type=float, default=0.125, help="EET: target active token fraction at the deepest routable layer")
+parser.add_argument("--eet-capacity-schedule", type=str, default="linear", choices=["uniform", "linear", "geometric"], help="EET: capacity schedule for compute skip")
+parser.add_argument("--eet-exit-fracs", type=str, default="", help="EET: comma-separated list of float exit fractions (sums to ~1.0) overriding schedule")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -868,6 +870,8 @@ def build_model_meta(depth):
         eet_override_prob_end=float(getattr(args, 'eet_override_prob_end', 0.1)),
         eet_compute_skip=bool(getattr(args, 'eet_compute_skip', 0)),
         eet_target_active_frac=float(getattr(args, 'eet_target_active_frac', 0.125)),
+        eet_capacity_schedule=getattr(args, 'eet_capacity_schedule', 'linear'),
+        eet_exit_fracs=[float(x.strip()) for x in getattr(args, 'eet_exit_fracs', '').split(',') if x.strip()] if getattr(args, 'eet_exit_fracs', '') else None,
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

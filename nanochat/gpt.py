@@ -397,6 +397,8 @@ class GPTConfig:
     # MoD-style fixed-capacity compute skipping
     eet_compute_skip: bool = False                 # True = gather/scatter active tokens for real FLOP savings
     eet_target_active_frac: float = 0.125          # fraction of tokens still active at deepest routable layer (geometric decay)
+    eet_capacity_schedule: str = 'linear'          # capacity schedule ('uniform' | 'linear' | 'geometric')
+    eet_exit_fracs: list[float] | None = None      # custom per-slot exit fractions override (comma-separated list of floats)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -503,6 +505,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_use_override", "eet_override_prob_start", "eet_override_prob_end",
     "eet_reenter_final",
     "eet_compute_skip", "eet_target_active_frac",
+    "eet_capacity_schedule", "eet_exit_fracs",
 }
 
 

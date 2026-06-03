@@ -937,6 +937,46 @@ def test_eet_global_router_compute_skip():
     print("✓ Global router with MoD compute skip is fully verified with gradients!")
 
 
+def test_eet_custom_exit_fracs():
+    device = "cpu"
+    print("\n--- Testing EET Custom Exit Fractions Override ---")
+
+    # With n_layer = 4, eet_min_exit_layer = 1, there are n_rl = 2 routing layers (layer 1 and 2).
+    # n_rl + 1 = 3 exit slots.
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=1,
+        eet_frozen_kv=False,
+        eet_reenter_final=True,
+        eet_compute_skip=True,
+        eet_global_router=True,
+        eet_exit_fracs=[0.00, 0.40, 0.60],  # 3 slots: slot 0 (0%), slot 1 (40%), final (60%)
+        n_layer=4
+    )
+
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+
+    B, T = 2, 10
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+
+    # 1. Forward run
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+    )
+    assert not torch.isnan(loss), "Loss with custom exit fracs is NaN"
+
+    print("✓ Custom exit fractions override verified successfully!")
+
+
 if __name__ == "__main__":
     test_eet_loss_variants()
     test_eet_phase3_quality_losses()
@@ -951,6 +991,7 @@ if __name__ == "__main__":
     test_eet_attention_variants_and_reentry()
     test_eet_compute_skip_fixed_capacity()
     test_eet_global_router_compute_skip()
+    test_eet_custom_exit_fracs()
 
 
 
