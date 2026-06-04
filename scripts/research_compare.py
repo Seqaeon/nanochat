@@ -939,6 +939,8 @@ if __name__ == "__main__":
     parser.add_argument("--eet-override-prob-end", type=float, default=0.1)
     parser.add_argument("--eet-capacity-alignment-lambda", type=float, default=0.0)
     parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--eet-reinforce-interval", type=int, default=0)
+    parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1)
 
     args = parser.parse_args()
     
