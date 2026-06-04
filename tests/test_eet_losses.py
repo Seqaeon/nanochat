@@ -1037,7 +1037,87 @@ if __name__ == "__main__":
     test_eet_global_router_compute_skip()
     test_eet_custom_exit_fracs()
     test_eet_capacity_alignment_and_task_grad()
+    test_eet_a3d_ffn_skip()
 
 
+def test_eet_a3d_ffn_skip():
+    """Test A³D: Attention-Anchored Adaptive Depth (FFN-only skip)."""
+    device = "cpu"
+    print("\n--- Testing A³D: FFN-only skip with full attention ---")
 
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_loss_variant='ce_guided',
+        eet_global_router=True,
+        eet_ffn_skip=True,
+        eet_ffn_target_frac=0.50,
+        eet_ffn_full_attn=True,
+        eet_gumbel_temp_start=1.0,
+        eet_gumbel_temp_end=0.1,
+        eet_router_task_grad=True,
+    )
 
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+
+    # Verify router outputs n_layer dimensions (one per layer)
+    n_layer = config.n_layer
+    router = model.eet_routers[0]
+    h_test = torch.randn(2, 8, 16, device=device)
+    router_out = router(h_test)
+    assert router_out.shape[-1] == n_layer, f"A³D router should output n_layer={n_layer} dims, got {router_out.shape[-1]}"
+    print(f"  ✓ Router outputs {n_layer} FFN decisions (one per layer)")
+
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+
+    # Forward pass
+    model.zero_grad(set_to_none=True)
+    loss = model(
+        x, y,
+        eet_do_route=True,
+        eet_phase=3,
+        eet_lambda_r=torch.tensor(0.0, device=device),
+        eet_lambda_e=torch.tensor(0.0, device=device),
+        eet_step=torch.tensor(50, device=device, dtype=torch.float32),
+        eet_total_steps=torch.tensor(100, device=device, dtype=torch.float32),
+    )
+
+    assert not torch.isnan(loss), "A³D loss is NaN"
+    print(f"  ✓ Forward pass successful, loss={loss.item():.4f}")
+
+    # Check diagnostics
+    diag = model._eet_diagnostics
+    assert diag.get('a3d', False), "Diagnostics should indicate A³D mode"
+    assert diag['active_frac'] == 0.50, f"Active frac should be 0.50, got {diag['active_frac']}"
+    print(f"  ✓ Diagnostics: a3d={diag['a3d']}, active_frac={diag['active_frac']}")
+
+    # Backward pass
+    loss.backward()
+
+    # Verify router gets gradients (task gradient via STE)
+    router_has_grad = False
+    for name, p in model.named_parameters():
+        if "eet_router" in name and p.grad is not None:
+            router_has_grad = True
+            assert not torch.isnan(p.grad).any(), f"NaN gradient in {name}"
+            print(f"  Router {name} grad norm: {p.grad.norm().item():.6f}")
+
+    assert router_has_grad, "Router did not receive gradients in A³D mode!"
+
+    # Verify backbone gets gradients
+    backbone_has_grad = False
+    for name, p in model.named_parameters():
+        if "transformer.h" in name and p.grad is not None:
+            backbone_has_grad = True
+            break
+    assert backbone_has_grad, "Backbone did not receive gradients in A³D mode!"
+
+    print("✓ A³D FFN-only skip is fully functional!")

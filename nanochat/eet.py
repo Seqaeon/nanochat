@@ -582,7 +582,11 @@ class EarlyExitGPT(GPT):
         if getattr(config, 'eet_global_router', False):
             # Upfront single global exit router
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
-            n_exits = len(routing_layers) + 1
+            if getattr(config, 'eet_ffn_skip', False):
+                # A³D: one FFN decision per layer
+                n_exits = n_layer
+            else:
+                n_exits = len(routing_layers) + 1
             self.eet_routers = nn.ModuleList([
                 GlobalExitRouter(n_embd, n_exits, router_type=config.eet_router_type,
                                  hidden_dim=router_hidden)
@@ -911,13 +915,16 @@ class EarlyExitGPT(GPT):
         use_gumbel = (config.eet_gumbel_temp_start > 0.0)
         compute_skip = getattr(config, 'eet_compute_skip', False)
         is_global_router = getattr(config, 'eet_global_router', False)
+        ffn_skip = getattr(config, 'eet_ffn_skip', False)
         # Compute is_soft_training first so the auto-enable checks below can reference it
-        is_soft_training = (eet_do_route and self.training and eet_phase == 2) or (use_gumbel and eet_do_route and self.training and not compute_skip)
+        # A³D (ffn_skip) has its own code path and should not trigger soft training
+        is_soft_training = (not ffn_skip) and ((eet_do_route and self.training and eet_phase == 2) or (use_gumbel and eet_do_route and self.training and not compute_skip))
         is_layer_weighted = (loss_variant == 'layer_weighted')
 
         # Global router requires compute_skip to physically drop tokens.
         # Without it the code falls through to soft blending (no compute savings).
-        if is_global_router and not compute_skip and do_route and not is_soft_training and not is_layer_weighted:
+        # Exception: A³D mode (ffn_skip) has its own code path.
+        if is_global_router and not compute_skip and do_route and not is_soft_training and not is_layer_weighted and not ffn_skip:
             print0("[EET] WARNING: eet_global_router=True but eet_compute_skip=False. "
                    "Enabling compute_skip automatically.")
             compute_skip = True
@@ -926,7 +933,7 @@ class EarlyExitGPT(GPT):
         # outputs ~0, never crosses eet_exit_threshold). compute_skip uses rank-based
         # top-K which always drops exactly the right number of tokens regardless of
         # router magnitude. Auto-enable whenever we're doing hard routing.
-        if do_route and not compute_skip and not is_soft_training and not is_layer_weighted:
+        if do_route and not compute_skip and not is_soft_training and not is_layer_weighted and not ffn_skip:
             print0("[EET] WARNING: eet_compute_skip=False with hard routing. "
                    "Enabling automatically — set eet_compute_skip=True in config to suppress.")
             compute_skip = True
@@ -950,7 +957,7 @@ class EarlyExitGPT(GPT):
 
         prev_x = x.detach()  # hidden state before first block
 
-        if is_global_router and not compute_skip:
+        if is_global_router and not compute_skip and not ffn_skip:
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
             n_exits = len(routing_layers) + 1
             
@@ -1455,6 +1462,104 @@ class EarlyExitGPT(GPT):
                 avg_active = soft_active.mean()
                 total_exit_frac = 1.0 - avg_active
                 n_routed_layers = len(routing_layers)
+
+        elif getattr(config, 'eet_ffn_skip', False) and do_route:
+            # --- A³D: Attention-Anchored Adaptive Depth ---
+            # All tokens go through attention at every layer (context preserved).
+            # Only FFN is selectively applied to top-K tokens per layer.
+            C = x.size(-1)
+            ffn_target_frac = getattr(config, 'eet_ffn_target_frac', 0.50)
+            K_ffn = max(1, int(ffn_target_frac * T))
+            is_global_router = getattr(config, 'eet_global_router', False)
+
+            # Global router: outputs per-layer FFN importance
+            global_router = self.eet_routers[0]
+            router_logits = global_router(
+                x0,
+                freq_bias=freq_bias,
+                pos_bias=pos_bias,
+                freq_alpha=config.eet_freq_prior_alpha,
+                pos_beta=config.eet_pos_prior_beta
+            )  # (B, T, n_layer)
+
+            # Temperature-scaled sigmoid for FFN probabilities
+            eet_gumbel_temp = max(getattr(config, 'eet_gumbel_temp_end', 0.1), 0.01)
+            if self.training:
+                # Anneal temperature during training
+                if eet_step is not None and eet_total_steps is not None:
+                    t_start = getattr(config, 'eet_gumbel_temp_start', 1.0)
+                    t_end = getattr(config, 'eet_gumbel_temp_end', 0.1)
+                    progress = min(1.0, eet_step / max(1, eet_total_steps))
+                    eet_gumbel_temp = t_start + (t_end - t_start) * progress
+
+            ffn_probs = torch.sigmoid(router_logits.float() / eet_gumbel_temp).to(x.dtype)  # (B, T, n_layer)
+
+            # Store for diagnostics
+            self._last_exit_probs = ffn_probs
+
+            # Diagnostic: track FFN token counts per layer
+            ffn_counts = []
+
+            for i, block in enumerate(blocks):
+                # Residual mixing
+                x0_w = self.x0_lambdas[i]
+                if self._use_residual_decay and self.depth_decay_raw is not None:
+                    decay_base = torch.sigmoid(self.depth_decay_raw)
+                    x0_w = x0_w * (decay_base ** i)
+                x_input = self.resid_lambdas[i] * x + x0_w * x0
+
+                # Phase A: Attention on ALL T tokens (context preserved)
+                ve = self.value_embeds[str(i)](idx).to(x_input.dtype) if str(i) in self.value_embeds else None
+                x = block.forward_attn_only(x_input, ve, cos_sin, self.window_sizes[i], kv_cache)
+
+                # Phase B: FFN on top-K tokens by FFN importance
+                layer_ffn_prob = ffn_probs[:, :, i]  # (B, T)
+                _, sorted_idx = torch.sort(layer_ffn_prob, dim=-1, descending=True)
+                ffn_idx = sorted_idx[:, :K_ffn]
+                ffn_idx, _ = torch.sort(ffn_idx, dim=-1)  # maintain position order
+
+                # Gather tokens for FFN
+                idx3 = ffn_idx.unsqueeze(-1)  # (B, K_ffn, 1)
+                x_ffn_in = torch.gather(x, 1, idx3.expand(-1, -1, C))
+
+                # Run FFN on gathered subset
+                x_ffn_out = block.forward_ffn_only(x_ffn_in)
+
+                # Task gradient: weight FFN contribution by router probability (STE)
+                if self.training and getattr(config, 'eet_router_task_grad', True):
+                    ffn_weight = torch.gather(layer_ffn_prob, 1, ffn_idx)  # (B, K_ffn)
+                    ffn_delta = x_ffn_out - x_ffn_in  # FFN-only contribution
+                    x_ffn_out = x_ffn_in + ffn_weight.unsqueeze(-1) * ffn_delta
+
+                # Scatter FFN output back into full tensor
+                x = x.scatter(1, idx3.expand(-1, -1, C), x_ffn_out)
+
+                # Residual mixer (on full tensor)
+                if self.residual_mixers is not None:
+                    gamma = self.residual_mix_gamma[i].to(x.dtype)
+                    mixed = self.residual_mixers[i](x.transpose(1, 2)).transpose(1, 2)
+                    x = x + gamma * mixed
+
+                ffn_counts.append(K_ffn)
+
+            x = norm(x)
+            avg_active = ffn_target_frac  # all tokens are "active" for attention
+            total_exit_frac = 1.0 - ffn_target_frac  # fraction that skipped FFN
+            n_routed_layers = n_layer
+
+            # Store diagnostics
+            self._last_active_counts = ffn_counts
+            self._last_T = T
+            self._eet_diagnostics = {
+                'phase': eet_phase,
+                'active_frac': avg_active,
+                'total_exit_frac': total_exit_frac,
+                'ffn_counts': ffn_counts,
+                'a3d': True,
+            }
+
+            # Store router input for external ce_guided
+            router_input = x0
 
         elif compute_skip and do_route:
             # --- MoD-style Fixed-Capacity Compute-Skip Path ---
@@ -2095,7 +2200,7 @@ class EarlyExitGPT(GPT):
             # Skip under compute_skip — candidate_states require expensive full-sequence
             # scatter+norm at every routing layer, and _compute_quality_advantages runs
             # the LM head on each candidate, negating all compute savings.
-            if use_gumbel and loss_reduction == 'mean' and not compute_skip:
+            if use_gumbel and loss_reduction == 'mean' and not compute_skip and not ffn_skip:
                 if len(p_exits) > 1:
                     adv_tensor, vmask = self._compute_quality_advantages(
                         candidate_states, p_exits, targets, config
@@ -2113,7 +2218,7 @@ class EarlyExitGPT(GPT):
                         loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
             # --- Efficiency loss + diversity pressure ---
-            if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
+            if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean' and not ffn_skip:
                 if self.training and eet_phase == 3 and not use_gumbel:
                     eff_div_loss, _ = compute_efficiency_and_diversity(
                         p_exits_soft, len(p_exits_soft), freq_bias, config, eet_lambda_e
@@ -2135,8 +2240,13 @@ class EarlyExitGPT(GPT):
                         capacity_loss = F.mse_loss(mean_probs, target_dist)
                         loss = loss + cal_lambda * capacity_loss.to(loss.dtype)
 
-            # Store diagnostics
-            if self.training:
+            # A³D efficiency loss: penalize overall FFN usage
+            if ffn_skip and self.training and loss_reduction == 'mean':
+                ffn_usage = self._last_exit_probs.mean()  # average FFN probability
+                loss = loss + eet_lambda_e * ffn_usage
+
+            # Store diagnostics (A³D sets its own in-branch)
+            if self.training and not ffn_skip:
                 self._eet_diagnostics = {
                     'phase': eet_phase,
                     'active_frac': avg_active,

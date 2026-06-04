@@ -405,6 +405,10 @@ class GPTConfig:
     eet_reinforce_lambda: float = 0.1               # REINFORCE loss weight
     eet_exit_adapter_rank: int = 0                  # per-exit low-rank adapter rank (0=disabled). Maps early-exit representations to lm_head space.
     eet_router_after_block: int = 0                 # run global router after this block index (0=use raw embedding x0). Post-attention context helps routing.
+    # A³D: Attention-Anchored Adaptive Depth (FFN-only skip)
+    eet_ffn_skip: bool = False                      # True = A³D mode: skip FFN only, preserve attention at all layers
+    eet_ffn_target_frac: float = 0.50               # fraction of tokens that GET FFN at each layer (rest skip FFN)
+    eet_ffn_full_attn: bool = True                  # True = attention on all T tokens; False = gather for attention too
 
 
 
@@ -7413,6 +7417,20 @@ class Block(nn.Module):
             # The gradient update will apply to the noised weights, which is the intended SAM-like behavior.
             pass
         return x
+
+    def forward_attn_only(self, x, ve, cos_sin, window_size, kv_cache):
+        """A³D: Run attention only (no FFN). Returns x + attn_out."""
+        norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
+        attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache)
+        return x + attn_out
+
+    def forward_ffn_only(self, x):
+        """A³D: Run FFN only on pre-attended x. Returns x + mlp(norm(x))."""
+        norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
+        block_out = self.mlp(norm_fn_mlp(x))
+        if self.residual_alpha is not None:
+            block_out = F.softplus(self.residual_alpha).to(block_out.dtype) * block_out
+        return x + block_out
 
 
 class GPT(nn.Module):

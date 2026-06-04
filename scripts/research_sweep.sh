@@ -338,7 +338,7 @@ while [[ $# -gt 0 ]]; do
         --eet-quality-lambda|--eet-quality-entropy-bonus|\
         --eet-gumbel-temp-start|--eet-gumbel-temp-end|--eet-gumbel-hard|--eet-commitment-beta|--eet-global-router|\
         --eet-freq-efficiency-alpha|--eet-diversity-lambda|--eet-ce-guided-lambda|--eet-depth-weight-type|--eet-depth-weight-max|\
-        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final|--eet-compute-skip|--eet-target-active-frac|--eet-capacity-schedule|--eet-exit-fracs|--eet-capacity-alignment-lambda|--eet-router-task-grad|--eet-reinforce-interval|--eet-reinforce-lambda|--eet-exit-adapter-rank|--eet-router-after-block)
+        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final|--eet-compute-skip|--eet-target-active-frac|--eet-capacity-schedule|--eet-exit-fracs|--eet-capacity-alignment-lambda|--eet-router-task-grad|--eet-reinforce-interval|--eet-reinforce-lambda|--eet-exit-adapter-rank|--eet-router-after-block|--eet-ffn-skip|--eet-ffn-target-frac|--eet-ffn-full-attn)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
