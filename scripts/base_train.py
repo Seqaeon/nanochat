@@ -1776,7 +1776,7 @@ while True:
             _tgt = y
 
             # Re-run the global router (tiny: 2 linear layers) to get differentiable logits
-            _global_router = orig_model.eet_global_router
+            _global_router = orig_model.eet_routers[0]
             _freq_bias = getattr(orig_model, '_freq_bias', None)
             _pos_bias = getattr(orig_model, '_pos_bias', None)
             _rl = _global_router(
