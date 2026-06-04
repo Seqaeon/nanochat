@@ -688,15 +688,12 @@ class EarlyExitGPT(GPT):
         
         Used by the two-pass ce_guided trick: compare CE at full depth vs CE
         at exit depth to identify tokens that were hurt by early routing.
+        
+        Memory-efficient: chunks the lm_head + CE computation so we never
+        allocate the full (B*T, vocab_size) logits tensor at once.
         """
         B, T = idx.shape
         config = self.config
-
-        # Use the parent GPT's forward to run all blocks densely
-        # GPT.forward computes: embed → blocks → norm → lm_head → loss
-        # We need logits, so we call with targets=None-like approach
-        # but actually we just replicate the logit computation since GPT.forward
-        # returns loss when targets are given
 
         # Rotary embeddings
         cos_sin = self.cos[:, :T], self.sin[:, :T]
@@ -719,16 +716,25 @@ class EarlyExitGPT(GPT):
             x = block(x_input, ve, cos_sin, self.window_sizes[i], None)
 
         x = norm(x)
-        logits = self.lm_head(x)
-        logits = logits[..., :config.vocab_size].float()
-        logits = 20 * torch.tanh(logits / 20)
 
-        per_token_ce = F.cross_entropy(
-            logits.view(-1, logits.size(-1)), targets.view(-1),
-            ignore_index=-1, reduction='none'
-        ).view(B, T)
+        # Chunked lm_head + CE: process 128 tokens at a time to avoid OOM
+        # from materializing full (B*T, vocab_size) logits tensor
+        x_flat = x.view(-1, x.shape[-1])        # (B*T, C)
+        targets_flat = targets.view(-1)           # (B*T,)
+        per_token_ce = torch.zeros(B * T, device=idx.device, dtype=torch.float32)
+        chunk_size = 128
+        for start in range(0, B * T, chunk_size):
+            end = min(start + chunk_size, B * T)
+            chunk_logits = self.lm_head(x_flat[start:end])
+            chunk_logits = chunk_logits[..., :config.vocab_size].float()
+            chunk_logits = 20.0 * torch.tanh(chunk_logits / 20.0)
+            per_token_ce[start:end] = F.cross_entropy(
+                chunk_logits, targets_flat[start:end],
+                ignore_index=-1, reduction='none'
+            )
+            del chunk_logits
 
-        return per_token_ce
+        return per_token_ce.view(B, T)
 
     @torch.no_grad()
     def finalize_token_difficulty(self):
