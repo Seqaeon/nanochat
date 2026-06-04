@@ -2527,6 +2527,7 @@ class EarlyExitGPT(GPT):
         # EET: Add router and translator parameters to transformer_matrices (and keep track of them separately)
         eet_params = sum(p.numel() for p in self.eet_routers.parameters())
         eet_params += sum(p.numel() for p in self.eet_translators.parameters())
+        eet_params += sum(p.numel() for p in self.eet_exit_adapters.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters()) + eet_params
 
         research = 0
