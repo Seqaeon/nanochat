@@ -1714,8 +1714,6 @@ while True:
                     step % _reinforce_interval == 0 and eet_do_route):
                     dense_ce = orig_model._compute_dense_per_token_ce(x, y)
                     orig_model._reinforce_dense_ce = dense_ce
-                else:
-                    orig_model._reinforce_dense_ce = None
 
                 loss = model(x, y,
                              eet_do_route=eet_do_route,
@@ -1766,6 +1764,58 @@ while True:
                         aux_loss_total = aux_loss_total + aux
             if aux_loss_total.item() > 0:
                 loss = loss + aux_loss_total
+        # EET: ce_guided depth classification — computed OUTSIDE the compiled forward
+        # to avoid changing the compiled graph. Re-runs the tiny global router on the
+        # stored embedding to get fresh router_logits WITH gradients.
+        if (model_config.use_eet and model_config.eet_compute_skip and
+            getattr(model_config, 'eet_loss_variant', '') == 'ce_guided' and
+            hasattr(orig_model, '_last_x0_for_ce') and
+            hasattr(orig_model, '_last_per_token_ce')):
+            _x0 = orig_model._last_x0_for_ce         # (B, T, C), detached
+            _ptce = orig_model._last_per_token_ce     # (B, T), detached
+            _tgt = y
+
+            # Re-run the global router (tiny: 2 linear layers) to get differentiable logits
+            _global_router = orig_model.eet_global_router
+            _freq_bias = getattr(orig_model, '_freq_bias', None)
+            _pos_bias = getattr(orig_model, '_pos_bias', None)
+            _rl = _global_router(
+                _x0,
+                freq_bias=_freq_bias,
+                pos_bias=_pos_bias,
+                freq_alpha=model_config.eet_freq_prior_alpha,
+                pos_beta=model_config.eet_pos_prior_beta
+            )  # (B, T, n_exits) — WITH gradients to router params
+
+            _n_exits = _rl.shape[-1]
+            _valid_mask = (_tgt != -1).float()
+            _n_valid = _valid_mask.sum().clamp(min=1.0)
+
+            # Two-pass: use differential CE if dense baseline is available
+            _dense_ce = getattr(orig_model, '_reinforce_dense_ce', None)
+            _ce_signal = (_ptce - _dense_ce) if _dense_ce is not None else _ptce
+
+            with torch.no_grad():
+                _valid_ce = _ce_signal[_tgt != -1]
+                if _valid_ce.numel() > 1:
+                    _ce_mean = _valid_ce.mean()
+                    _ce_std = _valid_ce.std().clamp(min=0.1)
+                    _normalized = torch.sigmoid((_ce_signal - _ce_mean) / _ce_std)
+                    _target_exit = (_normalized * _n_exits).long().clamp(0, _n_exits - 1)
+                else:
+                    _target_exit = torch.zeros_like(_tgt)
+                _target_exit = _target_exit * (_tgt != -1).long()
+
+            _depth_loss = F.cross_entropy(
+                _rl.float().view(-1, _n_exits),
+                _target_exit.view(-1),
+                ignore_index=-100,
+                reduction='none',
+            )
+            _depth_loss = (_depth_loss.view_as(_tgt) * _valid_mask).sum() / _n_valid
+            _ce_lambda = getattr(model_config, 'eet_ce_guided_lambda', 1.0)
+            loss = loss + _ce_lambda * _depth_loss
+
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
