@@ -403,6 +403,8 @@ class GPTConfig:
     eet_router_task_grad: bool = True              # allow task loss gradients to propagate to router through continue weights
     eet_reinforce_interval: int = 0                 # two-pass REINFORCE every N steps (0=disabled). Runs dense forward to get counterfactual CE.
     eet_reinforce_lambda: float = 0.1               # REINFORCE loss weight
+    eet_exit_adapter_rank: int = 0                  # per-exit low-rank adapter rank (0=disabled). Maps early-exit representations to lm_head space.
+    eet_router_after_block: int = 0                 # run global router after this block index (0=use raw embedding x0). Post-attention context helps routing.
 
 
 

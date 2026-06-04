@@ -374,6 +374,8 @@ def run_training_sweep(args):
         "--eet-router-task-grad", str(getattr(args, 'eet_router_task_grad', 1)),
         "--eet-reinforce-interval", str(getattr(args, 'eet_reinforce_interval', 0)),
         "--eet-reinforce-lambda", str(getattr(args, 'eet_reinforce_lambda', 0.1)),
+        "--eet-exit-adapter-rank", str(getattr(args, 'eet_exit_adapter_rank', 0)),
+        "--eet-router-after-block", str(getattr(args, 'eet_router_after_block', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -941,6 +943,8 @@ if __name__ == "__main__":
     parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1])
     parser.add_argument("--eet-reinforce-interval", type=int, default=0)
     parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1)
+    parser.add_argument("--eet-exit-adapter-rank", type=int, default=0)
+    parser.add_argument("--eet-router-after-block", type=int, default=0)
 
     args = parser.parse_args()
     

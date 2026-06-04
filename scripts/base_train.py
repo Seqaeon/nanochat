@@ -297,6 +297,8 @@ parser.add_argument("--eet-capacity-alignment-lambda", type=float, default=0.0, 
 parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1], help="EET: allow task loss gradients to propagate to router through continue weights (1/0)")
 parser.add_argument("--eet-reinforce-interval", type=int, default=0, help="EET: two-pass REINFORCE every N steps (0=disabled)")
 parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1, help="EET: REINFORCE loss weight")
+parser.add_argument("--eet-exit-adapter-rank", type=int, default=0, help="EET: per-exit low-rank adapter rank (0=disabled)")
+parser.add_argument("--eet-router-after-block", type=int, default=0, help="EET: run global router after this block index (0=use raw embedding)")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -881,6 +883,8 @@ def build_model_meta(depth):
         eet_router_task_grad=bool(getattr(args, 'eet_router_task_grad', 1)),
         eet_reinforce_interval=int(getattr(args, 'eet_reinforce_interval', 0)),
         eet_reinforce_lambda=float(getattr(args, 'eet_reinforce_lambda', 0.1)),
+        eet_exit_adapter_rank=int(getattr(args, 'eet_exit_adapter_rank', 0)),
+        eet_router_after_block=int(getattr(args, 'eet_router_after_block', 0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

@@ -226,6 +226,7 @@ run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
     --eet-router-type mlp1 \
     --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-exit-adapter-rank 16 --eet-router-after-block 1 \
     --eet-loss-variant ce_guided --eet-capacity-schedule bell \
     --eet-global-router 1 --eet-router-task-grad 1 \
     --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 \

@@ -456,6 +456,26 @@ class GlobalExitRouter(nn.Module):
         return logits.to(h.dtype)
 
 
+# ---------------------------------------------------------------------------
+# Per-Exit Low-Rank Adapter
+# ---------------------------------------------------------------------------
+
+class ExitAdapter(nn.Module):
+    """Low-rank residual adapter: x + up(gelu(down(x))).
+
+    Maps early-exit representations to the lm_head's expected input space.
+    Zero-initialized so it starts as identity (no-op at init).
+    """
+
+    def __init__(self, n_embd: int, rank: int = 16):
+        super().__init__()
+        self.down = Linear(n_embd, rank, bias=False)
+        self.up = Linear(rank, n_embd, bias=False)
+        # Zero-init up projection so adapter starts as identity
+        nn.init.zeros_(self.up.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.up(F.gelu(self.down(x.float()))).to(x.dtype)
 
 # ---------------------------------------------------------------------------
 # TunedLens Translator
@@ -583,6 +603,17 @@ class EarlyExitGPT(GPT):
             ])
         else:
             self.eet_translators = nn.ModuleList()  # empty — no wasted params
+
+        # Per-exit low-rank adapters (maps each exit depth's representation to lm_head space)
+        adapter_rank = getattr(config, 'eet_exit_adapter_rank', 0)
+        if adapter_rank > 0 and getattr(config, 'eet_global_router', False):
+            routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+            n_adapters = len(routing_layers) + 1  # routing exits + final layer
+            self.eet_exit_adapters = nn.ModuleList([
+                ExitAdapter(n_embd, rank=adapter_rank) for _ in range(n_adapters)
+            ])
+        else:
+            self.eet_exit_adapters = nn.ModuleList()
 
         # Setup n_exits and exit_freq_ema buffer for token-wise loss depth-weighting
         self.n_exits = n_exits if getattr(config, 'eet_global_router', False) else n_layer
@@ -1461,8 +1492,26 @@ class EarlyExitGPT(GPT):
             if is_global_router:
                 # Upfront single global exit router
                 global_router = self.eet_routers[0]
+
+                # Post-attention router: run first N blocks under no_grad
+                # to give the router contextual input instead of raw embeddings
+                _rab = getattr(config, 'eet_router_after_block', 0)
+                if _rab > 0:
+                    with torch.no_grad():
+                        _x_ctx = x.clone()
+                        for _pre_i in range(min(_rab, n_layer)):
+                            _x0_w = self.x0_lambdas[_pre_i]
+                            _x_inp = self.resid_lambdas[_pre_i] * _x_ctx + _x0_w * x0
+                            _ve = None
+                            if str(_pre_i) in self.value_embeds:
+                                _ve = self.value_embeds[str(_pre_i)](idx).to(_x_inp.dtype)
+                            _x_ctx = blocks[_pre_i](_x_inp, _ve, cos_sin, self.window_sizes[_pre_i], None)
+                    router_input = _x_ctx  # (B, T, C) with attention context, detached
+                else:
+                    router_input = x0
+
                 router_logits = global_router(
-                    x0,
+                    router_input,
                     freq_bias=freq_bias,
                     pos_bias=pos_bias,
                     freq_alpha=config.eet_freq_prior_alpha,
@@ -1719,6 +1768,9 @@ class EarlyExitGPT(GPT):
                         # Exiting tokens: scatter their FULL (unweighted) state into x_final
                         exit_idx_global = torch.gather(active_idx, 1, exit_local)
                         x_exited = torch.gather(x_active, 1, exit_local.unsqueeze(-1).expand(-1, -1, C))
+                        # Per-exit adapter: map this depth's representation to lm_head space
+                        if len(self.eet_exit_adapters) > 0:
+                            x_exited = self.eet_exit_adapters[rl_counter](x_exited)
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active
@@ -1797,6 +1849,9 @@ class EarlyExitGPT(GPT):
                     rl_counter += 1
 
             # Scatter the remaining active tokens into x_final at the very end
+            # Apply the final exit adapter (last adapter = deepest exit)
+            if len(self.eet_exit_adapters) > 0:
+                x_active = self.eet_exit_adapters[-1](x_active)
             x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active)
             x = x_final
 
@@ -1976,9 +2031,10 @@ class EarlyExitGPT(GPT):
                 ignore_index=-1, reduction=loss_reduction,
             )
 
-            # Store embedding + per_token_ce for external ce_guided (outside compiled forward)
+            # Store router input + per_token_ce for external ce_guided (outside compiled forward)
             if loss_variant == 'ce_guided' and is_global_router and self.training:
-                self._last_x0_for_ce = x0.detach()  # (B, T, C) — embedding for router re-run
+                # router_input is x0 or post-attention context (set in compute_skip path)
+                self._last_x0_for_ce = (router_input if compute_skip else x0).detach()
                 with torch.no_grad():
                     ptce = F.cross_entropy(
                         logits.detach().view(-1, logits.size(-1)), targets.view(-1),
