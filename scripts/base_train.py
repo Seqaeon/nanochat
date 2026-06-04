@@ -16,6 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["OMP_NUM_THREADS"] = "8"
 os.environ["MKL_NUM_THREADS"] = "8"
 import torch
+import torch.nn.functional as F
 torch.set_num_threads(8)
 import gc
 import json
