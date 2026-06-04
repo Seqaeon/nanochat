@@ -294,6 +294,8 @@ parser.add_argument("--eet-capacity-schedule", type=str, default="bell", choices
 parser.add_argument("--eet-exit-fracs", type=str, default="", help="EET: comma-separated list of float exit fractions (sums to ~1.0) overriding schedule")
 parser.add_argument("--eet-capacity-alignment-lambda", type=float, default=0.0, help="EET: weight for load-balancing/capacity alignment loss (0=disabled)")
 parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1], help="EET: allow task loss gradients to propagate to router through continue weights (1/0)")
+parser.add_argument("--eet-reinforce-interval", type=int, default=0, help="EET: two-pass REINFORCE every N steps (0=disabled)")
+parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1, help="EET: REINFORCE loss weight")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -876,6 +878,8 @@ def build_model_meta(depth):
         eet_exit_fracs=[float(x.strip()) for x in getattr(args, 'eet_exit_fracs', '').split(',') if x.strip()] if getattr(args, 'eet_exit_fracs', '') else None,
         eet_capacity_alignment_lambda=float(getattr(args, 'eet_capacity_alignment_lambda', 0.0)),
         eet_router_task_grad=bool(getattr(args, 'eet_router_task_grad', 1)),
+        eet_reinforce_interval=int(getattr(args, 'eet_reinforce_interval', 0)),
+        eet_reinforce_lambda=float(getattr(args, 'eet_reinforce_lambda', 0.1)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1998,7 +2002,9 @@ while True:
             _eet_phase = _eet_diag.get('phase', 0)
             _eet_active = _eet_diag['active_frac'].item() if hasattr(_eet_diag.get('active_frac', 0), 'item') else _eet_diag.get('active_frac', 1.0)
             _eet_exit = _eet_diag['total_exit_frac'].item() if hasattr(_eet_diag.get('total_exit_frac', 0), 'item') else _eet_diag.get('total_exit_frac', 0.0)
-            print0(f"  eet | phase={_eet_phase} | active={_eet_active:.3f} | exit_frac={_eet_exit:.3f}")
+            _active_counts = getattr(orig_model, '_last_active_counts', None)
+            _counts_str = f" | tokens={_active_counts}" if _active_counts else ""
+            print0(f"  eet | phase={_eet_phase} | active={_eet_active:.3f} | exit_frac={_eet_exit:.3f}{_counts_str}")
         # EET: Router gradient diagnostics — console print + JSONL log file
         if model_config.use_eet and hasattr(orig_model, '_eet_grad_info'):
             _gi = orig_model._eet_grad_info

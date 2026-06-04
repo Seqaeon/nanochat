@@ -372,6 +372,8 @@ def run_training_sweep(args):
         "--eet-override-prob-end", str(getattr(args, 'eet_override_prob_end', 0.1)),
         "--eet-capacity-alignment-lambda", str(getattr(args, 'eet_capacity_alignment_lambda', 0.0)),
         "--eet-router-task-grad", str(getattr(args, 'eet_router_task_grad', 1)),
+        "--eet-reinforce-interval", str(getattr(args, 'eet_reinforce_interval', 0)),
+        "--eet-reinforce-lambda", str(getattr(args, 'eet_reinforce_lambda', 0.1)),
     ]
     if args.compile:
         common_args.append("--compile")

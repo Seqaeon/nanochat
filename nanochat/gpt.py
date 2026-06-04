@@ -401,6 +401,8 @@ class GPTConfig:
     eet_exit_fracs: list[float] | None = None      # custom per-slot exit fractions override (comma-separated list of floats)
     eet_capacity_alignment_lambda: float = 0.0     # weight for load-balancing/capacity alignment loss (0=disabled)
     eet_router_task_grad: bool = True              # allow task loss gradients to propagate to router through continue weights
+    eet_reinforce_interval: int = 0                 # two-pass REINFORCE every N steps (0=disabled). Runs dense forward to get counterfactual CE.
+    eet_reinforce_lambda: float = 0.1               # REINFORCE loss weight
 
 
 

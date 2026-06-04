@@ -1916,10 +1916,21 @@ class EarlyExitGPT(GPT):
                     }
                 return loss
 
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), targets.view(-1),
-                ignore_index=-1, reduction=loss_reduction,
-            )
+            # Compute per-token CE for ce_guided depth classification (needed under compute_skip)
+            if loss_variant == 'ce_guided' and loss_reduction == 'mean':
+                per_token_ce_flat = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.view(-1),
+                    ignore_index=-1, reduction='none',
+                )
+                valid_mask_flat = (targets.view(-1) != -1).float()
+                loss = (per_token_ce_flat * valid_mask_flat).sum() / valid_mask_flat.sum().clamp(min=1.0)
+                per_token_ce = per_token_ce_flat.detach().view(B, T)
+            else:
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.view(-1),
+                    ignore_index=-1, reduction=loss_reduction,
+                )
+                per_token_ce = None
 
             # Commitment Loss for Gumbel/soft-blending
             if is_soft_training and getattr(config, 'eet_commitment_beta', 0.0) > 0:
@@ -1968,6 +1979,34 @@ class EarlyExitGPT(GPT):
                                 entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                             loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
 
+                # CE-Guided depth classification: bin tokens by CE difficulty, train router
+                # with F.cross_entropy on target exit bins. This is the corrective signal —
+                # if a token exits too early and has high CE, it gets binned deeper.
+                if loss_variant == 'ce_guided' and per_token_ce is not None and is_global_router:
+                    n_exits_ce = soft_weights.shape[-1]
+                    valid_mask_ce = (targets != -1).float()
+                    n_valid_ce = valid_mask_ce.sum().clamp(min=1.0)
+
+                    with torch.no_grad():
+                        valid_ce = per_token_ce[targets != -1]
+                        if valid_ce.numel() > 1:
+                            ce_mean = valid_ce.mean()
+                            ce_std = valid_ce.std().clamp(min=0.1)
+                            normalized = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
+                            target_exit = (normalized * n_exits_ce).long().clamp(0, n_exits_ce - 1)
+                        else:
+                            target_exit = torch.zeros(B, T, device=targets.device, dtype=torch.long)
+                        target_exit = target_exit * (targets != -1).long()
+
+                    depth_loss = F.cross_entropy(
+                        router_logits.float().view(-1, n_exits_ce),
+                        target_exit.view(-1),
+                        ignore_index=-100,
+                        reduction='none',
+                    )
+                    depth_loss = (depth_loss.view(B, T) * valid_mask_ce).sum() / n_valid_ce
+                    loss = loss + config.eet_ce_guided_lambda * depth_loss
+
             # Gumbel auxiliary loss: uses REINFORCE quality loss & entropy bonus continuously.
             # Skip under compute_skip — candidate_states require expensive full-sequence
             # scatter+norm at every routing layer, and _compute_quality_advantages runs
@@ -1991,7 +2030,7 @@ class EarlyExitGPT(GPT):
 
             # --- Efficiency loss + diversity pressure ---
             if (do_route or is_soft_training) and n_routed_layers > 0 and loss_reduction == 'mean':
-                if self.training and eet_phase == 3 and not use_gumbel:
+                if self.training and eet_phase == 3 and not use_gumbel and loss_variant != 'ce_guided':
                     eff_div_loss, _ = compute_efficiency_and_diversity(
                         p_exits_soft, len(p_exits_soft), freq_bias, config, eet_lambda_e
                     )
