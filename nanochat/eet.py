@@ -681,6 +681,55 @@ class EarlyExitGPT(GPT):
                 nn.init.zeros_(translator.proj.weight)
                 nn.init.zeros_(translator.proj.bias)
 
+    @torch.compiler.disable
+    @torch.no_grad()
+    def _compute_dense_per_token_ce(self, idx, targets):
+        """Run dense forward (all blocks, no routing) and return per-token CE.
+        
+        Used by the two-pass ce_guided trick: compare CE at full depth vs CE
+        at exit depth to identify tokens that were hurt by early routing.
+        """
+        B, T = idx.shape
+        config = self.config
+
+        # Use the parent GPT's forward to run all blocks densely
+        # GPT.forward computes: embed → blocks → norm → lm_head → loss
+        # We need logits, so we call with targets=None-like approach
+        # but actually we just replicate the logit computation since GPT.forward
+        # returns loss when targets are given
+
+        # Rotary embeddings
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
+
+        # Embedding
+        x = self.transformer.wte(idx)
+        x = x.to(torch.bfloat16 if idx.device.type == 'cuda' else torch.float32)
+        x = norm(x)
+        x0 = x
+
+        # Run all blocks densely
+        for i, block in enumerate(self.transformer.h):
+            x0_w = self.x0_lambdas[i]
+            x_input = self.resid_lambdas[i] * x + x0_w * x0
+
+            ve = None
+            if str(i) in self.value_embeds:
+                ve = self.value_embeds[str(i)](idx).to(x_input.dtype)
+
+            x = block(x_input, ve, cos_sin, self.window_sizes[i], None)
+
+        x = norm(x)
+        logits = self.lm_head(x)
+        logits = logits[..., :config.vocab_size].float()
+        logits = 20 * torch.tanh(logits / 20)
+
+        per_token_ce = F.cross_entropy(
+            logits.view(-1, logits.size(-1)), targets.view(-1),
+            ignore_index=-1, reduction='none'
+        ).view(B, T)
+
+        return per_token_ce
+
     @torch.no_grad()
     def finalize_token_difficulty(self):
         """Finalizes the token difficulty lookup tensor using DDP-all-reduced sums/counts if available."""
@@ -1982,17 +2031,31 @@ class EarlyExitGPT(GPT):
                 # CE-Guided depth classification: bin tokens by CE difficulty, train router
                 # with F.cross_entropy on target exit bins. This is the corrective signal —
                 # if a token exits too early and has high CE, it gets binned deeper.
+                #
+                # Two-pass mode (when _reinforce_dense_ce is available):
+                #   Uses CE_routed - CE_dense as difficulty signal instead of absolute CE.
+                #   This distinguishes "hard because exited early" (high diff → route deeper)
+                #   from "inherently hard" (similar CE at any depth → bin stays same).
                 if loss_variant == 'ce_guided' and per_token_ce is not None and is_global_router:
                     n_exits_ce = soft_weights.shape[-1]
                     valid_mask_ce = (targets != -1).float()
                     n_valid_ce = valid_mask_ce.sum().clamp(min=1.0)
 
                     with torch.no_grad():
-                        valid_ce = per_token_ce[targets != -1]
+                        # Use differential CE if two-pass dense CE is available
+                        dense_ce = getattr(self, '_reinforce_dense_ce', None)
+                        if dense_ce is not None:
+                            # Positive diff = routing hurt this token → route deeper
+                            ce_signal = per_token_ce - dense_ce
+                        else:
+                            # Fallback: use absolute CE
+                            ce_signal = per_token_ce
+
+                        valid_ce = ce_signal[targets != -1]
                         if valid_ce.numel() > 1:
                             ce_mean = valid_ce.mean()
                             ce_std = valid_ce.std().clamp(min=0.1)
-                            normalized = torch.sigmoid((per_token_ce - ce_mean) / ce_std)
+                            normalized = torch.sigmoid((ce_signal - ce_mean) / ce_std)
                             target_exit = (normalized * n_exits_ce).long().clamp(0, n_exits_ce - 1)
                         else:
                             target_exit = torch.zeros(B, T, device=targets.device, dtype=torch.long)

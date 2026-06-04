@@ -1708,6 +1708,15 @@ while True:
                 eet_step_tensor = torch.tensor(step, device=x.device, dtype=torch.float32)
                 eet_total_steps_tensor = torch.tensor(num_iterations, device=x.device, dtype=torch.float32)
 
+                # Two-pass ce_guided: run dense forward first to get per-token CE baseline
+                _reinforce_interval = getattr(model_config, 'eet_reinforce_interval', 0)
+                if (_reinforce_interval > 0 and eet_phase == 3 and
+                    step % _reinforce_interval == 0 and eet_do_route):
+                    dense_ce = orig_model._compute_dense_per_token_ce(x, y)
+                    orig_model._reinforce_dense_ce = dense_ce
+                else:
+                    orig_model._reinforce_dense_ce = None
+
                 loss = model(x, y,
                              eet_do_route=eet_do_route,
                              eet_phase=eet_phase,
