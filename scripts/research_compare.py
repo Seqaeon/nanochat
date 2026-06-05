@@ -467,16 +467,26 @@ def run_training_sweep(args):
     for model_name, extra_args in filtered_models.items():
         print(f"\n--- Training {model_name} ---")
         
-        ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
+        # Check for resumption. We resolve a fallback ckpt_dir in the current run environment
+        # in case absolute paths stored in the sweep state from a previous run/different machine are invalid.
+        fallback_ckpt_dir = (run_dir_path / f"ckpt_{model_name}").resolve()
 
-        # ── Resume: prefer the ckpt_dir stored in state from a previous run ──
         saved_ckpt_dir = None
         if model_name in state.get("unfinished", {}):
             saved_ckpt_dir = state["unfinished"][model_name].get("ckpt_dir")
         elif model_name in state.get("completed", {}):
             saved_ckpt_dir = state["completed"][model_name].get("ckpt_dir")
+
         if saved_ckpt_dir:
-            ckpt_dir = Path(saved_ckpt_dir)
+            temp_ckpt_dir = Path(saved_ckpt_dir)
+            temp_actual = temp_ckpt_dir / model_name
+            # Verify if this saved checkpoint directory exists and actually contains model checkpoint files
+            if temp_actual.exists() and glob.glob(str(temp_actual / "model_*.pt")):
+                ckpt_dir = temp_ckpt_dir
+            else:
+                ckpt_dir = fallback_ckpt_dir
+        else:
+            ckpt_dir = fallback_ckpt_dir
 
         # ChunkedRemixConfig: when --use-chunked-remix 1, inject canonical config defaults
         # as a *prefix* before common_args so explicit sweep flags (which come later) win.
@@ -486,39 +496,11 @@ def run_training_sweep(args):
             chunked_prefix = _cfg.to_cli_args(model_dim=model_dim)
             print(f"  [ChunkedRemixConfig] {_cfg.summary()}")
 
-        # Check for resumption
-        actual_model_ckpt_dir = ckpt_dir / model_name
-        model_tag_to_pass = model_name
-        last_step = None
-
-        try:
-            last_step = find_last_step(str(actual_model_ckpt_dir))
-            print(f"\n  ┌─────────────────────────────────────────────────────┐")
-            print(f"  │  ⏩  RESUMING [{model_name}] from step {last_step:,}")
-            print(f"  │     {str(actual_model_ckpt_dir)}")
-            print(f"  └─────────────────────────────────────────────────────┘\n")
-        except FileNotFoundError:
-            # Fallback: check if checkpoints are directly in the parent directory
-            try:
-                last_step = find_last_step(str(ckpt_dir))
-                model_tag_to_pass = "."
-                print(f"\n  ┌─────────────────────────────────────────────────────┐")
-                print(f"  │  ⏩  RESUMING [{model_name}] (fallback to parent) from step {last_step:,}")
-                print(f"  │     {str(ckpt_dir)}")
-                print(f"  └─────────────────────────────────────────────────────┘\n")
-            except FileNotFoundError:
-                print(f"\n  ┌─────────────────────────────────────────────────────┐")
-                print(f"  │  🆕  STARTING FRESH: [{model_name}]")
-                print(f"  │     No checkpoints found — training from scratch.")
-                print(f"  └─────────────────────────────────────────────────────┘\n")
-
         train_cmd_args = chunked_prefix + common_args + extra_args + [
             "--checkpoints-dir", str(ckpt_dir),
-            "--model-tag", model_tag_to_pass
+            "--model-tag", model_name
         ]
-        if last_step is not None:
-            train_cmd_args.extend(["--resume-from-step", str(last_step)])
-
+        
         # Handle mu-P scaling based on the new mode system
         if args.mu_p_mode == "disable":
             if model_name != "base":
@@ -531,12 +513,27 @@ def run_training_sweep(args):
         # if "enable", neither flag is passed; models calculate their own inherently
 
         # ── Record as unfinished BEFORE launching so a crash is visible ──
+        actual_model_ckpt_dir = ckpt_dir / model_name
         state.setdefault("unfinished", {})[model_name] = {
             "ckpt_dir": str(ckpt_dir),
-            "actual_model_ckpt_dir": str(actual_model_ckpt_dir if model_tag_to_pass != "." else ckpt_dir),
+            "actual_model_ckpt_dir": str(actual_model_ckpt_dir),
             "started_at": datetime.datetime.now().isoformat(),
         }
         save_sweep_state(run_dir_path, state)
+
+        # Check for resumption
+        try:
+            last_step = find_last_step(str(actual_model_ckpt_dir))
+            print(f"\n  ┌─────────────────────────────────────────────────────┐")
+            print(f"  │  ⏩  RESUMING [{model_name}] from step {last_step:,}")
+            print(f"  │     {str(actual_model_ckpt_dir)}")
+            print(f"  └─────────────────────────────────────────────────────┘\n")
+            train_cmd_args.extend(["--resume-from-step", str(last_step)])
+        except FileNotFoundError:
+            print(f"\n  ┌─────────────────────────────────────────────────────┐")
+            print(f"  │  🆕  STARTING FRESH: [{model_name}]")
+            print(f"  │     No checkpoints found — training from scratch.")
+            print(f"  └─────────────────────────────────────────────────────┘\n")
         
 
         # Need to preserve environment variables, especially LD_LIBRARY_PATH for cusparseLt
