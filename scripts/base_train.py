@@ -283,6 +283,7 @@ parser.add_argument("--eet-freq-efficiency-alpha", type=float, default=0.0, help
 parser.add_argument("--eet-diversity-lambda", type=float, default=0.0, help="EET: exit diversity pressure - penalizes uniform exit depth across tokens (0=disabled)")
 parser.add_argument("--eet-ce-guided-lambda", type=float, default=1.0, help="EET: CE-guided routing loss weight (loss_variant='ce_guided')")
 parser.add_argument("--eet-router-lr-mult", type=float, default=5.0, help="EET: Router LR multiplier relative to gate_lr (default 5.0). Higher = faster router learning.")
+parser.add_argument("--eet-model-lr-mult", type=float, default=1.0, help="EET: Backbone LR multiplier (default 1.0). Scales all non-router LRs when EET is active.")
 parser.add_argument("--eet-depth-weight-type", type=str, default="none", choices=["none", "linear", "ema", "sqrt"], help="EET: Token-wise CE loss weighting by exit depth")
 parser.add_argument("--eet-depth-weight-max", type=float, default=2.5, help="EET: Maximum weighting factor for deep tokens in linear strategy")
 parser.add_argument("--eet-use-override", type=int, default=0, choices=[0, 1], help="EET: 1 = enable stochastic depth override, 0 = disabled")
@@ -873,6 +874,7 @@ def build_model_meta(depth):
         eet_diversity_lambda=float(getattr(args, 'eet_diversity_lambda', 0.0)),
         eet_ce_guided_lambda=float(getattr(args, 'eet_ce_guided_lambda', 1.0)),
         eet_router_lr_mult=float(getattr(args, 'eet_router_lr_mult', 5.0)),
+        eet_model_lr_mult=float(getattr(args, 'eet_model_lr_mult', 1.0)),
         eet_depth_weight_type=str(getattr(args, 'eet_depth_weight_type', 'none')),
         eet_depth_weight_max=float(getattr(args, 'eet_depth_weight_max', 2.5)),
         eet_use_override=int(getattr(args, 'eet_use_override', 0)),

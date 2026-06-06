@@ -389,6 +389,7 @@ class GPTConfig:
     eet_diversity_lambda: float = 0.0              # exit diversity pressure: penalizes uniform exit depth across tokens
     eet_ce_guided_lambda: float = 1.0              # CE-guided routing loss weight (loss_variant='ce_guided')
     eet_router_lr_mult: float = 5.0                # Router LR multiplier (relative to gate_lr). Routers need higher LR to break symmetry.
+    eet_model_lr_mult: float = 1.0                 # Backbone LR multiplier when EET is active. Scales all non-router LRs (Muon + AdamW).
     eet_depth_weight_type: str = 'none'            # Token CE loss weighting type by exit depth ('none', 'linear', 'ema', 'sqrt')
     eet_depth_weight_max: float = 2.5              # Maximum weighting factor for deep tokens in linear strategy
     eet_use_override: int = 0                      # 1 = use stochastic depth override, 0 = disabled
@@ -8534,6 +8535,17 @@ class GPT(nn.Module):
             dmodel_lr_scale = (model_dim / 768) ** -0.5
             print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
 
+        # EET backbone LR multiplier: scale all non-router LRs when EET is active.
+        # Computed BEFORE router LR so the router remains independently controlled.
+        _eet_model_lr_mult = getattr(self.config, 'eet_model_lr_mult', 1.0)
+        _orig_matrix_lr = matrix_lr  # save unscaled for router LR computation
+        if _eet_model_lr_mult != 1.0 and getattr(self.config, 'use_eet', False):
+            print0(f"[EET] Scaling backbone LRs by eet_model_lr_mult={_eet_model_lr_mult:.3f}")
+            matrix_lr *= _eet_model_lr_mult
+            unembedding_lr *= _eet_model_lr_mult
+            embedding_lr *= _eet_model_lr_mult
+            scalar_lr *= _eet_model_lr_mult
+
         # Build param_groups with all required fields explicit
         param_groups = [
             # AdamW groups (embeddings, lm_head, scalars)
@@ -8570,8 +8582,9 @@ class GPT(nn.Module):
         # EET router params: dedicated group with configurable LR multiplier
         # Routers need higher LR than gate params to break the constant-function
         # equilibrium (MoE literature: gating networks need 2-10× higher LR).
+        # Uses _orig_matrix_lr (before eet_model_lr_mult scaling) so the two are independent.
         eet_router_lr_mult = getattr(self.config, 'eet_router_lr_mult', 5.0)
-        eet_router_lr = matrix_lr * gate_lr_scale * eet_router_lr_mult
+        eet_router_lr = _orig_matrix_lr * gate_lr_scale * eet_router_lr_mult
         if eet_router_matrix_params:
             for shape in sorted({p.shape for p in eet_router_matrix_params}):
                 group_params = [p for p in eet_router_matrix_params if p.shape == shape]
