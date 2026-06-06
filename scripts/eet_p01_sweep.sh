@@ -233,7 +233,7 @@ run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
     --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
     --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
     --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
-    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 2.0 --eet-router-lr-mult 1.0\
+    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 0.5 --eet-router-lr-mult 1.0\
     --eet-capacity-alignment-lambda 1.0
 # EET_P1_22: CE-Guided + Loss scaling by exit depth (Option 2: EMA Inverse Freq)
 #run_experiment "EET_P1_22_CEG_EMA_REENTRY_D${DEPTH}" \
