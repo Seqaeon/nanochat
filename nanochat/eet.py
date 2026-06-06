@@ -619,8 +619,46 @@ class EarlyExitGPT(GPT):
         else:
             self.eet_exit_adapters = nn.ModuleList()
 
-        # Setup n_exits and exit_freq_ema buffer for token-wise loss depth-weighting
+        # Per-exit depth-conditional affine (γ, β) — cheap manifold alignment before LM head
+        if getattr(config, 'eet_depth_affine', False) and getattr(config, 'eet_global_router', False):
+            routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+            n_affine = len(routing_layers) + 1  # routing exits + final layer
+            self.exit_gamma = nn.ParameterList([
+                nn.Parameter(torch.ones(n_embd)) for _ in range(n_affine)
+            ])
+            self.exit_beta = nn.ParameterList([
+                nn.Parameter(torch.zeros(n_embd)) for _ in range(n_affine)
+            ])
+        else:
+            self.exit_gamma = nn.ParameterList()
+            self.exit_beta = nn.ParameterList()
+
+        # Departure summary injection: learned gate per exit slot
+        if getattr(config, 'eet_departure_summary', False) and getattr(config, 'eet_global_router', False):
+            routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+            n_gates = len(routing_layers)
+            self.departure_gate = nn.ParameterList([
+                nn.Parameter(torch.zeros(1)) for _ in range(n_gates)
+            ])
+        else:
+            self.departure_gate = nn.ParameterList()
+
+        # Learned exit schedule: replace fixed bell/uniform with learnable fractions
+        if getattr(config, 'eet_learned_schedule', False) and getattr(config, 'eet_global_router', False):
+            routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
+            n_sched = len(routing_layers) + 1  # exit slots + final
+            self.exit_schedule_logits = nn.Parameter(torch.zeros(n_sched))
+        else:
+            self.exit_schedule_logits = None
+
         self.n_exits = n_exits if getattr(config, 'eet_global_router', False) else n_layer
+        if getattr(config, 'eet_route_consistency_lambda', 0.0) > 0:
+            self.register_buffer(
+                'vocab_route_ema',
+                torch.ones(config.vocab_size, self.n_exits) / self.n_exits
+            )
+        else:
+            self.vocab_route_ema = None
         if getattr(config, 'eet_depth_weight_type', 'none') == 'ema':
             self.register_buffer(
                 'exit_freq_ema',
@@ -715,6 +753,65 @@ class EarlyExitGPT(GPT):
             else:
                 nn.init.zeros_(translator.proj.weight)
                 nn.init.zeros_(translator.proj.bias)
+
+    @torch.compiler.disable
+    @torch.no_grad()
+    def _compute_dense_logits(self, idx):
+        """Run dense forward pass (all blocks, no routing) and return dense hidden states."""
+        B, T = idx.shape
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
+        x = self.transformer.wte(idx)
+        x = x.to(torch.bfloat16 if idx.device.type == 'cuda' else torch.float32)
+        x = norm(x)
+        x0 = x
+        for i, block in enumerate(self.transformer.h):
+            x_input = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+            ve = None
+            if str(i) in self.value_embeds:
+                ve = self.value_embeds[str(i)](idx).to(x_input.dtype)
+            x = block(x_input, ve, cos_sin, self.window_sizes[i], None)
+        return norm(x)
+
+    def _compute_dense_distillation_loss(self, x_final, dense_x, targets):
+        """Compute chunked KL-divergence distillation loss between EET final states and dense final states."""
+        B, T, C = x_final.shape
+        x_flat = x_final.view(-1, C)
+        dense_flat = dense_x.view(-1, C)
+        targets_flat = targets.view(-1)
+        
+        loss_distill = torch.tensor(0.0, device=x_final.device, dtype=torch.float32)
+        count = 0
+        chunk_size = 128
+        
+        valid_mask = (targets_flat != -1)
+        if not valid_mask.any():
+            return loss_distill
+            
+        x_flat = x_flat[valid_mask]
+        dense_flat = dense_flat[valid_mask]
+        
+        n_tokens = x_flat.size(0)
+        for start in range(0, n_tokens, chunk_size):
+            end = min(start + chunk_size, n_tokens)
+            
+            with torch.no_grad():
+                dense_logits = self.lm_head(dense_flat[start:end])
+                dense_logits = dense_logits[..., :self.config.vocab_size].float()
+                dense_logits = 20.0 * torch.tanh(dense_logits / 20.0)
+                dense_probs = torch.softmax(dense_logits / 2.0, dim=-1)
+                
+            student_logits = self.lm_head(x_flat[start:end])
+            student_logits = student_logits[..., :self.config.vocab_size].float()
+            student_logits = 20.0 * torch.tanh(student_logits / 20.0)
+            student_log_probs = torch.log_softmax(student_logits / 2.0, dim=-1)
+            
+            kl = F.kl_div(student_log_probs, dense_probs, reduction='sum')
+            loss_distill = loss_distill + kl
+            count = count + (end - start)
+            
+        if count > 0:
+            loss_distill = 4.0 * (loss_distill / count)
+        return loss_distill
 
     @torch.compiler.disable
     @torch.no_grad()
@@ -850,7 +947,7 @@ class EarlyExitGPT(GPT):
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
-                eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1):
+                eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1, eet_dense_x=None):
         """Forward pass with early exit routing.
 
         Phase scheduling is done OUTSIDE this method (in base_train.py) to
@@ -976,6 +1073,8 @@ class EarlyExitGPT(GPT):
                 freq_alpha=config.eet_freq_prior_alpha,
                 pos_beta=config.eet_pos_prior_beta
             )  # (B, T, n_exits)
+            if self.exit_schedule_logits is not None:
+                router_logits = router_logits + self.exit_schedule_logits
             
             # Gumbel vs Standard Soft vs Hard
             if use_gumbel:
@@ -1058,7 +1157,18 @@ class EarlyExitGPT(GPT):
                     candidate_states.append(norm(x))
             
             # Blend hidden states using routing weights
-            stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
+            if len(self.eet_exit_adapters) > 0 or len(self.exit_gamma) > 0:
+                adapted_states = []
+                for idx_ad, state in enumerate(candidate_states):
+                    adapted = state
+                    if len(self.eet_exit_adapters) > 0:
+                        adapted = self.eet_exit_adapters[idx_ad](adapted)
+                    if len(self.exit_gamma) > 0:
+                        adapted = adapted * self.exit_gamma[idx_ad] + self.exit_beta[idx_ad]
+                    adapted_states.append(adapted)
+                stacked = torch.stack(adapted_states, dim=2)
+            else:
+                stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
             x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
             
             p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
@@ -1215,6 +1325,27 @@ class EarlyExitGPT(GPT):
                     )
                     loss = loss + commit_loss
                     
+                # Route consistency loss
+                if getattr(config, 'eet_route_consistency_lambda', 0.0) > 0 and self.training and len(p_exits) > 0:
+                    if hasattr(self, 'vocab_route_ema') and self.vocab_route_ema is not None:
+                        idx_flat = idx.view(-1)
+                        valid_idx = (idx_flat >= 0) & (idx_flat < config.vocab_size)
+                        if valid_idx.any():
+                            idx_valid = idx_flat[valid_idx]
+                            stacked_p = torch.stack(p_exits, dim=-1)  # (B, T, n_exits)
+                            soft_weights_valid = stacked_p.view(-1, stacked_p.size(-1))[valid_idx]
+                            batch_ema = self.vocab_route_ema[idx_valid]
+                            consistency_loss = F.mse_loss(soft_weights_valid, batch_ema)
+                            loss = loss + config.eet_route_consistency_lambda * consistency_loss
+                            with torch.no_grad():
+                                new_ema_vals = 0.99 * batch_ema + 0.01 * soft_weights_valid.detach()
+                                self.vocab_route_ema.index_copy_(0, idx_valid, new_ema_vals)
+
+                # Concurrent dense distillation loss
+                if eet_dense_x is not None and targets is not None and self.training:
+                    distill_loss = self._compute_dense_distillation_loss(x_final, eet_dense_x, targets)
+                    loss = loss + config.eet_dense_distill_lambda * distill_loss
+                    
                 if self.training:
                     self._eet_diagnostics = {
                         'phase': eet_phase,
@@ -1337,6 +1468,8 @@ class EarlyExitGPT(GPT):
                 all_logits = torch.cat(
                     router_logits_list + [final_logit], dim=-1
                 )  # (B, T, n_exits)
+                if self.exit_schedule_logits is not None:
+                    all_logits = all_logits + self.exit_schedule_logits
                 
                 # Sample Gumbel noise in float32 for numerical stability
                 gumbel_noise = -torch.log(
@@ -1377,7 +1510,18 @@ class EarlyExitGPT(GPT):
                     soft_weights = torch.where(override_mask, forced, soft_weights)
                     
                 # Blend hidden states
-                stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
+                if len(self.eet_exit_adapters) > 0 or len(self.exit_gamma) > 0:
+                    adapted_states = []
+                    for idx_ad, state in enumerate(candidate_states):
+                        adapted = state
+                        if len(self.eet_exit_adapters) > 0:
+                            adapted = self.eet_exit_adapters[idx_ad](adapted)
+                        if len(self.exit_gamma) > 0:
+                            adapted = adapted * self.exit_gamma[idx_ad] + self.exit_beta[idx_ad]
+                        adapted_states.append(adapted)
+                    stacked = torch.stack(adapted_states, dim=2)
+                else:
+                    stacked = torch.stack(candidate_states, dim=2)  # (B, T, n_exits, D)
                 x_final = (routing_weights.unsqueeze(-1) * stacked).sum(dim=2)  # (B, T, D)
                 
                 p_exits = [soft_weights[:, :, k] for k in range(soft_weights.size(-1))]
@@ -1530,6 +1674,8 @@ class EarlyExitGPT(GPT):
                     freq_alpha=config.eet_freq_prior_alpha,
                     pos_beta=config.eet_pos_prior_beta
                 )  # (B, T, n_exits)
+                if self.exit_schedule_logits is not None:
+                    router_logits = router_logits + self.exit_schedule_logits
                 
                 # Gumbel vs Standard Soft vs Hard
                 if use_gumbel:
@@ -1784,11 +1930,18 @@ class EarlyExitGPT(GPT):
                         # Per-exit adapter: map this depth's representation to lm_head space
                         if len(self.eet_exit_adapters) > 0:
                             x_exited = self.eet_exit_adapters[rl_counter](x_exited)
+                        if len(self.exit_gamma) > 0:
+                            x_exited = x_exited * self.exit_gamma[rl_counter] + self.exit_beta[rl_counter]
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active
                         active_idx_next = torch.gather(active_idx, 1, keep_local)  # (B, K_next)
                         x_active_kept = torch.gather(x_active, 1, keep_local.unsqueeze(-1).expand(-1, -1, C))
+                        if getattr(config, 'eet_departure_summary', False) and len(self.departure_gate) > 0:
+                            if K_cur - K_next > 0:
+                                exit_mean = x_exited.mean(dim=1, keepdim=True)
+                                gate = torch.sigmoid(self.departure_gate[rl_counter]).to(x_active_kept.dtype)
+                                x_active_kept = x_active_kept + gate * exit_mean
 
                         # MoD-style score weighting: multiply the block's contribution by
                         # the continue weight from routing_weights (STE version) so that
@@ -1865,6 +2018,8 @@ class EarlyExitGPT(GPT):
             # Apply the final exit adapter (last adapter = deepest exit)
             if len(self.eet_exit_adapters) > 0:
                 x_active = self.eet_exit_adapters[-1](x_active)
+            if len(self.exit_gamma) > 0:
+                x_active = x_active * self.exit_gamma[-1] + self.exit_beta[-1]
             x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active)
             x = x_final
 
@@ -2695,6 +2850,11 @@ class EarlyExitGPT(GPT):
         eet_params = sum(p.numel() for p in self.eet_routers.parameters())
         eet_params += sum(p.numel() for p in self.eet_translators.parameters())
         eet_params += sum(p.numel() for p in self.eet_exit_adapters.parameters())
+        eet_params += sum(p.numel() for p in self.exit_gamma.parameters())
+        eet_params += sum(p.numel() for p in self.exit_beta.parameters())
+        eet_params += sum(p.numel() for p in self.departure_gate.parameters())
+        if self.exit_schedule_logits is not None:
+            eet_params += self.exit_schedule_logits.numel()
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters()) + eet_params
 
         research = 0

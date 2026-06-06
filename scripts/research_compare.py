@@ -380,6 +380,13 @@ def run_training_sweep(args):
         "--eet-ffn-skip", str(getattr(args, 'eet_ffn_skip', 0)),
         "--eet-ffn-target-frac", str(getattr(args, 'eet_ffn_target_frac', 0.50)),
         "--eet-ffn-full-attn", str(getattr(args, 'eet_ffn_full_attn', 1)),
+        "--eet-depth-affine", str(getattr(args, 'eet_depth_affine', 0)),
+        "--eet-capacity-anneal-frac", str(getattr(args, 'eet_capacity_anneal_frac', 0.0)),
+        "--eet-learned-schedule", str(getattr(args, 'eet_learned_schedule', 0)),
+        "--eet-departure-summary", str(getattr(args, 'eet_departure_summary', 0)),
+        "--eet-route-consistency-lambda", str(getattr(args, 'eet_route_consistency_lambda', 0.0)),
+        "--eet-dense-distill-interval", str(getattr(args, 'eet_dense_distill_interval', 0)),
+        "--eet-dense-distill-lambda", str(getattr(args, 'eet_dense_distill_lambda', 0.5)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -963,6 +970,13 @@ if __name__ == "__main__":
     parser.add_argument("--eet-ffn-skip", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-ffn-target-frac", type=float, default=0.50)
     parser.add_argument("--eet-ffn-full-attn", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--eet-depth-affine", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-capacity-anneal-frac", type=float, default=0.0)
+    parser.add_argument("--eet-learned-schedule", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-departure-summary", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-route-consistency-lambda", type=float, default=0.0)
+    parser.add_argument("--eet-dense-distill-interval", type=int, default=0)
+    parser.add_argument("--eet-dense-distill-lambda", type=float, default=0.5)
 
     args = parser.parse_args()
     

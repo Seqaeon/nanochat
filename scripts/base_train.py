@@ -303,6 +303,13 @@ parser.add_argument("--eet-router-after-block", type=int, default=0, help="EET: 
 parser.add_argument("--eet-ffn-skip", type=int, default=0, choices=[0, 1], help="EET A³D: skip FFN only, preserve attention at all layers")
 parser.add_argument("--eet-ffn-target-frac", type=float, default=0.50, help="EET A³D: fraction of tokens that get FFN at each layer")
 parser.add_argument("--eet-ffn-full-attn", type=int, default=1, choices=[0, 1], help="EET A³D: 1=attention on all T tokens, 0=gather for attention too")
+parser.add_argument("--eet-depth-affine", type=int, default=0, choices=[0, 1], help="EET: apply learned (γ, β) depth-conditional affine alignment before LM head")
+parser.add_argument("--eet-capacity-anneal-frac", type=float, default=0.0, help="EET: fraction of training steps to anneal target active frac from 0.5 to configured value")
+parser.add_argument("--eet-learned-schedule", type=int, default=0, choices=[0, 1], help="EET: learn per-exit scheduling prior logits instead of fixed schedule")
+parser.add_argument("--eet-departure-summary", type=int, default=0, choices=[0, 1], help="EET: inject mean state of exiting tokens into continuing active tokens")
+parser.add_argument("--eet-route-consistency-lambda", type=float, default=0.0, help="EET: weight for EMA-based routing consistency loss")
+parser.add_argument("--eet-dense-distill-interval", type=int, default=0, help="EET: concurrent dense distillation step interval (0=disabled)")
+parser.add_argument("--eet-dense-distill-lambda", type=float, default=0.5, help="EET: concurrent dense distillation KL loss weight")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -893,6 +900,13 @@ def build_model_meta(depth):
         eet_ffn_skip=bool(getattr(args, 'eet_ffn_skip', 0)),
         eet_ffn_target_frac=float(getattr(args, 'eet_ffn_target_frac', 0.50)),
         eet_ffn_full_attn=bool(getattr(args, 'eet_ffn_full_attn', 1)),
+        eet_depth_affine=bool(getattr(args, 'eet_depth_affine', 0)),
+        eet_capacity_anneal_frac=float(getattr(args, 'eet_capacity_anneal_frac', 0.0)),
+        eet_learned_schedule=bool(getattr(args, 'eet_learned_schedule', 0)),
+        eet_departure_summary=bool(getattr(args, 'eet_departure_summary', 0)),
+        eet_route_consistency_lambda=float(getattr(args, 'eet_route_consistency_lambda', 0.0)),
+        eet_dense_distill_interval=int(getattr(args, 'eet_dense_distill_interval', 0)),
+        eet_dense_distill_lambda=float(getattr(args, 'eet_dense_distill_lambda', 0.5)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1704,11 +1718,25 @@ while True:
                     orig_model.eet_phase_tracker[0] = eet_phase
                     print0(f"[EET] Transitioning from Phase 1 (Dense Warmup) to Phase {eet_phase} (Routing active).")
 
-                # Ensure routers and translators remain trainable
+                # Ensure routers and translators remain trainable (avoid writing if already True)
                 for param in orig_model.eet_routers.parameters():
-                    param.requires_grad = True
+                    if not param.requires_grad:
+                        param.requires_grad = True
                 for param in orig_model.eet_translators.parameters():
-                    param.requires_grad = True
+                    if not param.requires_grad:
+                        param.requires_grad = True
+
+                # Capacity annealing: update target_active_frac at discrete intervals to avoid recompilation breaks
+                _anneal_frac = getattr(model_config, 'eet_capacity_anneal_frac', 0.0)
+                if _anneal_frac > 0.0:
+                    progress = step / max(num_iterations, 1)
+                    if progress < _anneal_frac:
+                        t = progress / _anneal_frac
+                        t_discrete = round(t * 10) / 10.0
+                        base_target_frac = getattr(args, 'eet_target_active_frac', 0.125)
+                        model_config.eet_target_active_frac = 0.5 + t_discrete * (base_target_frac - 0.5)
+                    else:
+                        model_config.eet_target_active_frac = getattr(args, 'eet_target_active_frac', 0.125)
 
                 eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
                 if model_config.eet_gumbel_temp_start > 0.0:
@@ -1728,6 +1756,14 @@ while True:
                     dense_ce = orig_model._compute_dense_per_token_ce(x, y)
                     orig_model._reinforce_dense_ce = dense_ce
 
+                # Concurrent dense distillation: run dense forward pass to get teacher targets
+                _distill_interval = getattr(model_config, 'eet_dense_distill_interval', 0)
+                eet_dense_x = None
+                if (_distill_interval > 0 and eet_phase in {2, 3} and
+                    step % _distill_interval == 0 and eet_do_route):
+                    with torch.no_grad():
+                        eet_dense_x = orig_model._compute_dense_logits(x)
+
                 loss = model(x, y,
                              eet_do_route=eet_do_route,
                              eet_phase=eet_phase,
@@ -1735,7 +1771,8 @@ while True:
                              eet_lambda_e=torch.tensor(_eet_phase_info['lambda_e'], device=x.device, dtype=torch.float32),
                              eet_gumbel_temp=eet_gumbel_temp_tensor,
                              eet_step=eet_step_tensor,
-                             eet_total_steps=eet_total_steps_tensor)
+                             eet_total_steps=eet_total_steps_tensor,
+                             eet_dense_x=eet_dense_x)
         else:
             loss = model(x, y)
             

@@ -410,6 +410,14 @@ class GPTConfig:
     eet_ffn_skip: bool = False                      # True = A³D mode: skip FFN only, preserve attention at all layers
     eet_ffn_target_frac: float = 0.50               # fraction of tokens that GET FFN at each layer (rest skip FFN)
     eet_ffn_full_attn: bool = True                  # True = attention on all T tokens; False = gather for attention too
+    # Novel EET improvements
+    eet_depth_affine: bool = False                   # per-exit-depth learned (γ, β) affine applied before LM head (cheap alignment)
+    eet_capacity_anneal_frac: float = 0.0           # fraction of training to anneal target_active_frac from 0.5 → configured (0=disabled)
+    eet_learned_schedule: bool = False               # learn exit fractions instead of using fixed bell/uniform/geometric
+    eet_departure_summary: bool = False              # inject mean of exiting tokens' hidden states into remaining active tokens
+    eet_route_consistency_lambda: float = 0.0       # consistency loss weight penalizing routing oscillation (0=disabled)
+    eet_dense_distill_interval: int = 0             # concurrent dense distillation every N steps (0=disabled)
+    eet_dense_distill_lambda: float = 0.5           # KL distillation loss weight
 
 
 
@@ -519,6 +527,9 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_compute_skip", "eet_target_active_frac",
     "eet_capacity_schedule", "eet_exit_fracs",
     "eet_capacity_alignment_lambda", "eet_router_task_grad",
+    "eet_depth_affine", "eet_capacity_anneal_frac", "eet_learned_schedule",
+    "eet_departure_summary", "eet_route_consistency_lambda",
+    "eet_dense_distill_interval", "eet_dense_distill_lambda",
 }
 
 
