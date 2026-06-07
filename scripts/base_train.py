@@ -1529,8 +1529,6 @@ while True:
                 if eet_ever_routed:
                     eval_kwargs['eet_do_route'] = True
                     eval_kwargs['eet_phase'] = 3
-                    if hasattr(model, 'set_target_active_frac'):
-                        model.set_target_active_frac(model_config.eet_target_active_frac)
                 else:
                     eval_kwargs['eet_do_route'] = False
                     eval_kwargs['eet_phase'] = 1
@@ -1739,9 +1737,6 @@ while True:
                         model_config.eet_target_active_frac = 0.5 + t_discrete * (base_target_frac - 0.5)
                     else:
                         model_config.eet_target_active_frac = getattr(args, 'eet_target_active_frac', 0.125)
-
-                if model_config.use_eet and hasattr(orig_model, 'set_target_active_frac'):
-                    orig_model.set_target_active_frac(model_config.eet_target_active_frac)
 
                 eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
                 if model_config.eet_gumbel_temp_start > 0.0:

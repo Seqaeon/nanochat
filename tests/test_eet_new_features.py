@@ -215,12 +215,11 @@ def test_eet_capacity_anneal():
     model = EarlyExitGPT(config).to(device)
     model.train()
     
-    assert hasattr(model, 'eet_target_active_frac_tensor'), "eet_target_active_frac_tensor not registered"
-    assert abs(model.eet_target_active_frac_tensor.item() - 0.125) < 1e-6
+    assert model.config.eet_target_active_frac == 0.125
     
-    # Test setting the target active fraction
-    model.set_target_active_frac(0.4)
-    assert abs(model.eet_target_active_frac_tensor.item() - 0.4) < 1e-6
+    # Test updating the target active fraction config
+    model.config.eet_target_active_frac = 0.4
+    assert model.config.eet_target_active_frac == 0.4
     
     B, T = 2, 8
     x = torch.randint(0, config.vocab_size, (B, T), device=device)

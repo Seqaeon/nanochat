@@ -246,7 +246,7 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
     # 3) Method Propagation
     # We want these methods to be accessible on the wrapper as well
     # (DataParallel and torch.compile hide them)
-    methods_to_propagate = ["setup_optimizer", "estimate_flops", "num_scaling_params", "get_device", "set_target_active_frac"]
+    methods_to_propagate = ["setup_optimizer", "estimate_flops", "num_scaling_params", "get_device"]
     for method_name in methods_to_propagate:
         if hasattr(inner_model, method_name) and not hasattr(model, method_name):
             setattr(model, method_name, getattr(inner_model, method_name))

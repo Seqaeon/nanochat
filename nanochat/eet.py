@@ -681,12 +681,6 @@ class EarlyExitGPT(GPT):
         else:
             self._pos_prior = None
 
-        initial_frac = getattr(config, 'eet_target_active_frac', 0.125)
-        self.register_buffer(
-            'eet_target_active_frac_tensor',
-            torch.tensor(initial_frac, dtype=torch.float32)
-        )
-
         # Accumulators for Phase 1 dense token cross-entropy calibration
         self.register_buffer('token_ce_sum', torch.zeros(config.vocab_size, dtype=torch.float32))
         self.register_buffer('token_ce_count', torch.zeros(config.vocab_size, dtype=torch.float32))
@@ -702,11 +696,6 @@ class EarlyExitGPT(GPT):
         tracker_key = prefix + 'eet_phase_tracker'
         if tracker_key in state_dict:
             self.eet_current_phase = int(state_dict[tracker_key][0].item())
-
-    def set_target_active_frac(self, val):
-        """Update the target active fraction buffer."""
-        if hasattr(self, 'eet_target_active_frac_tensor') and self.eet_target_active_frac_tensor is not None:
-            self.eet_target_active_frac_tensor.fill_(val)
 
     @torch.no_grad()
     def init_weights(self):
@@ -1637,7 +1626,7 @@ class EarlyExitGPT(GPT):
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
             n_rl = len(routing_layers)
             routing_set = set(routing_layers)
-            target_frac = eet_target_active_frac if eet_target_active_frac is not None else self.eet_target_active_frac_tensor
+            target_frac = eet_target_active_frac if eet_target_active_frac is not None else getattr(config, 'eet_target_active_frac', 0.125)
 
             # NOTE: capacities are computed AFTER the global router runs (below),
             # so this list is populated later when is_global_router=True.
@@ -2316,10 +2305,7 @@ class EarlyExitGPT(GPT):
                 # Capacity Alignment / Load-Balancing Loss
                 cal_lambda = getattr(config, 'eet_capacity_alignment_lambda', 0.0)
                 if self.training and cal_lambda > 0 and hasattr(self, '_last_target_fractions'):
-                    if any(isinstance(x, torch.Tensor) for x in self._last_target_fractions):
-                        target_dist = torch.stack([x if isinstance(x, torch.Tensor) else torch.tensor(x, device=loss.device, dtype=torch.float32) for x in self._last_target_fractions])
-                    else:
-                        target_dist = torch.tensor(self._last_target_fractions, device=loss.device, dtype=torch.float32)
+                    target_dist = torch.tensor(self._last_target_fractions, device=loss.device, dtype=torch.float32)
                     curr_probs = p_exits_soft if (eet_phase == 3 and not use_gumbel) else p_exits
                     if len(curr_probs) == len(target_dist):
                         mean_probs = torch.stack([p.mean().float() for p in curr_probs])
