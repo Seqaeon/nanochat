@@ -1164,7 +1164,9 @@ class EarlyExitGPT(GPT):
                     if len(self.eet_exit_adapters) > 0:
                         adapted = self.eet_exit_adapters[idx_ad](adapted)
                     if len(self.exit_gamma) > 0:
-                        adapted = adapted * self.exit_gamma[idx_ad] + self.exit_beta[idx_ad]
+                        gamma = self.exit_gamma[idx_ad].to(adapted.dtype)
+                        beta = self.exit_beta[idx_ad].to(adapted.dtype)
+                        adapted = adapted * gamma + beta
                     adapted_states.append(adapted)
                 stacked = torch.stack(adapted_states, dim=2)
             else:
@@ -1517,7 +1519,9 @@ class EarlyExitGPT(GPT):
                         if len(self.eet_exit_adapters) > 0:
                             adapted = self.eet_exit_adapters[idx_ad](adapted)
                         if len(self.exit_gamma) > 0:
-                            adapted = adapted * self.exit_gamma[idx_ad] + self.exit_beta[idx_ad]
+                            gamma = self.exit_gamma[idx_ad].to(adapted.dtype)
+                            beta = self.exit_beta[idx_ad].to(adapted.dtype)
+                            adapted = adapted * gamma + beta
                         adapted_states.append(adapted)
                     stacked = torch.stack(adapted_states, dim=2)
                 else:
@@ -1931,7 +1935,9 @@ class EarlyExitGPT(GPT):
                         if len(self.eet_exit_adapters) > 0:
                             x_exited = self.eet_exit_adapters[rl_counter](x_exited)
                         if len(self.exit_gamma) > 0:
-                            x_exited = x_exited * self.exit_gamma[rl_counter] + self.exit_beta[rl_counter]
+                            gamma = self.exit_gamma[rl_counter].to(x_exited.dtype)
+                            beta = self.exit_beta[rl_counter].to(x_exited.dtype)
+                            x_exited = x_exited * gamma + beta
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active
@@ -2019,7 +2025,9 @@ class EarlyExitGPT(GPT):
             if len(self.eet_exit_adapters) > 0:
                 x_active = self.eet_exit_adapters[-1](x_active)
             if len(self.exit_gamma) > 0:
-                x_active = x_active * self.exit_gamma[-1] + self.exit_beta[-1]
+                gamma = self.exit_gamma[-1].to(x_active.dtype)
+                beta = self.exit_beta[-1].to(x_active.dtype)
+                x_active = x_active * gamma + beta
             x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active)
             x = x_final
 
