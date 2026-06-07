@@ -373,7 +373,8 @@ while True:
         if use_eet:
             eval_kwargs['eet_do_route'] = True
             eval_kwargs['eet_phase'] = 3
-            eval_kwargs['eet_target_active_frac'] = float(model.config.eet_target_active_frac)
+            if hasattr(model, 'set_target_active_frac'):
+                model.set_target_active_frac(model.config.eet_target_active_frac)
         val_bpb, val_loss = evaluate_bpb(model, val_loader, eval_steps, token_bytes, **eval_kwargs)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f} | val_loss: {val_loss:.4f}")
         if val_bpb < min_val_bpb:

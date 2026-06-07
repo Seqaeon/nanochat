@@ -282,7 +282,8 @@ def main():
                 if ever_routed:
                     eval_kwargs['eet_do_route'] = True
                     eval_kwargs['eet_phase'] = 3
-                    eval_kwargs['eet_target_active_frac'] = float(model.config.eet_target_active_frac)
+                    if hasattr(model, 'set_target_active_frac'):
+                        model.set_target_active_frac(model.config.eet_target_active_frac)
                 else:
                     eval_kwargs['eet_do_route'] = False
                     eval_kwargs['eet_phase'] = 1

@@ -193,3 +193,42 @@ def test_eet_dense_distill():
     loss.backward()
     
     print("✓ Concurrent Dense Distillation verified successfully!")
+
+
+def test_eet_capacity_anneal():
+    device = "cpu"
+    print("Testing EET Capacity Annealing...")
+    
+    config = GPTConfig(
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        vocab_size=128,
+        sequence_len=32,
+        use_eet=True,
+        eet_min_exit_layer=0,
+        eet_global_router=True,
+        eet_compute_skip=True,
+        eet_loss_variant='quality',
+    )
+    
+    model = EarlyExitGPT(config).to(device)
+    model.train()
+    
+    assert hasattr(model, 'eet_target_active_frac_tensor'), "eet_target_active_frac_tensor not registered"
+    assert abs(model.eet_target_active_frac_tensor.item() - 0.125) < 1e-6
+    
+    # Test setting the target active fraction
+    model.set_target_active_frac(0.4)
+    assert abs(model.eet_target_active_frac_tensor.item() - 0.4) < 1e-6
+    
+    B, T = 2, 8
+    x = torch.randint(0, config.vocab_size, (B, T), device=device)
+    y = torch.randint(0, config.vocab_size, (B, T), device=device)
+    
+    model.zero_grad(set_to_none=True)
+    loss = model(x, y, eet_do_route=True, eet_phase=3)
+    assert not torch.isnan(loss)
+    loss.backward()
+    
+    print("✓ Capacity Annealing verified successfully!")

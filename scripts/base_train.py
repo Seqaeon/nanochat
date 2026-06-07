@@ -1529,7 +1529,8 @@ while True:
                 if eet_ever_routed:
                     eval_kwargs['eet_do_route'] = True
                     eval_kwargs['eet_phase'] = 3
-                    eval_kwargs['eet_target_active_frac'] = float(model_config.eet_target_active_frac)
+                    if hasattr(model, 'set_target_active_frac'):
+                        model.set_target_active_frac(model_config.eet_target_active_frac)
                 else:
                     eval_kwargs['eet_do_route'] = False
                     eval_kwargs['eet_phase'] = 1
@@ -1739,6 +1740,9 @@ while True:
                     else:
                         model_config.eet_target_active_frac = getattr(args, 'eet_target_active_frac', 0.125)
 
+                if model_config.use_eet and hasattr(orig_model, 'set_target_active_frac'):
+                    orig_model.set_target_active_frac(model_config.eet_target_active_frac)
+
                 eet_gumbel_temp_tensor = torch.tensor(1.0, device=x.device, dtype=torch.float32)
                 if model_config.eet_gumbel_temp_start > 0.0:
                     t_start = model_config.eet_gumbel_temp_start
@@ -1773,8 +1777,7 @@ while True:
                              eet_gumbel_temp=eet_gumbel_temp_tensor,
                              eet_step=eet_step_tensor,
                              eet_total_steps=eet_total_steps_tensor,
-                             eet_dense_x=eet_dense_x,
-                             eet_target_active_frac=float(model_config.eet_target_active_frac))
+                             eet_dense_x=eet_dense_x)
         else:
             loss = model(x, y)
             
