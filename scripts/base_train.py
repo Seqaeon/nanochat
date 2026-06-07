@@ -1529,6 +1529,7 @@ while True:
                 if eet_ever_routed:
                     eval_kwargs['eet_do_route'] = True
                     eval_kwargs['eet_phase'] = 3
+                    eval_kwargs['eet_target_active_frac'] = float(model_config.eet_target_active_frac)
                 else:
                     eval_kwargs['eet_do_route'] = False
                     eval_kwargs['eet_phase'] = 1
@@ -1772,7 +1773,8 @@ while True:
                              eet_gumbel_temp=eet_gumbel_temp_tensor,
                              eet_step=eet_step_tensor,
                              eet_total_steps=eet_total_steps_tensor,
-                             eet_dense_x=eet_dense_x)
+                             eet_dense_x=eet_dense_x,
+                             eet_target_active_frac=float(model_config.eet_target_active_frac))
         else:
             loss = model(x, y)
             

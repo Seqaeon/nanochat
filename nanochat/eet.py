@@ -947,7 +947,8 @@ class EarlyExitGPT(GPT):
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean',
                 eet_do_route=False, eet_phase=1, eet_lambda_r=0.0, eet_lambda_e=0.0,
-                eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1, eet_dense_x=None):
+                eet_gumbel_temp=1.0, eet_step=0, eet_total_steps=1, eet_dense_x=None,
+                eet_target_active_frac=None):
         """Forward pass with early exit routing.
 
         Phase scheduling is done OUTSIDE this method (in base_train.py) to
@@ -1625,7 +1626,7 @@ class EarlyExitGPT(GPT):
             routing_layers = list(range(config.eet_min_exit_layer, n_layer - 1))
             n_rl = len(routing_layers)
             routing_set = set(routing_layers)
-            target_frac = getattr(config, 'eet_target_active_frac', 0.125)
+            target_frac = eet_target_active_frac if eet_target_active_frac is not None else getattr(config, 'eet_target_active_frac', 0.125)
 
             # NOTE: capacities are computed AFTER the global router runs (below),
             # so this list is populated later when is_global_router=True.
