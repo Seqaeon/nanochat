@@ -221,37 +221,37 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --eet-depth-weight-type linear --eet-depth-weight-max 2.5
 #
 # EET_P1_22: CE-Guided + Loss scaling by exit depth (Option 2: EMA Inverse Freq) - CLEAN BASELINE
-run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
-    "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
-    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
-    --eet-router-type mlp1 \
-    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
-    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
-    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
-    --eet-global-router 1 --eet-router-task-grad 1 \
-    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
-    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
-    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
-    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
-    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
-    --eet-capacity-alignment-lambda 1.0
-
+#run_experiment "EET_P1_22_CEG_EMA_D${DEPTH}" \
+#    "CE-guided routing with EMA inverse frequency loss scaling by exit depth" \
+#    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
+#    --eet-router-type mlp1 \
+#    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+#    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
+#    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
+#    --eet-global-router 1 --eet-router-task-grad 1 \
+#    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
+#    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+#    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
+#    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
+#    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
+#    --eet-capacity-alignment-lambda 1.0
+#
 # EET_P1_22_AFFINE: Cheap Exit-Depth Alignment
-run_experiment "EET_P1_22_CEG_EMA_AFFINE_D${DEPTH}" \
-    "EET_P1_22 Baseline + Cheap Exit-Depth Alignment (depth-affine=1)" \
-    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
-    --eet-router-type mlp1 \
-    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
-    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
-    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
-    --eet-global-router 1 --eet-router-task-grad 1 \
-    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
-    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
-    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
-    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
-    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
-    --eet-capacity-alignment-lambda 1.0 \
-    --eet-depth-affine 1
+#run_experiment "EET_P1_22_CEG_EMA_AFFINE_D${DEPTH}" \
+#    "EET_P1_22 Baseline + Cheap Exit-Depth Alignment (depth-affine=1)" \
+#    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
+#    --eet-router-type mlp1 \
+#    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+#    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
+#    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
+#    --eet-global-router 1 --eet-router-task-grad 1 \
+#    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
+#    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+#    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
+#    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
+#    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
+#    --eet-capacity-alignment-lambda 1.0 \
+#    --eet-depth-affine 1
 
 # EET_P1_22_ANNEAL: Target Capacity Annealing
 run_experiment "EET_P1_22_CEG_EMA_ANNEAL_D${DEPTH}" \
