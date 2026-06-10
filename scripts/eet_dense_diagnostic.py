@@ -543,6 +543,10 @@ def main():
     results['dense_ckpt'] = args.dense_ckpt_dir
     results['eet_ckpt'] = args.eet_ckpt_dir
 
+    # Generate plots
+    print0("[6/6] Generating plots...")
+    generate_plots(results, accum, args.output_dir, n_layers)
+
     # Convert position_ce_gap keys to strings for JSON
     if 'position_ce_gap' in results:
         results['position_ce_gap'] = {str(k): v for k, v in results['position_ce_gap'].items()}
@@ -552,10 +556,6 @@ def main():
     with open(json_path, 'w') as f:
         json.dump(results, f, indent=2, default=str)
     print0(f"  Saved results to {json_path}")
-
-    # Generate plots
-    print0("[6/6] Generating plots...")
-    generate_plots(results, accum, args.output_dir, n_layers)
 
     # Print summary
     print0("\n" + "=" * 64)
