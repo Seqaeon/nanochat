@@ -106,7 +106,7 @@ init_state
 # --target-param-data-ratio 10.5 with --target-tokens 0 makes base_train.py
 # compute num_iterations from the base GPT param count at this depth.
 EET_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-128} --total-batch-size -1 \
   --use-onecycle 0 --log-every 20 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
@@ -254,21 +254,21 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --eet-depth-affine 1
 
 # EET_P1_22_ANNEAL: Target Capacity Annealing
-run_experiment "EET_P1_22_CEG_EMA_ANNEAL_D${DEPTH}" \
-    "EET_P1_22 Baseline + Target Capacity Annealing (anneal-frac=0.15)" \
-    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
-    --eet-router-type mlp1 \
-    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
-    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
-    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
-    --eet-global-router 1 --eet-router-task-grad 1 \
-    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
-    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
-    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
-    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
-    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
-    --eet-capacity-alignment-lambda 1.0 \
-    --eet-capacity-anneal-frac 0.15
+#run_experiment "EET_P1_22_CEG_EMA_ANNEAL_D${DEPTH}" \
+#    "EET_P1_22 Baseline + Target Capacity Annealing (anneal-frac=0.15)" \
+#    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
+#    --eet-router-type mlp1 \
+#    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+#    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
+#    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
+#    --eet-global-router 1 --eet-router-task-grad 1 \
+#    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
+#    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+#    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
+#    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
+#    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
+#    --eet-capacity-alignment-lambda 1.0 \
+#    --eet-capacity-anneal-frac 0.15
 
 # EET_P1_22_SCHED: Learned prior scheduling logits
 #run_experiment "EET_P1_22_CEG_EMA_SCHED_D${DEPTH}" \
@@ -636,7 +636,56 @@ run_experiment "EET_P1_22_CEG_EMA_ALL_D${DEPTH}" \
 #    --eet-depth-weight-type ema
 #
 
+# ============================================================================
+# DIAGNOSTIC: Dense vs EET Comparison
+# ============================================================================
+# Trains a dense baseline and the clean EET baseline, then runs the
+# diagnostic comparison script automatically.
 
+run_experiment "EET_P1_DIAG_DENSE_D${DEPTH}" \
+    "Diagnostic: Dense baseline (control)" \
+    --use-eet 0
+
+run_experiment "EET_P1_DIAG_EET_D${DEPTH}" \
+    "Diagnostic: EET baseline (P1_22 config)" \
+    --use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
+    --eet-router-type mlp1 \
+    --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
+    --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
+    --eet-loss-variant ce_guided --eet-capacity-schedule bell \
+    --eet-global-router 1 --eet-router-task-grad 1 \
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
+    --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
+    --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
+    --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
+    --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0\
+    --eet-capacity-alignment-lambda 1.0
+
+# Run diagnostic comparison if both completed
+DENSE_CKPT="${EET_OUT_BASE}/EET_P1_DIAG_DENSE_D${DEPTH}/depth_${DEPTH}/ckpt_base/base"
+EET_CKPT="${EET_OUT_BASE}/EET_P1_DIAG_EET_D${DEPTH}/depth_${DEPTH}/ckpt_base/base"
+DIAG_OUT="${EET_OUT_BASE}/diagnostic_D${DEPTH}"
+
+if [ -d "$DENSE_CKPT" ] && [ -d "$EET_CKPT" ]; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Running EET vs Dense Diagnostic Comparison"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    python -m scripts.eet_dense_diagnostic \
+        --dense-ckpt-dir "$DENSE_CKPT" \
+        --eet-ckpt-dir "$EET_CKPT" \
+        --output-dir "$DIAG_OUT" \
+        --data-dir "${DATA_DIR:-data}" \
+        --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" \
+        --num-batches 50 \
+        --num-grad-batches 5 \
+        --device-batch-size 8 2>&1 | tee -a "$LOGFILE"
+    echo "✅  Diagnostic comparison complete. Results in $DIAG_OUT"
+else
+    echo "⚠️  Skipping diagnostic: one or both checkpoints not found."
+    echo "    Dense: $DENSE_CKPT"
+    echo "    EET:   $EET_CKPT"
+fi
 
 
 echo ""
