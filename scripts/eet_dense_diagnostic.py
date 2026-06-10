@@ -499,7 +499,7 @@ def main():
     print0("[3/6] Loading data...")
     tokenizer = get_tokenizer(tokenizer_dir=args.tokenizer_dir)
     loader = tokenizing_distributed_data_loader_bos_bestfit(
-        tokenizer, args.device_batch_size, args.sequence_len, "val", device=device)
+        tokenizer, args.device_batch_size, args.sequence_len, "val", device=device, data_dir=args.data_dir)
 
     # Initialize accumulators
     accum = defaultdict(float)
@@ -523,7 +523,7 @@ def main():
     print0(f"[5/6] Gradient analysis over {args.num_grad_batches} batches...")
     grad_count = 0
     loader2 = tokenizing_distributed_data_loader_bos_bestfit(
-        tokenizer, args.device_batch_size, args.sequence_len, "val", device=device)
+        tokenizer, args.device_batch_size, args.sequence_len, "val", device=device, data_dir=args.data_dir)
     for x, y in loader2:
         if grad_count >= args.num_grad_batches:
             break
