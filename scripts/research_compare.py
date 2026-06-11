@@ -387,6 +387,9 @@ def run_training_sweep(args):
         "--eet-route-consistency-lambda", str(getattr(args, 'eet_route_consistency_lambda', 0.0)),
         "--eet-dense-distill-interval", str(getattr(args, 'eet_dense_distill_interval', 0)),
         "--eet-dense-distill-lambda", str(getattr(args, 'eet_dense_distill_lambda', 0.5)),
+        "--eet-depth-lr-scale", str(getattr(args, 'eet_depth_lr_scale', 0)),
+        "--eet-depth-grad-scale", str(getattr(args, 'eet_depth_grad_scale', 0)),
+        "--eet-detach-aux-from-backbone", str(getattr(args, 'eet_detach_aux_from_backbone', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -977,6 +980,9 @@ if __name__ == "__main__":
     parser.add_argument("--eet-route-consistency-lambda", type=float, default=0.0)
     parser.add_argument("--eet-dense-distill-interval", type=int, default=0)
     parser.add_argument("--eet-dense-distill-lambda", type=float, default=0.5)
+    parser.add_argument("--eet-depth-lr-scale", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-depth-grad-scale", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-detach-aux-from-backbone", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
     
