@@ -1971,6 +1971,13 @@ class EarlyExitGPT(GPT):
                             gamma = self.exit_gamma[rl_counter].to(x_exited.dtype)
                             beta = self.exit_beta[rl_counter].to(x_exited.dtype)
                             x_exited = x_exited * gamma + beta
+                        # Backbone gradient isolation: detach exiting tokens so the main CE
+                        # loss only trains the backbone through final-layer tokens. This
+                        # prevents the conflicting gradient objective where early layers are
+                        # pulled toward "prediction-ready" representations (for exit tokens)
+                        # AND "good intermediate features" (for continuing tokens).
+                        if getattr(config, 'eet_detach_exit_from_backbone', False):
+                            x_exited = x_exited.detach()
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active
@@ -2037,6 +2044,9 @@ class EarlyExitGPT(GPT):
                         # Exiting tokens: scatter their final state into x_final
                         exit_idx_global = torch.gather(active_idx, 1, exit_local)
                         x_exited = torch.gather(x_active, 1, exit_local.unsqueeze(-1).expand(-1, -1, C))
+                        # Backbone gradient isolation (same as global router path)
+                        if getattr(config, 'eet_detach_exit_from_backbone', False):
+                            x_exited = x_exited.detach()
                         x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
 
                         # Continuing tokens: update active_idx and x_active

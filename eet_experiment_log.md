@@ -32,6 +32,10 @@ This log catalogs the architectural changes and tuning attempts for the Early Ex
 - **Status:** **Abandoned** (set to `0`).
 
 ---
+Gradient scaling didn't help — it amplified the same conflicting signals
+Detach aux didn't help — the MAIN CE loss (not aux) is the source of conflict
+Exit adapters didn't help — they transform the representation but the gradient still flows backward into the backbone
+Depth-scaled LR hurt — it amplified noisy gradients from the few final-layer tokens
 
 ## 🚀 Active Configurations & Hyperparameter Tuning
 

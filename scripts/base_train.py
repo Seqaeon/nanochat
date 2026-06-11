@@ -313,6 +313,7 @@ parser.add_argument("--eet-dense-distill-lambda", type=float, default=0.5, help=
 parser.add_argument("--eet-depth-lr-scale", type=int, default=0, choices=[0, 1], help="EET: per-layer LR scaling by inverse surviving fraction (Option A)")
 parser.add_argument("--eet-depth-grad-scale", type=int, default=0, choices=[0, 1], help="EET: scale per-token CE by inverse active fraction at exit depth (Option B)")
 parser.add_argument("--eet-detach-aux-from-backbone", type=int, default=0, choices=[0, 1], help="EET: detach aux losses (CE-guided, surprise) from backbone gradients")
+parser.add_argument("--eet-detach-exit-from-backbone", type=int, default=0, choices=[0, 1], help="EET: detach exiting token representations from backbone — backbone only trains from final-layer tokens")
 parser.add_argument("--p24-use-sliced-weight", type=int, default=0, choices=[0, 1], help="24: enable SlicedWeightLinear (LinearMoE2-style)")
 parser.add_argument("--p24-sliced-weight-reduction-scale", type=int, default=8, help="24: big_dim = in_features * reduction_scale")
 parser.add_argument("--p24-sliced-weight-min-select", type=int, default=128, help="24: minimum selected columns from weight bank")
@@ -913,6 +914,7 @@ def build_model_meta(depth):
         eet_depth_lr_scale=bool(int(getattr(args, 'eet_depth_lr_scale', 0))),
         eet_depth_grad_scale=bool(int(getattr(args, 'eet_depth_grad_scale', 0))),
         eet_detach_aux_from_backbone=bool(int(getattr(args, 'eet_detach_aux_from_backbone', 0))),
+        eet_detach_exit_from_backbone=bool(int(getattr(args, 'eet_detach_exit_from_backbone', 0))),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

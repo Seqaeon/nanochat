@@ -390,6 +390,7 @@ def run_training_sweep(args):
         "--eet-depth-lr-scale", str(getattr(args, 'eet_depth_lr_scale', 0)),
         "--eet-depth-grad-scale", str(getattr(args, 'eet_depth_grad_scale', 0)),
         "--eet-detach-aux-from-backbone", str(getattr(args, 'eet_detach_aux_from_backbone', 0)),
+        "--eet-detach-exit-from-backbone", str(getattr(args, 'eet_detach_exit_from_backbone', 0)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -983,6 +984,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-depth-lr-scale", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-depth-grad-scale", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-detach-aux-from-backbone", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-detach-exit-from-backbone", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
     

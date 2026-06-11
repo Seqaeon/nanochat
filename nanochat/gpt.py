@@ -422,6 +422,7 @@ class GPTConfig:
     eet_depth_lr_scale: bool = False                 # Option A: per-layer LR scaling inversely proportional to surviving token fraction
     eet_depth_grad_scale: bool = False               # Option B: scale per-token CE by inverse of active fraction at exit depth
     eet_detach_aux_from_backbone: bool = False       # Detach aux losses (CE-guided, surprise) from backbone — only train router params
+    eet_detach_exit_from_backbone: bool = False      # Detach exiting token representations from backbone graph — backbone only trains from final-layer tokens
 
 
 
