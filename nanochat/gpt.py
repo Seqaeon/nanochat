@@ -418,6 +418,10 @@ class GPTConfig:
     eet_route_consistency_lambda: float = 0.0       # consistency loss weight penalizing routing oscillation (0=disabled)
     eet_dense_distill_interval: int = 0             # concurrent dense distillation every N steps (0=disabled)
     eet_dense_distill_lambda: float = 0.5           # KL distillation loss weight
+    # Diagnostic-guided gradient fixes
+    eet_depth_lr_scale: bool = False                 # Option A: per-layer LR scaling inversely proportional to surviving token fraction
+    eet_depth_grad_scale: bool = False               # Option B: scale per-token CE by inverse of active fraction at exit depth
+    eet_detach_aux_from_backbone: bool = False       # Detach aux losses (CE-guided, surprise) from backbone — only train router params
 
 
 
@@ -8567,13 +8571,79 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Structural matrix params: normal Muon LR
-        for shape in sorted({p.shape for p in struct_matrix_params}):
-            group_params = [p for p in struct_matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+        # Structural matrix params: normal Muon LR (or depth-scaled when eet_depth_lr_scale=True)
+        _use_depth_lr = getattr(self.config, 'eet_depth_lr_scale', False) and getattr(self.config, 'use_eet', False)
+        if _use_depth_lr:
+            # Compute per-layer LR multipliers from the capacity schedule
+            import math as _math
+            _n_layer = self.config.n_layer
+            _min_exit = getattr(self.config, 'eet_min_exit_layer', 1)
+            _n_rl = _n_layer - 1 - _min_exit  # number of routing layers
+            _target_frac = getattr(self.config, 'eet_target_active_frac', 0.125)
+            _schedule = getattr(self.config, 'eet_capacity_schedule', 'bell')
+            # Compute exit fracs same way as forward pass
+            if _schedule == 'uniform':
+                _exit_fracs = [(1.0 - _target_frac) / _n_rl] * _n_rl
+            elif _schedule == 'linear':
+                _ws = [k + 1 for k in range(_n_rl)]
+                _tw = sum(_ws)
+                _exit_fracs = [w / _tw * (1.0 - _target_frac) for w in _ws]
+            elif _schedule == 'bell':
+                _mid = (_n_rl - 1) / 2.0
+                _sigma = max(1.0, _n_rl / 4.0)
+                _ws = [_math.exp(-((_k - _mid) / _sigma) ** 2) for _k in range(_n_rl)]
+                _tw = sum(_ws)
+                _exit_fracs = [w / _tw * (1.0 - _target_frac) for w in _ws]
+            else:  # geometric
+                _psf = 1.0 - _target_frac ** (1.0 / _n_rl)
+                _exit_fracs = [_psf] * _n_rl
+            # Compute per-layer surviving fraction
+            _survivor = [1.0] * _n_layer  # fraction of tokens active at each layer
+            _surv = 1.0
+            _rl_idx = 0
+            for layer_i in range(_n_layer):
+                _survivor[layer_i] = _surv
+                if layer_i in range(_min_exit, _n_layer - 1) and _rl_idx < len(_exit_fracs):
+                    _surv -= _exit_fracs[_rl_idx]
+                    _rl_idx += 1
+            # Per-layer LR scale = 1 / surviving_fraction (capped at 10×)
+            _layer_lr_scale = [min(10.0, 1.0 / max(s, 0.05)) for s in _survivor]
+            print0(f"[EET] Depth-scaled LR multipliers: {[f'{s:.2f}' for s in _layer_lr_scale]}")
+            # Map each param in struct_matrix_params to its layer index
+            _layer_param_ids = {}
+            for layer_i, block in enumerate(self.transformer.h):
+                for p in block.parameters():
+                    _layer_param_ids[id(p)] = layer_i
+            # Group struct_matrix_params by (layer, shape) with scaled LR
+            _depth_grouped = {}  # (layer_idx, shape) -> [params]
+            _non_layer_params = []
+            for p in struct_matrix_params:
+                li = _layer_param_ids.get(id(p))
+                if li is not None:
+                    key = (li, p.shape)
+                    _depth_grouped.setdefault(key, []).append(p)
+                else:
+                    _non_layer_params.append(p)
+            for (li, shape), gp in sorted(_depth_grouped.items()):
+                param_groups.append(dict(
+                    kind='muon', params=gp, lr=matrix_lr * _layer_lr_scale[li],
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
+            # Non-layer params (e.g. embedding model) at base LR
+            if _non_layer_params:
+                for shape in sorted({p.shape for p in _non_layer_params}):
+                    gp = [p for p in _non_layer_params if p.shape == shape]
+                    param_groups.append(dict(
+                        kind='muon', params=gp, lr=matrix_lr,
+                        momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                    ))
+        else:
+            for shape in sorted({p.shape for p in struct_matrix_params}):
+                group_params = [p for p in struct_matrix_params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=matrix_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
         # Gate matrix params: gate_lr_scale× Muon LR (default 0.3×, configurable)
         gate_lr = matrix_lr * gate_lr_scale
         for shape in sorted({p.shape for p in gate_matrix_params}):

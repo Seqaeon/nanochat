@@ -1219,7 +1219,9 @@ class EarlyExitGPT(GPT):
                         valid_mask_flat = (targets.view(-1) != -1).float()
 
                         dw_type = getattr(config, 'eet_depth_weight_type', 'none')
-                        if dw_type != 'none':
+                        use_depth_grad_scale = getattr(config, 'eet_depth_grad_scale', False)
+
+                        if dw_type != 'none' or use_depth_grad_scale:
                             # 1. Get exit depth for every token in the batch
                             exit_depth = routing_weights.argmax(dim=-1)  # (B, T)
                             exit_depth_flat = exit_depth.view(-1)  # (B*T,)
@@ -1234,7 +1236,7 @@ class EarlyExitGPT(GPT):
                                             freq_k = freq_k / dist.get_world_size()
                                         self.exit_freq_ema[k] = 0.99 * self.exit_freq_ema[k] + 0.01 * freq_k
 
-                            # 3. Compute depth weighting
+                            # 3. Compute depth weighting (existing depth_weight_type)
                             if dw_type == 'linear':
                                 max_w = getattr(config, 'eet_depth_weight_max', 2.5)
                                 depth_weight_flat = 1.0 + (exit_depth_flat.float() / (self.n_exits - 1)) * (max_w - 1.0)
@@ -1249,6 +1251,28 @@ class EarlyExitGPT(GPT):
                                 depth_weight_flat = norm_layer_w[exit_depth_flat]
                             else:
                                 depth_weight_flat = torch.ones_like(exit_depth_flat, dtype=torch.float32)
+
+                            # 3b. Option B: depth gradient scaling from capacity schedule
+                            # Weight = 1/active_fraction at exit layer (capped at 10×, normalized)
+                            if use_depth_grad_scale and hasattr(self, '_last_target_fractions'):
+                                tgt_fracs = self._last_target_fractions  # [exit_frac_0, ..., exit_frac_N, final_frac]
+                                # Compute surviving fraction at each exit slot
+                                n_slots = len(tgt_fracs)
+                                surv_at_slot = []
+                                _s = 1.0
+                                for ef in tgt_fracs:
+                                    _s -= ef
+                                    surv_at_slot.append(max(_s, 0.05))
+                                surv_at_slot[-1] = surv_at_slot[-2] if len(surv_at_slot) > 1 else 0.05  # final layer uses last surviving frac
+                                inv_surv = [min(10.0, 1.0 / s) for s in surv_at_slot]
+                                # Normalize so mean weight = 1.0
+                                _mean_w = sum(inv_surv) / len(inv_surv)
+                                inv_surv_norm = [w / _mean_w for w in inv_surv]
+                                grad_scale_t = torch.tensor(inv_surv_norm, device=idx.device, dtype=torch.float32)
+                                # Clamp exit_depth to valid range
+                                clamped_depth = exit_depth_flat.clamp(0, len(inv_surv_norm) - 1)
+                                grad_scale_per_token = grad_scale_t[clamped_depth]
+                                depth_weight_flat = depth_weight_flat * grad_scale_per_token
 
                             # 4. Multiply with per-token cross entropy before reduction
                             weighted_ce = per_token_ce_flat * depth_weight_flat.detach()
@@ -1281,14 +1305,22 @@ class EarlyExitGPT(GPT):
                                     entropy_bonus = entropy_bonus - (p_f * torch.log(p_f)).mean()
                                 loss = loss - config.eet_quality_entropy_bonus * entropy_bonus
                     elif loss_variant == 'entropy_surprise' and loss_reduction == 'mean':
+                        _detach_aux = getattr(config, 'eet_detach_aux_from_backbone', False)
+                        _stacked = stacked.detach() if _detach_aux else stacked
+                        _rw = routing_weights.detach() if _detach_aux else routing_weights
+                        _xf = x_final.detach() if _detach_aux else x_final
                         variant_loss, variant_diag = self._compute_entropy_surprise_loss(
-                            x_final, stacked, config, routing_weights=routing_weights
+                            _xf, _stacked, config, routing_weights=_rw
                         )
                         loss = loss + variant_loss
                     elif loss_variant == 'ce_guided' and loss_reduction == 'mean':
+                        _detach_aux = getattr(config, 'eet_detach_aux_from_backbone', False)
+                        _stacked = stacked.detach() if _detach_aux else stacked
+                        _rw = routing_weights.detach() if _detach_aux else routing_weights
+                        _rl = router_logits  # router_logits should keep grad (trains router)
                         variant_loss, variant_diag = self._compute_ce_guided_loss(
-                            per_token_ce, targets, stacked, routing_weights, config,
-                            router_logits=router_logits,
+                            per_token_ce, targets, _stacked, _rw, config,
+                            router_logits=_rl,
                         )
                         loss = loss + variant_loss
                     elif loss_variant == 'reconstruct' and loss_reduction == 'mean':
@@ -2235,8 +2267,11 @@ class EarlyExitGPT(GPT):
                         )
                         loss = loss + recon_loss_term
                     elif loss_variant == 'entropy_surprise' and need_exit_tracking:
+                        _detach_aux = getattr(config, 'eet_detach_aux_from_backbone', False)
+                        _eh = exit_hidden.detach() if _detach_aux else exit_hidden
+                        _peh = prev_exit_hidden.detach() if (_detach_aux and prev_exit_hidden is not None) else prev_exit_hidden
                         variant_loss, variant_diag = self._compute_entropy_surprise_loss(
-                            exit_hidden, prev_exit_hidden, config
+                            _eh, _peh, config
                         )
                         loss = loss + variant_loss
                     elif loss_variant == 'adversarial' and need_exit_tracking:
