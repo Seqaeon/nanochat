@@ -760,6 +760,248 @@ class MSTLayer(nn.Module):
             return self.transition(normed)
 
 
+# ---------------------------------------------------------------------------
+# Compile-optimized batched MST layer
+# ---------------------------------------------------------------------------
+# The key insight: instead of N separate SubTransformerBlock modules (each with
+# its own weight matrices and separate forward calls → N× kernel launches),
+# store all weights as fused (N, out, in) parameter tensors and process them
+# with a single batched operation via torch.einsum or torch.bmm.
+#
+# The entire sub-state flows as a (B, T, N, d) tensor — no Python lists, no
+# stacking/unstacking. torch.compile sees clean tensor ops and fuses them.
+# ---------------------------------------------------------------------------
+
+def _batched_linear(x, weight):
+    """Batched linear: x (B, T, N, in) @ weight (N, out, in).T → (B, T, N, out).
+
+    Uses bmm for efficiency: reshape to (N, B*T, in) @ (N, in, out) → (N, B*T, out).
+    """
+    B, T, N, d_in = x.shape
+    # (B, T, N, d_in) → (N, B*T, d_in)
+    x_r = x.permute(2, 0, 1, 3).reshape(N, B * T, d_in)
+    # weight is (N, d_out, d_in) → transpose to (N, d_in, d_out)
+    y = torch.bmm(x_r, weight.to(dtype=x.dtype).transpose(1, 2))  # (N, B*T, d_out)
+    # (N, B*T, d_out) → (B, T, N, d_out)
+    return y.view(N, B, T, -1).permute(1, 2, 0, 3)
+
+
+class BatchedMSTLayer(nn.Module):
+    """Compile-optimized MST layer: all N sub-transformers processed via batched ops.
+
+    Supports:
+      - Batched attention (Q/K/V/proj as (N, out, in) weight tensors)
+      - Batched FFN (fc/proj as (N, out, in) weight tensors)
+      - Per-sub sliding window attention (loop over N for flash_attn, N is static)
+      - Batched aggregate_distribute transition
+      - Value embeddings with batched VE gates
+
+    Input/output: (B, T, N, d) tensor — no Python lists.
+    """
+
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        d = config.mst_sub_dim
+        N = config.mst_n_subs
+        D = config.n_embd
+        n_head = config.n_head
+        n_layer = config.n_layer
+        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // n_head
+        qkv_dim = n_head * head_dim
+
+        self.N = N
+        self.d = d
+        self.n_head = n_head
+        self.head_dim = head_dim
+        self.qkv_dim = qkv_dim
+        self.layer_idx = layer_idx
+
+        # --- Batched attention weights: (N, out, in) ---
+        self.c_q_w = nn.Parameter(torch.empty(N, qkv_dim, d))
+        self.c_k_w = nn.Parameter(torch.empty(N, qkv_dim, d))
+        self.c_v_w = nn.Parameter(torch.empty(N, qkv_dim, d))
+        self.c_proj_w = nn.Parameter(torch.empty(N, d, qkv_dim))
+
+        # --- Batched FFN weights: standard d → 4d → d ---
+        inner = 4 * d
+        self.fc_w = nn.Parameter(torch.empty(N, inner, d))
+        self.fc_proj_w = nn.Parameter(torch.empty(N, d, inner))
+
+        # --- Batched VE gates: (N, n_head, ve_gate_channels) ---
+        self.ve_gate_channels = min(d, 32)
+        self._has_ve = has_ve(layer_idx, n_layer)
+        if self._has_ve:
+            self.ve_gate_w = nn.Parameter(torch.empty(N, n_head, self.ve_gate_channels))
+        else:
+            self.ve_gate_w = None
+
+        # --- Transition: aggregate_distribute ---
+        # Router: project mean sub repr to N logits
+        self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — used as Linear(d, N)
+        # Distribute: (N, d, d) — N projections from aggregated (B, T, d) back to N subs
+        self.distribute_w = nn.Parameter(torch.empty(N, d, d))
+        self.aux_weight = config.mst_routing_aux_weight
+
+    def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
+                kv_cache=None, total_sub_layers=1):
+        """
+        Args:
+            sub_states: (B, T, N, d) batched sub-transformer states
+            cos_sin: (cos, sin) for RoPE
+            ve: optional (B, T, d) value embedding (shared across subs)
+            window_sizes: list of N (left, right) tuples for per-sub sliding window
+            kv_cache: optional KVCache for inference
+            total_sub_layers: n_layer * N for cache slot indexing
+
+        Returns: (B, T, N, d), aux_loss scalar tensor
+        """
+        B, T, N, d = sub_states.shape
+        cos, sin = cos_sin
+
+        # ==================== ATTENTION ====================
+        # Pre-norm
+        x = norm(sub_states)  # (B, T, N, d) — RMSNorm on last dim
+
+        # Batched Q, K, V projections: (B, T, N, d) @ (N, qkv, d).T → (B, T, N, qkv)
+        q = _batched_linear(x, self.c_q_w)
+        k = _batched_linear(x, self.c_k_w)
+        v = _batched_linear(x, self.c_v_w)
+
+        # Value embedding: shared VE across all subs, per-sub gating
+        if ve is not None and self.ve_gate_w is not None:
+            # ve: (B, T, d) → (B, T, 1, n_head, head_dim) for broadcasting
+            ve_heads = ve.view(B, T, 1, self.n_head, self.head_dim)
+            # Gate: x[..., :ve_gc] → (B, T, N, ve_gc) @ ve_gate_w (N, n_head, ve_gc).T
+            gate_in = x[..., :self.ve_gate_channels]  # (B, T, N, ve_gc)
+            # einsum: (B,T,N,gc) × (N,H,gc) → (B,T,N,H)
+            gates = torch.einsum('btng,nhg->btnh',
+                                 gate_in, self.ve_gate_w.to(dtype=gate_in.dtype))
+            gates = 2.0 * torch.sigmoid(gates)  # (B, T, N, n_head)
+            # Apply to v: reshape v to (B,T,N,H,hd), add gated VE
+            v_heads = v.view(B, T, N, self.n_head, self.head_dim)
+            v_heads = v_heads + gates.unsqueeze(-1) * ve_heads
+            v = v_heads.reshape(B, T, N, self.qkv_dim)
+
+        # Per-sub flash attention (loop — N is static, compile unrolls it)
+        # Each sub may have a different sliding window size.
+        half_hd = self.head_dim // 2
+        cos_slice = cos[..., :half_hd]
+        sin_slice = sin[..., :half_hd]
+
+        attn_results = []
+        for j in range(N):
+            qj = q[:, :, j].view(B, T, self.n_head, self.head_dim)
+            kj = k[:, :, j].view(B, T, self.n_head, self.head_dim)
+            vj = v[:, :, j].view(B, T, self.n_head, self.head_dim)
+
+            # RoPE + QK-norm
+            qj = apply_rotary_emb(qj, cos_slice, sin_slice)
+            kj = apply_rotary_emb(kj, cos_slice, sin_slice)
+            qj, kj = norm(qj), norm(kj)
+
+            ws = window_sizes[j] if window_sizes is not None else (-1, 0)
+            if kv_cache is None:
+                yj = flash_attn.flash_attn_func(
+                    qj.to(torch.bfloat16), kj.to(torch.bfloat16), vj.to(torch.bfloat16),
+                    causal=True, window_size=ws
+                )
+            else:
+                sub_layer_idx = self.layer_idx * N + j
+                k_cache, v_cache = kv_cache.get_layer_cache(sub_layer_idx)
+                yj = flash_attn.flash_attn_with_kvcache(
+                    qj.to(torch.bfloat16), k_cache, v_cache,
+                    k=kj.to(torch.bfloat16), v=vj.to(torch.bfloat16),
+                    cache_seqlens=kv_cache.cache_seqlens,
+                    causal=True, window_size=ws,
+                )
+                if j == N - 1:
+                    kv_cache.advance(T)
+            attn_results.append(yj.reshape(B, T, self.qkv_dim))
+
+        y = torch.stack(attn_results, dim=2)  # (B, T, N, qkv_dim)
+
+        # Batched output projection
+        attn_out = _batched_linear(y, self.c_proj_w)  # (B, T, N, d)
+
+        # Attention residual
+        sub_states = sub_states + attn_out
+
+        # ==================== FFN ====================
+        x = norm(sub_states)
+        h = _batched_linear(x, self.fc_w)       # (B, T, N, 4d)
+        h = F.relu(h).square()                    # relu²
+        ffn_out = _batched_linear(h, self.fc_proj_w)  # (B, T, N, d)
+        sub_states = sub_states + ffn_out
+
+        # ==================== TRANSITION: aggregate_distribute ====================
+        # Pre-norm for transition
+        x = norm(sub_states)  # (B, T, N, d)
+
+        # Router: mean across subs → logits
+        router_input = x.mean(dim=2)  # (B, T, d)
+        # router_w is (N, d), used as weight for Linear(d, N)
+        logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
+        weights = F.softmax(logits, dim=-1)  # (B, T, N)
+
+        # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
+        aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
+
+        # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
+        # distribute_w: (N, d, d)
+        # einsum: (B,T,d) × (N,d_out,d_in) → (B,T,N,d_out)
+        dist_w = self.distribute_w.to(dtype=aggregated.dtype)
+        distributed = torch.einsum('btd,nod->btno', aggregated, dist_w)
+
+        # Transition residual (aggregate_distribute uses residual)
+        sub_states = sub_states + distributed
+
+        # Aux loss: load balance (soft_weighted)
+        aux_loss = sub_states.new_zeros(())
+        if self.training:
+            probs_mean = weights.mean(dim=(0, 1))  # (N,)
+            aux_loss = self.aux_weight * N * (probs_mean * probs_mean).sum()
+
+        return sub_states, aux_loss
+
+    @torch.no_grad()
+    def init_weights(self):
+        """Initialize weights matching the per-sub initialization pattern."""
+        sub_s = 1.0 / (self.d ** 0.5)
+        # Attention
+        for j in range(self.N):
+            nn.init.uniform_(self.c_q_w[j], -sub_s, sub_s)
+            nn.init.uniform_(self.c_k_w[j], -sub_s, sub_s)
+            nn.init.uniform_(self.c_v_w[j], -sub_s, sub_s)
+            nn.init.zeros_(self.c_proj_w[j])
+            # FFN
+            nn.init.uniform_(self.fc_w[j], -sub_s, sub_s)
+            nn.init.zeros_(self.fc_proj_w[j])
+            # VE gate
+            if self.ve_gate_w is not None:
+                nn.init.uniform_(self.ve_gate_w[j], -sub_s, sub_s)
+        # Router: zero init (soft at start)
+        nn.init.zeros_(self.router_w)
+        # Distribute: uniform
+        for j in range(self.N):
+            nn.init.uniform_(self.distribute_w[j], -sub_s, sub_s)
+
+
+def _can_use_batched_layer(config):
+    """Check if the config is compatible with BatchedMSTLayer."""
+    return (
+        config.mst_ffn_mode == 'standard'
+        and config.mst_transition_mode == 'aggregate_distribute'
+        and config.mst_sub_layers == 1
+        and not config.mst_ffn_shared_up
+        and not config.mst_cross_sub_kv
+        and config.mst_sub_dropout == 0.0
+        and (config.mst_head_dim == 0 or config.mst_head_dim == config.mst_sub_dim // config.n_head)
+        and not config.mst_progressive_merge
+        and not config.mst_hybrid_dense
+        and not config.mst_delta_residual
+    )
+
+
 class MST(nn.Module):
     """Modular Sub-Transformer model.
 
@@ -822,6 +1064,7 @@ class MST(nn.Module):
         dw = config.mst_diversity_weight
         div_layers = {0, n // 2, n - 1} if dw > 0 else set()
         if config.mst_hybrid_dense:
+            self._use_batched = False
             # Alternate: even layers = dense (full D), odd layers = MST (N×d)
             layers = []
             for i in range(n):
@@ -832,6 +1075,7 @@ class MST(nn.Module):
                                            diversity_weight=dw if i in div_layers else 0.0))
             self.layers = nn.ModuleList(layers)
         elif config.mst_progressive_merge:
+            self._use_batched = False
             # N1: Progressive sub-merging pyramid.
             # Concat-doubles-d approach: merging groups of subs by concatenation.
             # Schedule for N=8, n=8: layers 0-3 = 8×d, layers 4-6 = 2×4d, layer 7 = 1×8d
@@ -866,10 +1110,18 @@ class MST(nn.Module):
                     current_n = target_n
             self.layers = nn.ModuleList(layers)
         else:
-            self.layers = nn.ModuleList([
-                MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
-                for i in range(n)
-            ])
+            self._use_batched = _can_use_batched_layer(config)
+            if self._use_batched:
+                print0(f"[MST] Using compile-optimized BatchedMSTLayer (N={N}, d={d})")
+                self.layers = nn.ModuleList([
+                    BatchedMSTLayer(config, layer_idx=i)
+                    for i in range(n)
+                ])
+            else:
+                self.layers = nn.ModuleList([
+                    MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
+                    for i in range(n)
+                ])
 
         # Per-layer learnable residual scaling (matching base GPT)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
@@ -1008,27 +1260,51 @@ class MST(nn.Module):
         if hasattr(self.input_layer, 'stem_proj'):
             torch.nn.init.uniform_(self.input_layer.stem_proj.weight, -s, s)
 
-        # Sub-transformer blocks
+        # Sub-transformer blocks / batched layers
         sub_s = 1.0 / (self.config.mst_sub_dim ** 0.5)
         for layer in self.layers:
-            for block in layer.sub_blocks:
-                torch.nn.init.uniform_(block.attn.c_q.weight, -sub_s, sub_s)
-                torch.nn.init.uniform_(block.attn.c_k.weight, -sub_s, sub_s)
-                torch.nn.init.uniform_(block.attn.c_v.weight, -sub_s, sub_s)
-                torch.nn.init.zeros_(block.attn.c_proj.weight)
-                torch.nn.init.uniform_(block.ffn.c_fc.weight, -sub_s, sub_s)
-                if block.ffn.c_proj is not None:
-                    torch.nn.init.zeros_(block.ffn.c_proj.weight)
+            if isinstance(layer, BatchedMSTLayer):
+                # BatchedMSTLayer has its own init_weights
+                layer.init_weights()
+            elif hasattr(layer, 'sub_blocks'):
+                for block in layer.sub_blocks:
+                    torch.nn.init.uniform_(block.attn.c_q.weight, -sub_s, sub_s)
+                    torch.nn.init.uniform_(block.attn.c_k.weight, -sub_s, sub_s)
+                    torch.nn.init.uniform_(block.attn.c_v.weight, -sub_s, sub_s)
+                    torch.nn.init.zeros_(block.attn.c_proj.weight)
+                    torch.nn.init.uniform_(block.ffn.c_fc.weight, -sub_s, sub_s)
+                    if block.ffn.c_proj is not None:
+                        torch.nn.init.zeros_(block.ffn.c_proj.weight)
 
-        # Transition layers
+        # Transition layers (legacy path only)
         for layer in self.layers:
-            if hasattr(layer.transition, 'distribute'):
-                for proj in layer.transition.distribute:
-                    torch.nn.init.uniform_(proj.weight, -sub_s, sub_s)
-            if hasattr(layer.transition, 'cross_weights'):
-                torch.nn.init.zeros_(layer.transition.cross_weights)
-            if hasattr(layer.transition, 'router'):
-                torch.nn.init.zeros_(layer.transition.router.router.weight)
+            if isinstance(layer, BatchedMSTLayer):
+                continue  # already handled above
+            if hasattr(layer, 'transition'):
+                if hasattr(layer.transition, 'distribute'):
+                    for proj in layer.transition.distribute:
+                        torch.nn.init.uniform_(proj.weight, -sub_s, sub_s)
+                if hasattr(layer.transition, 'cross_weights'):
+                    torch.nn.init.zeros_(layer.transition.cross_weights)
+                if hasattr(layer.transition, 'router') and hasattr(layer.transition.router, 'router'):
+                    torch.nn.init.zeros_(layer.transition.router.router.weight)
+
+        # Router weights (legacy path only)
+        for layer in self.layers:
+            if isinstance(layer, BatchedMSTLayer):
+                continue
+            tr = getattr(layer, 'transition', None)
+            if tr is not None and hasattr(tr, 'router') and hasattr(tr.router, 'router'):
+                torch.nn.init.zeros_(tr.router.router.weight)
+
+        # VE gates (legacy path only)
+        for layer in self.layers:
+            if isinstance(layer, BatchedMSTLayer):
+                continue
+            if hasattr(layer, 'sub_blocks'):
+                for block in layer.sub_blocks:
+                    if block.attn.ve_gate is not None:
+                        torch.nn.init.uniform_(block.attn.ve_gate.weight, -sub_s, sub_s)
 
         # Final head
         if hasattr(self.final_head, 'proj'):
@@ -1038,18 +1314,6 @@ class MST(nn.Module):
         if hasattr(self.final_head, 'sub_heads'):
             for head in self.final_head.sub_heads:
                 torch.nn.init.normal_(head.weight, std=0.001)
-
-        # Router weights in all layers
-        for layer in self.layers:
-            tr = layer.transition
-            if hasattr(tr, 'router') and hasattr(tr.router, 'router'):
-                torch.nn.init.zeros_(tr.router.router.weight)
-
-        # VE gates in sub-transformer attention (init like c_v projection)
-        for layer in self.layers:
-            for block in layer.sub_blocks:
-                if block.attn.ve_gate is not None:
-                    torch.nn.init.uniform_(block.attn.ve_gate.weight, -sub_s, sub_s)
 
         # Per-layer scalars (matching base GPT init_weights)
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
@@ -1120,116 +1384,157 @@ class MST(nn.Module):
         x = norm(x)
 
         # Distribute to sub-transformers (Axis 1)
-        if self.delta_residual:
-            # DR1: In delta mode, x_D is the main full-D residual stream.
-            # Sub states are created fresh from down_proj at each layer.
-            x_D = x  # Full-D residual (B, T, D)
-            sub_states = None  # Created per-layer
-            sub_x0 = None
-        else:
-            if self.config.mst_input_mode == 'stem':
-                sub_states = self.input_layer.forward_with_cos_sin(x, cos_sin, input_ids=idx)
-            else:
-                sub_states = self.input_layer(x, input_ids=idx)
-            # Save initial sub-states for x0 residual (matching GPT's x0 pattern)
-            sub_x0 = [h.clone() for h in sub_states]
-            x_D = None
-
-        # Process through L layers
         N = self.config.mst_n_subs
         d = self.config.mst_sub_dim
-        total_sub_layers = self.config.n_layer * N
-        total_aux_loss = torch.tensor(0.0, device=x.device)
-        # Global residual stream (D-dim broadcast channel)
-        global_stream = x if self.use_global_residual else None
-        for i, layer in enumerate(self.layers):
-            if self.delta_residual:
-                # DR1: Create sub inputs from full-D stream via shared per-sub down projections
-                x_D_normed = norm(x_D)
-                sub_states = [self.delta_down_projs[j](x_D_normed) for j in range(N)]
+        if self._use_batched:
+            # ============ BATCHED TENSOR PATH ============
+            # sub_states is a (B, T, N, d) tensor throughout — no lists, no stacking.
+            if self.config.mst_input_mode == 'learned_proj':
+                # Batched learned projection: (B,T,D) @ (N,d,D).T → (B,T,N,d)
+                projs_w = torch.stack([p.weight for p in self.input_layer.projections], dim=0)  # (N, d, D)
+                sub_states = torch.einsum('btD,ndD->btnd', x, projs_w.to(dtype=x.dtype))
+            elif self.config.mst_input_mode == 'fixed_slice':
+                sub_states = x.view(B, T, N, d)
+            elif self.config.mst_input_mode == 'rotated_slice':
+                rot = self.input_layer.rotation.to(x.dtype)
+                x_rot = x @ rot.T
+                sub_states = x_rot.view(B, T, N, d)
             else:
-                # Per-layer residual scaling + x0 blend (matching base GPT)
+                # Fallback: use list-based input, then stack
+                sub_list = self.input_layer(x, input_ids=idx)
+                sub_states = torch.stack(sub_list, dim=2)
+
+            # Save initial sub-states for x0 residual
+            sub_x0 = sub_states.clone()
+
+            # Process through L layers
+            total_sub_layers = self.config.n_layer * N
+            total_aux_loss = x.new_zeros(())
+
+            for i, layer in enumerate(self.layers):
+                # Per-layer residual scaling + x0 blend
                 rl = self.resid_lambdas[i]
                 x0l = self.x0_lambdas[i]
-                sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
+                sub_states = rl * sub_states + x0l * sub_x0
 
-            # Global residual: each sub reads from global stream
-            if global_stream is not None:
-                gs_normed = norm(global_stream)
-                for j in range(N):
-                    sub_states[j] = sub_states[j] + self.global_read_projs[i][j](gs_normed)
+                # Value embedding: (B, T, d) shared across all subs
+                ve = None
+                if str(i) in self.value_embeds:
+                    ve = self.value_embeds[str(i)](idx).to(sub_states.dtype)  # (B, T, d)
 
-            # Value embeddings: per-sub VE from shared embedding, sliced like input
-            # Skip for progressive merge levels where sub_dim has changed from base d
-            sub_ves = None
-            current_sub_dim = sub_states[0].shape[-1]
-            if str(i) in self.value_embeds and current_sub_dim == d:
-                ve_full = self.value_embeds[str(i)](idx).to(sub_states[0].dtype)  # (B, T, d)
-                # Each sub-transformer gets the same VE (at sub_dim d)
-                sub_ves = [ve_full] * len(sub_states)
+                # Per-sub window sizes (multi-scale or layer default)
+                sub_ws = self.sub_window_sizes if self.sub_window_sizes is not None else None
+                if sub_ws is None:
+                    # Use the layer's window size for all subs
+                    sub_ws = [self.window_sizes[i]] * N
 
-            # Multi-scale: per-sub window sizes (truncated if subs merged)
-            sub_ws = None
-            if self.sub_window_sizes is not None:
-                n_current = len(sub_states)
-                sub_ws = self.sub_window_sizes[:n_current]
+                sub_states, aux_loss = layer(sub_states, cos_sin, ve=ve,
+                                              window_sizes=sub_ws,
+                                              kv_cache=kv_cache,
+                                              total_sub_layers=total_sub_layers)
+                total_aux_loss = total_aux_loss + aux_loss
 
-            sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
-                                         window_size=self.window_sizes[i],
-                                         sub_window_sizes=sub_ws,
-                                         kv_cache=kv_cache,
-                                         total_sub_layers=total_sub_layers)
-            total_aux_loss = total_aux_loss + aux_loss
+                # Diagnostics (detached, no graph impact)
+                if self._diag_enabled:
+                    self._diag_sub_states[i] = [sub_states[:, :, j].detach() for j in range(N)]
 
-            # Capture sub states for diagnostics (detached, no grad graph impact)
-            if self._diag_enabled:
-                self._diag_sub_states[i] = [h.detach() for h in sub_states]
+            # Final output: concat_proj
+            sub_states_normed = norm(sub_states)  # (B, T, N, d)
+            concatenated = sub_states_normed.reshape(B, T, N * d)  # (B, T, D)
+            h = self.final_head.proj(concatenated)  # (B, T, D)
+            logits = self.lm_head(h)
+            final_aux = x.new_zeros(())
+            total_aux_loss = total_aux_loss + final_aux
 
-            # DR1: Up-project sub outputs to D-dim deltas and add to full-D stream
-            if self.delta_residual:
-                deltas = [self.delta_up_projs[j](sub_states[j]) for j in range(len(sub_states))]
-                # Mean of deltas added to residual stream
-                x_D = x_D + torch.stack(deltas, dim=0).mean(dim=0)
-
-            # N1: Progressive merge — group concat (doubles d per merge)
-            if i in self.merge_layers:
-                target_n = self._merge_schedule[i]
-                group_size = len(sub_states) // target_n
-                merged = []
-                for j in range(target_n):
-                    group = sub_states[j * group_size : (j + 1) * group_size]
-                    merged.append(torch.cat(group, dim=-1))  # concat group → larger d
-                sub_states = merged
-                # Update x0 the same way
-                merged_x0 = []
-                for j in range(target_n):
-                    group = sub_x0[j * group_size : (j + 1) * group_size]
-                    merged_x0.append(torch.cat(group, dim=-1))
-                sub_x0 = merged_x0
-
-            # Global residual: subs write back to global stream
-            if global_stream is not None:
-                concatenated = torch.cat(sub_states, dim=-1)  # (B, T, N*d)
-                global_stream = global_stream + self.global_write_projs[i](concatenated)
-
-        # Final output
-        if self.delta_residual:
-            # DR1: x_D is already at full D — use lm_head directly
-            logits = self.lm_head(norm(x_D))
-            final_aux = torch.tensor(0.0, device=logits.device)
-        elif self.progressive_merge and len(sub_states) == 1:
-            # Progressive merge reduced to single D-dim sub — use lm_head directly
-            sub_states = [norm(sub_states[0])]
-            logits = self.lm_head(sub_states[0])
-            final_aux = torch.tensor(0.0, device=logits.device)
         else:
-            # Normalize each sub output
-            sub_states = [norm(h) for h in sub_states]
-            if self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
-                logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+            # ============ LEGACY LIST-BASED PATH ============
+            if self.delta_residual:
+                x_D = x
+                sub_states = None
+                sub_x0 = None
             else:
-                logits, final_aux = self.final_head(sub_states)
-        total_aux_loss = total_aux_loss + final_aux
+                if self.config.mst_input_mode == 'stem':
+                    sub_states = self.input_layer.forward_with_cos_sin(x, cos_sin, input_ids=idx)
+                else:
+                    sub_states = self.input_layer(x, input_ids=idx)
+                sub_x0 = [h.clone() for h in sub_states]
+                x_D = None
+
+            total_sub_layers = self.config.n_layer * N
+            total_aux_loss = torch.tensor(0.0, device=x.device)
+            global_stream = x if self.use_global_residual else None
+            for i, layer in enumerate(self.layers):
+                if self.delta_residual:
+                    x_D_normed = norm(x_D)
+                    sub_states = [self.delta_down_projs[j](x_D_normed) for j in range(N)]
+                else:
+                    rl = self.resid_lambdas[i]
+                    x0l = self.x0_lambdas[i]
+                    sub_states = [rl * h + x0l * h0 for h, h0 in zip(sub_states, sub_x0)]
+
+                if global_stream is not None:
+                    gs_normed = norm(global_stream)
+                    for j in range(N):
+                        sub_states[j] = sub_states[j] + self.global_read_projs[i][j](gs_normed)
+
+                sub_ves = None
+                current_sub_dim = sub_states[0].shape[-1]
+                if str(i) in self.value_embeds and current_sub_dim == d:
+                    ve_full = self.value_embeds[str(i)](idx).to(sub_states[0].dtype)
+                    sub_ves = [ve_full] * len(sub_states)
+
+                sub_ws = None
+                if self.sub_window_sizes is not None:
+                    n_current = len(sub_states)
+                    sub_ws = self.sub_window_sizes[:n_current]
+
+                sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
+                                              window_size=self.window_sizes[i],
+                                              sub_window_sizes=sub_ws,
+                                              kv_cache=kv_cache,
+                                              total_sub_layers=total_sub_layers)
+                total_aux_loss = total_aux_loss + aux_loss
+
+                if self._diag_enabled:
+                    self._diag_sub_states[i] = [h.detach() for h in sub_states]
+
+                if self.delta_residual:
+                    deltas = [self.delta_up_projs[j](sub_states[j]) for j in range(len(sub_states))]
+                    x_D = x_D + torch.stack(deltas, dim=0).mean(dim=0)
+
+                if i in self.merge_layers:
+                    target_n = self._merge_schedule[i]
+                    group_size = len(sub_states) // target_n
+                    merged = []
+                    for j in range(target_n):
+                        group = sub_states[j * group_size : (j + 1) * group_size]
+                        merged.append(torch.cat(group, dim=-1))
+                    sub_states = merged
+                    merged_x0 = []
+                    for j in range(target_n):
+                        group = sub_x0[j * group_size : (j + 1) * group_size]
+                        merged_x0.append(torch.cat(group, dim=-1))
+                    sub_x0 = merged_x0
+
+                if global_stream is not None:
+                    concatenated = torch.cat(sub_states, dim=-1)
+                    global_stream = global_stream + self.global_write_projs[i](concatenated)
+
+            # Final output
+            if self.delta_residual:
+                logits = self.lm_head(norm(x_D))
+                final_aux = torch.tensor(0.0, device=logits.device)
+            elif self.progressive_merge and len(sub_states) == 1:
+                sub_states = [norm(sub_states[0])]
+                logits = self.lm_head(sub_states[0])
+                final_aux = torch.tensor(0.0, device=logits.device)
+            else:
+                sub_states = [norm(h) for h in sub_states]
+                if self.config.mst_final_mode in ('aggregate_proj', 'concat_proj'):
+                    logits, final_aux = self.final_head(sub_states, lm_head=self.lm_head)
+                else:
+                    logits, final_aux = self.final_head(sub_states)
+            total_aux_loss = total_aux_loss + final_aux
 
         logits = logits[..., :self.config.vocab_size]
         logits = logits.float()
