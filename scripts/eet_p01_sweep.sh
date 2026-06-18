@@ -654,7 +654,7 @@ run_experiment "EET_P1_DIAG_EET_D${DEPTH}" \
     --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
     --eet-loss-variant ce_guided --eet-capacity-schedule bell \
     --eet-global-router 1 --eet-router-task-grad 1 \
-    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1\
+    --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 8 \
     --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
     --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac 0.10 \
     --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
