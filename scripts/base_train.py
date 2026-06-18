@@ -1888,16 +1888,28 @@ while True:
         # With progressive merge, later layers have fewer subs — only iterate valid indices.
         sub_grad_sq = [0.0] * N
         for layer in orig_model.layers:
-            n_subs_this_layer = len(layer.sub_blocks)
-            for j in range(n_subs_this_layer):
-                block = layer.sub_blocks[j]
-                for p in block.parameters():
-                    if p.grad is not None:
-                        # Map merged sub indices back: after merge, sub j in this layer
-                        # encompasses original subs [j*stride, (j+1)*stride).
-                        # For simplicity, accumulate to sub index j (valid for uniform N).
-                        if j < N:
-                            sub_grad_sq[j] += float(p.grad.float().norm() ** 2)
+            # BatchedMSTLayer stores weights as fused 2D tensors — no sub_blocks
+            if not hasattr(layer, 'sub_blocks'):
+                # For batched layers, attribute per-sub grad norms from the fused
+                # attention/FFN weights. Each weight is (N*out, in), so we split by N.
+                for attr in ('c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w'):
+                    p = getattr(layer, attr, None)
+                    if p is not None and p.grad is not None:
+                        n_subs = getattr(layer, 'N', N)
+                        chunks = p.grad.view(n_subs, -1, p.grad.shape[-1])
+                        for j in range(min(n_subs, N)):
+                            sub_grad_sq[j] += float(chunks[j].float().norm() ** 2)
+            else:
+                n_subs_this_layer = len(layer.sub_blocks)
+                for j in range(n_subs_this_layer):
+                    block = layer.sub_blocks[j]
+                    for p in block.parameters():
+                        if p.grad is not None:
+                            # Map merged sub indices back: after merge, sub j in this layer
+                            # encompasses original subs [j*stride, (j+1)*stride).
+                            # For simplicity, accumulate to sub index j (valid for uniform N).
+                            if j < N:
+                                sub_grad_sq[j] += float(p.grad.float().norm() ** 2)
         for j in range(N):
             _cached_sub_grad_norms[f'grad_norm_S{j}'] = float(sub_grad_sq[j] ** 0.5)
         orig_model._cached_grad_norms = _cached_sub_grad_norms
