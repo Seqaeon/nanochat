@@ -816,30 +816,32 @@ class BatchedMSTLayer(nn.Module):
         self.qkv_dim = qkv_dim
         self.layer_idx = layer_idx
 
-        # --- Batched attention weights: (N, out, in) ---
-        self.c_q_w = nn.Parameter(torch.empty(N, qkv_dim, d))
-        self.c_k_w = nn.Parameter(torch.empty(N, qkv_dim, d))
-        self.c_v_w = nn.Parameter(torch.empty(N, qkv_dim, d))
-        self.c_proj_w = nn.Parameter(torch.empty(N, d, qkv_dim))
+        # --- Batched attention weights: stored as 2D (N*out, in) for Muon compat ---
+        # Reshaped to (N, out, in) in forward via .view()
+        self.c_q_w = nn.Parameter(torch.empty(N * qkv_dim, d))
+        self.c_k_w = nn.Parameter(torch.empty(N * qkv_dim, d))
+        self.c_v_w = nn.Parameter(torch.empty(N * qkv_dim, d))
+        self.c_proj_w = nn.Parameter(torch.empty(N * d, qkv_dim))
 
         # --- Batched FFN weights: standard d → 4d → d ---
         inner = 4 * d
-        self.fc_w = nn.Parameter(torch.empty(N, inner, d))
-        self.fc_proj_w = nn.Parameter(torch.empty(N, d, inner))
+        self._inner = inner
+        self.fc_w = nn.Parameter(torch.empty(N * inner, d))
+        self.fc_proj_w = nn.Parameter(torch.empty(N * d, inner))
 
-        # --- Batched VE gates: (N, n_head, ve_gate_channels) ---
+        # --- Batched VE gates: stored as 2D (N*n_head, ve_gate_channels) ---
         self.ve_gate_channels = min(d, 32)
         self._has_ve = has_ve(layer_idx, n_layer)
         if self._has_ve:
-            self.ve_gate_w = nn.Parameter(torch.empty(N, n_head, self.ve_gate_channels))
+            self.ve_gate_w = nn.Parameter(torch.empty(N * n_head, self.ve_gate_channels))
         else:
             self.ve_gate_w = None
 
         # --- Transition: aggregate_distribute ---
         # Router: project mean sub repr to N logits
-        self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — used as Linear(d, N)
-        # Distribute: (N, d, d) — N projections from aggregated (B, T, d) back to N subs
-        self.distribute_w = nn.Parameter(torch.empty(N, d, d))
+        self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — used as Linear(d, N), already 2D
+        # Distribute: stored as 2D (N*d, d) for Muon compat
+        self.distribute_w = nn.Parameter(torch.empty(N * d, d))
         self.aux_weight = config.mst_routing_aux_weight
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
@@ -858,24 +860,34 @@ class BatchedMSTLayer(nn.Module):
         B, T, N, d = sub_states.shape
         cos, sin = cos_sin
 
+        # Reshape stored 2D weights (N*out, in) → 3D (N, out, in) for batched ops
+        c_q_w = self.c_q_w.view(N, self.qkv_dim, d)
+        c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
+        c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
+        c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
+        fc_w = self.fc_w.view(N, self._inner, d)
+        fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
+        distribute_w = self.distribute_w.view(N, d, d)
+        ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
+
         # ==================== ATTENTION ====================
         # Pre-norm
         x = norm(sub_states)  # (B, T, N, d) — RMSNorm on last dim
 
         # Batched Q, K, V projections: (B, T, N, d) @ (N, qkv, d).T → (B, T, N, qkv)
-        q = _batched_linear(x, self.c_q_w)
-        k = _batched_linear(x, self.c_k_w)
-        v = _batched_linear(x, self.c_v_w)
+        q = _batched_linear(x, c_q_w)
+        k = _batched_linear(x, c_k_w)
+        v = _batched_linear(x, c_v_w)
 
         # Value embedding: shared VE across all subs, per-sub gating
-        if ve is not None and self.ve_gate_w is not None:
+        if ve is not None and ve_gate_w is not None:
             # ve: (B, T, d) → (B, T, 1, n_head, head_dim) for broadcasting
             ve_heads = ve.view(B, T, 1, self.n_head, self.head_dim)
             # Gate: x[..., :ve_gc] → (B, T, N, ve_gc) @ ve_gate_w (N, n_head, ve_gc).T
             gate_in = x[..., :self.ve_gate_channels]  # (B, T, N, ve_gc)
             # einsum: (B,T,N,gc) × (N,H,gc) → (B,T,N,H)
             gates = torch.einsum('btng,nhg->btnh',
-                                 gate_in, self.ve_gate_w.to(dtype=gate_in.dtype))
+                                 gate_in, ve_gate_w.to(dtype=gate_in.dtype))
             gates = 2.0 * torch.sigmoid(gates)  # (B, T, N, n_head)
             # Apply to v: reshape v to (B,T,N,H,hd), add gated VE
             v_heads = v.view(B, T, N, self.n_head, self.head_dim)
@@ -921,16 +933,16 @@ class BatchedMSTLayer(nn.Module):
         y = torch.stack(attn_results, dim=2)  # (B, T, N, qkv_dim)
 
         # Batched output projection
-        attn_out = _batched_linear(y, self.c_proj_w)  # (B, T, N, d)
+        attn_out = _batched_linear(y, c_proj_w)  # (B, T, N, d)
 
         # Attention residual
         sub_states = sub_states + attn_out
 
         # ==================== FFN ====================
         x = norm(sub_states)
-        h = _batched_linear(x, self.fc_w)       # (B, T, N, 4d)
-        h = F.relu(h).square()                    # relu²
-        ffn_out = _batched_linear(h, self.fc_proj_w)  # (B, T, N, d)
+        h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
+        h = F.relu(h).square()                      # relu²
+        ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         sub_states = sub_states + ffn_out
 
         # ==================== TRANSITION: aggregate_distribute ====================
@@ -947,10 +959,10 @@ class BatchedMSTLayer(nn.Module):
         aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
 
         # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
-        # distribute_w: (N, d, d)
+        # distribute_w viewed as: (N, d, d)
         # einsum: (B,T,d) × (N,d_out,d_in) → (B,T,N,d_out)
-        dist_w = self.distribute_w.to(dtype=aggregated.dtype)
-        distributed = torch.einsum('btd,nod->btno', aggregated, dist_w)
+        dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
+        distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
 
         # Transition residual (aggregate_distribute uses residual)
         sub_states = sub_states + distributed
@@ -967,23 +979,32 @@ class BatchedMSTLayer(nn.Module):
     def init_weights(self):
         """Initialize weights matching the per-sub initialization pattern."""
         sub_s = 1.0 / (self.d ** 0.5)
-        # Attention
-        for j in range(self.N):
-            nn.init.uniform_(self.c_q_w[j], -sub_s, sub_s)
-            nn.init.uniform_(self.c_k_w[j], -sub_s, sub_s)
-            nn.init.uniform_(self.c_v_w[j], -sub_s, sub_s)
-            nn.init.zeros_(self.c_proj_w[j])
+        N, d = self.N, self.d
+        # View 2D stored weights as 3D for per-sub init
+        c_q = self.c_q_w.view(N, self.qkv_dim, d)
+        c_k = self.c_k_w.view(N, self.qkv_dim, d)
+        c_v = self.c_v_w.view(N, self.qkv_dim, d)
+        c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
+        fc = self.fc_w.view(N, self._inner, d)
+        fc_proj = self.fc_proj_w.view(N, d, self._inner)
+        dist = self.distribute_w.view(N, d, d)
+        ve_gate = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
+
+        for j in range(N):
+            nn.init.uniform_(c_q[j], -sub_s, sub_s)
+            nn.init.uniform_(c_k[j], -sub_s, sub_s)
+            nn.init.uniform_(c_v[j], -sub_s, sub_s)
+            nn.init.zeros_(c_proj[j])
             # FFN
-            nn.init.uniform_(self.fc_w[j], -sub_s, sub_s)
-            nn.init.zeros_(self.fc_proj_w[j])
+            nn.init.uniform_(fc[j], -sub_s, sub_s)
+            nn.init.zeros_(fc_proj[j])
             # VE gate
-            if self.ve_gate_w is not None:
-                nn.init.uniform_(self.ve_gate_w[j], -sub_s, sub_s)
+            if ve_gate is not None:
+                nn.init.uniform_(ve_gate[j], -sub_s, sub_s)
+            # Distribute
+            nn.init.uniform_(dist[j], -sub_s, sub_s)
         # Router: zero init (soft at start)
         nn.init.zeros_(self.router_w)
-        # Distribute: uniform
-        for j in range(self.N):
-            nn.init.uniform_(self.distribute_w[j], -sub_s, sub_s)
 
 
 def _can_use_batched_layer(config):
@@ -1724,6 +1745,7 @@ class MST(nn.Module):
         x0_params = [self.x0_lambdas]
 
         # All remaining params: matrix (2D+) → Muon, scalar (1D) → AdamW
+        # Note: BatchedMSTLayer stores weights as 2D (N*out, in) for Muon compatibility.
         covered_ids = {id(p) for p in embed_params + unembed_params + value_embeds_params + resid_params + x0_params}
         matrix_params = []
         scalar_params = []
