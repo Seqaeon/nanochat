@@ -926,7 +926,7 @@ class BatchedMSTLayer(nn.Module):
                     cache_seqlens=kv_cache.cache_seqlens,
                     causal=True, window_size=ws,
                 )
-                if j == N - 1:
+                if self.layer_idx == (total_sub_layers // N) - 1 and j == N - 1:
                     kv_cache.advance(T)
             attn_results.append(yj.reshape(B, T, self.qkv_dim))
 
