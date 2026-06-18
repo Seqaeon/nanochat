@@ -299,7 +299,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
 run_experiment "S5_W1_MULTISCALE_4FFA_D${DEPTH}" \
     "Multi-scale windows N=4 + FFA" \
-    --mst-input-mode learned_proj --mst-n-subs 4 --mst-sub-dim 128 \
+    --mst-input-mode learned_proj \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
     --mst-transition-mode free_for_all \
     --mst-final-mode concat_proj --mst-final-topk 0 \
