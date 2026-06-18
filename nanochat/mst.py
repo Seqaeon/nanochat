@@ -837,11 +837,19 @@ class BatchedMSTLayer(nn.Module):
         else:
             self.ve_gate_w = None
 
-        # --- Transition: aggregate_distribute ---
-        # Router: project mean sub repr to N logits
-        self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — used as Linear(d, N), already 2D
-        # Distribute: stored as 2D (N*d, d) for Muon compat
-        self.distribute_w = nn.Parameter(torch.empty(N * d, d))
+        # --- Transition weights (mode-dependent) ---
+        self._transition_mode = config.mst_transition_mode
+        if config.mst_transition_mode == 'aggregate_distribute':
+            # Router: project mean sub repr to N logits
+            self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — Linear(d, N), already 2D
+            # Distribute: stored as 2D (N*d, d) for Muon compat
+            self.distribute_w = nn.Parameter(torch.empty(N * d, d))
+        elif config.mst_transition_mode == 'free_for_all':
+            # Per-sub routers: each sender sub routes to N target subs
+            # Weight shape: (N_sender, N_target, d) → stored as 2D (N*N, d) for Muon
+            self.ffa_router_w = nn.Parameter(torch.empty(N * N, d))
+            self._ffa_temperature = config.mst_ffa_temperature
+            self._ffa_topk = config.mst_routing_topk
         self.aux_weight = config.mst_routing_aux_weight
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
@@ -867,7 +875,7 @@ class BatchedMSTLayer(nn.Module):
         c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
-        distribute_w = self.distribute_w.view(N, d, d)
+        distribute_w = self.distribute_w.view(N, d, d) if self._transition_mode == 'aggregate_distribute' else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         # ==================== ATTENTION ====================
@@ -945,33 +953,74 @@ class BatchedMSTLayer(nn.Module):
         ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         sub_states = sub_states + ffn_out
 
-        # ==================== TRANSITION: aggregate_distribute ====================
+        # ==================== TRANSITION ====================
         # Pre-norm for transition
         x = norm(sub_states)  # (B, T, N, d)
-
-        # Router: mean across subs → logits
-        router_input = x.mean(dim=2)  # (B, T, d)
-        # router_w is (N, d), used as weight for Linear(d, N)
-        logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
-        weights = F.softmax(logits, dim=-1)  # (B, T, N)
-
-        # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
-        aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
-
-        # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
-        # distribute_w viewed as: (N, d, d)
-        # einsum: (B,T,d) × (N,d_out,d_in) → (B,T,N,d_out)
-        dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
-        distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
-
-        # Transition residual (aggregate_distribute uses residual)
-        sub_states = sub_states + distributed
-
-        # Aux loss: load balance (soft_weighted)
         aux_loss = sub_states.new_zeros(())
-        if self.training:
-            probs_mean = weights.mean(dim=(0, 1))  # (N,)
-            aux_loss = self.aux_weight * N * (probs_mean * probs_mean).sum()
+
+        if self._transition_mode == 'aggregate_distribute':
+            # Router: mean across subs → logits
+            router_input = x.mean(dim=2)  # (B, T, d)
+            # router_w is (N, d), used as weight for Linear(d, N)
+            logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
+            weights = F.softmax(logits, dim=-1)  # (B, T, N)
+
+            # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
+            aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
+
+            # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
+            # distribute_w viewed as: (N, d, d)
+            # einsum: (B,T,d) × (N,d_out,d_in) → (B,T,N,d_out)
+            dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
+            distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
+
+            # Transition residual (aggregate_distribute uses residual)
+            sub_states = sub_states + distributed
+
+            # Aux loss: load balance (soft_weighted)
+            if self.training:
+                probs_mean = weights.mean(dim=(0, 1))  # (N,)
+                aux_loss = self.aux_weight * N * (probs_mean * probs_mean).sum()
+
+        elif self._transition_mode == 'free_for_all':
+            # FFA: each sender sub independently routes to all target subs
+            # ffa_router_w viewed as (N_sender, N_target, d)
+            ffa_w = self.ffa_router_w.view(N, N, d).to(dtype=x.dtype)
+
+            # Per-sub routing logits: (B,T,N_sender,d) × (N_sender,N_target,d) → (B,T,N_s,N_t)
+            route_logits = torch.einsum('btid,ijd->btij', x, ffa_w)
+
+            # Compute soft routing weights (always needed for gradient flow)
+            soft_weights = F.softmax(route_logits / self._ffa_temperature, dim=-1)  # (B,T,N_s,N_t)
+
+            if self._ffa_topk == 1:
+                # Hard routing with straight-through estimator (STE)
+                # Forward: one-hot argmax — each sender routes to exactly 1 target
+                # Backward: gradients flow through soft probabilities
+                hard_idx = soft_weights.argmax(dim=-1, keepdim=True)  # (B,T,N_s,1)
+                hard_weights = torch.zeros_like(soft_weights).scatter_(-1, hard_idx, 1.0)
+                route_weights = soft_weights + (hard_weights - soft_weights).detach()  # STE
+            elif self._ffa_topk > 1 and self._ffa_topk < N:
+                # Soft top-k: mask non-top-k logits, renormalize via softmax
+                _, topk_idx = torch.topk(route_logits, self._ffa_topk, dim=-1)
+                mask = torch.zeros_like(route_logits).scatter_(-1, topk_idx, 1.0)
+                masked_logits = route_logits.masked_fill(mask == 0, -1e9)
+                route_weights = F.softmax(masked_logits / self._ffa_temperature, dim=-1)
+            else:
+                # Fully soft (topk=0): all targets weighted
+                route_weights = soft_weights
+
+            # Target sub j receives weighted sum of all senders
+            # (B,T,N_sender,N_target) × (B,T,N_sender,d) → (B,T,N_target,d)
+            mixed = torch.einsum('btij,btid->btjd', route_weights, x)
+
+            # FFA: NO residual — creates deliberately mixed representations
+            sub_states = mixed
+
+            # Aux loss: load balance on target utilization
+            if self.training:
+                target_load = route_weights.mean(dim=(0, 1, 2))  # (N_target,)
+                aux_loss = self.aux_weight * N * (target_load * target_load).sum()
 
         return sub_states, aux_loss
 
@@ -987,7 +1036,6 @@ class BatchedMSTLayer(nn.Module):
         c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
         fc = self.fc_w.view(N, self._inner, d)
         fc_proj = self.fc_proj_w.view(N, d, self._inner)
-        dist = self.distribute_w.view(N, d, d)
         ve_gate = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         for j in range(N):
@@ -1001,17 +1049,24 @@ class BatchedMSTLayer(nn.Module):
             # VE gate
             if ve_gate is not None:
                 nn.init.uniform_(ve_gate[j], -sub_s, sub_s)
-            # Distribute
-            nn.init.uniform_(dist[j], -sub_s, sub_s)
-        # Router: zero init (soft at start)
-        nn.init.zeros_(self.router_w)
+
+        # Transition-specific init
+        if self._transition_mode == 'aggregate_distribute':
+            dist = self.distribute_w.view(N, d, d)
+            for j in range(N):
+                nn.init.uniform_(dist[j], -sub_s, sub_s)
+            # Router: zero init (soft at start)
+            nn.init.zeros_(self.router_w)
+        elif self._transition_mode == 'free_for_all':
+            # FFA routers: zero init so routing starts uniform
+            nn.init.zeros_(self.ffa_router_w)
 
 
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
     return (
         config.mst_ffn_mode == 'standard'
-        and config.mst_transition_mode == 'aggregate_distribute'
+        and config.mst_transition_mode in ('aggregate_distribute', 'free_for_all')
         and config.mst_sub_layers == 1
         and not config.mst_ffn_shared_up
         and not config.mst_cross_sub_kv
