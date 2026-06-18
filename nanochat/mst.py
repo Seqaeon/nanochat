@@ -1609,9 +1609,18 @@ class MST(nn.Module):
         else:
             active_fraction = 1.0  # soft_weighted / sequence_path: all subs active
 
-        # Params belonging to per-sub modules (sub_blocks): scale by active_fraction.
+        # Params belonging to per-sub modules: scale by active_fraction.
         # Shared params (wte, lm_head, value_embeds, input_layer, final_head) are always active.
-        sub_params = sum(p.numel() for layer in self.layers for p in layer.sub_blocks.parameters())
+        sub_params = 0
+        for layer in self.layers:
+            if isinstance(layer, BatchedMSTLayer):
+                # Batched layer: attention + FFN + VE gate weights are per-sub
+                for name in ('c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w', 've_gate_w'):
+                    p = getattr(layer, name, None)
+                    if p is not None:
+                        sub_params += p.numel()
+            elif hasattr(layer, 'sub_blocks'):
+                sub_params += sum(p.numel() for p in layer.sub_blocks.parameters())
         shared_params = nparams - sub_params
         active_params = int(shared_params + sub_params * active_fraction)
 
@@ -1663,7 +1672,11 @@ class MST(nn.Module):
         # --- FFA routing entropy and weight distribution ---
         from nanochat.mst import MSTTransition
         for i, layer in enumerate(self.layers):
-            trans = layer.transition
+            if isinstance(layer, BatchedMSTLayer):
+                continue  # batched layers have inline routing, no separate transition
+            trans = getattr(layer, 'transition', None)
+            if trans is None:
+                continue
             if trans.mode == 'free_for_all' and trans._last_route_weights is not None:
                 rw = trans._last_route_weights  # (B, T, N_sender, N_target)
                 # Mean routing matrix (averaged over batch and tokens)
