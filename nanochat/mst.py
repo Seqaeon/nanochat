@@ -850,6 +850,13 @@ class BatchedMSTLayer(nn.Module):
             self.ffa_router_w = nn.Parameter(torch.empty(N * N, d))
             self._ffa_temperature = config.mst_ffa_temperature
             self._ffa_topk = config.mst_routing_topk
+        elif config.mst_transition_mode == 'micro_attention':
+            # Shared Q/K/V/proj for self-attention over the N subs per position
+            # These are shared across subs (not per-sub), so they're regular 2D (d, d)
+            self.ma_q_w = nn.Parameter(torch.empty(d, d))
+            self.ma_k_w = nn.Parameter(torch.empty(d, d))
+            self.ma_v_w = nn.Parameter(torch.empty(d, d))
+            self.ma_proj_w = nn.Parameter(torch.empty(d, d))
         self.aux_weight = config.mst_routing_aux_weight
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
@@ -1022,6 +1029,28 @@ class BatchedMSTLayer(nn.Module):
                 target_load = route_weights.mean(dim=(0, 1, 2))  # (N_target,)
                 aux_loss = self.aux_weight * N * (target_load * target_load).sum()
 
+        elif self._transition_mode == 'micro_attention':
+            # Self-attention over the N subs at each token position
+            # Shared Q/K/V projections: (B,T,N,d) @ (d,d) → (B,T,N,d)
+            ma_q = F.linear(x, self.ma_q_w.to(dtype=x.dtype))  # (B,T,N,d)
+            ma_k = F.linear(x, self.ma_k_w.to(dtype=x.dtype))  # (B,T,N,d)
+            ma_v = F.linear(x, self.ma_v_w.to(dtype=x.dtype))  # (B,T,N,d)
+
+            # Scaled dot-product attention over the N dimension
+            # (B,T,N,d) × (B,T,d,N) → (B,T,N,N)
+            scale = d ** -0.5
+            attn_weights = torch.matmul(ma_q, ma_k.transpose(-2, -1)) * scale
+            attn_weights = F.softmax(attn_weights, dim=-1)  # (B,T,N,N)
+
+            # Apply attention: (B,T,N,N) × (B,T,N,d) → (B,T,N,d)
+            attended = torch.matmul(attn_weights, ma_v)
+
+            # Output projection
+            out = F.linear(attended, self.ma_proj_w.to(dtype=attended.dtype))  # (B,T,N,d)
+
+            # Micro-attention uses residual
+            sub_states = sub_states + out
+
         return sub_states, aux_loss
 
     @torch.no_grad()
@@ -1060,13 +1089,19 @@ class BatchedMSTLayer(nn.Module):
         elif self._transition_mode == 'free_for_all':
             # FFA routers: zero init so routing starts uniform
             nn.init.zeros_(self.ffa_router_w)
+        elif self._transition_mode == 'micro_attention':
+            # Shared Q/K/V: uniform init, proj: zero init (residual-friendly)
+            nn.init.uniform_(self.ma_q_w, -sub_s, sub_s)
+            nn.init.uniform_(self.ma_k_w, -sub_s, sub_s)
+            nn.init.uniform_(self.ma_v_w, -sub_s, sub_s)
+            nn.init.zeros_(self.ma_proj_w)
 
 
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
     return (
         config.mst_ffn_mode == 'standard'
-        and config.mst_transition_mode in ('aggregate_distribute', 'free_for_all')
+        and config.mst_transition_mode in ('aggregate_distribute', 'free_for_all', 'micro_attention')
         and config.mst_sub_layers == 1
         and not config.mst_ffn_shared_up
         and not config.mst_cross_sub_kv
