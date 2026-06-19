@@ -1,28 +1,62 @@
 
 <h2 class="sr-only">Three scatter plots comparing MST variants (AggDist, FFA) against the dense baseline power-law fit across total params, active params, and active FLOPs.</h2>
 
+
 <style>
+/*
+
 .section { display:flex; flex-direction:column; gap:8px; }
 .section-title { font-size:13px; font-weight:500; color:var(--color-text-primary); padding-bottom:4px; border-bottom:0.5px solid var(--color-border-tertiary); }
 .chart-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .chart-wrap { display:flex; flex-direction:column; gap:4px; }
 .chart-label { font-size:10px; color:var(--color-text-secondary); }
-.chart-box { position:relative; width:100%; height:180px; }
+.chart-box { position:relative; width:100%; height:280px; }
 .leg-row { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:11px; color:var(--color-text-secondary); }
 .leg-item { display:flex; align-items:center; gap:5px; }
 .fit-info { font-size:10px; color:var(--color-text-tertiary, #888); margin-top:4px; font-family:monospace; }
+*/
+.section { display: flex; flex-direction: column; gap: 16px; }
+.section-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary); padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+
+
+/* CHANGE: Stack items vertically instead of a 3-column grid */
+.chart-row { display: flex; flex-direction: column; gap: 24px; } 
+
+/* CHANGE: Add a subtle background or border padding if desired, or leave clean */
+.chart-wrap { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.chart-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary); }
+
+/* CHANGE: Increased height significantly since they have the full width to stretch */
+.chart-box { position: relative; width: 100%; height: 700px; } 
+
+.leg-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 11px; color: var(--color-text-secondary); }
+.leg-item { display: flex; align-items: center; gap: 5px; }
+.fit-info { font-size: 11px; color: var(--color-text-tertiary, #888); margin-top: 8px; font-family: monospace; line-height: 1.4; }
 </style>
 
-<div style="padding:0.75rem 0 0; display:flex; flex-direction:column; gap:2rem;">
+<div style="padding: 0.75rem 0; display: flex; flex-direction: column; gap: 2rem;">
 
   <div class="section">
     <div class="section-title">MST Variants vs Dense Baseline</div>
     <div class="leg-row" id="leg-mst"></div>
+    
     <div class="chart-row">
-      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="mst-c1" role="img" aria-label="MST variants vs dense baseline: total params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: active params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="mst-c3" role="img" aria-label="MST variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+      <div class="chart-wrap">
+        <div class="chart-label">Total Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c1" role="img" aria-label="MST variants vs dense baseline: total params vs val bpp"></canvas></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: active params vs val bpp"></canvas></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c3" role="img" aria-label="MST variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+      </div>
     </div>
+    
     <div class="fit-info" id="fit-info"></div>
   </div>
 
