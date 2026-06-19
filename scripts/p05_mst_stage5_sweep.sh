@@ -293,7 +293,7 @@ run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
     --mst-transition-mode aggregate_distribute \
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-multi-scale-windows 0
+    --mst-multi-scale-windows 1
 #
 #
 # S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
