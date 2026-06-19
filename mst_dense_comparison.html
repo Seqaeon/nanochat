@@ -96,7 +96,7 @@ const MST_VARIANTS = [
   
   // Keep your rich purple for AggDist
   { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0433, color:'#7E53D4' }, 
-  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:9.438659e8, bpp:0.893375, color:'#7E53D4' }, 
+  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:9.438659e8, bpp:0.8730348203279754, color:'#7E53D4' }, 
   
   // Keep your vibrant pink-magenta for FFA
   { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.058885, color:'#D4537E' },
@@ -212,35 +212,46 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
-
-
-
-
-  // Group AggDist variants for power fit
- /* const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
-  const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
-  // Add AggDist power fit if we have enough points
-  const aggdistCurve = variantCurveDS(keyFn, aggdistData, '#7F77DD', 'AggDist');
-  if (aggdistCurve) {
-    datasets.push(aggdistCurve); */
-    // Display fit info for the first chart (total params)
-
-// Group AggDist variants for power fit
-const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
-const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
-
-
-const aggdistCurve = variantCurveDS(keyFn, aggdistData, '#7E53D4', 'AggDist'); 
-
-if (aggdistCurve) {
-  datasets.push(aggdistCurve);
-    if (canvasId === 'mst-c1') {
-      const fit = aggdistCurve._fit;
-      const infoEl = document.getElementById('fit-info');
-      const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
-      infoEl.innerHTML = `Dense fit: bpp = ${da.toFixed(4)} × N<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)}) &nbsp;|&nbsp; AggDist fit: bpp = ${fit.a.toFixed(4)} × N<sup>${fit.b.toFixed(4)}</sup> (R²=${fit.r2.toFixed(4)})`;
+  // 1. Initialize datasets with the Dense baseline curve and dots, plus individual points
+  const datasets = [
+    baseCurveDS(keyFn, variants), 
+    baseDotDS(keyFn), 
+    ...variants.map(v => varDS(v, keyFn))
+  ];
+  
+  // 2. Dynamically group variants by their base prefix (e.g., 'aggdist', 'micro_attn', 'ffa')
+  const groups = {};
+  variants.forEach(v => {
+    // Splits 'micro_attn_d8' into ['micro', 'attn', 'd8'] and grabs the core prefix group
+    const baseGroup = v.id.replace(/_d\d+$/, ''); 
+    if (!groups[baseGroup]) {
+      groups[baseGroup] = {
+        data: [],
+        color: v.color,
+        label: v.label.split(' ')[0] // Captures 'MicroAttn', 'AggDist', or 'FFA'
+      };
     }
-  }
+    groups[baseGroup].data.push(v);
+  });
+
+  // 3. Loop through every variant group and calculate/push its respective power-law curve
+  Object.keys(groups).forEach(groupKey => {
+    const group = groups[groupKey];
+    const curve = variantCurveDS(keyFn, group.data, group.color, group.label);
+    if (curve) {
+      datasets.push(curve);
+      
+      // Keep your summary text info updated for the first chart layout
+      if (canvasId === 'mst-c1' && groupKey === 'aggdist') {
+        const fit = curve._fit;
+        const infoEl = document.getElementById('fit-info');
+        const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
+        infoEl.innerHTML = `Dense fit: bpp = ${da.toFixed(4)} × N<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)}) &nbsp;|&nbsp; AggDist fit: bpp = ${fit.a.toFixed(4)} × N<sup>${fit.b.toFixed(4)}</sup> (R²=${fit.r2.toFixed(4)})`;
+      }
+    }
+  });
+  
+  // 4. Render the chart config
   new Chart(document.getElementById(canvasId), {
     type: 'scatter',
     data: { datasets },
@@ -284,7 +295,6 @@ if (aggdistCurve) {
     }
   });
 }
-
 buildLegend('leg-mst', MST_VARIANTS);
 
 makeChart('mst-c1', MST_VARIANTS, d=>d.total,  'total params');
