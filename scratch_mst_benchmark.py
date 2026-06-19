@@ -82,7 +82,7 @@ def test_correctness():
     model_batched.init_weights()
 
     # Force legacy model: override transition to something that disables batching
-    config_legacy = make_mst_config(mst_transition_mode='free_for_all')
+    config_legacy = make_mst_config(mst_sub_layers=2)
     assert not _can_use_batched_layer(config_legacy), "Should be non-batched"
     # Actually, let's just test with the same config but check _use_batched flag
     print(f"  Batched model: _use_batched = {model_batched._use_batched}")
