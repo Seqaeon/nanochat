@@ -46,10 +46,27 @@ const DENSE = [
 ];
 
 
+/*const MST_VARIANTS = [
+  { id:'micro_attn_d8', label:'MicroAttn d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0358508491364813, color:'#7F77DD' }, 
+  { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#7F77DD' }, 
+  { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.069330, color:'#7E53D4' }, 
+  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:9.438659e8, bpp:0.893375, color:'#7E53D4' }, 
+  { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.058885, color:'#D4537E' },
+  { id:'ffa_d16', label:'FFA d16',total:186720288, active:186720288, flops:9.189949e8, bpp:0.907685, color:'#D4537E' },
+]; */
+
 const MST_VARIANTS = [
-  { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0358508491364813, color:'#7F77DD' }, 
-  { id:'aggdist_d16', label:'AggDist d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#7F77DD' }, 
-  { id:'ffa_d8', label:'FFA d8',total:45649936, active:45649936, flops:2.235679e8, bpp:1.10790287652502, color:'#D4537E' },
+  // A clean, bright sky blue for MicroAttn
+  { id:'micro_attn_d8', label:'MicroAttn d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0358508491364813, color:'#3CAEA3' }, 
+  { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, 
+  
+  // Keep your rich purple for AggDist
+  { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.069330, color:'#7E53D4' }, 
+  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:9.438659e8, bpp:0.893375, color:'#7E53D4' }, 
+  
+  // Keep your vibrant pink-magenta for FFA
+  { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.058885, color:'#D4537E' },
+  { id:'ffa_d16', label:'FFA d16',total:186720288, active:186720288, flops:9.189949e8, bpp:0.907685, color:'#D4537E' },
 ];
 
 const M = v => v / 1e6;
@@ -161,14 +178,28 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
+
+
+
+
   // Group AggDist variants for power fit
-  const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
+ /* const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
   const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
   // Add AggDist power fit if we have enough points
   const aggdistCurve = variantCurveDS(keyFn, aggdistData, '#7F77DD', 'AggDist');
   if (aggdistCurve) {
-    datasets.push(aggdistCurve);
+    datasets.push(aggdistCurve); */
     // Display fit info for the first chart (total params)
+
+// Group AggDist variants for power fit
+const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
+const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
+
+
+const aggdistCurve = variantCurveDS(keyFn, aggdistData, '#7E53D4', 'AggDist'); 
+
+if (aggdistCurve) {
+  datasets.push(aggdistCurve);
     if (canvasId === 'mst-c1') {
       const fit = aggdistCurve._fit;
       const infoEl = document.getElementById('fit-info');
