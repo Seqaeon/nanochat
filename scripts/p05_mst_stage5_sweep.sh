@@ -116,7 +116,7 @@ init_state
 
 # ── Common flags ─────────────────────────────────────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-64} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -286,25 +286,25 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --mst-multi-scale-windows 0
 
 # S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
-#run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
-#    "Multi-scale windows N=4 + aggdist" \
-#    --mst-input-mode learned_proj \
-#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-#    --mst-transition-mode aggregate_distribute \
-#    --mst-final-mode concat_proj --mst-final-topk 0 \
-#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-#    --mst-multi-scale-windows 1
-#
-#
-# S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
-run_experiment "S5_W1_MULTISCALE_4FFA_D${DEPTH}" \
-    "Multi-scale windows N=4 + FFA" \
+run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
+    "Multi-scale windows N=4 + aggdist" \
     --mst-input-mode learned_proj \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all \
+    --mst-transition-mode aggregate_distribute \
     --mst-final-mode concat_proj --mst-final-topk 0 \
     --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
     --mst-multi-scale-windows 1
+#
+#
+# S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
+#run_experiment "S5_W1_MULTISCALE_4FFA_D${DEPTH}" \
+#    "Multi-scale windows N=4 + FFA" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode free_for_all \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-multi-scale-windows 1
 
 #run_experiment "FFA_HARD" \
 #    "FFA with hard STE routing" \
