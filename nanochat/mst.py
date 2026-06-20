@@ -1708,7 +1708,12 @@ class MST(nn.Module):
         n_head = self.config.n_head
         head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else d // n_head
         t = self.config.sequence_len
-        attn_flops = self.config.n_layer * N * 12 * n_head * head_dim * t
+        # Sum attention FLOPs per layer, accounting for sliding window (matching dense GPT)
+        attn_flops = 0
+        for window_size in self.window_sizes:
+            window = window_size[0]  # (left, right) tuple, we use left
+            effective_seq = t if window < 0 else min(window, t)
+            attn_flops += N * 12 * n_head * head_dim * effective_seq
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
 
         # For topk_hard routing, only k/N sub-transformers execute per token.

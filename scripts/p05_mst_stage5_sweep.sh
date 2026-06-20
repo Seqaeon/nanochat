@@ -284,6 +284,10 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --mst-final-mode concat_proj --mst-final-topk 0 \
 #    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
 #    --mst-multi-scale-windows 0
+# S5-Dense Baseline
+#run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
+#    "Multi-scale windows N=4 + aggdist" \
+#    --use-mst 0
 
 # S5-W1-4-AGG: Multi-scale windows, N=4 + aggdist (compare transition methods)
 run_experiment "S5_W1_MULTISCALE_4SUB_AGG_D${DEPTH}" \
