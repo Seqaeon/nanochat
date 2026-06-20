@@ -226,8 +226,14 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
 
     # 1) Parallel wrapping
     if parallel_type == "ddp" and ddp_requested:
-        print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank})")
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True,)
+        # Check if the model uses any sparse conditional routing
+        cfg = getattr(model, 'config', None)
+        has_moe = getattr(cfg, 'use_moe', False) if cfg else False
+        has_eet = getattr(cfg, 'use_eet', False) if cfg else False
+        has_sparse_mst = (getattr(cfg, 'use_mst', False) and getattr(cfg, 'mst_routing_mode', '') == 'topk_hard') if cfg else False
+        find_unused = bool(has_moe or has_eet or has_sparse_mst)
+        print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank}, find_unused_parameters={find_unused})")
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=find_unused)
     elif parallel_type == "dp":
         num_gpus = torch.cuda.device_count()
         if torch.cuda.is_available() and num_gpus > 1:
