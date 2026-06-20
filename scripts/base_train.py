@@ -1368,6 +1368,7 @@ else:
     loop_state = meta_data["loop_state"]
     val_bpb = meta_data["val_bpb"]
     min_val_bpb = loop_state["min_val_bpb"]
+    min_val_loss = loop_state.get("min_val_loss", float("inf"))
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
     # On resume, the checkpoint we resumed from is the last known periodic save
@@ -1614,6 +1615,7 @@ while True:
                 "dataloader_state_dict": dataloader_state_dict,
                 "loop_state": { # all loop state (other than step) so that we can resume training
                     "min_val_bpb": min_val_bpb,
+                    "min_val_loss": min_val_loss,
                     "smooth_train_loss": smooth_train_loss,
                     "total_training_time": total_training_time,
                 },
