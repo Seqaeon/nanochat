@@ -1711,9 +1711,17 @@ class MST(nn.Module):
         # Sum attention FLOPs per layer, accounting for sliding window (matching dense GPT)
         attn_flops = 0
         for window_size in self.window_sizes:
-            window = window_size[0]  # (left, right) tuple, we use left
-            effective_seq = t if window < 0 else min(window, t)
-            attn_flops += N * 12 * n_head * head_dim * effective_seq
+            if self.sub_window_sizes is not None:
+                # Multi-scale: each sub has its own window size (overrides layer window)
+                for sub_ws in self.sub_window_sizes:
+                    window = sub_ws[0]
+                    effective_seq = t if window < 0 else min(window, t)
+                    attn_flops += 12 * n_head * head_dim * effective_seq
+            else:
+                # All subs share the layer's window size
+                window = window_size[0]  # (left, right) tuple, we use left
+                effective_seq = t if window < 0 else min(window, t)
+                attn_flops += N * 12 * n_head * head_dim * effective_seq
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
 
         # For topk_hard routing, only k/N sub-transformers execute per token.
