@@ -55,6 +55,11 @@
         <div class="chart-label">Active FLOPs vs Val BPP</div>
         <div class="chart-box"><canvas id="mst-c3" role="img" aria-label="MST variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
       </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">BPP Gap (MST - Dense Baseline) vs Depth</div>
+        <div class="chart-box"><canvas id="mst-gap-chart" role="img" aria-label="BPP gap between MST and dense baseline vs depth"></canvas></div>
+      </div>
     </div>
     
     <div class="fit-info" id="fit-info"></div>
@@ -91,17 +96,18 @@ const DENSE = [
 
 const MST_VARIANTS = [
   // A clean, bright sky blue for MicroAttn
-  { id:'micro_attn_d8', label:'MicroAttn d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0358508491364813, color:'#3CAEA3' }, 
-  { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, 
+  /* { id:'micro_attn_d8', label:'MicroAttn d8',   total:57677840, active:57677840, flops:2.454036e8, bpp:1.0358508491364813, color:'#3CAEA3' }, 
+  { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, */
   
   // Keep your rich purple for AggDist
-  { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.986109e8, bpp:1.0433, color:'#7E53D4' }, 
-  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:7.566950e8, bpp:0.8730348203279754, color:'#7E53D4' }, 
+  { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, color:'#7E53D4' }, 
+  { id:'aggdist_d12', label:'AggDist d12',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.8730348203279754, color:'#7E53D4' },
+  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, color:'#7E53D4' }, 
   { id:'aggdist_d24', label:'AggDist d24',   total:440457264, active:440457264, flops:1.919619e9, bpp:0.785666, color:'#7E53D4' }, 
   
   // Keep your vibrant pink-magenta for FFA
-  { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.05, color:'#D4537E' },
-  { id:'ffa_d16', label:'FFA d16',total:186720288, active:186720288, flops:9.189949e8, bpp:0.885165159095603, color:'#D4537E' },
+  /* { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.05, color:'#D4537E' },
+  { id:'ffa_d16', label:'FFA d16',total:186720288, active:186720288, flops:9.189949e8, bpp:0.885165159095603, color:'#D4537E' }, */
 ];
 
 const M = v => v / 1e6;
@@ -301,4 +307,198 @@ buildLegend('leg-mst', MST_VARIANTS);
 makeChart('mst-c1', MST_VARIANTS, d=>d.total,  'total params');
 makeChart('mst-c2', MST_VARIANTS, d=>d.active, 'active params');
 makeChart('mst-c3', MST_VARIANTS, d=>d.flops,  'active FLOPs');
+
+// BPP Gap vs Depth Chart
+const GAP_DATA = {
+  depths: [8, 16, 24],
+  dense_bpps: {
+    8: 0.969126,
+    16: 0.8364,
+    24: 0.7545
+  },
+  variants: [
+    /* {
+      label: 'MicroAttn',
+      color: '#3CAEA3',
+      data: [
+        { depth: 8, bpp: 1.0358508491364813 },
+        { depth: 16, bpp: 0.8752039886704976 }
+      ]
+    }, */
+    {
+      label: 'AggDist',
+      color: '#7E53D4',
+      data: [
+        { depth: 8, bpp: 1.041720 },
+        { depth: 16, bpp: 0.8730348203279754 },
+        { depth: 24, bpp: 0.785666 }
+      ]
+    },
+    /* {
+      label: 'FFA',
+      color: '#D4537E',
+      data: [
+        { depth: 8, bpp: 1.05 },
+        { depth: 16, bpp: 0.885165159095603 }
+      ]
+    } */
+  ]
+};
+
+function fitGapPowerLaw(data) {
+  const valid = data.filter(d => d.y > 0 && d.x > 0);
+  if (valid.length < 2) return null;
+  const lx = valid.map(d => Math.log(d.x));
+  const ly = valid.map(d => Math.log(d.y));
+  const n = lx.length;
+  const mx = lx.reduce((s,v) => s+v, 0) / n;
+  const my = ly.reduce((s,v) => s+v, 0) / n;
+  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
+  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
+  const b = cov / varx;
+  const a = Math.exp(my - b * mx);
+  return { a, b };
+}
+
+function fitAbsolutePowerLaw(data) {
+  const lx = data.map(d => Math.log(d.depth));
+  const ly = data.map(d => Math.log(d.bpp));
+  const n = lx.length;
+  if (n < 2) return null;
+  const mx = lx.reduce((s,v) => s+v, 0) / n;
+  const my = ly.reduce((s,v) => s+v, 0) / n;
+  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
+  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
+  const b = cov / varx;
+  const a = Math.exp(my - b * mx);
+  return { a, b };
+}
+
+const densePowerData = [
+  { depth: 8, bpp: 0.969126 },
+  { depth: 12, bpp: 0.9030 },
+  { depth: 14, bpp: 0.8688 },
+  { depth: 16, bpp: 0.8364 },
+  { depth: 18, bpp: 0.8131 },
+  { depth: 20, bpp: 0.7906 },
+  { depth: 22, bpp: 0.7714 },
+  { depth: 24, bpp: 0.7545 },
+  { depth: 26, bpp: 0.7382 },
+  { depth: 28, bpp: 0.7246 },
+  { depth: 30, bpp: 0.7120 }
+];
+const denseAbsoluteFit = fitAbsolutePowerLaw(densePowerData);
+
+const datasets = [];
+
+GAP_DATA.variants.forEach(v => {
+  const points = v.data.map(d => {
+    const denseBpp = GAP_DATA.dense_bpps[d.depth];
+    const gap = d.bpp - denseBpp;
+    return { x: d.depth, y: gap };
+  });
+
+  // 1. Measured points
+  datasets.push({
+    label: `${v.label} (Measured)`,
+    data: points,
+    showLine: false,
+    backgroundColor: v.color,
+    borderColor: v.color,
+    pointStyle: 'circle',
+    pointRadius: 6,
+    pointHoverRadius: 8,
+    order: 1
+  });
+
+  // 2. Power-law Fit on the Gap
+  const pFit = fitGapPowerLaw(points);
+  if (pFit) {
+    const pCurve = [];
+    for (let d = 8; d <= 48; d += 1) {
+      pCurve.push({ x: d, y: pFit.a * Math.pow(d, pFit.b) });
+    }
+    
+    // Calculate the crossover of absolute scaling curves
+    const varPowerData = v.data.map(d => ({ depth: d.depth, bpp: d.bpp }));
+    const varAbsoluteFit = fitAbsolutePowerLaw(varPowerData);
+    let crossoverStr = "never";
+    if (denseAbsoluteFit && varAbsoluteFit) {
+      const diffExp = varAbsoluteFit.b - denseAbsoluteFit.b;
+      if (diffExp < 0) {
+        const crossover = Math.pow(denseAbsoluteFit.a / varAbsoluteFit.a, 1 / diffExp);
+        crossoverStr = crossover > 1e6 ? ">1M depth" : `crossover @ d=${crossover.toFixed(0)}`;
+      }
+    }
+
+    datasets.push({
+      label: `${v.label} Gap Power Fit (gap = ${pFit.a.toFixed(3)}·d^${pFit.b.toFixed(2)}; absolute ${crossoverStr})`,
+      data: pCurve,
+      showLine: true,
+      borderColor: v.color,
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      tension: 0.1,
+      order: 2
+    });
+  }
+});
+
+new Chart(document.getElementById('mst-gap-chart'), {
+  type: 'scatter',
+  data: { datasets },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { top: 10, right: 10, bottom: 10, left: 10 } },
+    scales: {
+      x: {
+        type: 'linear',
+        title: { display: true, text: 'Depth (Layers)', color: '#888780', font: { size: 11, weight: 'bold' } },
+        min: 6,
+        max: 48,
+        ticks: {
+          stepSize: 4,
+          font: { size: 10 },
+          color: '#888780'
+        },
+        grid: { color: 'rgba(136, 135, 128, 0.1)' }
+      },
+      y: {
+        title: { display: true, text: 'BPP Gap (MST - Dense)', color: '#888780', font: { size: 11, weight: 'bold' } },
+        ticks: {
+          font: { size: 10 },
+          color: '#888780',
+          callback: v => (v >= 0 ? '+' : '') + v.toFixed(4)
+        },
+        grid: { color: 'rgba(136, 135, 128, 0.1)' },
+        min: 0.00,
+        max: 0.10
+      }
+    },
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top',
+        labels: {
+          color: '#888780',
+          font: { size: 10 }
+        }
+      },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const r = ctx.raw;
+            if (ctx.dataset.showLine && ctx.dataset.pointRadius === 0) {
+              return `${ctx.dataset.label}: +${r.y.toFixed(6)} bpp at Depth ${r.x.toFixed(1)}`;
+            }
+            return `${ctx.dataset.label}: +${r.y.toFixed(6)} bpp at Depth ${r.x}`;
+          }
+        }
+      }
+    }
+  }
+});
 </script>

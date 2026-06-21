@@ -24,17 +24,22 @@ set -euo pipefail
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 FORCE=0
-DEPTH=8
+DEPTHS=()
 for arg in "$@"; do
     case $arg in
         --force) FORCE=1 ;;
-        *)       DEPTH=$arg ;;
+        *)       DEPTHS+=("$arg") ;;
     esac
 done
+if [ ${#DEPTHS[@]} -eq 0 ]; then
+    DEPTHS=(8)
+fi
 
 # ── Configuration ────────────────────────────────────────────────────────────
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 N_SUBS="${N_SUBS:-4}"
+
+for DEPTH in "${DEPTHS[@]}"; do
 
 # Compute model_dim and sub_dim from depth (same logic as p04)
 MODEL_DIM=$(( DEPTH * ASPECT_RATIO ))
@@ -116,7 +121,7 @@ init_state
 
 # ── Common flags ─────────────────────────────────────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-64} --total-batch-size -1 --use-onecycle 0 --log-every 20 --skip-core \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-64} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -405,10 +410,11 @@ echo "════════════════════════�
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 6 complete"
 
-echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  P05 Stage 5+6 Sweep Complete"
 echo "  Depth:    ${DEPTH}"
 echo "  S5 Variants: AggDist, micro-attn, pyramid, shared-KV, multi-scale"
 echo "  S6 Variants: DR=delta residual, SL=multi-layer subs"
 echo "═══════════════════════════════════════════════════════════════"
+
+done
