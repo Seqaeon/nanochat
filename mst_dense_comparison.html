@@ -44,16 +44,25 @@
       <div class="chart-wrap">
         <div class="chart-label">Total Params vs Val BPP</div>
         <div class="chart-box"><canvas id="mst-c1" role="img" aria-label="MST variants vs dense baseline: total params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-mst-c1"></div>
       </div>
       
       <div class="chart-wrap">
         <div class="chart-label">Active Params vs Val BPP</div>
         <div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-mst-c2"></div>
       </div>
       
       <div class="chart-wrap">
         <div class="chart-label">Active FLOPs vs Val BPP</div>
         <div class="chart-box"><canvas id="mst-c3" role="img" aria-label="MST variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-mst-c3"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Total Training FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c4" role="img" aria-label="MST variants vs dense baseline: total training FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-mst-c4"></div>
       </div>
       
       <div class="chart-wrap">
@@ -61,8 +70,6 @@
         <div class="chart-box"><canvas id="mst-gap-chart" role="img" aria-label="BPP gap between MST and dense baseline vs depth"></canvas></div>
       </div>
     </div>
-    
-    <div class="fit-info" id="fit-info"></div>
   </div>
 
 </div>
@@ -77,10 +84,10 @@ const DENSE = [
   { total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18 ,  bpp: 0.8131 },          // d18
   { total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19 ,  bpp: 0.7906 },          // d20
   { total: 1123157490,  active: 1123157490,  flops: 3.763086e9, total_training_flops: 2.208863e19 ,  bpp: 0.7714 },          // d22
-  { total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops:  ,  bpp: 0.7545 },          // d24
-  { total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops:  ,  bpp: 0.7382 },          // d26
-  { total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops:  ,  bpp: 0.7246 },          // d28
-  { total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops:  , bpp: 0.7120 },          // d30
+  { total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops: 3.594180e19 ,  bpp: 0.7545 },          // d24
+  { total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops: 5.683668e19 ,  bpp: 0.7382 },          // d26
+  { total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops: 8.660963e19 ,  bpp: 0.7246 },          // d28
+  { total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20 , bpp: 0.7120 },          // d30
 
 ];
 
@@ -100,9 +107,9 @@ const MST_VARIANTS = [
   { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, */
   
   // Keep your rich purple for AggDist
-  /* { id:'aggdist_d2', label:'AggDist d2',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, color:'#7E53D4' }, 
-  { id:'aggdist_d4', label:'AggDist d4',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005, color:'#7E53D4' }, 
-  { id:'aggdist_d6', label:'AggDist d6',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835, color:'#7E53D4' }, */
+  /* { id:'aggdist_d2', label:'AggDist d2',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
+  { id:'aggdist_d4', label:'AggDist d4',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
+  { id:'aggdist_d6', label:'AggDist d6',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
   { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, total_training_flops: 7.845282e16 ,color:'#7E53D4' }, 
   { id:'aggdist_d10', label:'AggDist d10',   total:82298260, active:82298260, flops:2.628595e8, bpp:0.982563, total_training_flops: 1.934910e17 , color:'#7E53D4' }, 
   { id:'aggdist_d12', label:'AggDist d12',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.934262, total_training_flops: 4.292685e17 , color:'#7E53D4' },
@@ -114,7 +121,7 @@ const MST_VARIANTS = [
   { id:'ffa_d16', label:'FFA d16',total:186720288, active:186720288, flops:9.189949e8, bpp:0.885165159095603, color:'#D4537E' }, */
 ];
 
-const M = v => v / 1e6;
+const M = (v, scale = 1e6) => v / scale;
 
 function buildLegend(elId, variants) {
   const el = document.getElementById(elId);
@@ -145,7 +152,7 @@ function fitPowerLaw(keyFn, data) {
 }
 
 // Extrapolated power-law curve — extends ±40% of the log range beyond the data
-function baseCurveDS(keyFn, variants) {
+function baseCurveDS(keyFn, variants, scale = 1e6) {
   const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
   const xMin = Math.min(...allX);
   const xMax = Math.max(...allX);
@@ -157,7 +164,7 @@ function baseCurveDS(keyFn, variants) {
   const N = 100;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
-    return { x: M(x), y: a * Math.pow(x, b) };
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
   });
   return {
     type: 'line',
@@ -172,7 +179,7 @@ function baseCurveDS(keyFn, variants) {
 }
 
 // Power-law fit curve for a variant (e.g. AggDist)
-function variantCurveDS(keyFn, variantData, color, label) {
+function variantCurveDS(keyFn, variantData, color, label, scale = 1e6) {
   if (variantData.length < 2) return null;
   const { a, b, r2 } = fitPowerLaw(keyFn, variantData);
   const allX = variantData.map(keyFn).filter(v => v > 0);
@@ -185,7 +192,7 @@ function variantCurveDS(keyFn, variantData, color, label) {
   const N = 80;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
-    return { x: M(x), y: a * Math.pow(x, b) };
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
   });
   return {
     type: 'line',
@@ -201,8 +208,8 @@ function variantCurveDS(keyFn, variantData, color, label) {
 }
 
 // Actual DENSE data points (small dots, no line)
-function baseDotDS(keyFn) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp }));
+function baseDotDS(keyFn, scale = 1e6) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp }));
   return {
     label: 'Dense (measured)',
     data: pts,
@@ -213,10 +220,10 @@ function baseDotDS(keyFn) {
   };
 }
 
-function varDS(v, keyFn) {
+function varDS(v, keyFn, scale = 1e6) {
   return {
     label: v.label,
-    data: [{ x: M(keyFn(v)), y: v.bpp, id: v.id }],
+    data: [{ x: M(keyFn(v), scale), y: v.bpp, id: v.id }],
     backgroundColor: v.color, borderColor: v.color,
     pointStyle: 'circle', pointRadius: 7, pointHoverRadius: 9,
     pointBorderColor: 'rgba(255,255,255,0.5)', pointBorderWidth: 1.5,
@@ -225,11 +232,14 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
+  const isFlops = xLabel.includes('training FLOPs');
+  const scale = isFlops ? 1.0 : 1e6;
+
   // 1. Initialize datasets with the Dense baseline curve and dots, plus individual points
   const datasets = [
-    baseCurveDS(keyFn, variants), 
-    baseDotDS(keyFn), 
-    ...variants.map(v => varDS(v, keyFn))
+    baseCurveDS(keyFn, variants, scale), 
+    baseDotDS(keyFn, scale), 
+    ...variants.map(v => varDS(v, keyFn, scale))
   ];
   
   // 2. Dynamically group variants by their base prefix (e.g., 'aggdist', 'micro_attn', 'ffa')
@@ -250,16 +260,24 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
   // 3. Loop through every variant group and calculate/push its respective power-law curve
   Object.keys(groups).forEach(groupKey => {
     const group = groups[groupKey];
-    const curve = variantCurveDS(keyFn, group.data, group.color, group.label);
+    const curve = variantCurveDS(keyFn, group.data, group.color, group.label, scale);
     if (curve) {
       datasets.push(curve);
       
-      // Keep your summary text info updated for the first chart layout
-      if (canvasId === 'mst-c1' && groupKey === 'aggdist') {
+      // Populate fit info for this specific chart
+      if (groupKey === 'aggdist') {
         const fit = curve._fit;
-        const infoEl = document.getElementById('fit-info');
-        const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
-        infoEl.innerHTML = `Dense fit: bpp = ${da.toFixed(4)} × N<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)}) &nbsp;|&nbsp; AggDist fit: bpp = ${fit.a.toFixed(4)} × N<sup>${fit.b.toFixed(4)}</sup> (R²=${fit.r2.toFixed(4)})`;
+        const infoEl = document.getElementById(`fit-info-${canvasId}`);
+        if (infoEl) {
+          const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
+          let varSymbol = 'x';
+          if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
+          else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
+          else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
+          else if (xLabel.includes('training FLOPs')) varSymbol = 'FLOPs<sub>train</sub>';
+          
+          infoEl.innerHTML = `Dense fit: bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)}) &nbsp;|&nbsp; AggDist fit: bpp = ${fit.a.toFixed(4)} × ${varSymbol}<sup>${fit.b.toFixed(4)}</sup> (R²=${fit.r2.toFixed(4)})`;
+        }
       }
     }
   });
@@ -278,11 +296,19 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
           ticks: {
             font:{ size:9 }, color:'#888780', maxTicksLimit:5,
             callback(v) {
-              const m = v/1e6;
-              const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
-              const r = Math.round(m);
-              if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
-              return null;
+              if (isFlops) {
+                const exponent = Math.round(Math.log10(v));
+                if (Math.abs(v - Math.pow(10, exponent)) / v < 0.05) {
+                  return '10^' + exponent;
+                }
+                return null;
+              } else {
+                const m = v;
+                const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
+                const r = Math.round(m);
+                if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
+                return null;
+              }
             }
           },
           grid: { color:'rgba(136,135,128,0.1)' },
@@ -300,6 +326,9 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
             label: ctx => {
               const r = ctx.raw;
               const name = r.id ? `[${r.id}] ` : '';
+              if (isFlops) {
+                return `${name}${ctx.dataset.label}: (${r.x.toExponential(2)} FLOPs, ${r.y.toFixed(4)} bpp)`;
+              }
               return `${name}${ctx.dataset.label}: (${r.x.toFixed(1)}M, ${r.y.toFixed(4)} bpp)`;
             }
           }
@@ -313,6 +342,7 @@ buildLegend('leg-mst', MST_VARIANTS);
 makeChart('mst-c1', MST_VARIANTS, d=>d.total,  'total params');
 makeChart('mst-c2', MST_VARIANTS, d=>d.active, 'active params');
 makeChart('mst-c3', MST_VARIANTS, d=>d.flops,  'active FLOPs');
+makeChart('mst-c4', MST_VARIANTS, d=>d.total_training_flops, 'total training FLOPs');
 
 // BPP Gap vs Depth Chart
 const GAP_DATA = {
