@@ -1149,7 +1149,7 @@ class MST(nn.Module):
                     self.sub_window_sizes.append((-1, 0))
                 else:
                     # Geometric spacing from min_window to max_window
-                    ratio = j / max(1, N - 2)  # 0.0 to 1.0 for first N-1 subs
+                    ratio = j / max(1, N - 1)  # 0.0 to <1.0 for first N-1 subs
                     w = int(min_window * (max_window / min_window) ** ratio)
                     w = min(w, max_window)
                     self.sub_window_sizes.append((w, 0))  # (left_window, right_window=0 for causal)
@@ -1724,8 +1724,10 @@ class MST(nn.Module):
                 attn_flops += N * 12 * n_head * head_dim * effective_seq
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
 
-        # For topk_hard routing, only k/N sub-transformers execute per token.
-        # Scale sub-transformer FLOPs and params by the active fraction.
+        # For topk_hard routing, the router selects which k sub outputs to combine,
+        # but ALL N subs still execute their full attention + FFN. So active_flops == total_flops.
+        # Only active_params is discounted to reflect effective capacity (matching gpt.py's
+        # approach of never discounting attention/compute FLOPs for routing).
         routing_mode = self.config.mst_routing_mode
         if routing_mode == 'topk_hard':
             k = self.config.mst_routing_topk
@@ -1733,7 +1735,7 @@ class MST(nn.Module):
         else:
             active_fraction = 1.0  # soft_weighted / sequence_path: all subs active
 
-        # Params belonging to per-sub modules: scale by active_fraction.
+        # Params belonging to per-sub modules: scale by active_fraction for active_params only.
         # Shared params (wte, lm_head, value_embeds, input_layer, final_head) are always active.
         sub_params = 0
         for layer in self.layers:
@@ -1748,10 +1750,8 @@ class MST(nn.Module):
         shared_params = nparams - sub_params
         active_params = int(shared_params + sub_params * active_fraction)
 
-        # Scale only the sub-block portion of FLOPs; routing/transition/embedding overhead is always paid.
-        sub_flops = 6 * sub_params + attn_flops
-        shared_flops = total_flops - sub_flops
-        active_flops = int(shared_flops + sub_flops * active_fraction)
+        # All subs execute regardless of routing — active_flops == total_flops.
+        active_flops = total_flops
 
         return total_flops, active_flops, active_params
 
