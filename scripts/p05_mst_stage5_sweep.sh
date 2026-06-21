@@ -129,7 +129,7 @@ MST_COMMON="--models base \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
-  --target-tokens 0 \
+  --target-tokens -1 \
   --target-active-params 0 \
   --save-every 200 \
   --eval-every -1 \

@@ -100,10 +100,11 @@ const MST_VARIANTS = [
   { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, */
   
   // Keep your rich purple for AggDist
-  { id:'aggdist_d2', label:'AggDist d2',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, color:'#7E53D4' }, 
-  { id:'aggdist_d4', label:'AggDist d4',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115935, color:'#7E53D4' }, 
-  { id:'aggdist_d6', label:'AggDist d6',   total:82298260, active:82298260, flops:2.628595e8, bpp:1.115935, color:'#7E53D4' }, 
+  /* { id:'aggdist_d2', label:'AggDist d2',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, color:'#7E53D4' }, 
+  { id:'aggdist_d4', label:'AggDist d4',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005, color:'#7E53D4' }, 
+  { id:'aggdist_d6', label:'AggDist d6',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835, color:'#7E53D4' }, */
   { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, color:'#7E53D4' }, 
+  { id:'aggdist_d10', label:'AggDist d10',   total:82298260, active:82298260, flops:2.628595e8, bpp:0.982563, color:'#7E53D4' }, 
   { id:'aggdist_d12', label:'AggDist d12',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.934262, color:'#7E53D4' },
   { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, color:'#7E53D4' }, 
   { id:'aggdist_d24', label:'AggDist d24',   total:440457264, active:440457264, flops:1.919619e9, bpp:0.785666, color:'#7E53D4' }, 
@@ -159,9 +160,10 @@ function baseCurveDS(keyFn, variants) {
     return { x: M(x), y: a * Math.pow(x, b) };
   });
   return {
+    type: 'line',
     label: 'Dense baseline (power fit)',
     data: pts,
-    showLine: true, tension: 0,
+    tension: 0,
     borderColor: '#888780', backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [5,3],
     pointRadius: 0, pointHoverRadius: 0,
@@ -171,13 +173,13 @@ function baseCurveDS(keyFn, variants) {
 
 // Power-law fit curve for a variant (e.g. AggDist)
 function variantCurveDS(keyFn, variantData, color, label) {
-  if (variantData.length < 2) return null; // need at least 2 points for a fit
+  if (variantData.length < 2) return null;
   const { a, b, r2 } = fitPowerLaw(keyFn, variantData);
   const allX = variantData.map(keyFn).filter(v => v > 0);
   const xMin = Math.min(...allX);
   const xMax = Math.max(...allX);
   const logSpan = Math.log(xMax / xMin);
-  const pad = 0.6; // extend a bit further for extrapolation visibility
+  const pad = 0.6;
   const x0 = xMin * Math.exp(-pad * logSpan);
   const x1 = xMax * Math.exp( pad * logSpan);
   const N = 80;
@@ -186,9 +188,10 @@ function variantCurveDS(keyFn, variantData, color, label) {
     return { x: M(x), y: a * Math.pow(x, b) };
   });
   return {
+    type: 'line',
     label: `${label} (power fit)`,
     data: pts,
-    showLine: true, tension: 0,
+    tension: 0,
     borderColor: color, backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [3,2],
     pointRadius: 0, pointHoverRadius: 0,
@@ -276,7 +279,7 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
             font:{ size:9 }, color:'#888780', maxTicksLimit:5,
             callback(v) {
               const m = v/1e6;
-              const nice = [10,20,30,40,50,80,100,200,300,500,700,1000];
+              const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
               const r = Math.round(m);
               if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
               return null;
@@ -403,9 +406,9 @@ GAP_DATA.variants.forEach(v => {
 
   // 1. Measured points
   datasets.push({
+    type: 'scatter',
     label: `${v.label} (Measured)`,
     data: points,
-    showLine: false,
     backgroundColor: v.color,
     borderColor: v.color,
     pointStyle: 'circle',
@@ -435,15 +438,15 @@ GAP_DATA.variants.forEach(v => {
     }
 
     datasets.push({
+      type: 'line',
       label: `${v.label} Gap Power Fit (gap = ${pFit.a.toFixed(3)}·d^${pFit.b.toFixed(2)}; absolute ${crossoverStr})`,
       data: pCurve,
-      showLine: true,
       borderColor: v.color,
       borderWidth: 2,
       pointRadius: 0,
       pointHoverRadius: 0,
       fill: false,
-      tension: 0.1,
+      tension: 0.3,
       order: 2
     });
   }
