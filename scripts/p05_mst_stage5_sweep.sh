@@ -126,7 +126,7 @@ MST_COMMON="--models base \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 \
-  --warmdown-ratio 0.50 \
+  --warmdown-ratio 0.70 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
   --target-tokens -1 \
