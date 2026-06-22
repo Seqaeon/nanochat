@@ -121,7 +121,7 @@ init_state
 
 # ── Common flags ─────────────────────────────────────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-64} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
