@@ -121,7 +121,7 @@ init_state
 
 # ── Common flags ─────────────────────────────────────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-16} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-64} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -129,7 +129,7 @@ MST_COMMON="--models base \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
-  --target-tokens 0 \
+  --target-tokens -1 \
   --target-active-params 0 \
   --save-every 200 \
   --eval-every -1 \
