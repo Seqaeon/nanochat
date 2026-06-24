@@ -249,6 +249,23 @@ parser.add_argument("--mst-delta-residual", type=int, default=0, choices=[0, 1],
                     help="MST: delta residual mode — subs produce corrections to full-D stream (DR1)")
 parser.add_argument("--mst-sub-layers", type=int, default=1,
                     help="MST: layers per sub-transformer (SL1, default 1)")
+# MST Stage 7: Scaling improvements
+parser.add_argument("--mst-grad-equalize", type=int, default=0, choices=[0, 1],
+                    help="MST: enable per-sub gradient equalization (1A)")
+parser.add_argument("--mst-block-diagonal-muon", type=int, default=0, choices=[0, 1],
+                    help="MST: enable block-diagonal Muon Newton-Schulz (1B)")
+parser.add_argument("--mst-transition-width-mult", type=float, default=1.0,
+                    help="MST: width multiplier for transition bottleneck (1C)")
+parser.add_argument("--mst-sub-lr-scale", type=float, default=1.0,
+                    help="MST: learning rate multiplier for sub parameters")
+parser.add_argument("--mst-shared-expert", type=int, default=0, choices=[0, 1],
+                    help="MST: enable DeepSeek-style shared expert (2A)")
+parser.add_argument("--mst-router-entropy-weight", type=float, default=0.0,
+                    help="MST: weight for router entropy regularization (2C)")
+parser.add_argument("--mst-shared-kv-attn", type=int, default=0, choices=[0, 1],
+                    help="MST: share K,V projections across sub-transformers (3A)")
+parser.add_argument("--mst-contrastive-diversity-weight", type=float, default=0.0,
+                    help="MST: weight for contrastive representation diversity loss (3B)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
