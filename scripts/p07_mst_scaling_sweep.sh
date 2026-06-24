@@ -199,28 +199,28 @@ echo "  P0: Critical Fixes — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S7-0: AggDist baseline (control — same as p05 for comparison)
-run_experiment "S7_0_BASELINE_D${DEPTH}" \
-    "AggDist baseline (control for P07)" \
-    $AGGDIST_BASE
+#run_experiment "S7_0_BASELINE_D${DEPTH}" \
+#    "AggDist baseline (control for P07)" \
+#    $AGGDIST_BASE
 
 # S7-1A: Per-sub gradient equalization
-run_experiment "S7_1A_GRAD_EQ_D${DEPTH}" \
-    "1A: Per-sub gradient equalization (fixes 7.2× imbalance)" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1
+#run_experiment "S7_1A_GRAD_EQ_D${DEPTH}" \
+#    "1A: Per-sub gradient equalization (fixes 7.2× imbalance)" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1
 
 # S7-1B: Block-diagonal Muon Newton-Schulz
-run_experiment "S7_1B_BLOCK_DIAG_D${DEPTH}" \
-    "1B: Block-diagonal Muon (per-sub orthogonalization, fixes LR scale)" \
-    $AGGDIST_BASE \
-    --mst-block-diagonal-muon 1
+#run_experiment "S7_1B_BLOCK_DIAG_D${DEPTH}" \
+#    "1B: Block-diagonal Muon (per-sub orthogonalization, fixes LR scale)" \
+#    $AGGDIST_BASE \
+#    --mst-block-diagonal-muon 1
 
 # S7-P0: Combined 1A + 1B (expected best P0 result)
-run_experiment "S7_P0_GRADEQ_BLOCKDIAG_D${DEPTH}" \
-    "P0 combined: grad equalization + block-diagonal Muon" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1
+#run_experiment "S7_P0_GRADEQ_BLOCKDIAG_D${DEPTH}" \
+#    "P0 combined: grad equalization + block-diagonal Muon" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1
 
 # ============================================================================
 # P1: High priority
@@ -232,17 +232,17 @@ echo "  P1: High Priority — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S7-1C: Wider transition bottleneck (aggregate to D instead of d)
-run_experiment "S7_1C_WIDE_TRANS_D${DEPTH}" \
-    "1C: Wider transition (tw_mult=${N_SUBS}.0 → D-dim bottleneck)" \
-    $AGGDIST_BASE \
-    --mst-transition-width-mult ${N_SUBS}.0
+#run_experiment "S7_1C_WIDE_TRANS_D${DEPTH}" \
+#    "1C: Wider transition (tw_mult=${N_SUBS}.0 → D-dim bottleneck)" \
+#    $AGGDIST_BASE \
+#    --mst-transition-width-mult ${N_SUBS}.0
 
 # S7-LR: Per-sub LR scaling (√N boost)
 # For N=4, √N = 2.0 — compensates for μP scaling mismatch
-run_experiment "S7_LR_SUB_SCALE_D${DEPTH}" \
-    "LR: Per-sub Muon LR × 2.0 (√N correction for μP mismatch)" \
-    $AGGDIST_BASE \
-    --mst-sub-lr-scale 2.0
+#run_experiment "S7_LR_SUB_SCALE_D${DEPTH}" \
+#    "LR: Per-sub Muon LR × 2.0 (√N correction for μP mismatch)" \
+#    $AGGDIST_BASE \
+#    --mst-sub-lr-scale 2.0
 
 # ============================================================================
 # P2: Medium priority
@@ -254,10 +254,10 @@ echo "  P2: Medium Priority — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S7-2B: Longer warmup (3% instead of 0.5%)
-run_experiment "S7_2B_LONG_WARMUP_D${DEPTH}" \
-    "2B: Longer warmup (3% instead of 0.5%)" \
-    $AGGDIST_BASE \
-    --warmup-ratio 0.03
+#run_experiment "S7_2B_LONG_WARMUP_D${DEPTH}" \
+#    "2B: Longer warmup (3% instead of 0.5%)" \
+#    $AGGDIST_BASE \
+#    --warmup-ratio 0.03
 
 # S7-2A: DeepSeek-style shared expert (sub 0 always fully weighted)
 run_experiment "S7_2A_SHARED_EXPERT_D${DEPTH}" \
