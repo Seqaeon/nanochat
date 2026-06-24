@@ -326,6 +326,15 @@ def run_training_sweep(args):
         "--mst-multi-scale-windows", str(getattr(args, 'mst_multi_scale_windows', 0)),
         "--mst-delta-residual", str(getattr(args, 'mst_delta_residual', 0)),
         "--mst-sub-layers", str(getattr(args, 'mst_sub_layers', 1)),
+        # MST Stage 7: Scaling improvements
+        "--mst-grad-equalize", str(getattr(args, 'mst_grad_equalize', 0)),
+        "--mst-block-diagonal-muon", str(getattr(args, 'mst_block_diagonal_muon', 0)),
+        "--mst-transition-width-mult", str(getattr(args, 'mst_transition_width_mult', 1.0)),
+        "--mst-sub-lr-scale", str(getattr(args, 'mst_sub_lr_scale', 1.0)),
+        "--mst-shared-expert", str(getattr(args, 'mst_shared_expert', 0)),
+        "--mst-router-entropy-weight", str(getattr(args, 'mst_router_entropy_weight', 0.0)),
+        "--mst-shared-kv-attn", str(getattr(args, 'mst_shared_kv_attn', 0)),
+        "--mst-contrastive-diversity-weight", str(getattr(args, 'mst_contrastive_diversity_weight', 0.0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),

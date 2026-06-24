@@ -850,6 +850,15 @@ def build_model_meta(depth):
         mst_multi_scale_windows=getattr(args, 'mst_multi_scale_windows', 0),
         mst_delta_residual=getattr(args, 'mst_delta_residual', 0),
         mst_sub_layers=getattr(args, 'mst_sub_layers', 1),
+        # Stage 7: Scaling improvements (P07)
+        mst_grad_equalize=getattr(args, 'mst_grad_equalize', 0),
+        mst_block_diagonal_muon=getattr(args, 'mst_block_diagonal_muon', 0),
+        mst_transition_width_mult=getattr(args, 'mst_transition_width_mult', 1.0),
+        mst_sub_lr_scale=getattr(args, 'mst_sub_lr_scale', 1.0),
+        mst_shared_expert=getattr(args, 'mst_shared_expert', 0),
+        mst_router_entropy_weight=getattr(args, 'mst_router_entropy_weight', 0.0),
+        mst_shared_kv_attn=getattr(args, 'mst_shared_kv_attn', 0),
+        mst_contrastive_diversity_weight=getattr(args, 'mst_contrastive_diversity_weight', 0.0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1433,6 +1442,15 @@ if model_config.use_mst and master_process:
                 'params_transformer':  sp.get('transformer_matrices', '') if isinstance(sp, dict) else '',
                 'params_value_embeds': sp.get('value_embeds', '')         if isinstance(sp, dict) else '',
                 'params_total_sp':     sp.get('total', '')                if isinstance(sp, dict) else '',
+                # P07 scaling improvement flags
+                'grad_equalize':       c.mst_grad_equalize,
+                'block_diagonal_muon': c.mst_block_diagonal_muon,
+                'transition_width_mult': c.mst_transition_width_mult,
+                'sub_lr_scale':        c.mst_sub_lr_scale,
+                'shared_expert':       c.mst_shared_expert,
+                'router_entropy_weight': c.mst_router_entropy_weight,
+                'shared_kv_attn':      c.mst_shared_kv_attn,
+                'contrastive_div_weight': c.mst_contrastive_diversity_weight,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

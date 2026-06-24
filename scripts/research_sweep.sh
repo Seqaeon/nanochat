@@ -323,7 +323,10 @@ while [[ $# -gt 0 ]]; do
         --mst-transition-every|--mst-ffa-temperature|--mst-global-residual|\
         --mst-hybrid-dense|--mst-cross-sub-kv|\
         --mst-sub-aux-weight|--mst-progressive-merge|--mst-multi-scale-windows|\
-        --mst-delta-residual|--mst-sub-layers)
+        --mst-delta-residual|--mst-sub-layers|\
+        --mst-grad-equalize|--mst-block-diagonal-muon|--mst-transition-width-mult|\
+        --mst-sub-lr-scale|--mst-shared-expert|--mst-router-entropy-weight|\
+        --mst-shared-kv-attn|--mst-contrastive-diversity-weight)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

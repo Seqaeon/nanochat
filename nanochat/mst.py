@@ -837,11 +837,33 @@ class BatchedMSTLayer(nn.Module):
         else:
             self.ve_gate_w = None
 
+        # --- P07 config ---
+        self._shared_expert = bool(config.mst_shared_expert)
+        self._router_entropy_weight = config.mst_router_entropy_weight
+        self._contrastive_diversity_weight = config.mst_contrastive_diversity_weight
+        self._shared_kv_attn = bool(config.mst_shared_kv_attn)
+        self._last_route_entropy = None  # stored for diagnostics
+
+        # --- Shared K/V attention (3A): all subs share K,V weights, per-sub Q ---
+        if self._shared_kv_attn:
+            # Override c_k_w and c_v_w to be shared (d-dim, not N*d stacked)
+            # Keep c_q_w as per-sub (N*qkv_dim, d)
+            self.c_k_w = nn.Parameter(torch.empty(qkv_dim, d))  # shared
+            self.c_v_w = nn.Parameter(torch.empty(qkv_dim, d))  # shared
+
         # --- Transition weights (mode-dependent) ---
         self._transition_mode = config.mst_transition_mode
+        # 1C: Wider transition bottleneck — aggregate to tw_dim instead of d
+        tw_mult = config.mst_transition_width_mult
+        tw_dim = int(d * tw_mult)  # e.g. tw_mult=4.0 for N=4 gives D-width
+        self._tw_dim = tw_dim
         if config.mst_transition_mode == 'aggregate_distribute':
             # Router: project mean sub repr to N logits
             self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — Linear(d, N), already 2D
+            # Aggregate: d → tw_dim (identity if tw_mult=1)
+            if tw_mult != 1.0:
+                self.agg_up_w = nn.Parameter(torch.empty(tw_dim, d))
+                self.agg_down_w = nn.Parameter(torch.empty(d, tw_dim))
             # Distribute: stored as 2D (N*d, d) for Muon compat
             self.distribute_w = nn.Parameter(torch.empty(N * d, d))
         elif config.mst_transition_mode == 'free_for_all':
@@ -877,8 +899,13 @@ class BatchedMSTLayer(nn.Module):
 
         # Reshape stored 2D weights (N*out, in) → 3D (N, out, in) for batched ops
         c_q_w = self.c_q_w.view(N, self.qkv_dim, d)
-        c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
-        c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
+        if self._shared_kv_attn:
+            # 3A: K,V are shared (qkv_dim, d) — broadcast to all subs
+            c_k_w = self.c_k_w.unsqueeze(0).expand(N, -1, -1)  # (N, qkv_dim, d)
+            c_v_w = self.c_v_w.unsqueeze(0).expand(N, -1, -1)
+        else:
+            c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
+            c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
         c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
@@ -965,15 +992,55 @@ class BatchedMSTLayer(nn.Module):
         x = norm(sub_states)  # (B, T, N, d)
         aux_loss = sub_states.new_zeros(())
 
+        # 3B: Contrastive diversity loss on FFN activations
+        if self.training and self._contrastive_diversity_weight > 0.0:
+            # Use the pre-FFN norm (already computed as `x` before FFN, but we need
+            # the FFN intermediate activations). Re-compute from current sub_states.
+            with torch.no_grad():
+                x_for_div = norm(sub_states)  # (B, T, N, d)
+                # Mean representation per sub: (N, d)
+                mean_repr = x_for_div.float().mean(dim=(0, 1))  # (N, d)
+                normed_repr = F.normalize(mean_repr, dim=-1)  # (N, d)
+                sim = normed_repr @ normed_repr.T  # (N, N)
+                mask = ~torch.eye(N, device=sim.device, dtype=torch.bool)
+                contrastive_loss = sim.masked_select(mask).mean()
+            # Recompute with grad for the loss term
+            mean_repr_g = norm(sub_states).float().mean(dim=(0, 1))  # (N, d)
+            normed_g = F.normalize(mean_repr_g, dim=-1)
+            sim_g = normed_g @ normed_g.T
+            mask_g = ~torch.eye(N, device=sim_g.device, dtype=torch.bool)
+            aux_loss = aux_loss + self._contrastive_diversity_weight * sim_g.masked_select(mask_g).mean()
+
         if self._transition_mode == 'aggregate_distribute':
             # Router: mean across subs → logits
             router_input = x.mean(dim=2)  # (B, T, d)
             # router_w is (N, d), used as weight for Linear(d, N)
             logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
-            weights = F.softmax(logits, dim=-1)  # (B, T, N)
+
+            # 2A: Shared expert — sub 0 always gets full weight, remaining subs routed
+            if self._shared_expert:
+                # Route only subs 1..N-1; sub 0 weight = 1/N (fixed)
+                routed_logits = logits[..., 1:]  # (B, T, N-1)
+                routed_weights = F.softmax(routed_logits, dim=-1)  # (B, T, N-1)
+                shared_w = torch.full((B, T, 1), 1.0 / N, device=logits.device, dtype=routed_weights.dtype)
+                weights = torch.cat([shared_w, routed_weights * (1.0 - 1.0 / N)], dim=-1)  # (B, T, N)
+            else:
+                weights = F.softmax(logits, dim=-1)  # (B, T, N)
+
+            # Track router entropy for diagnostics
+            with torch.no_grad():
+                probs = F.softmax(logits, dim=-1)
+                ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
+                self._last_route_entropy = ent
 
             # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
             aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
+
+            # 1C: Wider transition bottleneck
+            if hasattr(self, 'agg_up_w'):
+                aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))  # (B, T, tw_dim)
+                aggregated = F.relu(aggregated).square()  # nonlinearity in expanded space
+                aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))  # (B, T, d)
 
             # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
             # distribute_w viewed as: (N, d, d)
@@ -987,7 +1054,13 @@ class BatchedMSTLayer(nn.Module):
             # Aux loss: load balance (soft_weighted)
             if self.training:
                 probs_mean = weights.mean(dim=(0, 1))  # (N,)
-                aux_loss = self.aux_weight * N * (probs_mean * probs_mean).sum()
+                aux_loss = aux_loss + self.aux_weight * N * (probs_mean * probs_mean).sum()
+                # 2C: Router entropy regularization — penalize low entropy
+                if self._router_entropy_weight > 0.0:
+                    import math
+                    target_entropy = math.log(N)
+                    current_entropy = -(probs_mean * (probs_mean + 1e-8).log()).sum()
+                    aux_loss = aux_loss + self._router_entropy_weight * (target_entropy - current_entropy) ** 2
 
         elif self._transition_mode == 'free_for_all':
             # FFA: each sender sub independently routes to all target subs
@@ -1060,17 +1133,28 @@ class BatchedMSTLayer(nn.Module):
         N, d = self.N, self.d
         # View 2D stored weights as 3D for per-sub init
         c_q = self.c_q_w.view(N, self.qkv_dim, d)
-        c_k = self.c_k_w.view(N, self.qkv_dim, d)
-        c_v = self.c_v_w.view(N, self.qkv_dim, d)
+        if self._shared_kv_attn:
+            # 3A: K,V are shared (qkv_dim, d) — not stacked per sub
+            c_k = self.c_k_w  # (qkv_dim, d)
+            c_v = self.c_v_w  # (qkv_dim, d)
+        else:
+            c_k = self.c_k_w.view(N, self.qkv_dim, d)
+            c_v = self.c_v_w.view(N, self.qkv_dim, d)
         c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
         fc = self.fc_w.view(N, self._inner, d)
         fc_proj = self.fc_proj_w.view(N, d, self._inner)
         ve_gate = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
+        if self._shared_kv_attn:
+            # Shared K,V: single init
+            nn.init.uniform_(c_k, -sub_s, sub_s)
+            nn.init.uniform_(c_v, -sub_s, sub_s)
+
         for j in range(N):
             nn.init.uniform_(c_q[j], -sub_s, sub_s)
-            nn.init.uniform_(c_k[j], -sub_s, sub_s)
-            nn.init.uniform_(c_v[j], -sub_s, sub_s)
+            if not self._shared_kv_attn:
+                nn.init.uniform_(c_k[j], -sub_s, sub_s)
+                nn.init.uniform_(c_v[j], -sub_s, sub_s)
             nn.init.zeros_(c_proj[j])
             # FFN
             nn.init.uniform_(fc[j], -sub_s, sub_s)
@@ -1086,6 +1170,10 @@ class BatchedMSTLayer(nn.Module):
                 nn.init.uniform_(dist[j], -sub_s, sub_s)
             # Router: zero init (soft at start)
             nn.init.zeros_(self.router_w)
+            # 1C: Wider transition bottleneck weights
+            if hasattr(self, 'agg_up_w'):
+                nn.init.uniform_(self.agg_up_w, -sub_s, sub_s)
+                nn.init.zeros_(self.agg_down_w)  # zero init for residual-friendliness
         elif self._transition_mode == 'free_for_all':
             # FFA routers: zero init so routing starts uniform
             nn.init.zeros_(self.ffa_router_w)
@@ -1320,6 +1408,11 @@ class MST(nn.Module):
         self._diag_enabled = False
         self._diag_sub_states = {}  # layer_idx -> list of N tensors (detached)
 
+        # 1A: Per-sub gradient equalization — normalize gradient norms per sub
+        self._grad_equalize = bool(config.mst_grad_equalize)
+        if self._grad_equalize and self._use_batched:
+            self._register_grad_equalize_hooks()
+
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
         if device is None:
             device = self.wte.weight.device
@@ -1331,6 +1424,42 @@ class MST(nn.Module):
         cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
+
+    def _register_grad_equalize_hooks(self):
+        """1A: Register backward hooks that equalize gradient norms across subs.
+
+        For each stacked weight tensor (N*out, in) in BatchedMSTLayer, reshapes
+        the gradient to (N, out, in), normalizes each sub's gradient to have the
+        mean norm, then reshapes back. This prevents the dominant-sub feedback loop
+        where sub 0 receives 7× more gradient than sub 3.
+        """
+        N = self.config.mst_n_subs
+        # Stacked per-sub weight names in BatchedMSTLayer
+        stacked_names = ('c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w')
+
+        def _make_hook(n_subs, total_out, d_in):
+            """Create a gradient hook that equalizes per-sub gradient norms."""
+            out_per_sub = total_out // n_subs
+            def hook(grad):
+                g = grad.view(n_subs, out_per_sub, d_in)
+                per_sub_norms = g.norm(dim=(-2, -1), keepdim=True)  # (N, 1, 1)
+                mean_norm = per_sub_norms.mean()
+                # Scale each sub's grad so all have equal norm (the mean)
+                scale = mean_norm / (per_sub_norms + 1e-8)
+                return (g * scale).reshape(total_out, d_in)
+            return hook
+
+        for layer in self.layers:
+            if not isinstance(layer, BatchedMSTLayer):
+                continue
+            for name in stacked_names:
+                param = getattr(layer, name, None)
+                if param is None or param.ndim != 2:
+                    continue
+                # Only hook stacked weights (total_out should be divisible by N)
+                if param.shape[0] % N == 0 and param.shape[0] // N > 1:
+                    param.register_hook(_make_hook(N, param.shape[0], param.shape[1]))
+        print0("[MST] 1A: Per-sub gradient equalization hooks registered")
 
     def _compute_window_sizes(self, config):
         """Compute per-layer window sizes for sliding window attention.
@@ -1793,11 +1922,14 @@ class MST(nn.Module):
                 diag[f'sub_sim_L{layer_idx}_max'] = float(off_diag.max())
                 diag[f'sub_sim_L{layer_idx}_min'] = float(off_diag.min())
 
-        # --- FFA routing entropy and weight distribution ---
+        # --- Routing entropy and weight distribution ---
         from nanochat.mst import MSTTransition
         for i, layer in enumerate(self.layers):
             if isinstance(layer, BatchedMSTLayer):
-                continue  # batched layers have inline routing, no separate transition
+                # Batched layers store route entropy directly from forward pass
+                if hasattr(layer, '_last_route_entropy') and layer._last_route_entropy is not None:
+                    diag[f'route_entropy_L{i}'] = float(layer._last_route_entropy)
+                continue
             trans = getattr(layer, 'transition', None)
             if trans is None:
                 continue
@@ -1887,13 +2019,51 @@ class MST(nn.Module):
             dict(kind='adamw', params=x0_params, lr=scalar_lr,
                  betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Matrix params → Muon, grouped by shape (matching GPT convention)
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
+
+        # P07: Separate stacked per-sub params from non-stacked params
+        # Stacked params get per-sub LR scaling and block-diagonal Muon
+        N = self.config.mst_n_subs
+        sub_lr_scale = self.config.mst_sub_lr_scale
+        block_diag = bool(self.config.mst_block_diagonal_muon)
+        stacked_names = {'c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w'}
+
+        # Identify stacked per-sub params by their parameter object identity
+        stacked_param_ids = set()
+        if self._use_batched:
+            for layer in self.layers:
+                if isinstance(layer, BatchedMSTLayer):
+                    for name in stacked_names:
+                        p = getattr(layer, name, None)
+                        if p is not None and p.ndim == 2 and p.shape[0] % N == 0:
+                            stacked_param_ids.add(id(p))
+
+        stacked_matrix_params = [p for p in matrix_params if id(p) in stacked_param_ids]
+        other_matrix_params = [p for p in matrix_params if id(p) not in stacked_param_ids]
+
+        # Non-stacked matrix params → standard Muon
+        for shape in sorted({p.shape for p in other_matrix_params}) if other_matrix_params else []:
+            group_params = [p for p in other_matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
             ))
+
+        # Stacked per-sub matrix params → Muon with optional LR scaling + block-diagonal
+        sub_muon_lr = matrix_lr * sub_lr_scale
+        for shape in sorted({p.shape for p in stacked_matrix_params}) if stacked_matrix_params else []:
+            group_params = [p for p in stacked_matrix_params if p.shape == shape]
+            group_dict = dict(
+                kind='muon', params=group_params, lr=sub_muon_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            )
+            if block_diag:
+                group_dict['block_diagonal'] = N  # number of blocks
+            param_groups.append(group_dict)
+
+        if sub_lr_scale != 1.0:
+            print0(f"[MST] Per-sub Muon LR scaled by {sub_lr_scale:.2f}× → {sub_muon_lr:.6f}")
+        if block_diag:
+            print0(f"[MST] 1B: Block-diagonal Muon enabled (N={N} blocks)")
 
         Factory = DistMuonAdamW if (ddp and world_size > 1) else MuonAdamW
         optimizer = Factory(param_groups)

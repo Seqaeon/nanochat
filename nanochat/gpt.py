@@ -351,6 +351,15 @@ class GPTConfig:
     # Stage 6 features
     mst_delta_residual: int = 0                 # DR1: delta residual mode — subs produce corrections to full-D stream
     mst_sub_layers: int = 1                     # SL1: layers per sub-transformer (1=current, 2/4/8=deeper subs)
+    # Stage 7: Scaling improvement experiments (P07)
+    mst_grad_equalize: int = 0                  # 1A: per-sub gradient equalization (0=off, 1=on)
+    mst_block_diagonal_muon: int = 0            # 1B: block-diagonal Newton-Schulz in Muon (0=off, 1=on)
+    mst_transition_width_mult: float = 1.0      # 1C: transition bottleneck width multiplier (1.0=d, 4.0=D for N=4)
+    mst_sub_lr_scale: float = 1.0               # per-sub Muon LR multiplier (√N ≈ 2.0 for N=4 to fix μP scaling)
+    mst_shared_expert: int = 0                  # 2A: DeepSeek-style shared expert — sub 0 always fully weighted (0=off, 1=on)
+    mst_router_entropy_weight: float = 0.0      # 2C: router entropy regularization weight (0=off, e.g. 0.1)
+    mst_shared_kv_attn: int = 0                 # 3A: share K,V projections in main attention across subs (0=off, 1=on)
+    mst_contrastive_diversity_weight: float = 0.0  # 3B: contrastive diversity loss on FFN activations (0=off)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -513,6 +522,10 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
     "mst_sub_aux_weight", "mst_progressive_merge", "mst_multi_scale_windows",
     "mst_delta_residual", "mst_sub_layers",
+    # MST Stage 7: Scaling improvements
+    "mst_grad_equalize", "mst_block_diagonal_muon", "mst_transition_width_mult",
+    "mst_sub_lr_scale", "mst_shared_expert", "mst_router_entropy_weight",
+    "mst_shared_kv_attn", "mst_contrastive_diversity_weight",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",
