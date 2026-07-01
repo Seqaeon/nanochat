@@ -438,47 +438,47 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # Gate each sub's FFN hidden state with a signal from ALL subs.
 # Multiplicative interaction: cross-sub info flows THROUGH relu² nonlinearity.
 # Cost: ~82K params/layer (rank-32 bottleneck: D→32→N*4d)
-run_experiment "S9_CSGATE_R32_D${DEPTH}" \
-    "S9-A: Cross-sub FFN gate rank=32" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-gate 32
-
+#run_experiment "S9_CSGATE_R32_D${DEPTH}" \
+#    "S9-A: Cross-sub FFN gate rank=32" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-gate 32
+#
 # S9-A2: Cross-sub FFN gating (rank=64) — more expressive gate
-run_experiment "S9_CSGATE_R64_D${DEPTH}" \
-    "S9-A: Cross-sub FFN gate rank=64" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-gate 64
-
+#run_experiment "S9_CSGATE_R64_D${DEPTH}" \
+#    "S9-A: Cross-sub FFN gate rank=64" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-gate 64
+#
 # S9-B: Hyper-connected sub residuals
 # Each transition sees previous layer's pre-transition state via learned EMA.
 # Near-zero extra params. Addresses depth-compounding bottleneck.
-run_experiment "S9_HYPER_D${DEPTH}" \
-    "S9-B: Hyper-connected sub residuals" \
-    $COMBO_A_BASE \
-    --mst-hyper-connect 1
-
+#run_experiment "S9_HYPER_D${DEPTH}" \
+#    "S9-B: Hyper-connected sub residuals" \
+#    $COMBO_A_BASE \
+#    --mst-hyper-connect 1
+#
 # S9-C: Cross-sub KV injection (per-token N×N attention across subs)
 # Softmax-based nonlinear cross-sub mixing at the attention level.
 # Cost: ~41K params/layer (per-sub Q, shared K/V, per-sub proj)
-run_experiment "S9_CROSSKV_D${DEPTH}" \
-    "S9-C: Cross-sub KV injection attention" \
-    $COMBO_A_BASE \
-    --mst-cross-kv-inject 1
-
+#run_experiment "S9_CROSSKV_D${DEPTH}" \
+#    "S9-C: Cross-sub KV injection attention" \
+#    $COMBO_A_BASE \
+#    --mst-cross-kv-inject 1
+#
 # S9-AB: Combo: cross-sub gate + hyper-connect
-run_experiment "S9_GATE_HYPER_D${DEPTH}" \
-    "S9-AB: Cross-sub gate (r=32) + hyper-connect" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-gate 32 \
-    --mst-hyper-connect 1
-
+#run_experiment "S9_GATE_HYPER_D${DEPTH}" \
+#    "S9-AB: Cross-sub gate (r=32) + hyper-connect" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-gate 32 \
+#    --mst-hyper-connect 1
+#
 # S9-ABC: Full combo: gate + hyper + cross-KV
-run_experiment "S9_FULL_D${DEPTH}" \
-    "S9-ABC: All cross-sub expressivity" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-gate 32 \
-    --mst-hyper-connect 1 \
-    --mst-cross-kv-inject 1
+#run_experiment "S9_FULL_D${DEPTH}" \
+#    "S9-ABC: All cross-sub expressivity" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-gate 32 \
+#    --mst-hyper-connect 1 \
+#    --mst-cross-kv-inject 1
 
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 9 sweep complete"
@@ -497,28 +497,28 @@ echo "  Stage 10: Structural Transition — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S10-A: SliceMoE with 4 slices (d=128 → 4 slices of 32)
-run_experiment "S10_SLICE4_D${DEPTH}" \
-    "S10-A: SliceMoE 4 slices" \
-    $COMBO_A_BASE \
-    --mst-slice-transition 4
-
+#run_experiment "S10_SLICE4_D${DEPTH}" \
+#    "S10-A: SliceMoE 4 slices" \
+#    $COMBO_A_BASE \
+#    --mst-slice-transition 4
+#
 # S10-A2: SliceMoE with 8 slices (d=128 → 8 slices of 16)
-run_experiment "S10_SLICE8_D${DEPTH}" \
-    "S10-A: SliceMoE 8 slices" \
-    $COMBO_A_BASE \
-    --mst-slice-transition 8
-
+#run_experiment "S10_SLICE8_D${DEPTH}" \
+#    "S10-A: SliceMoE 8 slices" \
+#    $COMBO_A_BASE \
+#    --mst-slice-transition 8
+#
 # S10-B: DenseFormer lookback K=2
-run_experiment "S10_LOOKBACK2_D${DEPTH}" \
-    "S10-B: DenseFormer lookback K=2" \
-    $COMBO_A_BASE \
-    --mst-lookback-layers 2
-
+#run_experiment "S10_LOOKBACK2_D${DEPTH}" \
+#    "S10-B: DenseFormer lookback K=2" \
+#    $COMBO_A_BASE \
+#    --mst-lookback-layers 2
+#
 # S10-B2: DenseFormer lookback K=4
-run_experiment "S10_LOOKBACK4_D${DEPTH}" \
-    "S10-B: DenseFormer lookback K=4" \
-    $COMBO_A_BASE \
-    --mst-lookback-layers 4
+#run_experiment "S10_LOOKBACK4_D${DEPTH}" \
+#    "S10-B: DenseFormer lookback K=4" \
+#    $COMBO_A_BASE \
+#    --mst-lookback-layers 4
 
 # S10-C: Bilinear transition
 run_experiment "S10_BILINEAR_D${DEPTH}" \
