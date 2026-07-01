@@ -861,6 +861,7 @@ class BatchedMSTLayer(nn.Module):
         tw_mult = config.mst_transition_width_mult
         tw_dim = int(d * tw_mult)  # e.g. tw_mult=4.0 for N=4 gives D-width
         self._tw_dim = tw_dim
+        self._has_wide_transition = False  # may be set True in AggDist branch
         if config.mst_transition_mode == 'aggregate_distribute':
             if self._transition_mlp:
                 # MLP transition: concat(N×d=D) → Linear(D,d) → SiLU → Linear(d,D) → split(N×d)
@@ -879,7 +880,8 @@ class BatchedMSTLayer(nn.Module):
                     else:
                         self.router_w = nn.Parameter(torch.empty(N, d))
                 # Aggregate: d → tw_dim (identity if tw_mult=1)
-                if tw_mult != 1.0:
+                self._has_wide_transition = tw_mult != 1.0
+                if self._has_wide_transition:
                     self.agg_up_w = nn.Parameter(torch.empty(tw_dim, d))
                     self.agg_down_w = nn.Parameter(torch.empty(d, tw_dim))
                 # Distribute: stored as 2D (N*d, d) for Muon compat
@@ -994,7 +996,7 @@ class BatchedMSTLayer(nn.Module):
         c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
-        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and hasattr(self, 'distribute_w')) else None
+        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and not self._mean_transition) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         # ==================== ATTENTION ====================
@@ -1233,7 +1235,7 @@ class BatchedMSTLayer(nn.Module):
                     aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
 
                 # === WIDE TRANSITION (relu² bottleneck) ===
-                if hasattr(self, 'agg_up_w'):
+                if self._has_wide_transition:
                     aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))
                     aggregated = F.relu(aggregated).square()
                     aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))
