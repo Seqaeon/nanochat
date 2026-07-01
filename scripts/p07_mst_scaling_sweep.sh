@@ -543,13 +543,75 @@ run_experiment "S10_LOOK_BILIN_D${DEPTH}" \
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 10 sweep complete"
 
+# ============================================================================
+# Stage 11: Attention bottleneck + structural (builds on COMBO_A baseline)
+# ============================================================================
+# These target the ACTUAL bottleneck: per-sub attention blindness to cross-sub features.
+# A: Cross-sub query modulation — Q informed by all subs via low-rank bottleneck
+# B: Feature cycling — parameter-free permutation of features across subs
+# C: Mean transition — remove learned transition, test if transition params are wasted
+# D: Global residual — D-dim shared stream provides gradient highway + cross-sub info
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Stage 11: Attention Bottleneck — Depth ${DEPTH}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# S11-A: Cross-sub query modulation r=16
+run_experiment "S11_QMOD16_D${DEPTH}" \
+    "S11-A: Cross-sub Q modulation r=16" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-qmod 16
+
+# S11-A2: Cross-sub query modulation r=32
+run_experiment "S11_QMOD32_D${DEPTH}" \
+    "S11-A: Cross-sub Q modulation r=32" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-qmod 32
+
+# S11-B: Feature cycling
+run_experiment "S11_FCYCLE_D${DEPTH}" \
+    "S11-B: Sub-feature cycling" \
+    $COMBO_A_BASE \
+    --mst-feature-cycle 1
+
+# S11-C: Mean transition (parameter-free)
+run_experiment "S11_MEAN_D${DEPTH}" \
+    "S11-C: Mean-add transition" \
+    $COMBO_A_BASE \
+    --mst-mean-transition 1
+
+# S11-D: Global residual stream (D-dim gradient highway)
+run_experiment "S11_GLOBAL_D${DEPTH}" \
+    "S11-D: Global D-dim residual stream" \
+    $COMBO_A_BASE \
+    --mst-global-residual 1
+
+# S11-AD: QMod + Global residual (best of both worlds?)
+run_experiment "S11_QMOD_GLOBAL_D${DEPTH}" \
+    "S11-AD: QMod(16) + Global residual" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-qmod 16 \
+    --mst-global-residual 1
+
+# S11-AB: QMod + Feature cycling
+run_experiment "S11_QMOD_FCYCLE_D${DEPTH}" \
+    "S11-AB: QMod(16) + Feature cycling" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-qmod 16 \
+    --mst-feature-cycle 1
+
+echo ""
+echo "  ✓ Depth ${DEPTH} Stage 11 sweep complete"
+
 echo "═══════════════════════════════════════════════════════════════"
-echo "  P07+S8+S9+S10 MST Scaling Sweep Complete"
+echo "  P07+S8+S9+S10+S11 MST Scaling Sweep Complete"
 echo "  Depth:    ${DEPTH}"
 echo "  P07: 13 experiments (baseline through COMBO)"
 echo "  S8:  5 experiments (gated, mlp, gated+nl, ffa_hard, ffa_soft)"
 echo "  S9:  6 experiments (csgate_r32, csgate_r64, hyper, crosskv, gate+hyper, full)"
 echo "  S10: 7 experiments (slice4, slice8, lookback2, lookback4, bilinear, slice+bilin, look+bilin)"
+echo "  S11: 7 experiments (qmod16, qmod32, fcycle, mean, global, qmod+global, qmod+fcycle)"
 echo "═══════════════════════════════════════════════════════════════"
 
 done

@@ -329,7 +329,9 @@ while [[ $# -gt 0 ]]; do
         --mst-shared-kv-attn|--mst-contrastive-diversity-weight|\
         --mst-transition-nonlinear|--mst-transition-gated|--mst-transition-mlp|\
         --mst-cross-sub-gate|--mst-hyper-connect|--mst-cross-kv-inject|\
-        --mst-slice-transition|--mst-lookback-layers|--mst-bilinear-transition)
+        --mst-slice-transition|--mst-lookback-layers|--mst-bilinear-transition|\
+        --mst-cross-sub-qmod|--mst-feature-cycle|--mst-mean-transition|\
+        --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

@@ -287,6 +287,13 @@ parser.add_argument("--mst-lookback-layers", type=int, default=0,
                     help="MST: DenseFormer lookback depth (0=off, K=num past layers e.g. 2)")
 parser.add_argument("--mst-bilinear-transition", type=int, default=0, choices=[0, 1],
                     help="MST: bilinear aggregate for 2nd-order cross-sub interaction (0=off, 1=on)")
+# MST Stage 11: Attention bottleneck + structural improvements
+parser.add_argument("--mst-cross-sub-qmod", type=int, default=0,
+                    help="MST: low-rank cross-sub query modulation rank (0=off, e.g. 16)")
+parser.add_argument("--mst-feature-cycle", type=int, default=0, choices=[0, 1],
+                    help="MST: sub-feature cycling at transition (0=off, 1=on)")
+parser.add_argument("--mst-mean-transition", type=int, default=0, choices=[0, 1],
+                    help="MST: parameter-free mean-add transition replacing AggDist (0=off, 1=on)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -909,6 +916,10 @@ def build_model_meta(depth):
         mst_slice_transition=getattr(args, 'mst_slice_transition', 0),
         mst_lookback_layers=getattr(args, 'mst_lookback_layers', 0),
         mst_bilinear_transition=getattr(args, 'mst_bilinear_transition', 0),
+        # Stage 11: Attention bottleneck + structural improvements
+        mst_cross_sub_qmod=getattr(args, 'mst_cross_sub_qmod', 0),
+        mst_feature_cycle=getattr(args, 'mst_feature_cycle', 0),
+        mst_mean_transition=getattr(args, 'mst_mean_transition', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1513,6 +1524,11 @@ if model_config.use_mst and master_process:
                 'slice_transition':     c.mst_slice_transition,
                 'lookback_layers':      c.mst_lookback_layers,
                 'bilinear_transition':  c.mst_bilinear_transition,
+                # Stage 11: Attention bottleneck + structural improvements
+                'cross_sub_qmod':       c.mst_cross_sub_qmod,
+                'feature_cycle':        c.mst_feature_cycle,
+                'mean_transition':      c.mst_mean_transition,
+                'global_residual':      c.mst_global_residual,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

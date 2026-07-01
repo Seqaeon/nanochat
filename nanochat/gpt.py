@@ -372,6 +372,10 @@ class GPTConfig:
     mst_slice_transition: int = 0                   # SliceMoE: per-slice routing (0=off, S=num slices e.g. 4)
     mst_lookback_layers: int = 0                    # DenseFormer lookback depth (0=off, K=num past layers e.g. 2)
     mst_bilinear_transition: int = 0                # Bilinear aggregate: 2nd-order cross-sub interaction (0=off, 1=on)
+    # Stage 11: Attention bottleneck + structural improvements
+    mst_cross_sub_qmod: int = 0                     # Low-rank cross-sub query modulation rank (0=off, e.g. 16)
+    mst_feature_cycle: int = 0                      # Sub-feature cycling at transition (0=off, 1=on)
+    mst_mean_transition: int = 0                    # Parameter-free mean-add transition replacing AggDist (0=off, 1=on)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -544,6 +548,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_cross_sub_gate", "mst_hyper_connect", "mst_cross_kv_inject",
     # MST Stage 10: Structural transition improvements
     "mst_slice_transition", "mst_lookback_layers", "mst_bilinear_transition",
+    # MST Stage 11: Attention bottleneck + structural improvements
+    "mst_cross_sub_qmod", "mst_feature_cycle", "mst_mean_transition",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

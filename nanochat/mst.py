@@ -870,9 +870,9 @@ class BatchedMSTLayer(nn.Module):
                 D = N * d
                 self.trans_mlp_fc_w = nn.Parameter(torch.empty(d, D))   # (d, D) — down-project
                 self.trans_mlp_proj_w = nn.Parameter(torch.empty(D, d)) # (D, d) — up-project
-            else:
+            elif not bool(config.mst_mean_transition):
                 # Standard AggDist (with optional nonlinear/gated/SliceMoE enhancements)
-                # SliceMoE replaces the standard router with per-slice routers
+                # Mean transition replaces all of this with parameter-free mean-add
                 if config.mst_slice_transition == 0:
                     if self._transition_gated:
                         self.gate_w = nn.Parameter(torch.empty(N, N * d))
@@ -953,6 +953,19 @@ class BatchedMSTLayer(nn.Module):
             self.bilinear_u = nn.Parameter(torch.empty(d, D))  # (d, D) — 2D for Muon
             self.bilinear_v = nn.Parameter(torch.empty(d, D))  # (d, D) — 2D for Muon
 
+        # ── Stage 11: Attention bottleneck + structural improvements ──
+        # A: Cross-sub query modulation — low-rank D→r→(N*qkv_dim) correction to Q
+        self._cross_sub_qmod = config.mst_cross_sub_qmod
+        if self._cross_sub_qmod > 0:
+            r = self._cross_sub_qmod
+            D = N * d
+            qkv_dim = self.qkv_dim
+            self.qmod_down_w = nn.Parameter(torch.empty(r, D))              # (r, D) — 2D for Muon
+            self.qmod_up_w = nn.Parameter(torch.empty(N * qkv_dim, r))      # (N*qkv, r) — 2D for Muon
+
+        # C: Mean transition — parameter-free mean-add replaces AggDist
+        self._mean_transition = bool(config.mst_mean_transition)
+
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
                 kv_cache=None, total_sub_layers=1):
         """
@@ -981,7 +994,7 @@ class BatchedMSTLayer(nn.Module):
         c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
-        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp) else None
+        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and hasattr(self, 'distribute_w')) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         # ==================== ATTENTION ====================
@@ -992,6 +1005,14 @@ class BatchedMSTLayer(nn.Module):
         q = _batched_linear(x, c_q_w)
         k = _batched_linear(x, c_k_w)
         v = _batched_linear(x, c_v_w)
+
+        # Stage 11-A: Cross-sub query modulation — add low-rank D→r→(N*qkv) correction to Q
+        if self._cross_sub_qmod > 0:
+            x_flat = x.reshape(B, T, N * d)  # (B, T, D) — full D-dim representation
+            qmod = F.linear(x_flat, self.qmod_down_w.to(dtype=x_flat.dtype))   # (B, T, r)
+            qmod = F.linear(qmod, self.qmod_up_w.to(dtype=qmod.dtype))         # (B, T, N*qkv)
+            qmod = qmod.view(B, T, N, self.qkv_dim)
+            q = q + qmod  # queries now conditioned on cross-sub features
 
         # Value embedding: shared VE across all subs, per-sub gating
         if ve is not None and ve_gate_w is not None:
@@ -1145,7 +1166,12 @@ class BatchedMSTLayer(nn.Module):
             aux_loss = aux_loss + self._contrastive_diversity_weight * sim_g.masked_select(mask_g).mean()
 
         if self._transition_mode == 'aggregate_distribute':
-            if self._transition_mlp:
+            if self._mean_transition:
+                # ---- Stage 11-C: Parameter-free mean-add transition ----
+                sub_mean = x.mean(dim=2, keepdim=True)  # (B, T, 1, d)
+                sub_states = sub_states + sub_mean       # broadcast add
+                self._last_route_entropy = math.log(N)   # uniform by definition
+            elif self._transition_mlp:
                 # ---- Bottleneck MLP transition: concat → Linear(D,d) → SiLU → Linear(d,D) → split ----
                 # Full cross-sub nonlinear interaction through a d-dim bottleneck
                 concat_x = x.reshape(B, T, N * d)  # (B, T, D)
@@ -1346,7 +1372,7 @@ class BatchedMSTLayer(nn.Module):
                 mlp_s = 1.0 / (D ** 0.5)
                 nn.init.uniform_(self.trans_mlp_fc_w, -mlp_s, mlp_s)
                 nn.init.zeros_(self.trans_mlp_proj_w)
-            else:
+            elif hasattr(self, 'distribute_w'):
                 dist = self.distribute_w.view(N, d, d)
                 for j in range(N):
                     nn.init.uniform_(dist[j], -sub_s, sub_s)
@@ -1398,6 +1424,13 @@ class BatchedMSTLayer(nn.Module):
             bi_s = 1.0 / (D ** 0.5)
             nn.init.uniform_(self.bilinear_u, -bi_s, bi_s)
             nn.init.uniform_(self.bilinear_v, -bi_s, bi_s)
+
+        # ── Stage 11: Attention bottleneck init ──
+        if self._cross_sub_qmod > 0:
+            D = N * d
+            qmod_s = 1.0 / (D ** 0.5)
+            nn.init.uniform_(self.qmod_down_w, -qmod_s, qmod_s)
+            nn.init.zeros_(self.qmod_up_w)  # zero-init: starts as no-op, residual-friendly
 
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
@@ -1866,12 +1899,21 @@ class MST(nn.Module):
             total_aux_loss = x.new_zeros(())
             lookback_K = self.config.mst_lookback_layers
             lookback_history = []  # sliding window of past K pre-transition states
+            feature_cycle = bool(self.config.mst_feature_cycle)
+            global_stream = x if self.use_global_residual else None
 
             for i, layer in enumerate(self.layers):
                 # Per-layer residual scaling + x0 blend
                 rl = self.resid_lambdas[i]
                 x0l = self.x0_lambdas[i]
                 sub_states = rl * sub_states + x0l * sub_x0
+
+                # Global residual: subs READ from D-dim shared stream
+                if global_stream is not None:
+                    gs_normed = norm(global_stream)  # (B, T, D)
+                    read_w = torch.stack([p.weight for p in self.global_read_projs[i]], dim=0)  # (N, d, D)
+                    read_add = torch.einsum('btD,ndD->btnd', gs_normed, read_w.to(dtype=gs_normed.dtype))
+                    sub_states = sub_states + read_add
 
                 # Proposal B: Hyper-connect — inject previous layer's pre-transition state
                 if i > 0 and hasattr(self.layers[i-1], '_pre_trans_x'):
@@ -1901,6 +1943,21 @@ class MST(nn.Module):
                     total_sub_layers=total_sub_layers)
                 total_aux_loss = total_aux_loss + aux_loss
 
+                # Global residual: subs WRITE to D-dim shared stream
+                if global_stream is not None:
+                    concat_normed = norm(sub_states).reshape(B, T, N * d)
+                    global_stream = global_stream + self.global_write_projs[i](concat_normed.to(dtype=global_stream.dtype))
+
+                # Stage 11-B: Feature cycling — cyclically permute features across subs
+                if feature_cycle and i < len(self.layers) - 1:  # don't cycle after last layer
+                    sub_flat = sub_states.reshape(B, T, N * d)
+                    sub_flat = torch.roll(sub_flat, shifts=d, dims=-1)
+                    sub_states = sub_flat.view(B, T, N, d)
+                    # Also cycle x0 so residual lambdas remain aligned
+                    x0_flat = sub_x0.reshape(B, T, N * d)
+                    x0_flat = torch.roll(x0_flat, shifts=d, dims=-1)
+                    sub_x0 = x0_flat.view(B, T, N, d)
+
                 # Collect lookback state after layer runs
                 if lookback_K > 0 and hasattr(layer, '_pre_trans_x_lb'):
                     lookback_history.append(layer._pre_trans_x_lb)
@@ -1913,6 +1970,13 @@ class MST(nn.Module):
             sub_states_normed = norm(sub_states)  # (B, T, N, d)
             concatenated = sub_states_normed.reshape(B, T, N * d)  # (B, T, D)
             h = self.final_head.proj(concatenated)  # (B, T, D)
+
+            # Global residual: final write ensures last write_proj gets gradients
+            if global_stream is not None:
+                n_layers = len(self.layers)
+                global_stream = global_stream + self.global_write_projs[n_layers - 1](concatenated.to(dtype=global_stream.dtype))
+                h = h + global_stream  # blend shared stream into output
+
             logits = self.lm_head(h)
             final_aux = x.new_zeros(())
             total_aux_loss = total_aux_loss + final_aux
