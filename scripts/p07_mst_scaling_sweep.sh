@@ -302,13 +302,13 @@ echo "  COMBO: Combined Best — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S7-COMBO-A: P0 + wider transition + sub LR scaling
-#run_experiment "S7_COMBO_A_D${DEPTH}" \
-#    "COMBO-A: grad_eq + block_diag + wide_trans + sub_lr" \
-#    $AGGDIST_BASE \
-#    --mst-grad-equalize 1 \
-#    --mst-block-diagonal-muon 1 \
-#    --mst-transition-width-mult ${N_SUBS}.0 \
-#    --mst-sub-lr-scale 2.0
+run_experiment "S7_COMBO_A_D${DEPTH}" \
+    "COMBO-A: grad_eq + block_diag + wide_trans + sub_lr" \
+    $AGGDIST_BASE \
+    --mst-grad-equalize 1 \
+    --mst-block-diagonal-muon 1 \
+    --mst-transition-width-mult ${N_SUBS}.0 \
+    --mst-sub-lr-scale 2.0
 #
 # S7-COMBO-B: P0 + longer warmup + entropy reg
 #run_experiment "S7_COMBO_B_D${DEPTH}" \
@@ -521,24 +521,24 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --mst-lookback-layers 4
 
 # S10-C: Bilinear transition
-run_experiment "S10_BILINEAR_D${DEPTH}" \
-    "S10-C: Bilinear 2nd-order transition" \
-    $COMBO_A_BASE \
-    --mst-bilinear-transition 1
-
+#run_experiment "S10_BILINEAR_D${DEPTH}" \
+#    "S10-C: Bilinear 2nd-order transition" \
+#    $COMBO_A_BASE \
+#    --mst-bilinear-transition 1
+#
 # S10-AC: SliceMoE + Bilinear (best structural combo?)
-run_experiment "S10_SLICE_BILIN_D${DEPTH}" \
-    "S10-AC: SliceMoE(4) + Bilinear" \
-    $COMBO_A_BASE \
-    --mst-slice-transition 4 \
-    --mst-bilinear-transition 1
-
+#run_experiment "S10_SLICE_BILIN_D${DEPTH}" \
+#    "S10-AC: SliceMoE(4) + Bilinear" \
+#    $COMBO_A_BASE \
+#    --mst-slice-transition 4 \
+#    --mst-bilinear-transition 1
+#
 # S10-BC: Lookback + Bilinear
-run_experiment "S10_LOOK_BILIN_D${DEPTH}" \
-    "S10-BC: Lookback(2) + Bilinear" \
-    $COMBO_A_BASE \
-    --mst-lookback-layers 2 \
-    --mst-bilinear-transition 1
+#run_experiment "S10_LOOK_BILIN_D${DEPTH}" \
+#    "S10-BC: Lookback(2) + Bilinear" \
+#    $COMBO_A_BASE \
+#    --mst-lookback-layers 2 \
+#    --mst-bilinear-transition 1
 
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 10 sweep complete"
@@ -558,49 +558,49 @@ echo "  Stage 11: Attention Bottleneck — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S11-A: Cross-sub query modulation r=16
-run_experiment "S11_QMOD16_D${DEPTH}" \
-    "S11-A: Cross-sub Q modulation r=16" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-qmod 16
-
+#run_experiment "S11_QMOD16_D${DEPTH}" \
+#    "S11-A: Cross-sub Q modulation r=16" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-qmod 16
+#
 # S11-A2: Cross-sub query modulation r=32
-run_experiment "S11_QMOD32_D${DEPTH}" \
-    "S11-A: Cross-sub Q modulation r=32" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-qmod 32
-
+#run_experiment "S11_QMOD32_D${DEPTH}" \
+#    "S11-A: Cross-sub Q modulation r=32" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-qmod 32
+#
 # S11-B: Feature cycling
-run_experiment "S11_FCYCLE_D${DEPTH}" \
-    "S11-B: Sub-feature cycling" \
-    $COMBO_A_BASE \
-    --mst-feature-cycle 1
-
+#run_experiment "S11_FCYCLE_D${DEPTH}" \
+#    "S11-B: Sub-feature cycling" \
+#    $COMBO_A_BASE \
+#    --mst-feature-cycle 1
+#
 # S11-C: Mean transition (parameter-free)
-run_experiment "S11_MEAN_D${DEPTH}" \
-    "S11-C: Mean-add transition" \
-    $COMBO_A_BASE \
-    --mst-mean-transition 1
-
+#run_experiment "S11_MEAN_D${DEPTH}" \
+#    "S11-C: Mean-add transition" \
+#    $COMBO_A_BASE \
+#    --mst-mean-transition 1
+#
 # S11-D: Global residual stream (D-dim gradient highway)
-run_experiment "S11_GLOBAL_D${DEPTH}" \
-    "S11-D: Global D-dim residual stream" \
-    $COMBO_A_BASE \
-    --mst-global-residual 1
-
+#run_experiment "S11_GLOBAL_D${DEPTH}" \
+#    "S11-D: Global D-dim residual stream" \
+#    $COMBO_A_BASE \
+#    --mst-global-residual 1
+#
 # S11-AD: QMod + Global residual (best of both worlds?)
-run_experiment "S11_QMOD_GLOBAL_D${DEPTH}" \
-    "S11-AD: QMod(16) + Global residual" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-qmod 16 \
-    --mst-global-residual 1
-
+#run_experiment "S11_QMOD_GLOBAL_D${DEPTH}" \
+#    "S11-AD: QMod(16) + Global residual" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-qmod 16 \
+#    --mst-global-residual 1
+#
 # S11-AB: QMod + Feature cycling
-run_experiment "S11_QMOD_FCYCLE_D${DEPTH}" \
-    "S11-AB: QMod(16) + Feature cycling" \
-    $COMBO_A_BASE \
-    --mst-cross-sub-qmod 16 \
-    --mst-feature-cycle 1
-
+#run_experiment "S11_QMOD_FCYCLE_D${DEPTH}" \
+#    "S11-AB: QMod(16) + Feature cycling" \
+#    $COMBO_A_BASE \
+#    --mst-cross-sub-qmod 16 \
+#    --mst-feature-cycle 1
+#
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 11 sweep complete"
 
