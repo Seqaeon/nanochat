@@ -339,6 +339,10 @@ def run_training_sweep(args):
         "--mst-transition-nonlinear", str(getattr(args, 'mst_transition_nonlinear', 0)),
         "--mst-transition-gated", str(getattr(args, 'mst_transition_gated', 0)),
         "--mst-transition-mlp", str(getattr(args, 'mst_transition_mlp', 0)),
+        # MST Stage 9: Cross-sub expressivity
+        "--mst-cross-sub-gate", str(getattr(args, 'mst_cross_sub_gate', 0)),
+        "--mst-hyper-connect", str(getattr(args, 'mst_hyper_connect', 0)),
+        "--mst-cross-kv-inject", str(getattr(args, 'mst_cross_kv_inject', 0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -946,6 +950,10 @@ if __name__ == "__main__":
     parser.add_argument("--mst-transition-nonlinear", type=int, default=0, choices=[0, 1])
     parser.add_argument("--mst-transition-gated", type=int, default=0, choices=[0, 1])
     parser.add_argument("--mst-transition-mlp", type=int, default=0, choices=[0, 1])
+    # MST Stage 9: Cross-sub expressivity
+    parser.add_argument("--mst-cross-sub-gate", type=int, default=0)
+    parser.add_argument("--mst-hyper-connect", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--mst-cross-kv-inject", type=int, default=0, choices=[0, 1])
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

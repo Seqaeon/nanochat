@@ -420,11 +420,75 @@ run_experiment "S8_MLP_D${DEPTH}" \
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 8 sweep complete"
 
+# ============================================================================
+# Stage 9: Cross-sub expressivity (builds on COMBO_A baseline)
+# ============================================================================
+# Root cause: within each sub, features interact nonlinearly (attn + FFN).
+# But ACROSS subs, features only interact linearly (transition).
+# Stage 9 addresses this by enabling nonlinear cross-sub interaction at
+# different points in the layer: FFN gating (A), residual lookback (B),
+# and attention-level mixing (C).
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Stage 9: Cross-Sub Expressivity — Depth ${DEPTH}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# S9-A: Cross-sub FFN gating (rank=32)
+# Gate each sub's FFN hidden state with a signal from ALL subs.
+# Multiplicative interaction: cross-sub info flows THROUGH relu² nonlinearity.
+# Cost: ~82K params/layer (rank-32 bottleneck: D→32→N*4d)
+run_experiment "S9_CSGATE_R32_D${DEPTH}" \
+    "S9-A: Cross-sub FFN gate rank=32" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-gate 32
+
+# S9-A2: Cross-sub FFN gating (rank=64) — more expressive gate
+run_experiment "S9_CSGATE_R64_D${DEPTH}" \
+    "S9-A: Cross-sub FFN gate rank=64" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-gate 64
+
+# S9-B: Hyper-connected sub residuals
+# Each transition sees previous layer's pre-transition state via learned EMA.
+# Near-zero extra params. Addresses depth-compounding bottleneck.
+run_experiment "S9_HYPER_D${DEPTH}" \
+    "S9-B: Hyper-connected sub residuals" \
+    $COMBO_A_BASE \
+    --mst-hyper-connect 1
+
+# S9-C: Cross-sub KV injection (per-token N×N attention across subs)
+# Softmax-based nonlinear cross-sub mixing at the attention level.
+# Cost: ~41K params/layer (per-sub Q, shared K/V, per-sub proj)
+run_experiment "S9_CROSSKV_D${DEPTH}" \
+    "S9-C: Cross-sub KV injection attention" \
+    $COMBO_A_BASE \
+    --mst-cross-kv-inject 1
+
+# S9-AB: Combo: cross-sub gate + hyper-connect
+run_experiment "S9_GATE_HYPER_D${DEPTH}" \
+    "S9-AB: Cross-sub gate (r=32) + hyper-connect" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-gate 32 \
+    --mst-hyper-connect 1
+
+# S9-ABC: Full combo: gate + hyper + cross-KV
+run_experiment "S9_FULL_D${DEPTH}" \
+    "S9-ABC: All cross-sub expressivity" \
+    $COMBO_A_BASE \
+    --mst-cross-sub-gate 32 \
+    --mst-hyper-connect 1 \
+    --mst-cross-kv-inject 1
+
+echo ""
+echo "  ✓ Depth ${DEPTH} Stage 9 sweep complete"
+
 echo "═══════════════════════════════════════════════════════════════"
-echo "  P07+S8 MST Scaling Sweep Complete"
+echo "  P07+S8+S9 MST Scaling Sweep Complete"
 echo "  Depth:    ${DEPTH}"
 echo "  P07: 13 experiments (baseline through COMBO)"
 echo "  S8:  5 experiments (gated, mlp, gated+nl, ffa_hard, ffa_soft)"
+echo "  S9:  6 experiments (csgate_r32, csgate_r64, hyper, crosskv, gate+hyper, full)"
 echo "═══════════════════════════════════════════════════════════════"
 
 done

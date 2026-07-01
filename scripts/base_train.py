@@ -273,6 +273,13 @@ parser.add_argument("--mst-transition-gated", type=int, default=0, choices=[0, 1
                     help="MST: input-dependent routing via concat→gate (replaces mean-based)")
 parser.add_argument("--mst-transition-mlp", type=int, default=0, choices=[0, 1],
                     help="MST: replace AggDist with concat→MLP→split (nonlinear cross-sub mixing)")
+# MST Stage 9: Cross-sub expressivity
+parser.add_argument("--mst-cross-sub-gate", type=int, default=0,
+                    help="MST: cross-sub FFN gating rank (0=off, e.g. 32)")
+parser.add_argument("--mst-hyper-connect", type=int, default=0, choices=[0, 1],
+                    help="MST: hyper-connected sub residuals via EMA lookback (0=off, 1=on)")
+parser.add_argument("--mst-cross-kv-inject", type=int, default=0, choices=[0, 1],
+                    help="MST: cross-sub KV injection attention (0=off, 1=on)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -887,6 +894,10 @@ def build_model_meta(depth):
         mst_transition_nonlinear=getattr(args, 'mst_transition_nonlinear', 0),
         mst_transition_gated=getattr(args, 'mst_transition_gated', 0),
         mst_transition_mlp=getattr(args, 'mst_transition_mlp', 0),
+        # Stage 9: Cross-sub expressivity
+        mst_cross_sub_gate=getattr(args, 'mst_cross_sub_gate', 0),
+        mst_hyper_connect=getattr(args, 'mst_hyper_connect', 0),
+        mst_cross_kv_inject=getattr(args, 'mst_cross_kv_inject', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1483,6 +1494,10 @@ if model_config.use_mst and master_process:
                 'transition_nonlinear': c.mst_transition_nonlinear,
                 'transition_gated':     c.mst_transition_gated,
                 'transition_mlp':       c.mst_transition_mlp,
+                # Stage 9: Cross-sub expressivity
+                'cross_sub_gate':       c.mst_cross_sub_gate,
+                'hyper_connect':        c.mst_hyper_connect,
+                'cross_kv_inject':      c.mst_cross_kv_inject,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

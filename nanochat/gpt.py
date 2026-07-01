@@ -364,6 +364,10 @@ class GPTConfig:
     mst_transition_nonlinear: int = 0               # add SiLU activation at AggDist bottleneck (0=off, 1=on)
     mst_transition_gated: int = 0                   # input-dependent routing via concat→gate (0=off, 1=on)
     mst_transition_mlp: int = 0                     # replace AggDist with concat→MLP→split (0=off, 1=on)
+    # Stage 9: Cross-sub expressivity
+    mst_cross_sub_gate: int = 0                     # A: cross-sub FFN gating rank (0=off, e.g. 32)
+    mst_hyper_connect: int = 0                      # B: hyper-connected sub residuals (0=off, 1=EMA lookback)
+    mst_cross_kv_inject: int = 0                    # C: cross-sub KV injection attention (0=off, 1=on)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -532,6 +536,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_shared_kv_attn", "mst_contrastive_diversity_weight",
     # MST Stage 8: Transition expressivity
     "mst_transition_nonlinear", "mst_transition_gated", "mst_transition_mlp",
+    # MST Stage 9: Cross-sub expressivity
+    "mst_cross_sub_gate", "mst_hyper_connect", "mst_cross_kv_inject",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

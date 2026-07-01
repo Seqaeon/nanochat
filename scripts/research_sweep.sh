@@ -327,7 +327,8 @@ while [[ $# -gt 0 ]]; do
         --mst-grad-equalize|--mst-block-diagonal-muon|--mst-transition-width-mult|\
         --mst-sub-lr-scale|--mst-shared-expert|--mst-router-entropy-weight|\
         --mst-shared-kv-attn|--mst-contrastive-diversity-weight|\
-        --mst-transition-nonlinear|--mst-transition-gated|--mst-transition-mlp)
+        --mst-transition-nonlinear|--mst-transition-gated|--mst-transition-mlp|\
+        --mst-cross-sub-gate|--mst-hyper-connect|--mst-cross-kv-inject)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

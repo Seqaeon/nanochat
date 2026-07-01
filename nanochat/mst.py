@@ -899,8 +899,36 @@ class BatchedMSTLayer(nn.Module):
             self.ma_proj_w = nn.Parameter(torch.empty(d, d))
         self.aux_weight = config.mst_routing_aux_weight
 
+        # ── Stage 9: Cross-sub expressivity ──
+        # A: Cross-sub FFN gating — gate each sub's FFN hidden state with cross-sub signal
+        self._cross_sub_gate_rank = config.mst_cross_sub_gate
+        if self._cross_sub_gate_rank > 0:
+            r = self._cross_sub_gate_rank
+            D = N * d
+            inner = self._inner  # 4*d
+            # Low-rank bottleneck: concat(D) → down(r) → SiLU → up(N*inner) → sigmoid
+            self.csgate_down_w = nn.Parameter(torch.empty(r, D))           # (r, D) — 2D
+            self.csgate_up_w = nn.Parameter(torch.empty(N * inner, r))     # (N*4d, r) — 2D
+
+        # B: Hyper-connected sub residuals — EMA of past pre-transition states
+        self._hyper_connect = bool(config.mst_hyper_connect)
+        if self._hyper_connect:
+            # Learnable mixing weight (initialized to 0 → starts as identity)
+            self.hyper_mix = nn.Parameter(torch.zeros(1))
+
+        # C: Cross-sub KV injection — per-token N×N attention across subs
+        self._cross_kv_inject = bool(config.mst_cross_kv_inject)
+        if self._cross_kv_inject:
+            cross_hd = max(d // 4, 32)  # cross-sub attention head dim
+            self._cross_hd = cross_hd
+            # Per-sub Q, shared K/V, per-sub output proj
+            self.cross_q_w = nn.Parameter(torch.empty(N * cross_hd, d))    # (N*hd, d)
+            self.cross_k_w = nn.Parameter(torch.empty(cross_hd, d))        # (hd, d) shared
+            self.cross_v_w = nn.Parameter(torch.empty(cross_hd, d))        # (hd, d) shared
+            self.cross_proj_w = nn.Parameter(torch.empty(N * d, cross_hd)) # (N*d, hd)
+
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
-                kv_cache=None, total_sub_layers=1):
+                kv_cache=None, total_sub_layers=1, prev_pre_trans=None):
         """
         Args:
             sub_states: (B, T, N, d) batched sub-transformer states
@@ -909,8 +937,12 @@ class BatchedMSTLayer(nn.Module):
             window_sizes: list of N (left, right) tuples for per-sub sliding window
             kv_cache: optional KVCache for inference
             total_sub_layers: n_layer * N for cache slot indexing
+            prev_pre_trans: optional (B, T, N, d) pre-transition states from previous layer (hyper-connect)
 
-        Returns: (B, T, N, d), aux_loss scalar tensor
+        Returns: (sub_states, aux_loss, pre_trans_x)
+            sub_states: (B, T, N, d)
+            aux_loss: scalar tensor
+            pre_trans_x: (B, T, N, d) or None — for hyper-connect threading
         """
         B, T, N, d = sub_states.shape
         cos, sin = cos_sin
@@ -998,9 +1030,43 @@ class BatchedMSTLayer(nn.Module):
         # Attention residual
         sub_states = sub_states + attn_out
 
+        # ==================== CROSS-SUB KV INJECTION (Proposal C) ====================
+        if self._cross_kv_inject:
+            # Per-token N×N attention across subs — softmax provides nonlinear cross-sub interaction
+            x_cs = norm(sub_states)  # (B, T, N, d)
+            cross_q_w = self.cross_q_w.view(N, self._cross_hd, d)
+            cross_proj_w_3d = self.cross_proj_w.view(N, d, self._cross_hd)
+            # Per-sub Q
+            q_cs = _batched_linear(x_cs, cross_q_w)  # (B, T, N, hd)
+            # Shared K/V applied to all subs
+            x_flat = x_cs.reshape(B * T * N, d)
+            k_cs = F.linear(x_flat, self.cross_k_w.to(dtype=x_flat.dtype))  # (B*T*N, hd)
+            v_cs = F.linear(x_flat, self.cross_v_w.to(dtype=x_flat.dtype))  # (B*T*N, hd)
+            k_cs = k_cs.view(B, T, N, self._cross_hd)
+            v_cs = v_cs.view(B, T, N, self._cross_hd)
+            # N×N attention: each sub queries all subs at each token position
+            attn_cs = torch.einsum('btnh,btmh->btnm', q_cs, k_cs) * (self._cross_hd ** -0.5)
+            attn_cs = F.softmax(attn_cs, dim=-1)  # (B, T, N, N)
+            cross_out = torch.einsum('btnm,btmh->btnh', attn_cs, v_cs)  # (B, T, N, hd)
+            cross_out = _batched_linear(cross_out, cross_proj_w_3d)  # (B, T, N, d)
+            sub_states = sub_states + cross_out
+
         # ==================== FFN ====================
         x = norm(sub_states)
+
+        # Proposal A: Cross-sub FFN gating — gate FFN hidden state with cross-sub signal
+        if self._cross_sub_gate_rank > 0:
+            concat_x = x.reshape(B, T, N * d)  # (B, T, D)
+            gate_h = F.silu(F.linear(concat_x, self.csgate_down_w.to(dtype=concat_x.dtype)))  # (B, T, r)
+            gate = torch.sigmoid(F.linear(gate_h, self.csgate_up_w.to(dtype=gate_h.dtype)))    # (B, T, N*4d)
+            gate = gate.view(B, T, N, self._inner)  # (B, T, N, 4d)
+
         h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
+
+        # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
+        if self._cross_sub_gate_rank > 0:
+            h = h * gate
+
         h = F.relu(h).square()                      # relu²
         ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         sub_states = sub_states + ffn_out
@@ -1008,7 +1074,13 @@ class BatchedMSTLayer(nn.Module):
         # ==================== TRANSITION ====================
         # Pre-norm for transition
         x = norm(sub_states)  # (B, T, N, d)
+        pre_trans_x = x if self._hyper_connect else None  # save for next layer
         aux_loss = sub_states.new_zeros(())
+
+        # Proposal B: Hyper-connected sub residuals — blend in previous layer's pre-transition
+        if self._hyper_connect and prev_pre_trans is not None:
+            alpha = torch.sigmoid(self.hyper_mix)  # scalar in [0, 1]
+            x = x + alpha * prev_pre_trans
 
         # 3B: Contrastive diversity loss on FFN activations
         if self.training and self._contrastive_diversity_weight > 0.0:
@@ -1039,6 +1111,8 @@ class BatchedMSTLayer(nn.Module):
                 out = F.linear(h, self.trans_mlp_proj_w.to(dtype=h.dtype))  # (B, T, D)
                 distributed = out.view(B, T, N, d)  # split back to (B, T, N, d)
                 sub_states = sub_states + distributed
+                # No router — report max entropy (uniform)
+                self._last_route_entropy = math.log(N)
             else:
                 # ---- Standard AggDist (with optional nonlinear/gated enhancements) ----
                 if self._transition_gated:
@@ -1158,7 +1232,7 @@ class BatchedMSTLayer(nn.Module):
             # Micro-attention uses residual
             sub_states = sub_states + out
 
-        return sub_states, aux_loss
+        return sub_states, aux_loss, pre_trans_x
 
     @torch.no_grad()
     def init_weights(self):
@@ -1228,6 +1302,21 @@ class BatchedMSTLayer(nn.Module):
             nn.init.uniform_(self.ma_v_w, -sub_s, sub_s)
             nn.init.zeros_(self.ma_proj_w)
 
+        # ── Stage 9: Cross-sub expressivity init ──
+        # A: Cross-sub FFN gate — zero init up-projection (residual-friendly: gate starts at 0.5)
+        if self._cross_sub_gate_rank > 0:
+            nn.init.uniform_(self.csgate_down_w, -sub_s, sub_s)
+            nn.init.zeros_(self.csgate_up_w)  # sigmoid(0)=0.5 → starts as pass-through
+
+        # B: Hyper-connect — already initialized to 0 in __init__ (sigmoid(0)=0.5)
+
+        # C: Cross-sub KV inject — uniform Q/K/V, zero proj (residual-friendly)
+        if self._cross_kv_inject:
+            cs_s = 1.0 / (self._cross_hd ** 0.5)
+            nn.init.uniform_(self.cross_q_w, -cs_s, cs_s)
+            nn.init.uniform_(self.cross_k_w, -cs_s, cs_s)
+            nn.init.uniform_(self.cross_v_w, -cs_s, cs_s)
+            nn.init.zeros_(self.cross_proj_w)
 
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
@@ -1694,6 +1783,7 @@ class MST(nn.Module):
             # Process through L layers
             total_sub_layers = self.config.n_layer * N
             total_aux_loss = x.new_zeros(())
+            prev_pre_trans = None  # for hyper-connect threading
 
             for i, layer in enumerate(self.layers):
                 # Per-layer residual scaling + x0 blend
@@ -1712,11 +1802,15 @@ class MST(nn.Module):
                     # Use the layer's window size for all subs
                     sub_ws = [self.window_sizes[i]] * N
 
-                sub_states, aux_loss = layer(sub_states, cos_sin, ve=ve,
-                                              window_sizes=sub_ws,
-                                              kv_cache=kv_cache,
-                                              total_sub_layers=total_sub_layers)
+                sub_states, aux_loss, pre_trans_x = layer(
+                    sub_states, cos_sin, ve=ve,
+                    window_sizes=sub_ws,
+                    kv_cache=kv_cache,
+                    total_sub_layers=total_sub_layers,
+                    prev_pre_trans=prev_pre_trans)
                 total_aux_loss = total_aux_loss + aux_loss
+                if pre_trans_x is not None:
+                    prev_pre_trans = pre_trans_x
 
                 # Diagnostics (detached, no graph impact)
                 if self._diag_enabled:
