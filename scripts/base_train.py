@@ -266,6 +266,13 @@ parser.add_argument("--mst-shared-kv-attn", type=int, default=0, choices=[0, 1],
                     help="MST: share K,V projections across sub-transformers (3A)")
 parser.add_argument("--mst-contrastive-diversity-weight", type=float, default=0.0,
                     help="MST: weight for contrastive representation diversity loss (3B)")
+# MST Stage 8: Transition expressivity
+parser.add_argument("--mst-transition-nonlinear", type=int, default=0, choices=[0, 1],
+                    help="MST: add SiLU activation at AggDist bottleneck")
+parser.add_argument("--mst-transition-gated", type=int, default=0, choices=[0, 1],
+                    help="MST: input-dependent routing via concat→gate (replaces mean-based)")
+parser.add_argument("--mst-transition-mlp", type=int, default=0, choices=[0, 1],
+                    help="MST: replace AggDist with concat→MLP→split (nonlinear cross-sub mixing)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")

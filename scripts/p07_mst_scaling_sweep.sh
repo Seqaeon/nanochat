@@ -260,16 +260,16 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 #    --warmup-ratio 0.03
 
 # S7-2A: DeepSeek-style shared expert (sub 0 always fully weighted)
-run_experiment "S7_2A_SHARED_EXPERT_D${DEPTH}" \
-    "2A: Shared expert (sub 0 always-on, subs 1-3 routed)" \
-    $AGGDIST_BASE \
-    --mst-shared-expert 1
-
+#run_experiment "S7_2A_SHARED_EXPERT_D${DEPTH}" \
+#    "2A: Shared expert (sub 0 always-on, subs 1-3 routed)" \
+#    $AGGDIST_BASE \
+#    --mst-shared-expert 1
+#
 # S7-2C: Router entropy regularization
-run_experiment "S7_2C_ROUTE_ENTROPY_D${DEPTH}" \
-    "2C: Router entropy regularization (weight=0.1)" \
-    $AGGDIST_BASE \
-    --mst-router-entropy-weight 0.1
+#run_experiment "S7_2C_ROUTE_ENTROPY_D${DEPTH}" \
+#    "2C: Router entropy regularization (weight=0.1)" \
+#    $AGGDIST_BASE \
+#    --mst-router-entropy-weight 0.1
 
 # ============================================================================
 # P3: Speculative
@@ -279,18 +279,18 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  P3: Speculative — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
+#
 # S7-3A: Shared K/V attention (per-sub Q, shared K/V across subs)
-run_experiment "S7_3A_SHARED_KV_D${DEPTH}" \
-    "3A: Shared K/V attention (per-sub Q, shared K/V)" \
-    $AGGDIST_BASE \
-    --mst-shared-kv-attn 1
-
+#run_experiment "S7_3A_SHARED_KV_D${DEPTH}" \
+#    "3A: Shared K/V attention (per-sub Q, shared K/V)" \
+#    $AGGDIST_BASE \
+#    --mst-shared-kv-attn 1
+#
 # S7-3B: Contrastive diversity loss on sub representations
-run_experiment "S7_3B_CONTRASTIVE_D${DEPTH}" \
-    "3B: Contrastive diversity loss (weight=0.01)" \
-    $AGGDIST_BASE \
-    --mst-contrastive-diversity-weight 0.01
+#run_experiment "S7_3B_CONTRASTIVE_D${DEPTH}" \
+#    "3B: Contrastive diversity loss (weight=0.01)" \
+#    $AGGDIST_BASE \
+#    --mst-contrastive-diversity-weight 0.01
 
 # ============================================================================
 # COMBO: Best interventions combined
@@ -311,13 +311,13 @@ run_experiment "S7_COMBO_A_D${DEPTH}" \
     --mst-sub-lr-scale 2.0
 
 # S7-COMBO-B: P0 + longer warmup + entropy reg
-run_experiment "S7_COMBO_B_D${DEPTH}" \
-    "COMBO-B: grad_eq + block_diag + warmup 3% + entropy reg" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --warmup-ratio 0.03 \
-    --mst-router-entropy-weight 0.1
+#run_experiment "S7_COMBO_B_D${DEPTH}" \
+#    "COMBO-B: grad_eq + block_diag + warmup 3% + entropy reg" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --warmup-ratio 0.03 \
+#    --mst-router-entropy-weight 0.1
 
 # S7-COMBO-FULL: All P0+P1+P2 interventions combined
 run_experiment "S7_COMBO_FULL_D${DEPTH}" \
@@ -333,15 +333,98 @@ run_experiment "S7_COMBO_FULL_D${DEPTH}" \
 echo ""
 echo "  ✓ Depth ${DEPTH} P07 sweep complete"
 
+# ============================================================================
+# Stage 8: Transition expressivity (builds on COMBO_A baseline)
+# ============================================================================
+# COMBO_A (1.051 bpp) is the best so far. It already includes:
+#   - grad_equalize + block_diagonal_muon (optimizer fixes)
+#   - transition_width_mult=4.0 (D-width bottleneck with relu²)
+#   - sub_lr_scale=2.0 (√N LR correction)
+#
+# Note: wide_trans already has relu² nonlinearity, so plain --mst-transition-nonlinear
+# is redundant here. Stage 8 tests whether different transition ARCHITECTURES improve
+# on the AggDist+wide_trans combo.
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Stage 8: Transition Expressivity — Depth ${DEPTH}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# COMBO_A flags as base (the current best)
+COMBO_A_BASE="$AGGDIST_BASE \
+  --mst-grad-equalize 1 \
+  --mst-block-diagonal-muon 1 \
+  --mst-transition-width-mult ${N_SUBS}.0 \
+  --mst-sub-lr-scale 2.0 \
+  --mst-multi-scale-windows 1"
+
+# S8-1: Gated transition — input-dependent routing via concat→gate
+# Replaces mean-based router with concat(all subs)→Linear(D,N).
+# Each token's routing depends on the FULL cross-sub representation.
+# Extra params: only ~12K (N × N*d = 4×512 per layer)
+run_experiment "S8_GATED_D${DEPTH}" \
+    "S8: Gated routing (concat→gate, input-dependent)" \
+    $COMBO_A_BASE \
+    --mst-transition-gated 1
+
+# S8-2: MLP transition — concat→Linear→SiLU→Linear→split
+# Replaces entire AggDist with a nonlinear MLP over all subs.
+# Strictly more expressive than AggDist: can compose nonlinear functions of sub outputs.
+# Extra params: ~3.7M (two D×D = 512×512 matrices per layer)
+# Note: replaces wide_trans bottleneck — uses its own D→D→D path.
+run_experiment "S8_MLP_D${DEPTH}" \
+    "S8: MLP transition (concat→SiLU MLP→split)" \
+    $AGGDIST_BASE \
+    --mst-grad-equalize 1 \
+    --mst-block-diagonal-muon 1 \
+    --mst-sub-lr-scale 2.0 \
+    --mst-multi-scale-windows 1 \
+    --mst-transition-mlp 1
+
+# S8-3: Gated + nonlinear — gated routing + SiLU at bottleneck
+# Tests whether adding SiLU ON TOP of the wide_trans relu² helps.
+# Two nonlinearities in the transition: relu² in the expanded path + SiLU after.
+run_experiment "S8_GATED_NL_D${DEPTH}" \
+    "S8: Gated + nonlinear (concat→gate + SiLU)" \
+    $COMBO_A_BASE \
+    --mst-transition-gated 1 \
+    --mst-transition-nonlinear 1
+
+# S8-4: FFA hard routing — each sub routes to exactly 1 target per token
+# Uses STE for gradient flow. Tests whether explicit sub→sub wiring helps vs AggDist.
+run_experiment "S8_FFA_HARD_D${DEPTH}" \
+    "S8: FFA hard routing (STE, topk=1)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 1 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-multi-scale-windows 1 \
+    --mst-grad-equalize 1 \
+    --mst-block-diagonal-muon 1 \
+    --mst-sub-lr-scale 2.0
+
+# S8-5: FFA soft routing (control — compare soft vs hard FFA)
+run_experiment "S8_FFA_SOFT_D${DEPTH}" \
+    "S8: FFA soft routing (topk=0, control for S8-4)" \
+    --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode free_for_all \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-multi-scale-windows 1 \
+    --mst-grad-equalize 1 \
+    --mst-block-diagonal-muon 1 \
+    --mst-sub-lr-scale 2.0
+
+echo ""
+echo "  ✓ Depth ${DEPTH} Stage 8 sweep complete"
+
 echo "═══════════════════════════════════════════════════════════════"
-echo "  P07 MST Scaling Improvements Sweep Complete"
+echo "  P07+S8 MST Scaling Sweep Complete"
 echo "  Depth:    ${DEPTH}"
-echo "  Experiments: 13 total"
-echo "    P0: baseline, grad_eq, block_diag, combined"
-echo "    P1: wide_trans, sub_lr_scale"
-echo "    P2: long_warmup, shared_expert, router_entropy"
-echo "    P3: shared_kv, contrastive_div"
-echo "    COMBO: A (P0+P1), B (P0+P2), FULL (all)"
+echo "  P07: 13 experiments (baseline through COMBO)"
+echo "  S8:  5 experiments (gated, mlp, gated+nl, ffa_hard, ffa_soft)"
 echo "═══════════════════════════════════════════════════════════════"
 
 done

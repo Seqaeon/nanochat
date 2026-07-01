@@ -853,19 +853,35 @@ class BatchedMSTLayer(nn.Module):
 
         # --- Transition weights (mode-dependent) ---
         self._transition_mode = config.mst_transition_mode
+        # Stage 8: Transition expressivity flags
+        self._transition_nonlinear = bool(config.mst_transition_nonlinear)
+        self._transition_gated = bool(config.mst_transition_gated)
+        self._transition_mlp = bool(config.mst_transition_mlp)
         # 1C: Wider transition bottleneck — aggregate to tw_dim instead of d
         tw_mult = config.mst_transition_width_mult
         tw_dim = int(d * tw_mult)  # e.g. tw_mult=4.0 for N=4 gives D-width
         self._tw_dim = tw_dim
         if config.mst_transition_mode == 'aggregate_distribute':
-            # Router: project mean sub repr to N logits
-            self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — Linear(d, N), already 2D
-            # Aggregate: d → tw_dim (identity if tw_mult=1)
-            if tw_mult != 1.0:
-                self.agg_up_w = nn.Parameter(torch.empty(tw_dim, d))
-                self.agg_down_w = nn.Parameter(torch.empty(d, tw_dim))
-            # Distribute: stored as 2D (N*d, d) for Muon compat
-            self.distribute_w = nn.Parameter(torch.empty(N * d, d))
+            if self._transition_mlp:
+                # MLP transition: concat(N×d=D) → Linear(D,D) → SiLU → Linear(D,D) → split(N×d)
+                # Replaces router + aggregate + distribute with a single nonlinear MLP
+                D = N * d
+                self.trans_mlp_fc_w = nn.Parameter(torch.empty(D, D))   # (D, D) — 2D for Muon
+                self.trans_mlp_proj_w = nn.Parameter(torch.empty(D, D)) # (D, D) — 2D for Muon
+            else:
+                # Standard AggDist (with optional nonlinear/gated enhancements)
+                if self._transition_gated:
+                    # Gated: concat(N×d) → Linear(N*d, N) — input-dependent routing
+                    self.gate_w = nn.Parameter(torch.empty(N, N * d))  # (N, D) — 2D for Muon
+                else:
+                    # Standard: mean(subs) → Linear(d, N)
+                    self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — already 2D
+                # Aggregate: d → tw_dim (identity if tw_mult=1)
+                if tw_mult != 1.0:
+                    self.agg_up_w = nn.Parameter(torch.empty(tw_dim, d))
+                    self.agg_down_w = nn.Parameter(torch.empty(d, tw_dim))
+                # Distribute: stored as 2D (N*d, d) for Muon compat
+                self.distribute_w = nn.Parameter(torch.empty(N * d, d))
         elif config.mst_transition_mode == 'free_for_all':
             # Per-sub routers: each sender sub routes to N target subs
             # Weight shape: (N_sender, N_target, d) → stored as 2D (N*N, d) for Muon
@@ -909,7 +925,7 @@ class BatchedMSTLayer(nn.Module):
         c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
-        distribute_w = self.distribute_w.view(N, d, d) if self._transition_mode == 'aggregate_distribute' else None
+        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         # ==================== ATTENTION ====================
@@ -1012,55 +1028,71 @@ class BatchedMSTLayer(nn.Module):
             aux_loss = aux_loss + self._contrastive_diversity_weight * sim_g.masked_select(mask_g).mean()
 
         if self._transition_mode == 'aggregate_distribute':
-            # Router: mean across subs → logits
-            router_input = x.mean(dim=2)  # (B, T, d)
-            # router_w is (N, d), used as weight for Linear(d, N)
-            logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
-
-            # 2A: Shared expert — sub 0 always gets full weight, remaining subs routed
-            if self._shared_expert:
-                # Route only subs 1..N-1; sub 0 weight = 1/N (fixed)
-                routed_logits = logits[..., 1:]  # (B, T, N-1)
-                routed_weights = F.softmax(routed_logits, dim=-1)  # (B, T, N-1)
-                shared_w = torch.full((B, T, 1), 1.0 / N, device=logits.device, dtype=routed_weights.dtype)
-                weights = torch.cat([shared_w, routed_weights * (1.0 - 1.0 / N)], dim=-1)  # (B, T, N)
+            if self._transition_mlp:
+                # ---- MLP transition: concat → Linear → SiLU → Linear → split ----
+                # Replaces router+aggregate+distribute with a nonlinear MLP over all subs
+                concat_x = x.reshape(B, T, N * d)  # (B, T, D)
+                h = F.linear(concat_x, self.trans_mlp_fc_w.to(dtype=concat_x.dtype))  # (B, T, D)
+                h = F.silu(h)
+                out = F.linear(h, self.trans_mlp_proj_w.to(dtype=h.dtype))  # (B, T, D)
+                distributed = out.view(B, T, N, d)  # split back to (B, T, N, d)
+                sub_states = sub_states + distributed
             else:
-                weights = F.softmax(logits, dim=-1)  # (B, T, N)
+                # ---- Standard AggDist (with optional nonlinear/gated enhancements) ----
+                if self._transition_gated:
+                    # Gated routing: concat(all subs) → Linear(D, N) — input-dependent
+                    concat_x = x.reshape(B, T, N * d)  # (B, T, D)
+                    logits = F.linear(concat_x, self.gate_w.to(dtype=concat_x.dtype))  # (B, T, N)
+                else:
+                    # Standard routing: mean(subs) → Linear(d, N)
+                    router_input = x.mean(dim=2)  # (B, T, d)
+                    logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
 
-            # Track router entropy for diagnostics
-            with torch.no_grad():
-                probs = F.softmax(logits, dim=-1)
-                ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
-                self._last_route_entropy = ent
+                # 2A: Shared expert — sub 0 always gets full weight, remaining subs routed
+                if self._shared_expert:
+                    routed_logits = logits[..., 1:]  # (B, T, N-1)
+                    routed_weights = F.softmax(routed_logits, dim=-1)  # (B, T, N-1)
+                    shared_w = torch.full((B, T, 1), 1.0 / N, device=logits.device, dtype=routed_weights.dtype)
+                    weights = torch.cat([shared_w, routed_weights * (1.0 - 1.0 / N)], dim=-1)  # (B, T, N)
+                else:
+                    weights = F.softmax(logits, dim=-1)  # (B, T, N)
 
-            # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
-            aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
+                # Track router entropy for diagnostics
+                with torch.no_grad():
+                    probs = F.softmax(logits, dim=-1)
+                    ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
+                    self._last_route_entropy = ent
 
-            # 1C: Wider transition bottleneck
-            if hasattr(self, 'agg_up_w'):
-                aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))  # (B, T, tw_dim)
-                aggregated = F.relu(aggregated).square()  # nonlinearity in expanded space
-                aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))  # (B, T, d)
+                # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
+                aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
 
-            # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
-            # distribute_w viewed as: (N, d, d)
-            # einsum: (B,T,d) × (N,d_out,d_in) → (B,T,N,d_out)
-            dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
-            distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
+                # 1C: Wider transition bottleneck
+                if hasattr(self, 'agg_up_w'):
+                    aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))  # (B, T, tw_dim)
+                    aggregated = F.relu(aggregated).square()  # nonlinearity in expanded space
+                    aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))  # (B, T, d)
 
-            # Transition residual (aggregate_distribute uses residual)
-            sub_states = sub_states + distributed
+                # Stage 8: Nonlinear activation at bottleneck
+                if self._transition_nonlinear:
+                    aggregated = F.silu(aggregated)
 
-            # Aux loss: load balance (soft_weighted)
-            if self.training:
-                probs_mean = weights.mean(dim=(0, 1))  # (N,)
-                aux_loss = aux_loss + self.aux_weight * N * (probs_mean * probs_mean).sum()
-                # 2C: Router entropy regularization — penalize low entropy
-                if self._router_entropy_weight > 0.0:
-                    import math
-                    target_entropy = math.log(N)
-                    current_entropy = -(probs_mean * (probs_mean + 1e-8).log()).sum()
-                    aux_loss = aux_loss + self._router_entropy_weight * (target_entropy - current_entropy) ** 2
+                # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
+                dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
+                distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
+
+                # Transition residual
+                sub_states = sub_states + distributed
+
+                # Aux loss: load balance (soft_weighted)
+                if self.training:
+                    probs_mean = weights.mean(dim=(0, 1))  # (N,)
+                    aux_loss = aux_loss + self.aux_weight * N * (probs_mean * probs_mean).sum()
+                    # 2C: Router entropy regularization — penalize low entropy
+                    if self._router_entropy_weight > 0.0:
+                        import math
+                        target_entropy = math.log(N)
+                        current_entropy = -(probs_mean * (probs_mean + 1e-8).log()).sum()
+                        aux_loss = aux_loss + self._router_entropy_weight * (target_entropy - current_entropy) ** 2
 
         elif self._transition_mode == 'free_for_all':
             # FFA: each sender sub independently routes to all target subs
@@ -1165,15 +1197,25 @@ class BatchedMSTLayer(nn.Module):
 
         # Transition-specific init
         if self._transition_mode == 'aggregate_distribute':
-            dist = self.distribute_w.view(N, d, d)
-            for j in range(N):
-                nn.init.uniform_(dist[j], -sub_s, sub_s)
-            # Router: zero init (soft at start)
-            nn.init.zeros_(self.router_w)
-            # 1C: Wider transition bottleneck weights
-            if hasattr(self, 'agg_up_w'):
-                nn.init.uniform_(self.agg_up_w, -sub_s, sub_s)
-                nn.init.zeros_(self.agg_down_w)  # zero init for residual-friendliness
+            if self._transition_mlp:
+                # MLP transition: uniform init fc, zero init proj (residual-friendly)
+                D = N * d
+                mlp_s = 1.0 / (D ** 0.5)
+                nn.init.uniform_(self.trans_mlp_fc_w, -mlp_s, mlp_s)
+                nn.init.zeros_(self.trans_mlp_proj_w)
+            else:
+                dist = self.distribute_w.view(N, d, d)
+                for j in range(N):
+                    nn.init.uniform_(dist[j], -sub_s, sub_s)
+                # Router/gate: zero init (soft/uniform at start)
+                if self._transition_gated:
+                    nn.init.zeros_(self.gate_w)
+                else:
+                    nn.init.zeros_(self.router_w)
+                # 1C: Wider transition bottleneck weights
+                if hasattr(self, 'agg_up_w'):
+                    nn.init.uniform_(self.agg_up_w, -sub_s, sub_s)
+                    nn.init.zeros_(self.agg_down_w)  # zero init for residual-friendliness
         elif self._transition_mode == 'free_for_all':
             # FFA routers: zero init so routing starts uniform
             nn.init.zeros_(self.ffa_router_w)

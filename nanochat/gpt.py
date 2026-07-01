@@ -360,6 +360,10 @@ class GPTConfig:
     mst_router_entropy_weight: float = 0.0      # 2C: router entropy regularization weight (0=off, e.g. 0.1)
     mst_shared_kv_attn: int = 0                 # 3A: share K,V projections in main attention across subs (0=off, 1=on)
     mst_contrastive_diversity_weight: float = 0.0  # 3B: contrastive diversity loss on FFN activations (0=off)
+    # Stage 8: Transition expressivity
+    mst_transition_nonlinear: int = 0               # add SiLU activation at AggDist bottleneck (0=off, 1=on)
+    mst_transition_gated: int = 0                   # input-dependent routing via concat→gate (0=off, 1=on)
+    mst_transition_mlp: int = 0                     # replace AggDist with concat→MLP→split (0=off, 1=on)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -526,6 +530,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_grad_equalize", "mst_block_diagonal_muon", "mst_transition_width_mult",
     "mst_sub_lr_scale", "mst_shared_expert", "mst_router_entropy_weight",
     "mst_shared_kv_attn", "mst_contrastive_diversity_weight",
+    # MST Stage 8: Transition expressivity
+    "mst_transition_nonlinear", "mst_transition_gated", "mst_transition_mlp",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",
