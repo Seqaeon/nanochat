@@ -368,6 +368,10 @@ class GPTConfig:
     mst_cross_sub_gate: int = 0                     # A: cross-sub FFN gating rank (0=off, e.g. 32)
     mst_hyper_connect: int = 0                      # B: hyper-connected sub residuals (0=off, 1=EMA lookback)
     mst_cross_kv_inject: int = 0                    # C: cross-sub KV injection attention (0=off, 1=on)
+    # Stage 10: Structural transition improvements
+    mst_slice_transition: int = 0                   # SliceMoE: per-slice routing (0=off, S=num slices e.g. 4)
+    mst_lookback_layers: int = 0                    # DenseFormer lookback depth (0=off, K=num past layers e.g. 2)
+    mst_bilinear_transition: int = 0                # Bilinear aggregate: 2nd-order cross-sub interaction (0=off, 1=on)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -538,6 +542,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_transition_nonlinear", "mst_transition_gated", "mst_transition_mlp",
     # MST Stage 9: Cross-sub expressivity
     "mst_cross_sub_gate", "mst_hyper_connect", "mst_cross_kv_inject",
+    # MST Stage 10: Structural transition improvements
+    "mst_slice_transition", "mst_lookback_layers", "mst_bilinear_transition",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

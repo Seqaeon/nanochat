@@ -280,6 +280,13 @@ parser.add_argument("--mst-hyper-connect", type=int, default=0, choices=[0, 1],
                     help="MST: hyper-connected sub residuals via EMA lookback (0=off, 1=on)")
 parser.add_argument("--mst-cross-kv-inject", type=int, default=0, choices=[0, 1],
                     help="MST: cross-sub KV injection attention (0=off, 1=on)")
+# MST Stage 10: Structural transition improvements
+parser.add_argument("--mst-slice-transition", type=int, default=0,
+                    help="MST: SliceMoE per-slice routing (0=off, S=num slices e.g. 4)")
+parser.add_argument("--mst-lookback-layers", type=int, default=0,
+                    help="MST: DenseFormer lookback depth (0=off, K=num past layers e.g. 2)")
+parser.add_argument("--mst-bilinear-transition", type=int, default=0, choices=[0, 1],
+                    help="MST: bilinear aggregate for 2nd-order cross-sub interaction (0=off, 1=on)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -898,6 +905,10 @@ def build_model_meta(depth):
         mst_cross_sub_gate=getattr(args, 'mst_cross_sub_gate', 0),
         mst_hyper_connect=getattr(args, 'mst_hyper_connect', 0),
         mst_cross_kv_inject=getattr(args, 'mst_cross_kv_inject', 0),
+        # Stage 10: Structural transition improvements
+        mst_slice_transition=getattr(args, 'mst_slice_transition', 0),
+        mst_lookback_layers=getattr(args, 'mst_lookback_layers', 0),
+        mst_bilinear_transition=getattr(args, 'mst_bilinear_transition', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1498,6 +1509,10 @@ if model_config.use_mst and master_process:
                 'cross_sub_gate':       c.mst_cross_sub_gate,
                 'hyper_connect':        c.mst_hyper_connect,
                 'cross_kv_inject':      c.mst_cross_kv_inject,
+                # Stage 10: Structural transition improvements
+                'slice_transition':     c.mst_slice_transition,
+                'lookback_layers':      c.mst_lookback_layers,
+                'bilinear_transition':  c.mst_bilinear_transition,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

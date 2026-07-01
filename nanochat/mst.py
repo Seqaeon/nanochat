@@ -871,13 +871,13 @@ class BatchedMSTLayer(nn.Module):
                 self.trans_mlp_fc_w = nn.Parameter(torch.empty(d, D))   # (d, D) — down-project
                 self.trans_mlp_proj_w = nn.Parameter(torch.empty(D, d)) # (D, d) — up-project
             else:
-                # Standard AggDist (with optional nonlinear/gated enhancements)
-                if self._transition_gated:
-                    # Gated: concat(N×d) → Linear(N*d, N) — input-dependent routing
-                    self.gate_w = nn.Parameter(torch.empty(N, N * d))  # (N, D) — 2D for Muon
-                else:
-                    # Standard: mean(subs) → Linear(d, N)
-                    self.router_w = nn.Parameter(torch.empty(N, d))  # (N, d) — already 2D
+                # Standard AggDist (with optional nonlinear/gated/SliceMoE enhancements)
+                # SliceMoE replaces the standard router with per-slice routers
+                if config.mst_slice_transition == 0:
+                    if self._transition_gated:
+                        self.gate_w = nn.Parameter(torch.empty(N, N * d))
+                    else:
+                        self.router_w = nn.Parameter(torch.empty(N, d))
                 # Aggregate: d → tw_dim (identity if tw_mult=1)
                 if tw_mult != 1.0:
                     self.agg_up_w = nn.Parameter(torch.empty(tw_dim, d))
@@ -926,6 +926,32 @@ class BatchedMSTLayer(nn.Module):
             self.cross_k_w = nn.Parameter(torch.empty(cross_hd, d))        # (hd, d) shared
             self.cross_v_w = nn.Parameter(torch.empty(cross_hd, d))        # (hd, d) shared
             self.cross_proj_w = nn.Parameter(torch.empty(N * d, cross_hd)) # (N*d, hd)
+
+        # ── Stage 10: Structural transition improvements ──
+        # SliceMoE: partition each sub's d-dim into S slices, route each independently
+        self._slice_transition = config.mst_slice_transition
+        if self._slice_transition > 0:
+            S = self._slice_transition
+            assert d % S == 0, f"mst_sub_dim ({d}) must be divisible by mst_slice_transition ({S})"
+            slice_d = d // S
+            # S independent routers, each (N, slice_d) — route each slice across N subs
+            self.slice_router_w = nn.Parameter(torch.empty(S * N, slice_d))  # (S*N, slice_d) — 2D
+
+        # Lookback: DenseFormer-style multi-layer lookback with per-layer scalars
+        self._lookback_layers = config.mst_lookback_layers
+        if self._lookback_layers > 0:
+            K = self._lookback_layers
+            # K+1 scalars: [current, prev_1, prev_2, ...] initialized to [1, 0, 0, ...]
+            init_vals = torch.zeros(K + 1)
+            init_vals[0] = 1.0
+            self.lookback_weights = nn.Parameter(init_vals)
+
+        # Bilinear: agg = (concat @ U) * (concat @ V) — 2nd-order cross-sub interaction
+        self._bilinear_transition = bool(config.mst_bilinear_transition)
+        if self._bilinear_transition:
+            D = N * d
+            self.bilinear_u = nn.Parameter(torch.empty(d, D))  # (d, D) — 2D for Muon
+            self.bilinear_v = nn.Parameter(torch.empty(d, D))  # (d, D) — 2D for Muon
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
                 kv_cache=None, total_sub_layers=1):
@@ -1072,6 +1098,20 @@ class BatchedMSTLayer(nn.Module):
         x = norm(sub_states)  # (B, T, N, d)
         aux_loss = sub_states.new_zeros(())
 
+        # Stage 10-B: DenseFormer lookback — store and blend multi-layer pre-transition states
+        if self._lookback_layers > 0:
+            self._pre_trans_x_lb = x.detach()  # store for future layers
+            # Blend: softmax-weighted combination of current + past K layers
+            w = F.softmax(self.lookback_weights, dim=0)  # (K+1,) normalized
+            if hasattr(self, '_lookback_history') and self._lookback_history is not None:
+                history = self._lookback_history  # list of up to K past tensors
+                x = w[0] * x
+                for k, past in enumerate(history):
+                    x = x + w[k + 1] * past
+            else:
+                # First layer or no history: use x as-is, but touch weights for DDP
+                x = x + 0.0 * w.sum()
+
         # Proposal B: Hyper-connected sub residuals — store pre-transition state
         # and blend in previous layer's state. Uses layer attribute to avoid
         # changing return signature (which breaks torch.compile memory efficiency).
@@ -1117,58 +1157,82 @@ class BatchedMSTLayer(nn.Module):
                 # No router — report max entropy (uniform)
                 self._last_route_entropy = math.log(N)
             else:
-                # ---- Standard AggDist (with optional nonlinear/gated enhancements) ----
-                if self._transition_gated:
-                    # Gated routing: concat(all subs) → Linear(D, N) — input-dependent
-                    concat_x = x.reshape(B, T, N * d)  # (B, T, D)
-                    logits = F.linear(concat_x, self.gate_w.to(dtype=concat_x.dtype))  # (B, T, N)
+                # ---- Standard AggDist (with optional SliceMoE / bilinear enhancements) ----
+
+                # === ROUTING + AGGREGATION ===
+                if self._slice_transition > 0:
+                    # Stage 10-A: SliceMoE — per-slice independent routing
+                    S = self._slice_transition
+                    slice_d = d // S
+                    # Reshape subs into slices: (B, T, N, S, slice_d)
+                    x_sliced = x.view(B, T, N, S, slice_d)
+                    # Per-slice router input: mean across subs for each slice
+                    slice_means = x_sliced.mean(dim=2)  # (B, T, S, slice_d)
+                    # Compute routing logits per slice: (B, T, S, N)
+                    router_w_3d = self.slice_router_w.view(S, N, slice_d)
+                    slice_logits = torch.einsum('btsd,snd->btsn', slice_means, router_w_3d.to(dtype=slice_means.dtype))
+                    slice_weights = F.softmax(slice_logits, dim=-1)  # (B, T, S, N)
+                    # Weighted sum per slice: (B, T, S, N) × (B, T, N, S, slice_d) → (B, T, S, slice_d)
+                    aggregated_slices = torch.einsum('btsn,btnsd->btsd', slice_weights, x_sliced)
+                    # Flatten back to d-dim: (B, T, S, slice_d) → (B, T, d)
+                    aggregated = aggregated_slices.reshape(B, T, d)
+                    # Track entropy for diagnostics (mean across slices)
+                    with torch.no_grad():
+                        ent = -(slice_weights * (slice_weights + 1e-8).log()).sum(-1).mean()
+                        self._last_route_entropy = ent
+                    # Compute weights for aux loss (mean across slices)
+                    weights = slice_weights.mean(dim=2)  # (B, T, N)
                 else:
-                    # Standard routing: mean(subs) → Linear(d, N)
-                    router_input = x.mean(dim=2)  # (B, T, d)
-                    logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))  # (B, T, N)
+                    # Standard single-router aggregation
+                    if self._transition_gated:
+                        concat_x = x.reshape(B, T, N * d)
+                        logits = F.linear(concat_x, self.gate_w.to(dtype=concat_x.dtype))
+                    else:
+                        router_input = x.mean(dim=2)
+                        logits = F.linear(router_input, self.router_w.to(dtype=router_input.dtype))
 
-                # 2A: Shared expert — sub 0 always gets full weight, remaining subs routed
-                if self._shared_expert:
-                    routed_logits = logits[..., 1:]  # (B, T, N-1)
-                    routed_weights = F.softmax(routed_logits, dim=-1)  # (B, T, N-1)
-                    shared_w = torch.full((B, T, 1), 1.0 / N, device=logits.device, dtype=routed_weights.dtype)
-                    weights = torch.cat([shared_w, routed_weights * (1.0 - 1.0 / N)], dim=-1)  # (B, T, N)
-                else:
-                    weights = F.softmax(logits, dim=-1)  # (B, T, N)
+                    if self._shared_expert:
+                        routed_logits = logits[..., 1:]
+                        routed_weights = F.softmax(routed_logits, dim=-1)
+                        shared_w = torch.full((B, T, 1), 1.0 / N, device=logits.device, dtype=routed_weights.dtype)
+                        weights = torch.cat([shared_w, routed_weights * (1.0 - 1.0 / N)], dim=-1)
+                    else:
+                        weights = F.softmax(logits, dim=-1)
 
-                # Track router entropy for diagnostics
-                with torch.no_grad():
-                    probs = F.softmax(logits, dim=-1)
-                    ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
-                    self._last_route_entropy = ent
+                    with torch.no_grad():
+                        probs = F.softmax(logits, dim=-1)
+                        ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
+                        self._last_route_entropy = ent
 
-                # Weighted sum: (B, T, N) × (B, T, N, d) → (B, T, d)
-                aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
+                    aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
 
-                # 1C: Wider transition bottleneck
+                # === WIDE TRANSITION (relu² bottleneck) ===
                 if hasattr(self, 'agg_up_w'):
-                    aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))  # (B, T, tw_dim)
-                    aggregated = F.relu(aggregated).square()  # nonlinearity in expanded space
-                    aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))  # (B, T, d)
+                    aggregated = F.linear(aggregated, self.agg_up_w.to(dtype=aggregated.dtype))
+                    aggregated = F.relu(aggregated).square()
+                    aggregated = F.linear(aggregated, self.agg_down_w.to(dtype=aggregated.dtype))
 
-                # Stage 8: Nonlinear activation at bottleneck
                 if self._transition_nonlinear:
                     aggregated = F.silu(aggregated)
 
-                # Batched distribute: (B, T, d) → (B, T, N, d) via N projections
+                # === Stage 10-C: BILINEAR aggregate — add 2nd-order cross-sub interaction ===
+                if self._bilinear_transition:
+                    concat_x = x.reshape(B, T, N * d)  # (B, T, D)
+                    proj_u = F.linear(concat_x, self.bilinear_u.to(dtype=concat_x.dtype))  # (B, T, d)
+                    proj_v = F.linear(concat_x, self.bilinear_v.to(dtype=concat_x.dtype))  # (B, T, d)
+                    bilinear_agg = proj_u * proj_v  # element-wise product = 2nd-order
+                    aggregated = aggregated + bilinear_agg  # add to linear aggregate
+
+                # === DISTRIBUTE ===
                 dist_w_3d = distribute_w.to(dtype=aggregated.dtype)
                 distributed = torch.einsum('btd,nod->btno', aggregated, dist_w_3d)
-
-                # Transition residual
                 sub_states = sub_states + distributed
 
-                # Aux loss: load balance (soft_weighted)
+                # Aux loss: load balance
                 if self.training:
-                    probs_mean = weights.mean(dim=(0, 1))  # (N,)
+                    probs_mean = weights.mean(dim=(0, 1))
                     aux_loss = aux_loss + self.aux_weight * N * (probs_mean * probs_mean).sum()
-                    # 2C: Router entropy regularization — penalize low entropy
                     if self._router_entropy_weight > 0.0:
-                        import math
                         target_entropy = math.log(N)
                         current_entropy = -(probs_mean * (probs_mean + 1e-8).log()).sum()
                         aux_loss = aux_loss + self._router_entropy_weight * (target_entropy - current_entropy) ** 2
@@ -1286,10 +1350,10 @@ class BatchedMSTLayer(nn.Module):
                 dist = self.distribute_w.view(N, d, d)
                 for j in range(N):
                     nn.init.uniform_(dist[j], -sub_s, sub_s)
-                # Router/gate: zero init (soft/uniform at start)
-                if self._transition_gated:
+                # Router/gate: zero init (soft/uniform at start) — skip if SliceMoE replaces router
+                if hasattr(self, 'gate_w'):
                     nn.init.zeros_(self.gate_w)
-                else:
+                elif hasattr(self, 'router_w'):
                     nn.init.zeros_(self.router_w)
                 # 1C: Wider transition bottleneck weights
                 if hasattr(self, 'agg_up_w'):
@@ -1320,6 +1384,20 @@ class BatchedMSTLayer(nn.Module):
             nn.init.uniform_(self.cross_k_w, -cs_s, cs_s)
             nn.init.uniform_(self.cross_v_w, -cs_s, cs_s)
             nn.init.zeros_(self.cross_proj_w)
+
+        # ── Stage 10: Structural transition init ──
+        # SliceMoE: zero init slice routers (starts uniform)
+        if self._slice_transition > 0:
+            nn.init.zeros_(self.slice_router_w)
+
+        # Lookback: already initialized in __init__ to [1, 0, 0, ...]
+
+        # Bilinear: uniform init both projections, small scale for stability
+        if self._bilinear_transition:
+            D = N * d
+            bi_s = 1.0 / (D ** 0.5)
+            nn.init.uniform_(self.bilinear_u, -bi_s, bi_s)
+            nn.init.uniform_(self.bilinear_v, -bi_s, bi_s)
 
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
@@ -1786,6 +1864,8 @@ class MST(nn.Module):
             # Process through L layers
             total_sub_layers = self.config.n_layer * N
             total_aux_loss = x.new_zeros(())
+            lookback_K = self.config.mst_lookback_layers
+            lookback_history = []  # sliding window of past K pre-transition states
 
             for i, layer in enumerate(self.layers):
                 # Per-layer residual scaling + x0 blend
@@ -1798,6 +1878,10 @@ class MST(nn.Module):
                     layer._prev_pre_trans = self.layers[i-1]._pre_trans_x
                 else:
                     layer._prev_pre_trans = None
+
+                # Stage 10-B: Lookback — inject history of past K pre-transition states
+                if lookback_K > 0:
+                    layer._lookback_history = lookback_history[-lookback_K:] if lookback_history else None
 
                 # Value embedding: (B, T, d) shared across all subs
                 ve = None
@@ -1816,6 +1900,10 @@ class MST(nn.Module):
                     kv_cache=kv_cache,
                     total_sub_layers=total_sub_layers)
                 total_aux_loss = total_aux_loss + aux_loss
+
+                # Collect lookback state after layer runs
+                if lookback_K > 0 and hasattr(layer, '_pre_trans_x_lb'):
+                    lookback_history.append(layer._pre_trans_x_lb)
 
                 # Diagnostics (detached, no graph impact)
                 if self._diag_enabled:

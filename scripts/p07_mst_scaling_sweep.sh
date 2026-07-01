@@ -483,12 +483,73 @@ run_experiment "S9_FULL_D${DEPTH}" \
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 9 sweep complete"
 
+# ============================================================================
+# Stage 10: Structural transition improvements (builds on COMBO_A baseline)
+# ============================================================================
+# These address the STRUCTURE of the transition, not just adding nonlinearity.
+# A: SliceMoE — fine-grained per-feature routing (different features routed differently)
+# B: DenseFormer lookback — transition sees earlier layers lost through sequential bottleneck
+# C: Bilinear — 2nd-order cross-sub interactions (products) impossible for linear transitions
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Stage 10: Structural Transition — Depth ${DEPTH}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# S10-A: SliceMoE with 4 slices (d=128 → 4 slices of 32)
+run_experiment "S10_SLICE4_D${DEPTH}" \
+    "S10-A: SliceMoE 4 slices" \
+    $COMBO_A_BASE \
+    --mst-slice-transition 4
+
+# S10-A2: SliceMoE with 8 slices (d=128 → 8 slices of 16)
+run_experiment "S10_SLICE8_D${DEPTH}" \
+    "S10-A: SliceMoE 8 slices" \
+    $COMBO_A_BASE \
+    --mst-slice-transition 8
+
+# S10-B: DenseFormer lookback K=2
+run_experiment "S10_LOOKBACK2_D${DEPTH}" \
+    "S10-B: DenseFormer lookback K=2" \
+    $COMBO_A_BASE \
+    --mst-lookback-layers 2
+
+# S10-B2: DenseFormer lookback K=4
+run_experiment "S10_LOOKBACK4_D${DEPTH}" \
+    "S10-B: DenseFormer lookback K=4" \
+    $COMBO_A_BASE \
+    --mst-lookback-layers 4
+
+# S10-C: Bilinear transition
+run_experiment "S10_BILINEAR_D${DEPTH}" \
+    "S10-C: Bilinear 2nd-order transition" \
+    $COMBO_A_BASE \
+    --mst-bilinear-transition 1
+
+# S10-AC: SliceMoE + Bilinear (best structural combo?)
+run_experiment "S10_SLICE_BILIN_D${DEPTH}" \
+    "S10-AC: SliceMoE(4) + Bilinear" \
+    $COMBO_A_BASE \
+    --mst-slice-transition 4 \
+    --mst-bilinear-transition 1
+
+# S10-BC: Lookback + Bilinear
+run_experiment "S10_LOOK_BILIN_D${DEPTH}" \
+    "S10-BC: Lookback(2) + Bilinear" \
+    $COMBO_A_BASE \
+    --mst-lookback-layers 2 \
+    --mst-bilinear-transition 1
+
+echo ""
+echo "  ✓ Depth ${DEPTH} Stage 10 sweep complete"
+
 echo "═══════════════════════════════════════════════════════════════"
-echo "  P07+S8+S9 MST Scaling Sweep Complete"
+echo "  P07+S8+S9+S10 MST Scaling Sweep Complete"
 echo "  Depth:    ${DEPTH}"
 echo "  P07: 13 experiments (baseline through COMBO)"
 echo "  S8:  5 experiments (gated, mlp, gated+nl, ffa_hard, ffa_soft)"
 echo "  S9:  6 experiments (csgate_r32, csgate_r64, hyper, crosskv, gate+hyper, full)"
+echo "  S10: 7 experiments (slice4, slice8, lookback2, lookback4, bilinear, slice+bilin, look+bilin)"
 echo "═══════════════════════════════════════════════════════════════"
 
 done

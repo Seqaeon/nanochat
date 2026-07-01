@@ -343,6 +343,10 @@ def run_training_sweep(args):
         "--mst-cross-sub-gate", str(getattr(args, 'mst_cross_sub_gate', 0)),
         "--mst-hyper-connect", str(getattr(args, 'mst_hyper_connect', 0)),
         "--mst-cross-kv-inject", str(getattr(args, 'mst_cross_kv_inject', 0)),
+        # MST Stage 10: Structural transition improvements
+        "--mst-slice-transition", str(getattr(args, 'mst_slice_transition', 0)),
+        "--mst-lookback-layers", str(getattr(args, 'mst_lookback_layers', 0)),
+        "--mst-bilinear-transition", str(getattr(args, 'mst_bilinear_transition', 0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -954,6 +958,10 @@ if __name__ == "__main__":
     parser.add_argument("--mst-cross-sub-gate", type=int, default=0)
     parser.add_argument("--mst-hyper-connect", type=int, default=0, choices=[0, 1])
     parser.add_argument("--mst-cross-kv-inject", type=int, default=0, choices=[0, 1])
+    # MST Stage 10: Structural transition improvements
+    parser.add_argument("--mst-slice-transition", type=int, default=0)
+    parser.add_argument("--mst-lookback-layers", type=int, default=0)
+    parser.add_argument("--mst-bilinear-transition", type=int, default=0, choices=[0, 1])
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")
