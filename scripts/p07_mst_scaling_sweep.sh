@@ -372,14 +372,14 @@ COMBO_A_BASE="$AGGDIST_BASE \
 # Strictly more expressive than AggDist: can compose nonlinear functions of sub outputs.
 # Extra params: ~3.7M (two D×D = 512×512 matrices per layer)
 # Note: replaces wide_trans bottleneck — uses its own D→D→D path.
-run_experiment "S8_MLP_D${DEPTH}" \
-    "S8: MLP transition (concat→SiLU MLP→split)" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --mst-sub-lr-scale 2.0 \
-    --mst-multi-scale-windows 1 \
-    --mst-transition-mlp 1
+#run_experiment "S8_MLP_D${DEPTH}" \
+#    "S8: MLP transition (concat→SiLU MLP→split)" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --mst-sub-lr-scale 2.0 \
+#    --mst-multi-scale-windows 1 \
+#    --mst-transition-mlp 1
 
 # S8-3: Gated + nonlinear — gated routing + SiLU at bottleneck
 # Tests whether adding SiLU ON TOP of the wide_trans relu² helps.
