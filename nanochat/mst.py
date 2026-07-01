@@ -1460,7 +1460,8 @@ class MST(nn.Module):
         D = config.n_embd
         d = config.mst_sub_dim
         N = config.mst_n_subs
-        assert D == N * d, f"n_embd ({D}) must equal mst_n_subs ({N}) * mst_sub_dim ({d})"
+        if config.mst_input_mode == 'fixed_slice':
+            assert D == N * d, f"For fixed_slice input mode, n_embd ({D}) must equal mst_n_subs ({N}) * mst_sub_dim ({d})"
 
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         self._padded_vocab_size = padded_vocab_size
