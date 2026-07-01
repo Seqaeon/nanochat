@@ -1074,7 +1074,7 @@ class BatchedMSTLayer(nn.Module):
         # ==================== TRANSITION ====================
         # Pre-norm for transition
         x = norm(sub_states)  # (B, T, N, d)
-        pre_trans_x = x if self._hyper_connect else None  # save for next layer
+        pre_trans_x = x.detach() if self._hyper_connect else None  # detach: context only, no cross-layer grad
         aux_loss = sub_states.new_zeros(())
 
         # Proposal B: Hyper-connected sub residuals — blend in previous layer's pre-transition
