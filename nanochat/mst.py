@@ -863,11 +863,13 @@ class BatchedMSTLayer(nn.Module):
         self._tw_dim = tw_dim
         if config.mst_transition_mode == 'aggregate_distribute':
             if self._transition_mlp:
-                # MLP transition: concat(N×d=D) → Linear(D,D) → SiLU → Linear(D,D) → split(N×d)
-                # Replaces router + aggregate + distribute with a single nonlinear MLP
+                # MLP transition: concat(N×d=D) → Linear(D,d) → SiLU → Linear(d,D) → split(N×d)
+                # Bottleneck MLP: same d-dim compression as AggDist but with full cross-sub
+                # nonlinear interaction and NO routing step. Parameter-matched to AggDist.
+                # Params per layer: 2×D×d = 2×512×128 = 131K (vs AggDist+wide_trans ~197K)
                 D = N * d
-                self.trans_mlp_fc_w = nn.Parameter(torch.empty(D, D))   # (D, D) — 2D for Muon
-                self.trans_mlp_proj_w = nn.Parameter(torch.empty(D, D)) # (D, D) — 2D for Muon
+                self.trans_mlp_fc_w = nn.Parameter(torch.empty(d, D))   # (d, D) — down-project
+                self.trans_mlp_proj_w = nn.Parameter(torch.empty(D, d)) # (D, d) — up-project
             else:
                 # Standard AggDist (with optional nonlinear/gated enhancements)
                 if self._transition_gated:
@@ -1029,10 +1031,10 @@ class BatchedMSTLayer(nn.Module):
 
         if self._transition_mode == 'aggregate_distribute':
             if self._transition_mlp:
-                # ---- MLP transition: concat → Linear → SiLU → Linear → split ----
-                # Replaces router+aggregate+distribute with a nonlinear MLP over all subs
+                # ---- Bottleneck MLP transition: concat → Linear(D,d) → SiLU → Linear(d,D) → split ----
+                # Full cross-sub nonlinear interaction through a d-dim bottleneck
                 concat_x = x.reshape(B, T, N * d)  # (B, T, D)
-                h = F.linear(concat_x, self.trans_mlp_fc_w.to(dtype=concat_x.dtype))  # (B, T, D)
+                h = F.linear(concat_x, self.trans_mlp_fc_w.to(dtype=concat_x.dtype))  # (B, T, d)
                 h = F.silu(h)
                 out = F.linear(h, self.trans_mlp_proj_w.to(dtype=h.dtype))  # (B, T, D)
                 distributed = out.view(B, T, N, d)  # split back to (B, T, N, d)

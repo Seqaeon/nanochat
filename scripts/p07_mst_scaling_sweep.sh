@@ -129,7 +129,7 @@ init_state
 
 # ── Common flags (matching p05 AggDist baseline) ─────────────────────────────
 MST_COMMON="--models base \
-  --device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+  --device-batch-size ${DEVICE_BATCH_SIZE:-128} --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -362,11 +362,11 @@ COMBO_A_BASE="$AGGDIST_BASE \
 # Replaces mean-based router with concat(all subs)→Linear(D,N).
 # Each token's routing depends on the FULL cross-sub representation.
 # Extra params: only ~12K (N × N*d = 4×512 per layer)
-run_experiment "S8_GATED_D${DEPTH}" \
-    "S8: Gated routing (concat→gate, input-dependent)" \
-    $COMBO_A_BASE \
-    --mst-transition-gated 1
-
+#run_experiment "S8_GATED_D${DEPTH}" \
+#    "S8: Gated routing (concat→gate, input-dependent)" \
+#    $COMBO_A_BASE \
+#    --mst-transition-gated 1
+#
 # S8-2: MLP transition — concat→Linear→SiLU→Linear→split
 # Replaces entire AggDist with a nonlinear MLP over all subs.
 # Strictly more expressive than AggDist: can compose nonlinear functions of sub outputs.
@@ -384,38 +384,38 @@ run_experiment "S8_MLP_D${DEPTH}" \
 # S8-3: Gated + nonlinear — gated routing + SiLU at bottleneck
 # Tests whether adding SiLU ON TOP of the wide_trans relu² helps.
 # Two nonlinearities in the transition: relu² in the expanded path + SiLU after.
-run_experiment "S8_GATED_NL_D${DEPTH}" \
-    "S8: Gated + nonlinear (concat→gate + SiLU)" \
-    $COMBO_A_BASE \
-    --mst-transition-gated 1 \
-    --mst-transition-nonlinear 1
-
+#run_experiment "S8_GATED_NL_D${DEPTH}" \
+#    "S8: Gated + nonlinear (concat→gate + SiLU)" \
+#    $COMBO_A_BASE \
+#    --mst-transition-gated 1 \
+#    --mst-transition-nonlinear 1
+#
 # S8-4: FFA hard routing — each sub routes to exactly 1 target per token
 # Uses STE for gradient flow. Tests whether explicit sub→sub wiring helps vs AggDist.
-run_experiment "S8_FFA_HARD_D${DEPTH}" \
-    "S8: FFA hard routing (STE, topk=1)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 1 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-multi-scale-windows 1 \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --mst-sub-lr-scale 2.0
-
+#run_experiment "S8_FFA_HARD_D${DEPTH}" \
+#    "S8: FFA hard routing (STE, topk=1)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 1 --mst-ffn-mode standard \
+#    --mst-transition-mode free_for_all \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-multi-scale-windows 1 \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --mst-sub-lr-scale 2.0
+#
 # S8-5: FFA soft routing (control — compare soft vs hard FFA)
-run_experiment "S8_FFA_SOFT_D${DEPTH}" \
-    "S8: FFA soft routing (topk=0, control for S8-4)" \
-    --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode free_for_all \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-multi-scale-windows 1 \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --mst-sub-lr-scale 2.0
+#run_experiment "S8_FFA_SOFT_D${DEPTH}" \
+#    "S8: FFA soft routing (topk=0, control for S8-4)" \
+#    --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode free_for_all \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-multi-scale-windows 1 \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --mst-sub-lr-scale 2.0
 
 echo ""
 echo "  ✓ Depth ${DEPTH} Stage 8 sweep complete"
