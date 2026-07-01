@@ -302,14 +302,14 @@ echo "  COMBO: Combined Best — Depth ${DEPTH}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # S7-COMBO-A: P0 + wider transition + sub LR scaling
-run_experiment "S7_COMBO_A_D${DEPTH}" \
-    "COMBO-A: grad_eq + block_diag + wide_trans + sub_lr" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --mst-transition-width-mult ${N_SUBS}.0 \
-    --mst-sub-lr-scale 2.0
-
+#run_experiment "S7_COMBO_A_D${DEPTH}" \
+#    "COMBO-A: grad_eq + block_diag + wide_trans + sub_lr" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --mst-transition-width-mult ${N_SUBS}.0 \
+#    --mst-sub-lr-scale 2.0
+#
 # S7-COMBO-B: P0 + longer warmup + entropy reg
 #run_experiment "S7_COMBO_B_D${DEPTH}" \
 #    "COMBO-B: grad_eq + block_diag + warmup 3% + entropy reg" \
@@ -320,16 +320,16 @@ run_experiment "S7_COMBO_A_D${DEPTH}" \
 #    --mst-router-entropy-weight 0.1
 
 # S7-COMBO-FULL: All P0+P1+P2 interventions combined
-run_experiment "S7_COMBO_FULL_D${DEPTH}" \
-    "COMBO-FULL: all P0+P1+P2 combined" \
-    $AGGDIST_BASE \
-    --mst-grad-equalize 1 \
-    --mst-block-diagonal-muon 1 \
-    --mst-transition-width-mult ${N_SUBS}.0 \
-    --mst-sub-lr-scale 2.0 \
-    --warmup-ratio 0.03 \
-    --mst-router-entropy-weight 0.1
-
+#run_experiment "S7_COMBO_FULL_D${DEPTH}" \
+#    "COMBO-FULL: all P0+P1+P2 combined" \
+#    $AGGDIST_BASE \
+#    --mst-grad-equalize 1 \
+#    --mst-block-diagonal-muon 1 \
+#    --mst-transition-width-mult ${N_SUBS}.0 \
+#    --mst-sub-lr-scale 2.0 \
+#    --warmup-ratio 0.03 \
+#    --mst-router-entropy-weight 0.1
+#
 echo ""
 echo "  ✓ Depth ${DEPTH} P07 sweep complete"
 
