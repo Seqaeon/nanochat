@@ -1077,9 +1077,13 @@ class BatchedMSTLayer(nn.Module):
         # changing return signature (which breaks torch.compile memory efficiency).
         if self._hyper_connect:
             self._pre_trans_x = x.detach()  # store for next layer (detached: no cross-layer grad)
+            alpha = torch.sigmoid(self.hyper_mix)  # always compute so DDP sees grad for all layers
             if hasattr(self, '_prev_pre_trans') and self._prev_pre_trans is not None:
-                alpha = torch.sigmoid(self.hyper_mix)  # scalar in [0, 1]
                 x = x + alpha * self._prev_pre_trans
+            else:
+                # Layer 0: no previous layer. Use hyper_mix with zero effect so DDP
+                # doesn't complain about unused parameters.
+                x = x + (0.0 * alpha)
 
         # 3B: Contrastive diversity loss on FFN activations
         if self.training and self._contrastive_diversity_weight > 0.0:
