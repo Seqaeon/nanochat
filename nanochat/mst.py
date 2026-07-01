@@ -928,7 +928,7 @@ class BatchedMSTLayer(nn.Module):
             self.cross_proj_w = nn.Parameter(torch.empty(N * d, cross_hd)) # (N*d, hd)
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
-                kv_cache=None, total_sub_layers=1, prev_pre_trans=None):
+                kv_cache=None, total_sub_layers=1):
         """
         Args:
             sub_states: (B, T, N, d) batched sub-transformer states
@@ -937,12 +937,8 @@ class BatchedMSTLayer(nn.Module):
             window_sizes: list of N (left, right) tuples for per-sub sliding window
             kv_cache: optional KVCache for inference
             total_sub_layers: n_layer * N for cache slot indexing
-            prev_pre_trans: optional (B, T, N, d) pre-transition states from previous layer (hyper-connect)
 
-        Returns: (sub_states, aux_loss, pre_trans_x)
-            sub_states: (B, T, N, d)
-            aux_loss: scalar tensor
-            pre_trans_x: (B, T, N, d) or None — for hyper-connect threading
+        Returns: (sub_states, aux_loss)
         """
         B, T, N, d = sub_states.shape
         cos, sin = cos_sin
@@ -1074,13 +1070,16 @@ class BatchedMSTLayer(nn.Module):
         # ==================== TRANSITION ====================
         # Pre-norm for transition
         x = norm(sub_states)  # (B, T, N, d)
-        pre_trans_x = x.detach() if self._hyper_connect else None  # detach: context only, no cross-layer grad
         aux_loss = sub_states.new_zeros(())
 
-        # Proposal B: Hyper-connected sub residuals — blend in previous layer's pre-transition
-        if self._hyper_connect and prev_pre_trans is not None:
-            alpha = torch.sigmoid(self.hyper_mix)  # scalar in [0, 1]
-            x = x + alpha * prev_pre_trans
+        # Proposal B: Hyper-connected sub residuals — store pre-transition state
+        # and blend in previous layer's state. Uses layer attribute to avoid
+        # changing return signature (which breaks torch.compile memory efficiency).
+        if self._hyper_connect:
+            self._pre_trans_x = x.detach()  # store for next layer (detached: no cross-layer grad)
+            if hasattr(self, '_prev_pre_trans') and self._prev_pre_trans is not None:
+                alpha = torch.sigmoid(self.hyper_mix)  # scalar in [0, 1]
+                x = x + alpha * self._prev_pre_trans
 
         # 3B: Contrastive diversity loss on FFN activations
         if self.training and self._contrastive_diversity_weight > 0.0:
@@ -1232,7 +1231,7 @@ class BatchedMSTLayer(nn.Module):
             # Micro-attention uses residual
             sub_states = sub_states + out
 
-        return sub_states, aux_loss, pre_trans_x
+        return sub_states, aux_loss
 
     @torch.no_grad()
     def init_weights(self):
@@ -1783,13 +1782,18 @@ class MST(nn.Module):
             # Process through L layers
             total_sub_layers = self.config.n_layer * N
             total_aux_loss = x.new_zeros(())
-            prev_pre_trans = None  # for hyper-connect threading
 
             for i, layer in enumerate(self.layers):
                 # Per-layer residual scaling + x0 blend
                 rl = self.resid_lambdas[i]
                 x0l = self.x0_lambdas[i]
                 sub_states = rl * sub_states + x0l * sub_x0
+
+                # Proposal B: Hyper-connect — inject previous layer's pre-transition state
+                if i > 0 and hasattr(self.layers[i-1], '_pre_trans_x'):
+                    layer._prev_pre_trans = self.layers[i-1]._pre_trans_x
+                else:
+                    layer._prev_pre_trans = None
 
                 # Value embedding: (B, T, d) shared across all subs
                 ve = None
@@ -1802,15 +1806,12 @@ class MST(nn.Module):
                     # Use the layer's window size for all subs
                     sub_ws = [self.window_sizes[i]] * N
 
-                sub_states, aux_loss, pre_trans_x = layer(
+                sub_states, aux_loss = layer(
                     sub_states, cos_sin, ve=ve,
                     window_sizes=sub_ws,
                     kv_cache=kv_cache,
-                    total_sub_layers=total_sub_layers,
-                    prev_pre_trans=prev_pre_trans)
+                    total_sub_layers=total_sub_layers)
                 total_aux_loss = total_aux_loss + aux_loss
-                if pre_trans_x is not None:
-                    prev_pre_trans = pre_trans_x
 
                 # Diagnostics (detached, no graph impact)
                 if self._diag_enabled:
