@@ -326,7 +326,8 @@ while [[ $# -gt 0 ]]; do
         --mst-delta-residual|--mst-sub-layers|\
         --mst-grad-equalize|--mst-block-diagonal-muon|--mst-transition-width-mult|\
         --mst-sub-lr-scale|--mst-shared-expert|--mst-router-entropy-weight|\
-        --mst-shared-kv-attn|--mst-contrastive-diversity-weight)
+        --mst-shared-kv-attn|--mst-contrastive-diversity-weight|\
+        --mst-transition-nonlinear|--mst-transition-gated|--mst-transition-mlp)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

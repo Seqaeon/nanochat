@@ -335,6 +335,10 @@ def run_training_sweep(args):
         "--mst-router-entropy-weight", str(getattr(args, 'mst_router_entropy_weight', 0.0)),
         "--mst-shared-kv-attn", str(getattr(args, 'mst_shared_kv_attn', 0)),
         "--mst-contrastive-diversity-weight", str(getattr(args, 'mst_contrastive_diversity_weight', 0.0)),
+        # MST Stage 8: Transition expressivity
+        "--mst-transition-nonlinear", str(getattr(args, 'mst_transition_nonlinear', 0)),
+        "--mst-transition-gated", str(getattr(args, 'mst_transition_gated', 0)),
+        "--mst-transition-mlp", str(getattr(args, 'mst_transition_mlp', 0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -938,6 +942,10 @@ if __name__ == "__main__":
     parser.add_argument("--mst-router-entropy-weight", type=float, default=0.0)
     parser.add_argument("--mst-shared-kv-attn", type=int, default=0, choices=[0, 1])
     parser.add_argument("--mst-contrastive-diversity-weight", type=float, default=0.0)
+    # MST Stage 8: Transition expressivity
+    parser.add_argument("--mst-transition-nonlinear", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--mst-transition-gated", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--mst-transition-mlp", type=int, default=0, choices=[0, 1])
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

@@ -883,6 +883,10 @@ def build_model_meta(depth):
         mst_router_entropy_weight=getattr(args, 'mst_router_entropy_weight', 0.0),
         mst_shared_kv_attn=getattr(args, 'mst_shared_kv_attn', 0),
         mst_contrastive_diversity_weight=getattr(args, 'mst_contrastive_diversity_weight', 0.0),
+        # Stage 8: Transition expressivity
+        mst_transition_nonlinear=getattr(args, 'mst_transition_nonlinear', 0),
+        mst_transition_gated=getattr(args, 'mst_transition_gated', 0),
+        mst_transition_mlp=getattr(args, 'mst_transition_mlp', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1475,6 +1479,10 @@ if model_config.use_mst and master_process:
                 'router_entropy_weight': c.mst_router_entropy_weight,
                 'shared_kv_attn':      c.mst_shared_kv_attn,
                 'contrastive_div_weight': c.mst_contrastive_diversity_weight,
+                # Stage 8: Transition expressivity
+                'transition_nonlinear': c.mst_transition_nonlinear,
+                'transition_gated':     c.mst_transition_gated,
+                'transition_mlp':       c.mst_transition_mlp,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
