@@ -78,16 +78,17 @@
 <script>
 const DENSE = [
 // Feb 8 scores
-  { total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17 ,   bpp: 0.9030 },          // d12 
-  { total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18 , bpp: 0.8688 },          // d14
-  { total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18 ,  bpp: 0.8364 },          // d16
-  { total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18 ,  bpp: 0.8131 },          // d18
-  { total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19 ,  bpp: 0.7906 },          // d20
-  { total: 1123157490,  active: 1123157490,  flops: 3.763086e9, total_training_flops: 2.208863e19 ,  bpp: 0.7714 },          // d22
-  { total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops: 3.594180e19 ,  bpp: 0.7545 },          // d24
-  { total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops: 5.683668e19 ,  bpp: 0.7382 },          // d26
-  { total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops: 8.660963e19 ,  bpp: 0.7246 },          // d28
-  { total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20 , bpp: 0.7120 },          // d30
+  { id: "dense_d12", total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17 ,  bpp: 0.9030 },          // d12 
+  { id: "dense_d14", total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18 , bpp: 0.8688 },          // d14
+  { id: "dense_d16", total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18 ,  bpp: 0.8364 },          // d16
+  { id: "dense_d18", total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18 ,  bpp: 0.8131 },          // d18
+  { id: "dense_d20", total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19 ,  bpp: 0.7906 },          // d20
+  { id: "dense_d22", total: 1123157490,  active: 1123157490,  flops: 3.763086e9, total_training_flops: 2.208863e19 ,  bpp: 0.7714 },          // d22
+  { id: "dense_d24", total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops: 3.594180e19 ,  bpp: 0.7545 },          // d24
+  { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops: 5.683668e19 ,  bpp: 0.7382 },          // d26
+  { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops: 8.660963e19 ,  bpp: 0.7246 },          // d28
+  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20 , bpp: 0.7120 }           // d30
+
 
 ];
 
@@ -107,27 +108,28 @@ const MST_VARIANTS = [
   { id:'micro_attn_d16', label:'MicroAttn d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#3CAEA3' }, */
 
 
-  {id:'aggdist_d8_undertrained', label:'AggDist d8 Undertrained',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.079775, total_training_flops: 4.511037e16 ,color:'#3CAEA3' }, 
-  {id:'aggdist_d8_undertrained_after', label:'AggDist d8 Undertrained after',   total:58726416, active:58726416, flops:1.856348e8, bpp:1.050999, total_training_flops: 4.905236e16 ,color:'#FFFF00' }, 
-  {id:'aggdist_d8_undertrained_after_wide6', label:'AggDist d8 Undertrained after_wide6',   total:62399504, active:62399504, flops:2.249748e8, bpp:1.027276, total_training_flops: 6.811706e16 ,color:'#0000FF' }, 
-  {id:'aggdist_d9_undertrained_after', label:'AggDist d9 Undertrained after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
- // {id:'aggdist_d8_undertrained_mlp_full', label:'AggDist d8 Undertrained mlp_full',   total:61343760, active:61343760, flops:2.001347e08, bpp: 1.039726, total_training_flops: 5.839254e16 ,color:'#00FF00' }, 
- // {id:'aggdist_d8_undertrained_cross_sub_ffn_gate', label:'AggDist d8 Undertrained cross_sub_ffn_gate',   total:59774992, active:59774992, flops:1.907220e8, bpp: 1.044996, total_training_flops: 5.249647e16 ,color:'#00FF00' }, 
-  { id:'aggdist_d10_undertrained', label:'AggDist d10 Undertrained',   total:82298260, active:82298260, flops:2.628595e8, bpp:1.020320, total_training_flops: 9.688331e16 , color:'#3CAEA3' }, 
-  { id:'aggdist_d12_undertrained', label:'AggDist d12 Undertrained',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.973067, total_training_flops: 1.924408e17 , color:'#3CAEA3' },
-  { id:'aggdist_d16_undertrained', label:'AggDist d16 Undertrained',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.905677, total_training_flops: 6.389513e17 , color:'#3CAEA3' }, 
-  { id:'aggdist_d24_undertrained', label:'AggDist d24 Undertrained',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.826342, total_training_flops: 4.357200e18 , color:'#3CAEA3' }, 
-  { id:'aggdist_d32_undertrained', label:'AggDist d32 Undertrained',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.768228, total_training_flops: 1.937323e19 , color:'#3CAEA3' }, 
+
+  // {id:'aggdist_d8_after', label:'AggDist d8 after',   total:58726416, active:58726416, flops:1.856348e8, bpp:1.050999, total_training_flops: 4.905236e16 ,color:'#FFFF00' }, 
+  //{id:'aggdist_d9_after', label:'AggDist d9 after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
+  {id:'aggdist_d16_after', label:'AggDist d16 after',   total:199254048, active:199254048, flops:7.299564e8, bpp:0.8809506833787342, total_training_flops: 7.554643e17 ,color:'#FFFF00' }, 
+  {id:'aggdist_d32_after', label:'AggDist d32 after',   total:914456640, active:914456640, flops:4.027122e9, bpp:0.7433940812663586, total_training_flops: 2.447819e19 ,color:'#FFFF00' }, 
+
+ // {id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.079775, total_training_flops: 4.511037e16 ,color:'#3CAEA3' }, 
+  //{ id:'aggdist_d10', label:'AggDist d10',   total:82298260, active:82298260, flops:2.628595e8, bpp:1.020320, total_training_flops: 9.688331e16 , color:'#3CAEA3' }, 
+  //{ id:'aggdist_d12', label:'AggDist d12',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.973067, total_training_flops: 1.924408e17 , color:'#3CAEA3' },
+  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.905677, total_training_flops: 6.389513e17 , color:'#3CAEA3' }, 
+  { id:'aggdist_d24', label:'AggDist d24',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.826342, total_training_flops: 4.357200e18 , color:'#3CAEA3' }, 
+  { id:'aggdist_d32', label:'AggDist d32',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.768228, total_training_flops: 1.937323e19 , color:'#3CAEA3' }, 
   // Keep your rich purple for AggDist
-  /* { id:'aggdist_d2', label:'AggDist d2',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
-  { id:'aggdist_d4', label:'AggDist d4',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
-  { id:'aggdist_d6', label:'AggDist d6',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
- // { id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, total_training_flops: 7.845282e16 ,color:'#7E53D4' }, 
-  { id:'aggdist_d10', label:'AggDist d10',   total:82298260, active:82298260, flops:2.628595e8, bpp:0.982563, total_training_flops: 1.934910e17 , color:'#7E53D4' }, 
-  { id:'aggdist_d12', label:'AggDist d12',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.934262, total_training_flops: 4.292685e17 , color:'#7E53D4' },
-  { id:'aggdist_d16', label:'AggDist d16',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, total_training_flops: 1.664245e18 , color:'#7E53D4' }, 
-  { id:'aggdist_d24', label:'AggDist d24',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.785666, total_training_flops: 1.329815e19 , color:'#7E53D4' }, 
-  //{ id:'aggdist_d32', label:'AggDist d32',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.785666, total_training_flops: 6.350950e+19 , color:'#7E53D4' }, 
+  /* { id:'aggdist_d2_overtrained', label:'AggDist d2 Overtrained',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
+  { id:'aggdist_d4_overtrained', label:'AggDist d4 Overtrained',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
+  { id:'aggdist_d6_overtrained', label:'AggDist d6 Overtrained',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
+ // { id:'aggdist_d8_overtrained', label:'AggDist d8 Overtrained',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, total_training_flops: 7.845282e16 ,color:'#7E53D4' }, 
+  //{ id:'aggdist_d10_overtrained', label:'AggDist d10 Overtrained',   total:82298260, active:82298260, flops:2.628595e8, bpp:0.982563, total_training_flops: 1.934910e17 , color:'#7E53D4' }, 
+ // { id:'aggdist_d12_overtrained', label:'AggDist d12 Overtrained',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.934262, total_training_flops: 4.292685e17 , color:'#7E53D4' },
+  { id:'aggdist_d16_overtrained', label:'AggDist d16 Overtrained',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, total_training_flops: 1.664245e18 , color:'#7E53D4' }, 
+  { id:'aggdist_d24_overtrained', label:'AggDist d24 Overtrained',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.785666, total_training_flops: 1.329815e19 , color:'#7E53D4' }, 
+  //{ id:'aggdist_d32_overtrained', label:'AggDist d32 Overtrained',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.785666, total_training_flops: 6.350950e+19 , color:'#7E53D4' }, 
   
   // Keep your vibrant pink-magenta for FFA
   /* { id:'ffa_d8', label:'FFA d8',total:57165840, active:57165840, flops:2.423316e8, bpp:1.05, color:'#D4537E' },
@@ -223,7 +225,7 @@ function variantCurveDS(keyFn, variantData, color, label, scale = 1e6) {
 
 // Actual DENSE data points (small dots, no line)
 function baseDotDS(keyFn, scale = 1e6) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp }));
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp, id: d.id }));
   return {
     label: 'Dense (measured)',
     data: pts,
@@ -259,7 +261,7 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
   // 2. Dynamically group variants by their base prefix (e.g., 'aggdist', 'micro_attn', 'ffa')
   const groups = {};
   variants.forEach(v => {
-    // Strips '_d<depth>' from anywhere in the ID (e.g. 'aggdist_d8_undertrained' -> 'aggdist_undertrained')
+    // Strips '_d<depth>' from anywhere in the ID (e.g. 'aggdist_d8' -> 'aggdist')
     const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1'); 
     if (!groups[baseGroup]) {
       groups[baseGroup] = {
@@ -363,9 +365,11 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
 }
 buildLegend('leg-mst', MST_VARIANTS);
 
-makeChart('mst-c1', MST_VARIANTS, d=>d.total,  'total params');
-makeChart('mst-c2', MST_VARIANTS, d=>d.active, 'active params');
-makeChart('mst-c3', MST_VARIANTS, d=>d.flops,  'active FLOPs');
+const standardVariants = MST_VARIANTS.filter(v => !v.id.includes('overtrained'));
+
+makeChart('mst-c1', standardVariants, d=>d.total,  'total params');
+makeChart('mst-c2', standardVariants, d=>d.active, 'active params');
+makeChart('mst-c3', standardVariants, d=>d.flops,  'active FLOPs');
 makeChart('mst-c4', MST_VARIANTS, d=>d.total_training_flops, 'total training FLOPs');
 
 // BPP Gap vs Depth Chart
@@ -397,7 +401,7 @@ const GAP_DATA = {
       ]
     },
     {
-      label: 'AggDist Undertrained',
+      label: 'AggDist',
       color: '#3CAEA3',
       data: [
         { depth: 8, bpp: 1.079775 },
