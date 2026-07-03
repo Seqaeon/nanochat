@@ -307,11 +307,8 @@ run_experiment "S7_COMBO_A_D${DEPTH}" \
     $AGGDIST_BASE \
     --mst-grad-equalize 1 \
     --mst-block-diagonal-muon 1 \
+    --mst-transition-width-mult ${N_SUBS}.0 \
     --mst-sub-lr-scale 2.0
-
-   
-# --mst-transition-width-mult ${N_SUBS}.0 \
-    
 #
 # S7-COMBO-B: P0 + longer warmup + entropy reg
 #run_experiment "S7_COMBO_B_D${DEPTH}" \
