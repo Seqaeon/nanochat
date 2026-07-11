@@ -122,6 +122,14 @@ USE_FA4 = _BACKEND == 'fa4'
 USE_FA3 = _BACKEND == 'fa3'     # kept for backward-compat with existing imports
 
 
+def _resolve_use_fa3():
+    global _BACKEND, USE_FA4, USE_FA3
+    _BACKEND = _resolve_backend()
+    USE_FA4 = _BACKEND == 'fa4'
+    USE_FA3 = _BACKEND == 'fa3'
+    return USE_FA3
+
+
 # =============================================================================
 # SDPA helpers
 # =============================================================================

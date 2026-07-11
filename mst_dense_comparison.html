@@ -144,6 +144,104 @@ const MST_VARIANTS = [
 
 const M = (v, scale = 1e6) => v / scale;
 
+// --- Hover crosshair -------------------------------------------------------
+// Tracks the mouse along the x-axis and, at that x, evaluates every tracked
+// curve's closed-form fit (y = a * x^b) directly -- rather than snapping to
+// the nearest plotted sample -- then draws a synced dot on each curve plus
+// a tooltip listing all of their values (and each variant's gap vs the
+// Dense baseline). One global plugin instance serves every chart on the
+// page; each chart just registers its own curves via attachCrosshair().
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterEvent(chart, args) {
+    const cfg = chart.$crosshair;
+    if (!cfg) return;
+    const e = args.event;
+    if (e.type === 'mousemove') {
+      const area = chart.chartArea;
+      if (e.x < area.left || e.x > area.right || e.y < area.top || e.y > area.bottom) {
+        if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+        return;
+      }
+      const x = chart.scales.x.getValueForPixel(e.x);
+      chart.$hoverX = x;
+      renderCrosshairTooltip(chart, cfg, x, e.x, e.y);
+      args.changed = true;
+    } else if (e.type === 'mouseout') {
+      if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+    }
+  },
+  afterDraw(chart) {
+    const x = chart.$hoverX;
+    const cfg = chart.$crosshair;
+    if (x == null || !cfg) return;
+    const { ctx, chartArea, scales } = chart;
+    const px = scales.x.getPixelForValue(x);
+    if (px < chartArea.left || px > chartArea.right) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(px, chartArea.top);
+    ctx.lineTo(px, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(136,135,128,0.55)';
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    cfg.curves.forEach(c => {
+      const y = c.evalFn(x);
+      if (y == null || !isFinite(y) || y < scales.y.min || y > scales.y.max) return;
+      const py = scales.y.getPixelForValue(y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+Chart.register(crosshairPlugin);
+
+function renderCrosshairTooltip(chart, cfg, x, px, py) {
+  const rows = cfg.curves.map(c => ({ ...c, y: c.evalFn(x) })).filter(r => r.y != null && isFinite(r.y));
+  if (!rows.length) { cfg.tip.style.display = 'none'; return; }
+  const baseline = rows[0];
+  let html = `<div style="font-weight:500;color:var(--color-text-primary,#111);margin-bottom:4px;">${cfg.xLabel ? cfg.xLabel + ': ' : ''}${cfg.formatX(x)}</div>`;
+  rows.forEach((r, i) => {
+    const delta = r.y - baseline.y;
+    const deltaTxt = (cfg.showDelta !== false && i > 0)
+      ? ` <span style="color:var(--color-text-tertiary,#888);">(${delta >= 0 ? '+' : ''}${delta.toFixed(4)} vs ${baseline.label})</span>`
+      : '';
+    html += `<div style="display:flex;align-items:center;gap:6px;color:var(--color-text-secondary,#555);"><span style="width:8px;height:8px;border-radius:50%;background:${r.color};flex:none;display:inline-block;"></span>${r.label}: ${cfg.formatY(r.y)}${deltaTxt}</div>`;
+  });
+  cfg.tip.innerHTML = html;
+  cfg.tip.style.display = 'block';
+
+  const wrapRect = cfg.wrapper.getBoundingClientRect();
+  const tw = cfg.tip.offsetWidth, th = cfg.tip.offsetHeight;
+  let left = px + 16, top = py - th / 2;
+  if (left + tw > wrapRect.width) left = px - tw - 16;
+  if (left < 0) left = 4;
+  if (top < 0) top = 4;
+  if (top + th > wrapRect.height) top = wrapRect.height - th - 4;
+  cfg.tip.style.left = left + 'px';
+  cfg.tip.style.top = top + 'px';
+}
+
+// Wire a chart up to the crosshair above. `curves` is an array of
+// { label, color, evalFn(x) => y }. The first curve is treated as the
+// baseline that the others get a "vs" delta against (set opts.showDelta
+// to false to omit that, e.g. when the y-axis is already a difference).
+function attachCrosshair(chart, curves, formatX, formatY, xLabel, opts = {}) {
+  const wrapper = chart.canvas.parentElement;
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:absolute;pointer-events:none;z-index:5;background:var(--color-bg-primary,#fff);border:0.5px solid var(--color-border-tertiary,#ccc);border-radius:6px;padding:6px 9px;font-size:11px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,0.12);display:none;white-space:nowrap;';
+  wrapper.appendChild(tip);
+  chart.$crosshair = { curves, formatX, formatY, xLabel, tip, wrapper, showDelta: opts.showDelta };
+}
+
 function buildLegend(elId, variants) {
   const el = document.getElementById(elId);
   const baseItem = `<span class="leg-item"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="1.5" stroke-dasharray="4,3"/></svg>Dense baseline (power fit)</span>`;
@@ -292,15 +390,19 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
         label: group.label,
         a: fit.a,
         b: fit.b,
-        r2: fit.r2
+        r2: fit.r2,
+        color: group.color
       });
     }
   });
 
+  // Dense baseline fit -- computed unconditionally so the hover crosshair
+  // has it available even if the fit-info element is ever missing.
+  const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
+
   // Populate fit info for this specific chart
   const infoEl = document.getElementById(`fit-info-${canvasId}`);
   if (infoEl) {
-    const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
     let varSymbol = 'x';
     if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
     else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
@@ -315,7 +417,7 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
   }
   
   // 4. Render the chart config
-  new Chart(document.getElementById(canvasId), {
+  const chart = new Chart(document.getElementById(canvasId), {
     type: 'scatter',
     data: { datasets },
     options: {
@@ -368,6 +470,17 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
       }
     }
   });
+
+  // Hover crosshair: at whatever x the mouse is over, show the Dense
+  // baseline's fitted value plus every variant group's fitted value there,
+  // each against the Dense baseline.
+  const curves = [
+    { label: 'Dense baseline', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
+    ...fits.map(f => ({ label: f.label, color: f.color, evalFn: v => f.a * Math.pow(v * scale, f.b) }))
+  ];
+  const formatX = v => isFlops ? `${v.toExponential(2)} FLOPs` : (v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`);
+  const formatY = v => `${v.toFixed(4)} bpp`;
+  attachCrosshair(chart, curves, formatX, formatY, xLabel);
 }
 buildLegend('leg-mst', MST_VARIANTS);
 
@@ -471,6 +584,7 @@ const densePowerData = [
 const denseAbsoluteFit = fitAbsolutePowerLaw(densePowerData);
 
 const datasets = [];
+const gapCurves = [];
 
 GAP_DATA.variants.forEach(v => {
   const points = v.data.map(d => {
@@ -524,10 +638,12 @@ GAP_DATA.variants.forEach(v => {
       tension: 0.3,
       order: 2
     });
+
+    gapCurves.push({ label: v.label, color: v.color, evalFn: d => pFit.a * Math.pow(d, pFit.b) });
   }
 });
 
-new Chart(document.getElementById('mst-gap-chart'), {
+const gapChart = new Chart(document.getElementById('mst-gap-chart'), {
   type: 'scatter',
   data: { datasets },
   options: {
@@ -582,4 +698,16 @@ new Chart(document.getElementById('mst-gap-chart'), {
     }
   }
 });
+
+// Hover crosshair for the gap chart -- shows every variant's fitted gap at
+// the hovered depth. No "vs baseline" delta here since the y-axis is
+// already MST - Dense, i.e. already a gap.
+attachCrosshair(
+  gapChart,
+  gapCurves,
+  d => `depth ${d.toFixed(1)}`,
+  v => `${v >= 0 ? '+' : ''}${v.toFixed(6)} bpp`,
+  null,
+  { showDelta: false }
+);
 </script>

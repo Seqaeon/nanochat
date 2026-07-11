@@ -201,7 +201,7 @@ class Engine:
         else:
             head_dim = m.n_embd // m.n_head
             v_head_dim = head_dim
-            if len(self.model.transformer.h) > 0 and hasattr(self.model.transformer.h[0], 'attn') and hasattr(self.model.transformer.h[0].attn, 'v_head_dim'):
+            if hasattr(self.model, 'transformer') and len(self.model.transformer.h) > 0 and hasattr(self.model.transformer.h[0], 'attn') and hasattr(self.model.transformer.h[0].attn, 'v_head_dim'):
                 v_head_dim = self.model.transformer.h[0].attn.v_head_dim
             kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": head_dim, "v_head_dim": v_head_dim, "num_layers": m.n_layer}
         kv_cache_prefill = KVCache(

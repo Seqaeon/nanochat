@@ -1,37 +1,73 @@
-
-<h2 class="sr-only">Nine scatter plots organized in three sections — RemixedLinear Sparse, RemixedLinear Dense, and Standard MoE — each comparing its variants against the dense baseline curve across total params, active params, and active FLOPs.</h2>
+<h2 class="sr-only">Six scatter plots organized in two sections — RemixedLinear Sparse and Standard MoE — each comparing its variants against the dense baseline curve across total params, active params, and active FLOPs.</h2>
 
 <style>
-.section { display:flex; flex-direction:column; gap:8px; }
-.section-title { font-size:13px; font-weight:500; color:var(--color-text-primary); padding-bottom:4px; border-bottom:0.5px solid var(--color-border-tertiary); }
-.chart-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-.chart-wrap { display:flex; flex-direction:column; gap:4px; }
-.chart-label { font-size:10px; color:var(--color-text-secondary); }
-.chart-box { position:relative; width:100%; height:180px; }
-.leg-row { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:11px; color:var(--color-text-secondary); }
-.leg-item { display:flex; align-items:center; gap:5px; }
+.section { display: flex; flex-direction: column; gap: 16px; }
+.section-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary); padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+
+/* Stack items vertically instead of a 3-column grid */
+.chart-row { display: flex; flex-direction: column; gap: 24px; } 
+
+/* Add a subtle background or border padding if desired, or leave clean */
+.chart-wrap { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.chart-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary); }
+
+/* Increased height significantly since they have the full width to stretch */
+.chart-box { position: relative; width: 100%; height: 700px; } 
+
+.leg-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 11px; color: var(--color-text-secondary); }
+.leg-item { display: flex; align-items: center; gap: 5px; }
+.fit-info { font-size: 11px; color: var(--color-text-tertiary, #888); margin-top: 8px; font-family: monospace; line-height: 1.4; }
 </style>
 
-<div style="padding:0.75rem 0 0; display:flex; flex-direction:column; gap:2rem;">
+<div style="padding: 0.75rem 0; display: flex; flex-direction: column; gap: 2rem;">
 
   <div class="section">
     <div class="section-title">RemixedLinear Sparse vs Dense Baseline</div>
     <div class="leg-row" id="leg-rls"></div>
+    
     <div class="chart-row">
-      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="rls-c1" role="img" aria-label="RLS variants vs dense baseline: total params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="rls-c2" role="img" aria-label="RLS variants vs dense baseline: active params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="rls-c3" role="img" aria-label="RLS variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+      <div class="chart-wrap">
+        <div class="chart-label">Total Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="rls-c1" role="img" aria-label="RLS variants vs dense baseline: total params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-rls-c1"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="rls-c2" role="img" aria-label="RLS variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-rls-c2"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="rls-c3" role="img" aria-label="RLS variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-rls-c3"></div>
+      </div>
     </div>
   </div>
-
 
   <div class="section">
     <div class="section-title">Standard MoE vs Dense Baseline</div>
     <div class="leg-row" id="leg-moe"></div>
+    
     <div class="chart-row">
-      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="moe-c1" role="img" aria-label="MoE variants vs dense baseline: total params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="moe-c2" role="img" aria-label="MoE variants vs dense baseline: active params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="moe-c3" role="img" aria-label="MoE variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+      <div class="chart-wrap">
+        <div class="chart-label">Total Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="moe-c1" role="img" aria-label="MoE variants vs dense baseline: total params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-moe-c1"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="moe-c2" role="img" aria-label="MoE variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-moe-c2"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="moe-c3" role="img" aria-label="MoE variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-moe-c3"></div>
+      </div>
     </div>
   </div>
 
@@ -40,34 +76,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const DENSE = [
-// My run scores
- /* { total: 12976164,   active: 12976164,   flops: 3.106426e7,  bpp: 1.4745 },        // d2 old small entry
-  { total: 36700296,   active: 36700296,   flops: 7.785754e7,  bpp: 1.170726 },        // d4 old small entry
-  { total: 73531692,   active: 73531692,   flops: 1.627932e8,  bpp:  1.044306 },        // d6 old small entry
-  { total: 125829648,  active: 125829648,  flops: 2.862643e8,  bpp: 0.969126 },        // d8 old small entry
-  { total: 195953460,  active: 195953460,  flops: 4.816944e8,  bpp: 0.908873 },          // d10
-  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.865634 },          // d12 old entry */
-
-
-
-
-// Jan 7 scores
-/*  { total: 195953460,  active: 195953460,  flops: 4.679318e8,  bpp: 1.0312 },          // d10
-  { total: 279184534,  active: 279184534,  flops: 6.936399e8,  bpp: 1.0096 },          // d11
-  { total: 286262424,  active: 286262424,  flops: 7.384666e8,  bpp: 0.9825 },          // d12 
-  { total: 389482042,  active: 389482042,  flops: 1.021191e9,  bpp: 0.9644 },          // d13
-  { total: 399115836,  active: 399115836,  flops: 1.081747e9,  bpp: 0.9437 },          // d14
-  { total: 524290078,  active: 524290078,  flops: 1.447047e9,  bpp: 0.9257 },          // d15
-  { total: 536872992,  active: 536872992,  flops: 1.547710e9,  bpp: 0.9101 },          // d16
-  { total: 685967938,  active: 685967938,  flops: 2.010136e9,  bpp: 0.8952 },          // d17
-  { total: 701893188,  active: 701893188,  flops: 2.109226e9,  bpp: 0.8817 },          // d18
-  { total: 876874918,  active: 876874918,  flops: 2.677820e9,  bpp: 0.8687 },          // d19
-  { total: 896535720,  active: 896535720,  flops: 2.886213e9,  bpp: 0.8572 },          // d20
-  { total: 2818580544, active: 2818580544, flops: 1.062003e10, bpp: 0.7236 },          // d32
-  { total: 3286639716, active: 3286639716, flops: 1.257392e10, bpp: 0.7045 },          // d34 */
-
 // Feb 8 scores
-
   { id: "dense_d12", total: 286261730,  active: 286261730,  flops: 7.596959e8,  bpp: 0.9030 },          // d12 
   { id: "dense_d14", total: 399114882,  active: 399114882,  flops: 1.128533e9,  bpp: 0.8688 },          // d14
   { id: "dense_d16", total: 536871738,  active: 536871738,  flops: 1.585452e9,  bpp: 0.8364 },          // d16
@@ -78,39 +87,122 @@ const DENSE = [
   { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9,  bpp: 0.7382 },          // d26
   { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9,  bpp: 0.7246 },          // d28
   { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, bpp: 0.7120 },          // d30
-
 ];
 
-
 const RLS = [
-//aspect_ratio set to 32
-  /* { id:'29A8', label:'29A top1-base_d8',   total:137026624, active:70966336, flops:1.914412e8, bpp:0.9959563202387124, color:'#7F77DD' },//0.000000014 0.000000005
-  { id:'29C8', label:'29C chunk64-base__8T_d8',total:137026624, active:62563648, flops:1.410251e8, bpp:0.9909287412314639, color:'#D4537E' }, //0.000000016 0.000000007
-  { id:'29E', label:'29E top1-chunk64',total:137026624, active:61531456, flops:1.348319e8, bpp:0.994869, color:'#E24B4A' }, // 0.000000016   0.000000007
-  { id:'29K8', label:'29C chunk256-base_d8',total:137026624, active:61419136, flops:1.341580e8, bpp:0.9950159784831405, color:'#D4537E' }, // 0.000000016  0.000000007
-  { id:'29K4', label:'29C 29C_CHUNK64_BASELINE_4T_AS32_D8', total:75586624, active:56934592, flops:1.072507e8, bpp:1.039659, color:'#D4537E' }, // 0.000000016  0.000000007 */
-
-//aspect_ratio set to 64
-  /*{ id:'29A4', label:'29A top1-base_d4',   total:55655968, active:39140896, flops:9.250114e7, bpp:1.086944, color:'#7F77DD' },
-  { id:'29A8', label:'29A top1-base_d8',   total:276100416, active:143979840, flops:3.951655e8, bpp:0.904716, color:'#7F77DD' }, */
   { id:'29C4', label:'29C chunk64-base_d4',total:55655968, active:37003936, flops:7.967938e7, bpp:1.082087, color:'#D4537E' },
   { id:'29C8', label:'29C chunk64-base_d8',total:276100416, active:127174464, flops:2.943332e8, bpp:0.902843, color:'#D4537E' },
   { id:'29C12', label:'29C chunk64-base_d12',total:791881440, active:289582944, flops:7.583897e8, bpp:0.8139, color:'#D4537E' },
- /* { id:'29C8', label:'29C chunk64-base__4T_d8',total:200455488, active:125992512, flops:2.872415e8, bpp:0.9157, color:'#D4537E' }, //0.000000016 0.000000007
-  { id:'29E', label:'29E top1-chunk64',total:55655968, active:36745888, flops:7.813109e7, bpp:1.086759, color:'#E24B4A' }, */
 ];
-
 
 const MOE = [
   { id:'29I', label:'29I top-1',       total:51388552, active:36708488, flops:7.790669e7, bpp:1.186575, color:'#E24B4A' },
   { id:'29J', label:'29J top-all',     total:51388552, active:51388552, flops:1.659871e8, bpp:1.186305, color:'#EF9F27' },
 ];
 
-const M = v => v / 1e6;
+const M = (v, scale = 1e6) => v / scale;
+
+// --- Hover crosshair -------------------------------------------------------
+// Tracks the mouse along the x-axis and, at that x, evaluates every tracked
+// curve's closed-form fit (y = a * x^b) directly -- rather than snapping to
+// the nearest plotted sample -- then draws a synced dot on each curve plus
+// a tooltip listing all of their values (and each variant's gap vs the
+// Dense baseline). One global plugin instance serves every chart on the
+// page; each chart just registers its own curves via attachCrosshair().
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterEvent(chart, args) {
+    const cfg = chart.$crosshair;
+    if (!cfg) return;
+    const e = args.event;
+    if (e.type === 'mousemove') {
+      const area = chart.chartArea;
+      if (e.x < area.left || e.x > area.right || e.y < area.top || e.y > area.bottom) {
+        if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+        return;
+      }
+      const x = chart.scales.x.getValueForPixel(e.x);
+      chart.$hoverX = x;
+      renderCrosshairTooltip(chart, cfg, x, e.x, e.y);
+      args.changed = true;
+    } else if (e.type === 'mouseout') {
+      if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+    }
+  },
+  afterDraw(chart) {
+    const x = chart.$hoverX;
+    const cfg = chart.$crosshair;
+    if (x == null || !cfg) return;
+    const { ctx, chartArea, scales } = chart;
+    const px = scales.x.getPixelForValue(x);
+    if (px < chartArea.left || px > chartArea.right) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(px, chartArea.top);
+    ctx.lineTo(px, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(136,135,128,0.55)';
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    cfg.curves.forEach(c => {
+      const y = c.evalFn(x);
+      if (y == null || !isFinite(y) || y < scales.y.min || y > scales.y.max) return;
+      const py = scales.y.getPixelForValue(y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+Chart.register(crosshairPlugin);
+
+function renderCrosshairTooltip(chart, cfg, x, px, py) {
+  const rows = cfg.curves.map(c => ({ ...c, y: c.evalFn(x) })).filter(r => r.y != null && isFinite(r.y));
+  if (!rows.length) { cfg.tip.style.display = 'none'; return; }
+  const baseline = rows[0];
+  let html = `<div style="font-weight:500;color:var(--color-text-primary,#111);margin-bottom:4px;">${cfg.xLabel ? cfg.xLabel + ': ' : ''}${cfg.formatX(x)}</div>`;
+  rows.forEach((r, i) => {
+    const delta = r.y - baseline.y;
+    const deltaTxt = (cfg.showDelta !== false && i > 0)
+      ? ` <span style="color:var(--color-text-tertiary,#888);">(${delta >= 0 ? '+' : ''}${delta.toFixed(4)} vs ${baseline.label})</span>`
+      : '';
+    html += `<div style="display:flex;align-items:center;gap:6px;color:var(--color-text-secondary,#555);"><span style="width:8px;height:8px;border-radius:50%;background:${r.color};flex:none;display:inline-block;"></span>${r.label}: ${cfg.formatY(r.y)}${deltaTxt}</div>`;
+  });
+  cfg.tip.innerHTML = html;
+  cfg.tip.style.display = 'block';
+
+  const wrapRect = cfg.wrapper.getBoundingClientRect();
+  const tw = cfg.tip.offsetWidth, th = cfg.tip.offsetHeight;
+  let left = px + 16, top = py - th / 2;
+  if (left + tw > wrapRect.width) left = px - tw - 16;
+  if (left < 0) left = 4;
+  if (top < 0) top = 4;
+  if (top + th > wrapRect.height) top = wrapRect.height - th - 4;
+  cfg.tip.style.left = left + 'px';
+  cfg.tip.style.top = top + 'px';
+}
+
+// Wire a chart up to the crosshair above. `curves` is an array of
+// { label, color, evalFn(x) => y }. The first curve is treated as the
+// baseline that the others get a "vs" delta against (set opts.showDelta
+// to false to omit that, e.g. when the y-axis is already a difference).
+function attachCrosshair(chart, curves, formatX, formatY, xLabel, opts = {}) {
+  const wrapper = chart.canvas.parentElement;
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:absolute;pointer-events:none;z-index:5;background:var(--color-bg-primary,#fff);border:0.5px solid var(--color-border-tertiary,#ccc);border-radius:6px;padding:6px 9px;font-size:11px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,0.12);display:none;white-space:nowrap;';
+  wrapper.appendChild(tip);
+  chart.$crosshair = { curves, formatX, formatY, xLabel, tip, wrapper, showDelta: opts.showDelta };
+}
 
 function buildLegend(elId, variants) {
   const el = document.getElementById(elId);
-  const baseItem = `<span class="leg-item"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="1.5" stroke-dasharray="4,3"/></svg>Dense baseline</span>`;
+  const baseItem = `<span class="leg-item"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="1.5" stroke-dasharray="4,3"/></svg>Dense baseline (power fit)</span>`;
   const items = variants.map(v =>
     `<span class="leg-item"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.5" fill="${v.color}"/></svg>${v.label}</span>`
   ).join('');
@@ -118,22 +210,27 @@ function buildLegend(elId, variants) {
 }
 
 // Fit power law: bpp = a * x^b  (OLS in log-log space)
-function fitPowerLaw(keyFn) {
-  const valid = DENSE.filter(d => keyFn(d) > 0 && d.bpp > 0);
+function fitPowerLaw(keyFn, data) {
+  const valid = (data || DENSE).filter(d => keyFn(d) > 0 && d.bpp > 0);
   const lx = valid.map(d => Math.log(keyFn(d)));
   const ly = valid.map(d => Math.log(d.bpp));
   const n = lx.length;
+  if (n < 2) return { a: 0, b: 0, r2: 0 };
   const mx = lx.reduce((s,v) => s+v, 0) / n;
   const my = ly.reduce((s,v) => s+v, 0) / n;
   const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
   const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
   const b = cov / varx;
   const a = Math.exp(my - b * mx);
-  return { a, b };
+  // R² goodness of fit
+  const ssres = valid.reduce((s,d,i) => s + (ly[i] - Math.log(a) - b * lx[i])**2, 0);
+  const sstot = ly.reduce((s,v) => s + (v - my)**2, 0);
+  const r2 = 1 - ssres / sstot;
+  return { a, b, r2 };
 }
 
 // Extrapolated power-law curve — extends ±40% of the log range beyond the data
-function baseCurveDS(keyFn, variants) {
+function baseCurveDS(keyFn, variants, scale = 1e6) {
   const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
   const xMin = Math.min(...allX);
   const xMax = Math.max(...allX);
@@ -145,12 +242,13 @@ function baseCurveDS(keyFn, variants) {
   const N = 100;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
-    return { x: M(x), y: a * Math.pow(x, b) };
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
   });
   return {
-    label: 'Dense baseline',
+    type: 'line',
+    label: 'Dense baseline (power fit)',
     data: pts,
-    showLine: true, tension: 0,
+    tension: 0,
     borderColor: '#888780', backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [5,3],
     pointRadius: 0, pointHoverRadius: 0,
@@ -158,9 +256,39 @@ function baseCurveDS(keyFn, variants) {
   };
 }
 
+// Power-law fit curve for a variant
+function variantCurveDS(keyFn, variantData, color, label, scale = 1e6, allVariants) {
+  if (variantData.length < 2) return null;
+  const { a, b, r2 } = fitPowerLaw(keyFn, variantData);
+  // Extrapolate variant curves over the entire range of all data points
+  const allXCombined = [...DENSE, ...allVariants].map(keyFn).filter(v => v > 0);
+  const xMin = Math.min(...allXCombined);
+  const xMax = Math.max(...allXCombined);
+  const logSpan = Math.log(xMax / xMin);
+  const pad = 0.5;
+  const x0 = xMin * Math.exp(-pad * logSpan);
+  const x1 = xMax * Math.exp( pad * logSpan);
+  const N = 80;
+  const pts = Array.from({length: N}, (_, i) => {
+    const x = x0 * Math.pow(x1/x0, i/(N-1));
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
+  });
+  return {
+    type: 'line',
+    label: `${label} (power fit)`,
+    data: pts,
+    tension: 0,
+    borderColor: color, backgroundColor: 'transparent',
+    borderWidth: 1.5, borderDash: [3,2],
+    pointRadius: 0, pointHoverRadius: 0,
+    order: 8,
+    _fit: { a, b, r2 },
+  };
+}
+
 // Actual DENSE data points (small dots, no line)
-function baseDotDS(keyFn) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp, id: d.id }));
+function baseDotDS(keyFn, scale = 1e6) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp, id: d.id }));
   return {
     label: 'Dense (measured)',
     data: pts,
@@ -171,10 +299,10 @@ function baseDotDS(keyFn) {
   };
 }
 
-function varDS(v, keyFn) {
+function varDS(v, keyFn, scale = 1e6) {
   return {
     label: v.label,
-    data: [{ x: M(keyFn(v)), y: v.bpp, id: v.id }],
+    data: [{ x: M(keyFn(v), scale), y: v.bpp, id: v.id }],
     backgroundColor: v.color, borderColor: v.color,
     pointStyle: 'circle', pointRadius: 7, pointHoverRadius: 9,
     pointBorderColor: 'rgba(255,255,255,0.5)', pointBorderWidth: 1.5,
@@ -183,8 +311,69 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
-  const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
-  new Chart(document.getElementById(canvasId), {
+  const scale = 1e6;
+
+  // 1. Initialize datasets with the Dense baseline curve and dots, plus individual points
+  const datasets = [
+    baseCurveDS(keyFn, variants, scale), 
+    baseDotDS(keyFn, scale), 
+    ...variants.map(v => varDS(v, keyFn, scale))
+  ];
+  
+  // 2. Dynamically group variants by their base prefix
+  const groups = {};
+  variants.forEach(v => {
+    // Strips '_d<depth>' or trailing digits (e.g. '29C4' -> '29C')
+    const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1').replace(/\d+$/, ''); 
+    if (!groups[baseGroup]) {
+      groups[baseGroup] = {
+        data: [],
+        color: v.color,
+        label: v.label.replace(/[\s_-]*d\d+([\s_-]|$)/gi, '$1').trim()
+      };
+    }
+    groups[baseGroup].data.push(v);
+  });
+
+  const fits = [];
+  // 3. Loop through every variant group and calculate/push its respective power-law curve
+  Object.keys(groups).forEach(groupKey => {
+    const group = groups[groupKey];
+    const curve = variantCurveDS(keyFn, group.data, group.color, group.label, scale, variants);
+    if (curve) {
+      datasets.push(curve);
+      
+      const fit = curve._fit;
+      fits.push({
+        label: group.label,
+        a: fit.a,
+        b: fit.b,
+        r2: fit.r2,
+        color: group.color
+      });
+    }
+  });
+
+  // Dense baseline fit
+  const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
+
+  // Populate fit info for this specific chart
+  const infoEl = document.getElementById(`fit-info-${canvasId}`);
+  if (infoEl) {
+    let varSymbol = 'x';
+    if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
+    else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
+    else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
+
+    let html = `Dense fit: bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)})`;
+    fits.forEach(f => {
+      html += ` &nbsp;|&nbsp; ${f.label} fit: bpp = ${f.a.toFixed(4)} × ${varSymbol}<sup>${f.b.toFixed(4)}</sup> (R²=${f.r2.toFixed(4)})`;
+    });
+    infoEl.innerHTML = html;
+  }
+  
+  // 4. Render the chart config
+  const chart = new Chart(document.getElementById(canvasId), {
     type: 'scatter',
     data: { datasets },
     options: {
@@ -197,8 +386,8 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
           ticks: {
             font:{ size:9 }, color:'#888780', maxTicksLimit:5,
             callback(v) {
-              const m = v/1e6;
-              const nice = [10,20,30,40,50,80,100,200,300,500,700,1000];
+              const m = v;
+              const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
               const r = Math.round(m);
               if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
               return null;
@@ -226,17 +415,25 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
       }
     }
   });
+
+  // Hover crosshair: at whatever x the mouse is over, show the Dense
+  // baseline's fitted value plus every variant group's fitted value there,
+  // each against the Dense baseline.
+  const curves = [
+    { label: 'Dense baseline', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
+    ...fits.map(f => ({ label: f.label, color: f.color, evalFn: v => f.a * Math.pow(v * scale, f.b) }))
+  ];
+  const formatX = v => v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`;
+  const formatY = v => `${v.toFixed(4)} bpp`;
+  attachCrosshair(chart, curves, formatX, formatY, xLabel);
 }
 
 buildLegend('leg-rls', RLS);
-
 buildLegend('leg-moe', MOE);
 
 makeChart('rls-c1', RLS, d=>d.total,  'total params');
 makeChart('rls-c2', RLS, d=>d.active, 'active params');
 makeChart('rls-c3', RLS, d=>d.flops,  'active FLOPs');
-
-
 
 makeChart('moe-c1', MOE, d=>d.total,  'total params');
 makeChart('moe-c2', MOE, d=>d.active, 'active params');

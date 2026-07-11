@@ -1115,3 +1115,52 @@ With narrow experts (r = D_in // K), activation intermediates are r-dimensional 
 | 21_PER_MLP_TOP1 | K=4 | 1 | MLP only | Maximum FLOP savings in MLP |
 | 21_PER_ALL_SOFT | K=4 | all | MLP+Attn | Full pervasive expert routing |
 | 21_PER_ALL_TOP1 | K=4 | 1 | MLP+Attn | Maximum FLOP savings everywhere |
+
+---
+
+## Phase 22: MoE Attention Projections
+Extended template-routing to attention projections ($Q, K, V, O$). Replaced standard linear projections in attention blocks with `RemixedLinear` configured with multiple templates (`n_templates > 1`) and per-token routing weights.
+- Added `--p22-template-routing-learned` to toggle learned vs. frozen routing projections.
+- Achieved **1.122 BPB** at depth 4 with learned routing (compared to standard MoE variants).
+
+## Phase 23: Tiny Experts & Quantile Routing
+Designed a fully vectorized 3D tensor expert computation (`expert_up_w`, `expert_down_w`) to prevent Distributed Data Parallel (DDP) deadlocks by avoiding Python loops, ensuring compatibility with `torch.compile`.
+- Introduced `QuantileBalancedRouter` (and cross-attention variants) to enforce balanced expert allocation without hard load balancing loss terms.
+- Tested basis compression at small scale ($B=C/4$), which bottlenecked representation and caused loss spikes, but was alleviated by softer gating ($T=2.0$).
+- Sweeps verified standard MoE baselines alongside LoKR (Low-Rank Parameter Parity) expert adapters.
+
+## Phase 24: Sliced, Folded, and Sequence-Gated Linear
+Explored lighter weight parameter/FLOP-efficient linear variants:
+- **`SlicedWeightLinear`**: Selects column indices from a wide parameter bank using a Product Key router.
+- **`FoldedModulationLinear`**: Gated folded dimensions to modulate input channels.
+- **`SequenceGatedLinear`**: Standard dense layer with a sequence-averaged multiplicative gate.
+
+## Phase 25: RemixedLinear Ablations (Full Rank)
+Isolated the effect of basis compression by running at full rank ($B=C$, scale_basis=False).
+- Found that full-rank `RemixedLinear` with the low-rank output gate beat the dense baseline (**1.1604** vs **1.167** BPB), showing that the output gate condition on the context is the primary quality driver.
+
+## Phase 26: OutputGatedLinear
+Ablated the factorization pathway itself:
+- Tested `OutputGatedLinear` (standard dense weight matrix + low-rank output gate) to see if we could get the benefits of the output gate without the factorization/LayerNorm bottleneck.
+
+## Phase 27: Chunk-Gated Sweeps
+Tested amortized routing scopes over chunks of tokens to reduce computation.
+
+## Phase 28: FLOPs-Efficient Routing and Global Banks
+Optimized runtime overhead of MoE and `RemixedLinear`:
+- **Shared Basis Injection (28C)**: Precomputes the basis projection $h_{\text{basis}}$ once per block for $Q, K, V, O$ attention projections.
+- **Amortized Chunk Routing (28D)**: Performs routing once per $N$-token chunk (e.g., $N=64$) to build an effective weight matrix, enabling single contractive operations and massive speedups.
+- **Global Template Bank (28E/F)**: Consolidates parameters out of individual layers into a shared global parameter bank, using layer-specific routers.
+
+## Phase 29: Param/FLOP Efficiency under Total Parameter Budget
+Evaluated Chunk Routing vs. standard MoE baselines under tight param-token budgets:
+- `29A_8T_TOP1_BASELINE_D8`: **0.9047 BPB**
+- `29C_CHUNK64_BASELINE_D8`: **0.9028 BPB** (beating the dense baseline of **0.9088 BPB**).
+- Depth 12 runs of `29C` achieved **0.8139 BPB**.
+
+## Phase 30: LayerNorm Confound & Token Budget MoE Retraining
+Addressed review weaknesses:
+- **30A**: Dense + intermediate LayerNorm to isolate LN confound from K=1 ablation.
+- **30B**: `RemixedLinear` K=1 without LN to isolate factorization effect.
+- **30C/D**: Retrained MoE top-all and top-1 using TOTAL parameter budget for token allocation instead of active parameter budget, ensuring a fair Chinchilla comparison.
+

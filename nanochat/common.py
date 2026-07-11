@@ -231,7 +231,8 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
         has_moe = getattr(cfg, 'use_moe', False) if cfg else False
         has_eet = getattr(cfg, 'use_eet', False) if cfg else False
         has_sparse_mst = (getattr(cfg, 'use_mst', False) and getattr(cfg, 'mst_routing_mode', '') == 'topk_hard') if cfg else False
-        find_unused = bool(has_moe or has_eet or has_sparse_mst)
+        has_remix = getattr(cfg, 'use_remix_linear', False) if cfg else False
+        find_unused = bool(has_moe or has_eet or has_sparse_mst or has_remix)
         print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank}, find_unused_parameters={find_unused})")
         model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=find_unused)
     elif parallel_type == "dp":

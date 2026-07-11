@@ -1,29 +1,49 @@
-
-<h2 class="sr-only">Three scatter plots comparing MST variants (AggDist, FFA) against the dense baseline power-law fit across total params, active params, and active FLOPs.</h2>
+<h2 class="sr-only">Three scatter plots comparing EET variants against the dense baseline power-law fit across total params, active params, and active FLOPs.</h2>
 
 <style>
-.section { display:flex; flex-direction:column; gap:8px; }
-.section-title { font-size:13px; font-weight:500; color:var(--color-text-primary); padding-bottom:4px; border-bottom:0.5px solid var(--color-border-tertiary); }
-.chart-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-.chart-wrap { display:flex; flex-direction:column; gap:4px; }
-.chart-label { font-size:10px; color:var(--color-text-secondary); }
-.chart-box { position:relative; width:100%; height:180px; }
-.leg-row { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:11px; color:var(--color-text-secondary); }
-.leg-item { display:flex; align-items:center; gap:5px; }
-.fit-info { font-size:10px; color:var(--color-text-tertiary, #888); margin-top:4px; font-family:monospace; }
+.section { display: flex; flex-direction: column; gap: 16px; }
+.section-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary); padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+
+/* Stack items vertically instead of a 3-column grid */
+.chart-row { display: flex; flex-direction: column; gap: 24px; } 
+
+/* Add a subtle background or border padding if desired, or leave clean */
+.chart-wrap { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.chart-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary); }
+
+/* Increased height significantly since they have the full width to stretch */
+.chart-box { position: relative; width: 100%; height: 700px; } 
+
+.leg-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 11px; color: var(--color-text-secondary); }
+.leg-item { display: flex; align-items: center; gap: 5px; }
+.fit-info { font-size: 11px; color: var(--color-text-tertiary, #888); margin-top: 8px; font-family: monospace; line-height: 1.4; }
 </style>
 
-<div style="padding:0.75rem 0 0; display:flex; flex-direction:column; gap:2rem;">
+<div style="padding: 0.75rem 0; display: flex; flex-direction: column; gap: 2rem;">
 
   <div class="section">
-    <div class="section-title">MST Variants vs Dense Baseline</div>
-    <div class="leg-row" id="leg-mst"></div>
+    <div class="section-title">EET Variants vs Dense Baseline</div>
+    <div class="leg-row" id="leg-eet"></div>
+    
     <div class="chart-row">
-      <div class="chart-wrap"><div class="chart-label">total params</div><div class="chart-box"><canvas id="mst-c1" role="img" aria-label="MST variants vs dense baseline: total params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active params</div><div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: active params vs val bpp"></canvas></div></div>
-      <div class="chart-wrap"><div class="chart-label">active FLOPs</div><div class="chart-box"><canvas id="mst-c3" role="img" aria-label="MST variants vs dense baseline: active FLOPs vs val bpp"></canvas></div></div>
+      <div class="chart-wrap">
+        <div class="chart-label">Total Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="eet-c1" role="img" aria-label="EET variants vs dense baseline: total params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-eet-c1"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="eet-c2" role="img" aria-label="EET variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-eet-c2"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Active FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="eet-c3" role="img" aria-label="EET variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-eet-c3"></div>
+      </div>
     </div>
-    <div class="fit-info" id="fit-info"></div>
   </div>
 
 </div>
@@ -42,18 +62,113 @@ const DENSE = [
   { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9,  bpp: 0.7382 },          // d26
   { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9,  bpp: 0.7246 },          // d28
   { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, bpp: 0.7120 },          // d30
-
 ];
 
-
-const MST_VARIANTS = [
+const EET_VARIANTS = [
   { id:'eet_d8', label:'EET d8',   total:125896086, active:125896086, flops:2.866629e8, bpp:1.0358508491364813, color:'#7F77DD' }, 
-  { id:'eet_d16', label:'EER d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#7F77DD' }, 
+  { id:'eet_d16', label:'EET d16',   total:190849056, active:190849056, flops:9.437676e8, bpp:0.8752039886704976, color:'#7F77DD' }, 
   { id:'eet_d24', label:'EET d24',   total:1384723654, active:1384723654, flops:4.693900e9, bpp:0.812597, color:'#7F77DD' }, 
-
 ];
 
-const M = v => v / 1e6;
+const M = (v, scale = 1e6) => v / scale;
+
+// --- Hover crosshair -------------------------------------------------------
+// Tracks the mouse along the x-axis and, at that x, evaluates every tracked
+// curve's closed-form fit (y = a * x^b) directly -- rather than snapping to
+// the nearest plotted sample -- then draws a synced dot on each curve plus
+// a tooltip listing all of their values (and each variant's gap vs the
+// Dense baseline). One global plugin instance serves every chart on the
+// page; each chart just registers its own curves via attachCrosshair().
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterEvent(chart, args) {
+    const cfg = chart.$crosshair;
+    if (!cfg) return;
+    const e = args.event;
+    if (e.type === 'mousemove') {
+      const area = chart.chartArea;
+      if (e.x < area.left || e.x > area.right || e.y < area.top || e.y > area.bottom) {
+        if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+        return;
+      }
+      const x = chart.scales.x.getValueForPixel(e.x);
+      chart.$hoverX = x;
+      renderCrosshairTooltip(chart, cfg, x, e.x, e.y);
+      args.changed = true;
+    } else if (e.type === 'mouseout') {
+      if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+    }
+  },
+  afterDraw(chart) {
+    const x = chart.$hoverX;
+    const cfg = chart.$crosshair;
+    if (x == null || !cfg) return;
+    const { ctx, chartArea, scales } = chart;
+    const px = scales.x.getPixelForValue(x);
+    if (px < chartArea.left || px > chartArea.right) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(px, chartArea.top);
+    ctx.lineTo(px, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(136,135,128,0.55)';
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    cfg.curves.forEach(c => {
+      const y = c.evalFn(x);
+      if (y == null || !isFinite(y) || y < scales.y.min || y > scales.y.max) return;
+      const py = scales.y.getPixelForValue(y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+Chart.register(crosshairPlugin);
+
+function renderCrosshairTooltip(chart, cfg, x, px, py) {
+  const rows = cfg.curves.map(c => ({ ...c, y: c.evalFn(x) })).filter(r => r.y != null && isFinite(r.y));
+  if (!rows.length) { cfg.tip.style.display = 'none'; return; }
+  const baseline = rows[0];
+  let html = `<div style="font-weight:500;color:var(--color-text-primary,#111);margin-bottom:4px;">${cfg.xLabel ? cfg.xLabel + ': ' : ''}${cfg.formatX(x)}</div>`;
+  rows.forEach((r, i) => {
+    const delta = r.y - baseline.y;
+    const deltaTxt = (cfg.showDelta !== false && i > 0)
+      ? ` <span style="color:var(--color-text-tertiary,#888);">(${delta >= 0 ? '+' : ''}${delta.toFixed(4)} vs ${baseline.label})</span>`
+      : '';
+    html += `<div style="display:flex;align-items:center;gap:6px;color:var(--color-text-secondary,#555);"><span style="width:8px;height:8px;border-radius:50%;background:${r.color};flex:none;display:inline-block;"></span>${r.label}: ${cfg.formatY(r.y)}${deltaTxt}</div>`;
+  });
+  cfg.tip.innerHTML = html;
+  cfg.tip.style.display = 'block';
+
+  const wrapRect = cfg.wrapper.getBoundingClientRect();
+  const tw = cfg.tip.offsetWidth, th = cfg.tip.offsetHeight;
+  let left = px + 16, top = py - th / 2;
+  if (left + tw > wrapRect.width) left = px - tw - 16;
+  if (left < 0) left = 4;
+  if (top < 0) top = 4;
+  if (top + th > wrapRect.height) top = wrapRect.height - th - 4;
+  cfg.tip.style.left = left + 'px';
+  cfg.tip.style.top = top + 'px';
+}
+
+// Wire a chart up to the crosshair above. `curves` is an array of
+// { label, color, evalFn(x) => y }. The first curve is treated as the
+// baseline that the others get a "vs" delta against (set opts.showDelta
+// to false to omit that, e.g. when the y-axis is already a difference).
+function attachCrosshair(chart, curves, formatX, formatY, xLabel, opts = {}) {
+  const wrapper = chart.canvas.parentElement;
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:absolute;pointer-events:none;z-index:5;background:var(--color-bg-primary,#fff);border:0.5px solid var(--color-border-tertiary,#ccc);border-radius:6px;padding:6px 9px;font-size:11px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,0.12);display:none;white-space:nowrap;';
+  wrapper.appendChild(tip);
+  chart.$crosshair = { curves, formatX, formatY, xLabel, tip, wrapper, showDelta: opts.showDelta };
+}
 
 function buildLegend(elId, variants) {
   const el = document.getElementById(elId);
@@ -70,6 +185,7 @@ function fitPowerLaw(keyFn, data) {
   const lx = valid.map(d => Math.log(keyFn(d)));
   const ly = valid.map(d => Math.log(d.bpp));
   const n = lx.length;
+  if (n < 2) return { a: 0, b: 0, r2: 0 };
   const mx = lx.reduce((s,v) => s+v, 0) / n;
   const my = ly.reduce((s,v) => s+v, 0) / n;
   const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
@@ -84,7 +200,7 @@ function fitPowerLaw(keyFn, data) {
 }
 
 // Extrapolated power-law curve — extends ±40% of the log range beyond the data
-function baseCurveDS(keyFn, variants) {
+function baseCurveDS(keyFn, variants, scale = 1e6) {
   const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
   const xMin = Math.min(...allX);
   const xMax = Math.max(...allX);
@@ -96,12 +212,13 @@ function baseCurveDS(keyFn, variants) {
   const N = 100;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
-    return { x: M(x), y: a * Math.pow(x, b) };
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
   });
   return {
+    type: 'line',
     label: 'Dense baseline (power fit)',
     data: pts,
-    showLine: true, tension: 0,
+    tension: 0,
     borderColor: '#888780', backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [5,3],
     pointRadius: 0, pointHoverRadius: 0,
@@ -109,26 +226,28 @@ function baseCurveDS(keyFn, variants) {
   };
 }
 
-// Power-law fit curve for a variant (e.g. AggDist)
-function variantCurveDS(keyFn, variantData, color, label) {
-  if (variantData.length < 2) return null; // need at least 2 points for a fit
+// Power-law fit curve for a variant (e.g. EET)
+function variantCurveDS(keyFn, variantData, color, label, scale = 1e6) {
+  if (variantData.length < 2) return null;
   const { a, b, r2 } = fitPowerLaw(keyFn, variantData);
-  const allX = variantData.map(keyFn).filter(v => v > 0);
-  const xMin = Math.min(...allX);
-  const xMax = Math.max(...allX);
+  // Extrapolate variant curves over the entire range of all data points (Dense baseline and variants combined)
+  const allXCombined = [...DENSE, ...EET_VARIANTS].map(keyFn).filter(v => v > 0);
+  const xMin = Math.min(...allXCombined);
+  const xMax = Math.max(...allXCombined);
   const logSpan = Math.log(xMax / xMin);
-  const pad = 0.6; // extend a bit further for extrapolation visibility
+  const pad = 0.5;
   const x0 = xMin * Math.exp(-pad * logSpan);
   const x1 = xMax * Math.exp( pad * logSpan);
   const N = 80;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
-    return { x: M(x), y: a * Math.pow(x, b) };
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
   });
   return {
+    type: 'line',
     label: `${label} (power fit)`,
     data: pts,
-    showLine: true, tension: 0,
+    tension: 0,
     borderColor: color, backgroundColor: 'transparent',
     borderWidth: 1.5, borderDash: [3,2],
     pointRadius: 0, pointHoverRadius: 0,
@@ -138,8 +257,8 @@ function variantCurveDS(keyFn, variantData, color, label) {
 }
 
 // Actual DENSE data points (small dots, no line)
-function baseDotDS(keyFn) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d)), y: d.bpp, id: d.id }));
+function baseDotDS(keyFn, scale = 1e6) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp, id: d.id }));
   return {
     label: 'Dense (measured)',
     data: pts,
@@ -150,10 +269,10 @@ function baseDotDS(keyFn) {
   };
 }
 
-function varDS(v, keyFn) {
+function varDS(v, keyFn, scale = 1e6) {
   return {
     label: v.label,
-    data: [{ x: M(keyFn(v)), y: v.bpp, id: v.id }],
+    data: [{ x: M(keyFn(v), scale), y: v.bpp, id: v.id }],
     backgroundColor: v.color, borderColor: v.color,
     pointStyle: 'circle', pointRadius: 7, pointHoverRadius: 9,
     pointBorderColor: 'rgba(255,255,255,0.5)', pointBorderWidth: 1.5,
@@ -162,22 +281,69 @@ function varDS(v, keyFn) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
-  // Group AggDist variants for power fit
-  const aggdistData = variants.filter(v => v.id.startsWith('aggdist'));
-  const datasets = [baseCurveDS(keyFn, variants), baseDotDS(keyFn), ...variants.map(v => varDS(v, keyFn))];
-  // Add AggDist power fit if we have enough points
-  const aggdistCurve = variantCurveDS(keyFn, aggdistData, '#7F77DD', 'AggDist');
-  if (aggdistCurve) {
-    datasets.push(aggdistCurve);
-    // Display fit info for the first chart (total params)
-    if (canvasId === 'mst-c1') {
-      const fit = aggdistCurve._fit;
-      const infoEl = document.getElementById('fit-info');
-      const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
-      infoEl.innerHTML = `Dense fit: bpp = ${da.toFixed(4)} × N<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)}) &nbsp;|&nbsp; AggDist fit: bpp = ${fit.a.toFixed(4)} × N<sup>${fit.b.toFixed(4)}</sup> (R²=${fit.r2.toFixed(4)})`;
+  const scale = 1e6;
+
+  // 1. Initialize datasets with the Dense baseline curve and dots, plus individual points
+  const datasets = [
+    baseCurveDS(keyFn, variants, scale), 
+    baseDotDS(keyFn, scale), 
+    ...variants.map(v => varDS(v, keyFn, scale))
+  ];
+  
+  // 2. Dynamically group variants by their base prefix
+  const groups = {};
+  variants.forEach(v => {
+    // Strips '_d<depth>' from anywhere in the ID (e.g. 'eet_d8' -> 'eet')
+    const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1').replace(/\d+$/, ''); 
+    if (!groups[baseGroup]) {
+      groups[baseGroup] = {
+        data: [],
+        color: v.color,
+        label: v.label.replace(/[\s_-]*d\d+([\s_-]|$)/gi, '$1').trim()
+      };
     }
+    groups[baseGroup].data.push(v);
+  });
+
+  const fits = [];
+  // 3. Loop through every variant group and calculate/push its respective power-law curve
+  Object.keys(groups).forEach(groupKey => {
+    const group = groups[groupKey];
+    const curve = variantCurveDS(keyFn, group.data, group.color, group.label, scale);
+    if (curve) {
+      datasets.push(curve);
+      
+      const fit = curve._fit;
+      fits.push({
+        label: group.label,
+        a: fit.a,
+        b: fit.b,
+        r2: fit.r2,
+        color: group.color
+      });
+    }
+  });
+
+  // Dense baseline fit
+  const { a: da, b: db, r2: dr2 } = fitPowerLaw(keyFn);
+
+  // Populate fit info for this specific chart
+  const infoEl = document.getElementById(`fit-info-${canvasId}`);
+  if (infoEl) {
+    let varSymbol = 'x';
+    if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
+    else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
+    else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
+
+    let html = `Dense fit: bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)})`;
+    fits.forEach(f => {
+      html += ` &nbsp;|&nbsp; ${f.label} fit: bpp = ${f.a.toFixed(4)} × ${varSymbol}<sup>${f.b.toFixed(4)}</sup> (R²=${f.r2.toFixed(4)})`;
+    });
+    infoEl.innerHTML = html;
   }
-  new Chart(document.getElementById(canvasId), {
+  
+  // 4. Render the chart config
+  const chart = new Chart(document.getElementById(canvasId), {
     type: 'scatter',
     data: { datasets },
     options: {
@@ -190,8 +356,8 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
           ticks: {
             font:{ size:9 }, color:'#888780', maxTicksLimit:5,
             callback(v) {
-              const m = v/1e6;
-              const nice = [10,20,30,40,50,80,100,200,300,500,700,1000];
+              const m = v;
+              const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
               const r = Math.round(m);
               if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
               return null;
@@ -219,11 +385,22 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
       }
     }
   });
+
+  // Hover crosshair: at whatever x the mouse is over, show the Dense
+  // baseline's fitted value plus every variant group's fitted value there,
+  // each against the Dense baseline.
+  const curves = [
+    { label: 'Dense baseline', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
+    ...fits.map(f => ({ label: f.label, color: f.color, evalFn: v => f.a * Math.pow(v * scale, f.b) }))
+  ];
+  const formatX = v => v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`;
+  const formatY = v => `${v.toFixed(4)} bpp`;
+  attachCrosshair(chart, curves, formatX, formatY, xLabel);
 }
 
-buildLegend('leg-mst', MST_VARIANTS);
+buildLegend('leg-eet', EET_VARIANTS);
 
-makeChart('mst-c1', MST_VARIANTS, d=>d.total,  'total params');
-makeChart('mst-c2', MST_VARIANTS, d=>d.active, 'active params');
-makeChart('mst-c3', MST_VARIANTS, d=>d.flops,  'active FLOPs');
+makeChart('eet-c1', EET_VARIANTS, d=>d.total,  'total params');
+makeChart('eet-c2', EET_VARIANTS, d=>d.active, 'active params');
+makeChart('eet-c3', EET_VARIANTS, d=>d.flops,  'active FLOPs');
 </script>
