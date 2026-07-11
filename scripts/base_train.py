@@ -196,6 +196,9 @@ parser.add_argument("--remix-gate-lr-scale", type=float, default=0.3, help="LR m
 # Phase 30: LayerNorm ablation flags
 parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LayerNorm in RemixedLinear basis projection (0=keep LN, 1=remove LN)")
 parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LayerNorm to dense linear projections for controlled ablation (0=off, 1=on)")
+# Phase 29: RemixedLinear optimizer optimizations
+parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank (prevents cross-template gradient contamination)")
+parser.add_argument("--remix-template-lr-scale", type=float, default=1.0, help="29: LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR, MST-inspired)")
 # ── MST: Modular Sub-Transformer ──
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
@@ -867,6 +870,9 @@ def build_model_meta(depth):
         # Phase 30: LayerNorm ablation
         remix_disable_ln_basis=getattr(args, 'remix_disable_ln_basis', 0),
         dense_intermediate_ln=getattr(args, 'dense_intermediate_ln', 0),
+        # Phase 29: RemixedLinear optimizer optimizations
+        p29_template_block_diag=getattr(args, 'remix_template_block_diag', 0),
+        p29_template_lr_scale=getattr(args, 'remix_template_lr_scale', 1.0),
         # MST: Modular Sub-Transformer
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),

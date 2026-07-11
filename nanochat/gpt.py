@@ -77,6 +77,9 @@ class GPTConfig:
     p28_global_template_bank: str = 'none'  # 28E/F: 'none'|'ffn'|'all' — cross-layer global template bank
     p28_attn_proj_templates: int = 0        # 28C2: override n_templates for attn c_proj (0=use default from remixed_linear_kwargs)
     p28_attn_qk_templates: int = 0          # 28C3: override n_templates for attn c_q and c_k (0=use default)
+    # Phase 29: RemixedLinear optimizer optimizations
+    p29_template_block_diag: int = 0        # Block-diagonal Muon for template_bank (0=off, 1=on — uses K blocks)
+    p29_template_lr_scale: float = 1.0      # LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR)
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -1597,10 +1600,9 @@ class RemixedLinear(nn.Module):
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
             else:
                 # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
-                self.template_bank = nn.ParameterList([
-                    nn.Parameter(torch.randn(out_features, basis_size))
-                    for _ in range(self.n_templates)
-                ])
+                self.template_bank = nn.Parameter(
+                    torch.randn(self.n_templates, out_features, basis_size)
+                )
                 self.template_mixing = None  # use template_bank instead
                 # Content routing for template selection
                 route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
@@ -1802,8 +1804,7 @@ class RemixedLinear(nn.Module):
         if self.template_mixing is not None:
             yield self.template_mixing
         if self.template_bank is not None:
-            for t in self.template_bank:
-                yield t
+            yield self.template_bank
         # Tiny Expert stacked 3D weight tensors → structural AdamW group (ndim=3)
         if self.expert_up_w is not None:
             yield self.expert_up_w
@@ -1908,17 +1909,10 @@ class RemixedLinear(nn.Module):
                     # Centered gate: passthrough at init, symmetric amplify/suppress
                     s = self.centered_gate_scale.to(dtype=dtype)
                     gate_basis = (1.0 + torch.tanh(s * gate_logits)).to(dtype=dtype)
-                    if self.training:
-                        with torch.no_grad():
-                            gb = gate_basis.float()
-                            self._gate_stats['basis_mean'] = gb.mean().detach()
-                            self._gate_stats['basis_std']  = gb.std().detach()
-                            self._gate_stats['basis_dead'] = (gb < 0.10).float().mean().detach()
-                            self._gate_stats['basis_sat']  = (gb > 1.90).float().mean().detach()
                 else:
                     gate_basis = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
-                # Track basis gate stats (zero overhead when not training)
-                if self.training and gate_basis is not None:
+                # Track basis gate stats (zero overhead when not training; skip under torch.compile)
+                if self.training and gate_basis is not None and not torch.compiler.is_compiling():
                     with torch.no_grad():
                         gb = gate_basis.float()
                         self._gate_stats['basis_mean'] = gb.mean().detach()
@@ -1938,7 +1932,7 @@ class RemixedLinear(nn.Module):
                 gate_logits = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, out)
                 gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits)
                 # Track output gate stats
-                if self.training:
+                if self.training and not torch.compiler.is_compiling():
                     with torch.no_grad():
                         go = gate_out.float()
                         self._gate_stats['out_mean'] = go.mean().detach()
@@ -2071,9 +2065,7 @@ class RemixedLinear(nn.Module):
                 # Phase 28D: amortized chunk routing — vectorized (no Python loop).
                 # Compute routing once per chunk from the first token, then apply
                 # a single chunk-level effective weight to all tokens in the chunk.
-                T_stack = torch.stack(
-                    [t.to(dtype=dtype) for t in self.template_bank], dim=0
-                )  # (K, out_features, basis_size)
+                T_stack = self.template_bank.to(dtype=dtype)  # (K, out_features, basis_size)
                 chunk = self.chunk_routing_size
                 B, T_len, C = x.shape
                 n_chunks = (T_len + chunk - 1) // chunk
@@ -2124,9 +2116,7 @@ class RemixedLinear(nn.Module):
                     # Hard top-k sparse routing — stack all templates, matmul, gather
                     topk_vals, topk_idx = route_logits.topk(topk, dim=-1)   # (B, T, topk)
                     topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype)  # (B, T, topk)
-                    T_stack = torch.stack(
-                        [t.to(dtype=dtype) for t in self.template_bank], dim=0
-                    )  # (K, out, basis)
+                    T_stack = self.template_bank.to(dtype=dtype)  # (K, out, basis)
                     all_out = torch.einsum('bts,kos->btko', h_gated, T_stack)  # (B, T, K, out)
                     idx_exp = topk_idx.unsqueeze(-1).expand(
                         *topk_idx.shape, all_out.shape[-1]
@@ -2134,13 +2124,11 @@ class RemixedLinear(nn.Module):
                     topk_out = torch.gather(all_out, dim=-2, index=idx_exp)   # (B, T, topk, out)
                     pre_output = (topk_out * topk_weights.unsqueeze(-1)).sum(dim=-2)  # (B, T, out)
                 else:
-                    # Soft routing: weighted sum over all K templates
+                    # Soft routing: batched weighted sum over all K templates (single einsum)
                     route_weights = F.softmax(route_logits, dim=-1).to(dtype)  # (B, T, K)
-                    pre_output = torch.zeros(*h_gated.shape[:-1], self.template_bank[0].shape[0],
-                                             device=x.device, dtype=dtype)
-                    for k in range(self.n_templates):
-                        out_k = F.linear(h_gated, self.template_bank[k].to(dtype=dtype))
-                        pre_output = pre_output + route_weights[..., k:k+1] * out_k
+                    T_stack = self.template_bank.to(dtype=dtype)  # (K, out, basis)
+                    all_out = torch.einsum('bts,kos->btko', h_gated, T_stack)  # (B, T, K, out)
+                    pre_output = (all_out * route_weights.unsqueeze(-1)).sum(dim=2)  # (B, T, out)
         else:
             pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
 
@@ -2161,7 +2149,7 @@ class RemixedLinear(nn.Module):
             # Guard: template_bank may be None (n_templates=1 or tiny_expert/lokr modes)
             _tmix = self.template_mixing
             if _tmix is None and self.template_bank is not None:
-                _tmix = self.template_bank[0]
+                _tmix = self.template_bank[0]  # (out, basis) — first template from stacked 3D
             tmix = _tmix
             overlap = torch.matmul(tmix.to(dtype=dtype), w_dyn.transpose(0, 1))
             self._last_orth_loss = overlap.pow(2).mean()
@@ -2306,7 +2294,7 @@ class DualGateLinear(nn.Module):
                     h = h * gate1 + shift.to(dtype=dtype)
                 else:
                     gb_sig = torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
-                    if self.training:
+                    if self.training and not torch.compiler.is_compiling():
                         with torch.no_grad():
                             gb = gb_sig.float()
                             self._gate_stats['basis_mean'] = gb.mean().detach()
@@ -2323,7 +2311,7 @@ class DualGateLinear(nn.Module):
                     coeffs = self.output_gate_coeffs(ctx)
                 gate_logits2 = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))
                 gate2 = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gate_logits2)
-                if self.training:
+                if self.training and not torch.compiler.is_compiling():
                     with torch.no_grad():
                         go = gate2.float()
                         self._gate_stats['out_mean'] = go.mean().detach()
@@ -7745,8 +7733,12 @@ class GPT(nn.Module):
                     if sub.template_mixing is not None:
                         torch.nn.init.kaiming_normal_(sub.template_mixing)
                     if sub.template_bank is not None:
-                        for t in sub.template_bank:
-                            torch.nn.init.kaiming_normal_(t)
+                        if sub.template_bank.ndim == 3:
+                            # Stacked 3D tensor: init each template slice independently
+                            for k in range(sub.template_bank.shape[0]):
+                                torch.nn.init.kaiming_normal_(sub.template_bank.data[k])
+                        else:
+                            torch.nn.init.kaiming_normal_(sub.template_bank)
                     # Phase 23 Stacked Tiny Experts
                     if sub.expert_up_w is not None:
                         K, H, B_sz = sub.expert_up_w.shape
@@ -8191,7 +8183,7 @@ class GPT(nn.Module):
                     chunk = getattr(submod, 'chunk_routing_size', 0)
                     if chunk > 0:
                         # Chunk routing: routing + mixing ops amortized over chunk_size tokens
-                        template_params = sum(t.numel() for t in submod.template_bank)
+                        template_params = submod.template_bank.numel()
                         route_params = submod.template_route.numel() if submod.template_route is not None else 0
                         
                         topk = getattr(submod, 'template_topk', 0)
@@ -8214,7 +8206,7 @@ class GPT(nn.Module):
                         topk = getattr(submod, 'template_topk', 0)
                         K = submod.n_templates
                         if topk > 0 and topk < K:
-                            template_params = sum(t.numel() for t in submod.template_bank)
+                            template_params = submod.template_bank.numel()
                             inactive_frac = 1.0 - (topk / K)
                             inactive_expert_params += int(template_params * inactive_frac)
                 elif getattr(submod, 'lokr_expert', False):
@@ -8364,6 +8356,7 @@ class GPT(nn.Module):
         ckr_gate_adamw_params = []  # 13b: CKR gate params → dedicated conservative AdamW
         eet_router_matrix_params = []  # EET router 2D params → dedicated high-LR Muon
         eet_router_adamw_params  = []  # EET router 1D params → dedicated high-LR AdamW
+        template_bank_params = []  # P29: 3D template_bank params → block-diagonal Muon
 
         def _sort_ctx_stream_params(stream):
             """Route SelectiveContextStream/MultiScaleContext params to gate groups."""
@@ -8421,7 +8414,13 @@ class GPT(nn.Module):
                                     (gate_matrix_params if p.ndim == 2 else gate_adamw_params).append(p)
                         if hasattr(rl, 'non_gate_parameters'):
                             for p in rl.non_gate_parameters():
-                                (struct_matrix_params if p.ndim == 2 else struct_adamw_params).append(p)
+                                if p.ndim == 3 and hasattr(rl, 'template_bank') and p is rl.template_bank:
+                                    # P29: 3D stacked template_bank → dedicated block-diagonal Muon group
+                                    template_bank_params.append(p)
+                                elif p.ndim >= 2:
+                                    struct_matrix_params.append(p)
+                                else:
+                                    struct_adamw_params.append(p)
                         else:
                             # Plain Linear/Float8Linear — all params are structural
                             for p in rl.parameters():
@@ -8552,7 +8551,8 @@ class GPT(nn.Module):
         all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                       embedding_params + lm_head_params + value_embeds_params +
                       resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params +
-                      eet_router_matrix_params + eet_router_adamw_params)
+                      eet_router_matrix_params + eet_router_adamw_params +
+                      template_bank_params)
 
         # Safety catch-all: route any uncovered params (e.g. lokr_route_proj when
         # use_context=False, which is gated inside gate_parameters()) to struct groups.
@@ -8569,7 +8569,8 @@ class GPT(nn.Module):
             all_params = (gate_matrix_params + struct_matrix_params + research_adamw_params +
                           embedding_params + lm_head_params + value_embeds_params +
                           resid_params + x0_params + ckr_gate_adamw_params + p19_scalar_params +
-                          eet_router_matrix_params + eet_router_adamw_params)
+                          eet_router_matrix_params + eet_router_adamw_params +
+                          template_bank_params)
 
         assert len(list(self.parameters())) == len(all_params), (
             f"Parameter count mismatch even after catch-all: model has "
@@ -8722,6 +8723,28 @@ class GPT(nn.Module):
                 kind='adamw', params=p19_scalar_params,
                 lr=scalar_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0,
             ))
+        # Phase 29: Template bank params → block-diagonal Muon with optional LR scaling
+        _p29_block_diag = getattr(self.config, 'p29_template_block_diag', 0)
+        _p29_lr_scale = getattr(self.config, 'p29_template_lr_scale', 1.0)
+        if template_bank_params:
+            template_lr = matrix_lr * _p29_lr_scale
+            for shape in sorted({p.shape for p in template_bank_params}):
+                group_params = [p for p in template_bank_params if p.shape == shape]
+                K = shape[0]  # n_templates dimension
+                # Reshape 3D (K, out, basis) → 2D (K*out, basis) for Muon compatibility
+                # Then use block_diagonal=K so Newton-Schulz runs independently per template
+                group_dict = dict(
+                    kind='muon', params=group_params, lr=template_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                    _template_bank_3d=True,  # flag for reshape handling
+                )
+                if _p29_block_diag:
+                    group_dict['block_diagonal'] = K
+                param_groups.append(group_dict)
+            if _p29_lr_scale != 1.0:
+                print0(f"[P29] Template bank Muon LR scaled by {_p29_lr_scale:.2f}× → {template_lr:.6f}")
+            if _p29_block_diag:
+                print0(f"[P29] Block-diagonal Muon enabled for template_bank")
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
         optimizer = Factory(param_groups)

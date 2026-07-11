@@ -234,10 +234,27 @@ class MuonAdamW(torch.optim.Optimizer):
         When 'block_diagonal' is set in the group, stacked weights (N*out, in) are
         reshaped to (N, out, in) so Newton-Schulz runs independently per block.
         This prevents cross-sub gradient contamination in MST.
+
+        When '_template_bank_3d' is set, params are 3D (K, out, basis). They are
+        flattened to 2D (K*out, basis) for Muon processing, then reshaped back.
         """
         params: list[Tensor] = group['params']
         if not params:
             return
+
+        # P29: Handle 3D template_bank params by flattening to 2D for Muon compatibility
+        is_3d = group.get('_template_bank_3d', False)
+        original_3d_shape = None
+        if is_3d and params[0].ndim == 3:
+            original_3d_shape = params[0].shape  # (K, out, basis)
+            K, out_dim, basis_dim = original_3d_shape
+            # Reshape each param: (K, out, basis) → (K*out, basis)
+            flat_shape = (K * out_dim, basis_dim)
+            params_2d = [p.data.reshape(flat_shape) for p in params]
+            # Create temporary 2D parameter-like tensors for processing
+            # We'll copy results back to the original 3D params after
+        else:
+            params_2d = None
 
         n_blocks = group.get('block_diagonal', 0)  # 0 = standard, >0 = block-diagonal
 
@@ -245,7 +262,12 @@ class MuonAdamW(torch.optim.Optimizer):
         p = params[0]
         state = self.state[p]
         num_params = len(params)
-        shape, device, dtype = p.shape, p.device, p.dtype
+        # Use flattened 2D shape if template_bank_3d, otherwise original shape
+        if params_2d is not None:
+            shape = (original_3d_shape[0] * original_3d_shape[1], original_3d_shape[2])
+        else:
+            shape = p.shape
+        device, dtype = p.device, p.dtype
 
         if n_blocks > 0:
             # Block-diagonal mode: reshape (N*out, in) → (N, out, in) for per-block processing
@@ -266,9 +288,18 @@ class MuonAdamW(torch.optim.Optimizer):
             red_dim = -1 if block_shape[0] >= block_shape[1] else -2
 
             # Stack and reshape: (num_params, N*out, in) → (num_params*N, out, in)
-            stacked_grads = torch.stack([(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params])
+            if params_2d is not None:
+                # 3D template_bank: flatten grads to 2D before stacking
+                stacked_grads = torch.stack([
+                    (pp.grad.reshape(shape) if pp.grad is not None else torch.zeros(shape, dtype=dtype, device=device))
+                    for pp in params
+                ])
+                stacked_params = torch.stack(params_2d)
+            else:
+                stacked_grads = torch.stack([(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params])
+                stacked_params = torch.stack(params)
             stacked_grads = stacked_grads.reshape(num_params * n_blocks, *block_shape)
-            stacked_params = torch.stack(params).reshape(num_params * n_blocks, *block_shape)
+            stacked_params = stacked_params.reshape(num_params * n_blocks, *block_shape)
 
             # LR scaling: use block shape (out_per_block, in) instead of stacked shape
             self._muon_momentum_t.fill_(group["momentum"])
@@ -286,7 +317,12 @@ class MuonAdamW(torch.optim.Optimizer):
 
             # Reshape back and copy to original params
             updated = stacked_params.reshape(num_params, *shape)
-            torch._foreach_copy_(params, list(updated.unbind(0)))
+            if original_3d_shape is not None:
+                # 3D template_bank: reshape 2D (K*out, basis) → 3D (K, out, basis) before copying
+                for i, pp in enumerate(params):
+                    pp.data.copy_(updated[i].reshape(original_3d_shape))
+            else:
+                torch._foreach_copy_(params, list(updated.unbind(0)))
         else:
             # Standard (non-block-diagonal) path
             # Momentum for every individual parameter
@@ -302,8 +338,16 @@ class MuonAdamW(torch.optim.Optimizer):
             red_dim = -1 if shape[-2] >= shape[-1] else -2
 
             # Stack grads and params (NOTE: this assumes all params have the same shape)
-            stacked_grads = torch.stack([(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params])
-            stacked_params = torch.stack(params)
+            if params_2d is not None:
+                # 3D template_bank: flatten grads to 2D before stacking
+                stacked_grads = torch.stack([
+                    (pp.grad.reshape(shape) if pp.grad is not None else torch.zeros(shape, dtype=dtype, device=device))
+                    for pp in params
+                ])
+                stacked_params = torch.stack(params_2d)
+            else:
+                stacked_grads = torch.stack([(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params])
+                stacked_params = torch.stack(params)
 
             # Fill all the 0-D tensors with current values
             self._muon_momentum_t.fill_(group["momentum"])
@@ -321,7 +365,12 @@ class MuonAdamW(torch.optim.Optimizer):
             )
 
             # Copy back to original params
-            torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+            if original_3d_shape is not None:
+                # 3D template_bank: reshape 2D → 3D before copying
+                for i, pp in enumerate(params):
+                    pp.data.copy_(stacked_params[i].reshape(original_3d_shape))
+            else:
+                torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
     @torch.no_grad()
     def step(self):
