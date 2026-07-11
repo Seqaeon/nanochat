@@ -278,6 +278,10 @@ else
     print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
     _SAVED=$(get_out_dir "$TAG")
     _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
