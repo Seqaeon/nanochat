@@ -488,10 +488,26 @@ class DistMuonAdamW(torch.optim.Optimizer):
         chunk_size = (len(params) + world_size - 1) // world_size
         padded_num_params = chunk_size * world_size
         p = params[0]
-        shape, device, dtype = p.shape, p.device, p.dtype
+        device, dtype = p.device, p.dtype
+
+        # P29: Handle 3D template_bank params by flattening to 2D
+        is_3d = group.get('_template_bank_3d', False)
+        original_3d_shape = None
+        if is_3d and p.ndim == 3:
+            original_3d_shape = p.shape  # (K, out, basis)
+            K, out_dim, basis_dim = original_3d_shape
+            shape = (K * out_dim, basis_dim)
+        else:
+            shape = p.shape
 
         # Stack grads and zero-pad to padded_num_params
-        grad_stack = torch.stack([(p.grad if p.grad is not None else torch.zeros_like(p)) for p in params])
+        if original_3d_shape is not None:
+            grad_stack = torch.stack([
+                (pp.grad.reshape(shape) if pp.grad is not None else torch.zeros(shape, dtype=dtype, device=device))
+                for pp in params
+            ])
+        else:
+            grad_stack = torch.stack([(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params])
         stacked_grads = torch.empty(padded_num_params, *shape, dtype=dtype, device=device)
         stacked_grads[:len(params)].copy_(grad_stack)
         if len(params) < padded_num_params:
@@ -501,7 +517,8 @@ class DistMuonAdamW(torch.optim.Optimizer):
         grad_chunk = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
         future = dist.reduce_scatter_tensor(grad_chunk, stacked_grads, op=dist.ReduceOp.AVG, async_op=True).get_future()
 
-        return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads, chunk_size=chunk_size)
+        return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads,
+                    chunk_size=chunk_size, _shape_2d=shape, _original_3d_shape=original_3d_shape)
 
     def _compute_adamw(self, group: dict, info: dict, gather_list: list, rank: int, world_size: int) -> None:
         """Wait for reduce, compute AdamW updates, launch gathers for large params."""
@@ -551,7 +568,11 @@ class DistMuonAdamW(torch.optim.Optimizer):
         chunk_size = info['chunk_size']
         grad_chunk = info['grad_chunk']
         p = params[0]
-        shape, device, dtype = p.shape, p.device, p.dtype
+        device, dtype = p.device, p.dtype
+
+        # P29: Use flattened 2D shape for 3D template_bank params
+        shape = info['_shape_2d']
+        original_3d_shape = info.get('_original_3d_shape')
 
         # How many params does this rank own?
         start_idx = rank * chunk_size
@@ -571,7 +592,11 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         if num_owned > 0:
             owned_params = [params[start_idx + i] for i in range(num_owned)]
-            stacked_owned = torch.stack(owned_params)
+            if original_3d_shape is not None:
+                # 3D template_bank: flatten to 2D before stacking
+                stacked_owned = torch.stack([pp.data.reshape(shape) for pp in owned_params])
+            else:
+                stacked_owned = torch.stack(owned_params)
 
             # Fill 0-D tensors and run fused kernel
             self._muon_momentum_t.fill_(group["momentum"])
@@ -592,15 +617,22 @@ class DistMuonAdamW(torch.optim.Optimizer):
         # Reuse stacked_grads buffer for all_gather output
         stacked_params = info["stacked_grads"]
         future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
-        gather_list.append(dict(future=future, stacked_params=stacked_params, params=params))
+        gather_list.append(dict(future=future, stacked_params=stacked_params, params=params,
+                                _original_3d_shape=original_3d_shape))
 
     def _finish_gathers(self, gather_list: list) -> None:
         """Wait for all gathers and copy Muon params back."""
         for info in gather_list:
             info["future"].wait()
             if info["params"] is not None:
-                # Muon: copy from stacked buffer back to individual params
-                torch._foreach_copy_(info["params"], list(info["stacked_params"][:len(info["params"])].unbind(0)))
+                original_3d_shape = info.get('_original_3d_shape')
+                if original_3d_shape is not None:
+                    # 3D template_bank: reshape 2D → 3D before copying back
+                    for i, pp in enumerate(info["params"]):
+                        pp.data.copy_(info["stacked_params"][i].reshape(original_3d_shape))
+                else:
+                    # Muon: copy from stacked buffer back to individual params
+                    torch._foreach_copy_(info["params"], list(info["stacked_params"][:len(info["params"])].unbind(0)))
 
     @torch.no_grad()
     def step(self):
