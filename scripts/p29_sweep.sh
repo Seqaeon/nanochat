@@ -194,7 +194,7 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
   --remix-use-output-gate 1 \
   --remix-basis-gate-mode centered \
   --target-tokens -1 \
-  --target-active-params 0 \
+  --target-active-params 1 \
   --save-every 200 \
   --p23-quantile-route 1"
 
