@@ -75,19 +75,24 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
+
 const DENSE = [
 // Feb 8 scores
-  { id: "dense_d12", total: 286261730,  active: 286261730,  flops: 7.596959e8,  bpp: 0.9030 },          // d12 
-  { id: "dense_d14", total: 399114882,  active: 399114882,  flops: 1.128533e9,  bpp: 0.8688 },          // d14
-  { id: "dense_d16", total: 536871738,  active: 536871738,  flops: 1.585452e9,  bpp: 0.8364 },          // d16
-  { id: "dense_d18", total: 701891594,  active: 701891594,  flops: 2.179995e9,  bpp: 0.8131 },          // d18
-  { id: "dense_d20", total: 896533746,  active: 896533746,  flops: 2.886213e9,  bpp: 0.7906 },          // d20
-  { id: "dense_d22", total: 1123157490,  active: 1123157490,  flops: 3.763086e9,  bpp: 0.7714 },          // d22
-  { id: "dense_d24", total: 1384122122,  active: 1384122122,  flops: 4.775225e9,  bpp: 0.7545 },          // d24
-  { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9,  bpp: 0.7382 },          // d26
-  { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9,  bpp: 0.7246 },          // d28
-  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, bpp: 0.7120 },          // d30
+  { id: "dense_d12", total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17 ,  bpp: 0.9030 },          // d12 
+  { id: "dense_d14", total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18 , bpp: 0.8688 },          // d14
+  { id: "dense_d16", total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18 ,  bpp: 0.8364 },          // d16
+  { id: "dense_d18", total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18 ,  bpp: 0.8131 },          // d18
+  { id: "dense_d20", total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19 ,  bpp: 0.7906 },          // d20
+  { id: "dense_d22", total: 1123157490,  active: 1123157490,  flops: 3.763086e9, total_training_flops: 2.208863e19 ,  bpp: 0.7714 },          // d22
+  { id: "dense_d24", total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops: 3.594180e19 ,  bpp: 0.7545 },          // d24
+  { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops: 5.683668e19 ,  bpp: 0.7382 },          // d26
+  { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops: 8.660963e19 ,  bpp: 0.7246 },          // d28
+  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20 , bpp: 0.7120 }           // d30
+
+
 ];
+
+
 
 const RLS = [
   { id:'29C4', label:'29C chunk64-base_d4',total:55655968, active:37003936, flops:7.967938e7, bpp:1.082087, color:'#D4537E' },
