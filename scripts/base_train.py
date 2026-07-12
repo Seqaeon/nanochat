@@ -1363,6 +1363,7 @@ total_tokens = total_batch_size * num_iterations # the actual number of tokens w
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+print0(f"Total active training FLOPs estimate: {num_active_flops_per_token * total_tokens:e}")
 
 # Research branches use a OneCycle-style schedule; base keeps the original warmup/flat/warmdown schedule
 use_research_mode = args.use_moe or args.use_perm or args.use_remix_linear
@@ -2428,6 +2429,7 @@ get_report().log(section=section_name, data=[
     { # stats about the training setup
         "Number of parameters": num_params,
         "Number of FLOPs per token": f"{num_flops_per_token:e}",
+        "Number of active FLOPs per token": f"{num_active_flops_per_token:e}",
         "Calculated number of iterations": num_iterations,
         "Number of training tokens": total_tokens,
         "Tokens : Scaling params ratio": total_batch_size * num_iterations / num_scaling_params,
@@ -2443,6 +2445,7 @@ get_report().log(section=section_name, data=[
         "CORE metric estimate": results.get("core_metric", None),
         "MFU %": f"{mfu:.2f}%",
         "Total training flops": f"{flops_so_far:e}",
+        "Total active training flops": f"{num_active_flops_per_token * total_batch_size * step:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
         "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
     }
