@@ -8724,27 +8724,27 @@ class GPT(nn.Module):
                 lr=scalar_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0,
             ))
         # Phase 29: Template bank params → block-diagonal Muon with optional LR scaling
-        _p29_block_diag = getattr(self.config, 'p29_template_block_diag', 0)
+        # IMPORTANT: block_diagonal=K is ALWAYS used for template_bank. Before P0, each
+        # template was a separate 2D nn.Parameter, so Muon ran Newton-Schulz independently
+        # per template. After stacking into (K, out, basis), we must use block_diagonal=K
+        # to preserve that per-template independence. Without it, all K templates get a
+        # single joint Newton-Schulz pass, causing cross-template gradient contamination.
         _p29_lr_scale = getattr(self.config, 'p29_template_lr_scale', 1.0)
         if template_bank_params:
             template_lr = matrix_lr * _p29_lr_scale
             for shape in sorted({p.shape for p in template_bank_params}):
                 group_params = [p for p in template_bank_params if p.shape == shape]
                 K = shape[0]  # n_templates dimension
-                # Reshape 3D (K, out, basis) → 2D (K*out, basis) for Muon compatibility
-                # Then use block_diagonal=K so Newton-Schulz runs independently per template
                 group_dict = dict(
                     kind='muon', params=group_params, lr=template_lr,
                     momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-                    _template_bank_3d=True,  # flag for reshape handling
+                    _template_bank_3d=True,  # flag for 3D→2D reshape handling
+                    block_diagonal=K,        # per-template Newton-Schulz (mandatory for correctness)
                 )
-                if _p29_block_diag:
-                    group_dict['block_diagonal'] = K
                 param_groups.append(group_dict)
             if _p29_lr_scale != 1.0:
                 print0(f"[P29] Template bank Muon LR scaled by {_p29_lr_scale:.2f}× → {template_lr:.6f}")
-            if _p29_block_diag:
-                print0(f"[P29] Block-diagonal Muon enabled for template_bank")
+            print0(f"[P29] Template bank: block-diagonal Muon (K={template_bank_params[0].shape[0]} blocks)")
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
         optimizer = Factory(param_groups)

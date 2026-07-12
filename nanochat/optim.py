@@ -573,6 +573,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
         # P29: Use flattened 2D shape for 3D template_bank params
         shape = info['_shape_2d']
         original_3d_shape = info.get('_original_3d_shape')
+        n_blocks = group.get('block_diagonal', 0)
 
         # How many params does this rank own?
         start_idx = rank * chunk_size
@@ -580,36 +581,79 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         # Get or create group-level state
         state = self.state[p]
-        if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(chunk_size, *shape, dtype=dtype, device=device)
-        if "second_momentum_buffer" not in state:
-            state_shape = (chunk_size, shape[-2], 1) if shape[-2] >= shape[-1] else (chunk_size, 1, shape[-1])
-            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
-        red_dim = -1 if shape[-2] >= shape[-1] else -2
 
-        # Build output buffer for all_gather
-        updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+        if n_blocks > 0:
+            # Block-diagonal mode: (K*out, basis) → K blocks of (out, basis)
+            assert shape[0] % n_blocks == 0, f"block_diagonal={n_blocks} but shape[0]={shape[0]}"
+            out_per_block = shape[0] // n_blocks
+            block_shape = (out_per_block, shape[1])
 
-        if num_owned > 0:
-            owned_params = [params[start_idx + i] for i in range(num_owned)]
-            if original_3d_shape is not None:
-                # 3D template_bank: flatten to 2D before stacking
-                stacked_owned = torch.stack([pp.data.reshape(shape) for pp in owned_params])
-            else:
-                stacked_owned = torch.stack(owned_params)
+            if "momentum_buffer" not in state:
+                state["momentum_buffer"] = torch.zeros(chunk_size * n_blocks, *block_shape, dtype=dtype, device=device)
+            if "second_momentum_buffer" not in state:
+                state_shape = ((chunk_size * n_blocks, block_shape[0], 1) if block_shape[0] >= block_shape[1]
+                               else (chunk_size * n_blocks, 1, block_shape[1]))
+                state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+            red_dim = -1 if block_shape[0] >= block_shape[1] else -2
 
-            # Fill 0-D tensors and run fused kernel
-            self._muon_momentum_t.fill_(group["momentum"])
-            self._muon_beta2_t.fill_(group["beta2"])
-            self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
-            self._muon_wd_t.fill_(group["weight_decay"])
-            muon_step_fused(
-                grad_chunk[:num_owned], stacked_owned,
-                state["momentum_buffer"][:num_owned], state["second_momentum_buffer"][:num_owned],
-                self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
-                group["ns_steps"], red_dim,
-            )
-            updated_params[:num_owned].copy_(stacked_owned)
+            updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+
+            if num_owned > 0:
+                owned_params = [params[start_idx + i] for i in range(num_owned)]
+                if original_3d_shape is not None:
+                    stacked_owned = torch.stack([pp.data.reshape(shape) for pp in owned_params])
+                else:
+                    stacked_owned = torch.stack(owned_params)
+
+                # Reshape to blocks: (num_owned, K*out, basis) → (num_owned*K, out, basis)
+                owned_grads = grad_chunk[:num_owned].reshape(num_owned * n_blocks, *block_shape)
+                owned_params_blocked = stacked_owned.reshape(num_owned * n_blocks, *block_shape)
+
+                # Momentum/second_momentum slices for owned params
+                mom_slice = state["momentum_buffer"][:num_owned * n_blocks]
+                sm_slice = state["second_momentum_buffer"][:num_owned * n_blocks]
+
+                self._muon_momentum_t.fill_(group["momentum"])
+                self._muon_beta2_t.fill_(group["beta2"])
+                self._muon_lr_t.fill_(group["lr"] * max(1.0, block_shape[0] / block_shape[1])**0.5)
+                self._muon_wd_t.fill_(group["weight_decay"])
+                muon_step_fused(
+                    owned_grads, owned_params_blocked,
+                    mom_slice, sm_slice,
+                    self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
+                    group["ns_steps"], red_dim,
+                )
+                # Reshape back: (num_owned*K, out, basis) → (num_owned, K*out, basis)
+                updated_params[:num_owned].copy_(owned_params_blocked.reshape(num_owned, *shape))
+        else:
+            # Standard (non-block-diagonal) path
+            if "momentum_buffer" not in state:
+                state["momentum_buffer"] = torch.zeros(chunk_size, *shape, dtype=dtype, device=device)
+            if "second_momentum_buffer" not in state:
+                state_shape = (chunk_size, shape[-2], 1) if shape[-2] >= shape[-1] else (chunk_size, 1, shape[-1])
+                state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+            red_dim = -1 if shape[-2] >= shape[-1] else -2
+
+            updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+
+            if num_owned > 0:
+                owned_params = [params[start_idx + i] for i in range(num_owned)]
+                if original_3d_shape is not None:
+                    stacked_owned = torch.stack([pp.data.reshape(shape) for pp in owned_params])
+                else:
+                    stacked_owned = torch.stack(owned_params)
+
+                self._muon_momentum_t.fill_(group["momentum"])
+                self._muon_beta2_t.fill_(group["beta2"])
+                self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
+                self._muon_wd_t.fill_(group["weight_decay"])
+                muon_step_fused(
+                    grad_chunk[:num_owned], stacked_owned,
+                    state["momentum_buffer"][:num_owned], state["second_momentum_buffer"][:num_owned],
+                    self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
+                    group["ns_steps"], red_dim,
+                )
+                updated_params[:num_owned].copy_(stacked_owned)
 
         if num_owned < chunk_size:
             updated_params[num_owned:].zero_()
