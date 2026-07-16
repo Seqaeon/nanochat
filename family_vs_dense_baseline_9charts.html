@@ -43,6 +43,12 @@
         <div class="chart-box"><canvas id="rls-c3" role="img" aria-label="RLS variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
         <div class="fit-info" id="fit-info-rls-c3"></div>
       </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Total Training FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="rls-c4" role="img" aria-label="RLS variants vs dense baseline: total training FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-rls-c4"></div>
+      </div>
     </div>
   </div>
 
@@ -67,6 +73,12 @@
         <div class="chart-label">Active FLOPs vs Val BPP</div>
         <div class="chart-box"><canvas id="moe-c3" role="img" aria-label="MoE variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
         <div class="fit-info" id="fit-info-moe-c3"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-label">Total Training FLOPs vs Val BPP</div>
+        <div class="chart-box"><canvas id="moe-c4" role="img" aria-label="MoE variants vs dense baseline: total training FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-moe-c4"></div>
       </div>
     </div>
   </div>
@@ -95,15 +107,21 @@ const DENSE = [
 
 
 const RLS = [
-  { id:'29C4', label:'29C chunk64-base_d4',total:55655968, active:37003936, flops:7.967938e7, total_training_flops:  ,bpp:1.082087, color:'#D4537E' },
-  { id:'29C8', label:'29C chunk64-base_d8',total:276100416, active:127174464, flops:2.943332e8, total_training_flops:   bpp:0.902843, color:'#D4537E' },
-  //{ id:'29C8', label:'29C chunk64-base_d8',total:276100416, active:127174464, flops:2.943332e8, total_training_flops: 5.396527e+17  bpp:0.968598303241164, color:'#D4537E' },
-  { id:'29C12', label:'29C chunk64-base_d12',total:791881440, active:289582944, flops:7.583897e8, total_training_flops:   bpp:0.8139, color:'#D4537E' },
+
+
+ // { id:'29C4_active', label:'29C chunk64-base_d4_active_scaled',total:55655968, active:37003936, flops:7.967938e7, total_training_flops: 9.900661e15, bpp:1.150914, color:'#3CAEA3' },
+  { id:'29C8_active', label:'29C chunk64-base_d8_active_scaled',total:276100416, active:127174464, flops:2.943332e8, total_training_flops: 1.337143e17,  bpp:0.968598303241164, color:'#3CAEA3' },
+  { id:'29C12_active', label:'29C chunk64-base_d12_active_scaled',total:791881440, active:289582944, flops:7.583897e8, total_training_flops: 9.031816e+17,  bpp:0.885540527126097, color:'#3CAEA3' },
+
+
+  { id:'29C4', label:'29C chunk64-base_d4',total:55655968, active:37003936, flops:7.967938e7, total_training_flops: 2.550360e16, bpp:1.082087, color:'#D4537E' },
+  { id:'29C8', label:'29C chunk64-base_d8',total:276100416, active:127174464, flops:2.943332e8, total_training_flops: 5.940370e17,  bpp:0.902843, color:'#D4537E' },
+  { id:'29C12', label:'29C chunk64-base_d12',total:791881440, active:289582944, flops:7.583897e8, total_training_flops: 4.902986e18,  bpp:0.8139, color:'#D4537E' },
 ];
 
 const MOE = [
-  { id:'29I', label:'29I top-1',       total:51388552, active:36708488, flops:7.790669e7, bpp:1.186575, color:'#E24B4A' },
-  { id:'29J', label:'29J top-all',     total:51388552, active:51388552, flops:1.659871e8, bpp:1.186305, color:'#EF9F27' },
+  { id:'29I', label:'29I top-1',       total:51388552, active:36708488, flops:7.790669e7, total_training_flops: 4.568814e+16, bpp:1.186575, color:'#E24B4A' },
+  { id:'29J', label:'29J top-all',     total:51388552, active:51388552, flops:1.659871e8, total_training_flops: 4.568814e+16, bpp:1.186305, color:'#EF9F27' },
 ];
 
 const M = (v, scale = 1e6) => v / scale;
@@ -317,7 +335,8 @@ function varDS(v, keyFn, scale = 1e6) {
 }
 
 function makeChart(canvasId, variants, keyFn, xLabel) {
-  const scale = 1e6;
+  const isFlops = xLabel.includes('training FLOPs');
+  const scale = isFlops ? 1.0 : 1e6;
 
   // 1. Initialize datasets with the Dense baseline curve and dots, plus individual points
   const datasets = [
@@ -329,8 +348,8 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
   // 2. Dynamically group variants by their base prefix
   const groups = {};
   variants.forEach(v => {
-    // Strips '_d<depth>' or trailing digits (e.g. '29C4' -> '29C')
-    const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1').replace(/\d+$/, ''); 
+    // Strips '_d<depth>' or trailing digits (e.g. '29C4' -> '29C', '29C4_active' -> '29C_active')
+    const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1').replace(/\d+(_active)?$/, '$1'); 
     if (!groups[baseGroup]) {
       groups[baseGroup] = {
         data: [],
@@ -370,6 +389,7 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
     if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
     else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
     else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
+    else if (xLabel.includes('training FLOPs')) varSymbol = 'FLOPs<sub>train</sub>';
 
     let html = `Dense fit: bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup> (R²=${dr2.toFixed(4)})`;
     fits.forEach(f => {
@@ -392,11 +412,19 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
           ticks: {
             font:{ size:9 }, color:'#888780', maxTicksLimit:5,
             callback(v) {
-              const m = v;
-              const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
-              const r = Math.round(m);
-              if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
-              return null;
+              if (isFlops) {
+                const exponent = Math.round(Math.log10(v));
+                if (Math.abs(v - Math.pow(10, exponent)) / v < 0.05) {
+                  return '10^' + exponent;
+                }
+                return null;
+              } else {
+                const m = v;
+                const nice = [5,10,20,30,40,50,80,100,200,300,500,700,1000];
+                const r = Math.round(m);
+                if (nice.includes(r) && Math.abs(m-r)/r < 0.015) return r>=1000 ? (r/1000)+'B' : r+'M';
+                return null;
+              }
             }
           },
           grid: { color:'rgba(136,135,128,0.1)' },
@@ -414,6 +442,9 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
             label: ctx => {
               const r = ctx.raw;
               const name = r.id ? `[${r.id}] ` : '';
+              if (isFlops) {
+                return `${name}${ctx.dataset.label}: (${r.x.toExponential(2)} FLOPs, ${r.y.toFixed(4)} bpp)`;
+              }
               return `${name}${ctx.dataset.label}: (${r.x.toFixed(1)}M, ${r.y.toFixed(4)} bpp)`;
             }
           }
@@ -429,7 +460,7 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
     { label: 'Dense baseline', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
     ...fits.map(f => ({ label: f.label, color: f.color, evalFn: v => f.a * Math.pow(v * scale, f.b) }))
   ];
-  const formatX = v => v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`;
+  const formatX = v => isFlops ? `${v.toExponential(2)} FLOPs` : (v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`);
   const formatY = v => `${v.toFixed(4)} bpp`;
   attachCrosshair(chart, curves, formatX, formatY, xLabel);
 }
@@ -440,8 +471,10 @@ buildLegend('leg-moe', MOE);
 makeChart('rls-c1', RLS, d=>d.total,  'total params');
 makeChart('rls-c2', RLS, d=>d.active, 'active params');
 makeChart('rls-c3', RLS, d=>d.flops,  'active FLOPs');
+makeChart('rls-c4', RLS, d=>d.total_training_flops, 'total training FLOPs');
 
 makeChart('moe-c1', MOE, d=>d.total,  'total params');
 makeChart('moe-c2', MOE, d=>d.active, 'active params');
 makeChart('moe-c3', MOE, d=>d.flops,  'active FLOPs');
+makeChart('moe-c4', MOE, d=>d.total_training_flops, 'total training FLOPs');
 </script>
