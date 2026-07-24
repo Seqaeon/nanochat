@@ -1,0 +1,29 @@
+{
+  "name": "squaring-mod-local-gpu-medium",
+  "data": {
+    "kind": "squaring_mod",
+    "data_root": null,
+    "batch_size": 32,
+    "eval_batch_size": 64,
+    "shuffle_train": true,
+    "shuffle_eval": false,
+    "num_workers": 0,
+    "pin_memory": true,
+    "drop_last": true,
+    "seed": 45
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "dtype": "float32",
+    "amp": false,
+    "compile": false,
+    "total_training_time_seconds": 300,
+    "max_steps": 500000,
+    "seeds": [74],
+    "grad_clip": 1.0,
+    "log_every": 200
+  },
+  "model_state": {
+    "maximum_elements": 500000000
+  }
+}

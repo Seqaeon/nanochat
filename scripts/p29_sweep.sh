@@ -174,8 +174,8 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 # Notes:
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
-REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
-  --device-batch-size 16 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
+  --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --target-param-data-ratio 10.5 \
@@ -201,8 +201,8 @@ REMIX_COMMON="--fp8 --max-shards 170 --models remixed-linear \
 # Common flags for dense baseline and Standard MoE experiments.
 # Uses --models base (standard transformer, no remix-linear).
 # Higher device-batch-size (128) since there is no MoE/remix overhead.
-BASE_COMMON="--fp8 --max-shards 170 --models base \
-  --device-batch-size 128 --total-batch-size -1 --use-onecycle 0 --log-every 200 --skip-core \
+BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
+  --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-128}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -272,29 +272,29 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-#TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-#        rm -rf "$_RUN_DIR"
-#    fi
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $REMIX_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      --p22-n-templates 8 \
-#      --p28-chunk-routing-size 64 \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 \
+      --p28-chunk-routing-size 64 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 # ══════════════════════════════════════════════════════
 # 29C: Chunk Routing N=64 (Full Rank Baseline)
 #   - Soft routing over 8 templates, amortized over 64 tokens
@@ -516,24 +516,24 @@ BASE_COMMON="--fp8 --max-shards 170 --models base \
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-TAG="29BASE_DENSE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
-
+#TAG="29BASE_DENSE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
+#
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║          Phase 29 Sweep Complete                            ║"

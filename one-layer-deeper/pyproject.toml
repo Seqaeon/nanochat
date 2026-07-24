@@ -1,0 +1,36 @@
+[project]
+name = "one-layer-benchmark"
+version = "0.1.0"
+description = "One Layer Deeper architecture and optimizer competition."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = "==3.13.5"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "jsonargparse==4.49.0",
+    "modal>=1.1.0",
+    "numpy==2.5.0",
+    "psycopg[binary]>=3.2,<4",
+    "python-multipart>=0.0.20,<1",
+    "torch==2.12.1",
+    "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+one-layer = "client.cli:main"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["benchmark", "benchmark.manifests", "client", "data", "service", "service.static"]
+py-modules = ["submission_validation"]
+
+[tool.setuptools.package-data]
+benchmark = ["manifests/*.json"]
+service = ["static/*.css", "static/*.svg"]
+
+[tool.uv]
+package = true

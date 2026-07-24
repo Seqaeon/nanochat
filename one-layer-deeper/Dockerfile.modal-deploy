@@ -1,0 +1,25 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+RUN pip install --no-cache-dir "modal>=1.1,<2"
+
+COPY pyproject.toml uv.lock modal_runner.py submission_validation.py /app/
+COPY benchmark/*.py /app/benchmark/
+COPY benchmark/manifests/h100_easy_*.json benchmark/manifests/h100_medium_*.json /app/benchmark/manifests/
+COPY data/__init__.py data/config.py data/factory.py data/counting.py data/squaring_mod.py /app/data/
+COPY service/__init__.py service/tiers.py /app/service/
+COPY scripts/generate_datasets.sh /app/scripts/generate_datasets.sh
+COPY scripts/deploy_modal.sh /app/scripts/deploy_modal.sh
+COPY submissions/baseline_adamw/submission.py /app/submissions/baseline_adamw/submission.py
+
+RUN test -f /app/modal_runner.py \
+    && test -f /app/benchmark/manifests/h100_easy_e1.json \
+    && test -f /app/benchmark/manifests/h100_medium_m5.json \
+    && test -f /app/data/squaring_mod.py \
+    && test -f /app/scripts/deploy_modal.sh \
+    && test -f /app/submissions/baseline_adamw/submission.py
+
+CMD ["sh", "scripts/deploy_modal.sh"]
