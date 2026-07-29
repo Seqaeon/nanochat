@@ -1582,6 +1582,8 @@ class RemixedLinear(nn.Module):
                     if self.template_routing_learned:
                         self.template_route = nn.Parameter(route_init)
                     else:
+                        if hasattr(self, 'template_route') and not isinstance(self.template_route, (nn.Parameter, torch.Tensor)):
+                            del self.template_route
                         self.register_buffer('template_route', route_init)
                     self._qrouter = None
             else:
@@ -1609,6 +1611,8 @@ class RemixedLinear(nn.Module):
                 if self.template_routing_learned:
                     self.template_route = nn.Parameter(route_init)
                 else:
+                    if hasattr(self, 'template_route') and not isinstance(self.template_route, (nn.Parameter, torch.Tensor)):
+                        del self.template_route
                     self.register_buffer('template_route', route_init)
                 # Diagnostics
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
@@ -2160,6 +2164,329 @@ class RemixedLinear(nn.Module):
             pre_output = pre_output * gate_out
 
         return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype) if self.bias is not None else pre_output.to(dtype=dtype)
+
+
+class RemixedLinearFused(nn.Module):
+    """Throughput-optimized RemixedLinear for chunk routing (29C config).
+
+    Only supports the n_templates>1, chunk_routing_size>0 path.
+    All other routing modes (per-token, LoKR, TinyExpert, global bank,
+    operator modulation) are dropped for clarity and speed.
+
+    Key optimizations over RemixedLinear:
+      1. Template assembly einsum('bnk,koc→bnoc') → single cuBLAS GEMM
+         via reshape + matmul: (BN,K) @ (K, O*B_sz) → reshape
+      2. Chunk mixing einsum('bnsc,bnoc→bnso') → torch.bmm:
+         bmm((BN, chunk, B_sz), (BN, B_sz, O)) → (BN, chunk, O)
+      3. Skips gate multiply entirely when basis gate is disabled
+         (avoids multiplying by ones tensor)
+
+    Wrap with torch.compile() for additional elementwise fusion of
+    LN + gate + bias into fewer kernel launches.
+    """
+
+    def __init__(self, in_features, out_features, context_dim,
+                 basis_size=64, remixed_linear_kwargs=None, scale_basis=True,
+                 film_gate=False, routing_scope='per_sequence'):
+        super().__init__()
+        if remixed_linear_kwargs is None:
+            remixed_linear_kwargs = {}
+        kw = remixed_linear_kwargs
+
+        # ── Extract config from kwargs (same keys as RemixedLinear) ───────
+        n_templates = int(kw.get('n_templates', 8))
+        chunk_routing_size = int(kw.get('chunk_routing_size', 64))
+        assert n_templates > 1, "RemixedLinearFused requires n_templates > 1"
+        assert chunk_routing_size > 0, "RemixedLinearFused requires chunk_routing_size > 0"
+
+        use_basis_gate = kw.get('use_basis_gate', True)
+        use_output_gate = kw.get('use_output_gate', True)
+        basis_gate_mode = kw.get('basis_gate_mode', 'mlp')
+        output_gate_rank = int(kw.get('output_gate_rank', 8))
+        gate_temperature = max(float(kw.get('gate_temperature', 1.0)), 1e-6)
+        template_routing_learned = kw.get('template_routing_learned', False)
+        template_topk = int(kw.get('template_topk', 0))
+        _bsf = int(kw.get('basis_scale_factor', 4))
+
+        if scale_basis:
+            basis_size = max(basis_size, min(in_features, out_features) // max(1, _bsf))
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.basis_size = basis_size
+        self.n_templates = n_templates
+        self.chunk_routing_size = chunk_routing_size
+        self.use_basis_gate = use_basis_gate
+        self.use_output_gate = use_output_gate
+        self.use_context = kw.get('use_context', True)
+        self.routing_scope = routing_scope
+        self.template_topk = template_topk
+        self.gate_temperature = gate_temperature
+        self._gate_stats = {}
+        self._film_gate_flag = film_gate
+        self._last_orth_loss = None  # compat with RemixedLinear diagnostics
+
+        # ── Compat attrs (None stubs for shared code: weight init, FLOPs) ─
+        self.template_mixing = None
+        self.expert_up_w = None
+        self.expert_down_w = None
+        self.lokr_down_w = None
+        self.lokr_up_w = None
+        self.lokr_route_proj = None
+        self.lokr_expert = False
+        self.tiny_expert = False
+        self._use_global_bank = False
+        self._global_bank = None
+
+        # ── Structural parameters ────────────────────────────────────────
+        self.basis = Linear(in_features, basis_size, bias=False)
+        self.ln_basis = nn.LayerNorm(basis_size)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+
+        # Template bank: (K, out_features, basis_size)
+        self.template_bank = nn.Parameter(
+            torch.randn(n_templates, out_features, basis_size)
+        )
+
+        # Routing: quantile-balanced or simple learned/frozen softmax
+        self.use_quantile_route = int(kw.get('use_quantile_route', 0))
+        self._qrouter = None
+
+        if self.use_quantile_route == 2 and template_topk > 0:
+            self._qrouter = QuantileCrossAttentionRouter(
+                in_features, n_templates, template_topk)
+            self.template_route = None
+        elif self.use_quantile_route == 1 and template_topk > 0:
+            self._qrouter = QuantileBalancedRouter(
+                in_features, n_templates, template_topk,
+                learned=template_routing_learned)
+            self.template_route = None
+        else:
+            # Standard routing projection: (in_features, K) — frozen by default
+            route_init = torch.randn(in_features, n_templates) / (in_features ** 0.5)
+            if template_routing_learned:
+                self.template_route = nn.Parameter(route_init)
+            else:
+                self.register_buffer('template_route', route_init)
+
+        # ── Context gates ────────────────────────────────────────────────
+        self.basis_modulator = None
+        self.basis_gate_mode = basis_gate_mode if use_basis_gate else 'none'
+
+        if self.use_context and use_basis_gate:
+            _gate_out_size = 2 * basis_size if (use_basis_gate and film_gate) else basis_size
+            if basis_gate_mode == 'linear':
+                self.basis_modulator = Linear(context_dim, _gate_out_size, bias=True)
+                nn.init.zeros_(self.basis_modulator.weight)
+                nn.init.zeros_(self.basis_modulator.bias)
+            elif basis_gate_mode == 'mlp':
+                basis_hidden = max(context_dim // 2, min(basis_size, context_dim * 2))
+                self.basis_modulator = nn.Sequential(
+                    Linear(context_dim, basis_hidden, bias=True),
+                    nn.GELU(),
+                    Linear(basis_hidden, _gate_out_size, bias=True),
+                )
+                nn.init.zeros_(self.basis_modulator[-1].weight)
+                if self.basis_modulator[-1].bias is not None:
+                    nn.init.zeros_(self.basis_modulator[-1].bias)
+
+        if self.use_context and use_output_gate:
+            r = output_gate_rank
+            self.output_gate_coeffs = Linear(context_dim, r, bias=True)
+            self.output_gate_basis = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_scale = nn.Parameter(torch.ones(1) * 0.1)
+
+        # Entropy tracking (diagnostic only)
+        self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+
+    # ── Optimizer group helpers ──────────────────────────────────────────
+
+    def gate_parameters(self):
+        """Yield context-gate parameters (lower-LR optimizer group)."""
+        if self.basis_modulator is not None:
+            yield from self.basis_modulator.parameters()
+        if self.use_output_gate:
+            yield self.output_gate_coeffs.weight
+            if self.output_gate_coeffs.bias is not None:
+                yield self.output_gate_coeffs.bias
+            yield self.output_gate_basis
+            yield self.output_gate_scale
+        if isinstance(self.template_route, nn.Parameter):
+            yield self.template_route
+        if self._qrouter is not None:
+            yield from self._qrouter.parameters()
+
+    def non_gate_parameters(self):
+        """Yield structural parameters (Muon / normal-LR group)."""
+        yield self.basis.weight
+        yield self.template_bank
+        yield self.bias
+
+    # ── Weight conversion ────────────────────────────────────────────────
+
+    @classmethod
+    def from_remixed_linear(cls, orig):
+        """Convert a trained RemixedLinear to RemixedLinearFused.
+
+        Copies all matching parameters/buffers.  Raises if the source
+        RemixedLinear does not use chunk routing with multiple templates.
+        """
+        assert isinstance(orig, RemixedLinear), "Expected a RemixedLinear instance"
+        assert orig.n_templates > 1, "Requires multi-template RemixedLinear"
+        assert orig.chunk_routing_size > 0, "Requires chunk routing (chunk_routing_size > 0)"
+
+        ctx_dim = (orig.output_gate_coeffs.weight.shape[1]
+                   if orig.use_output_gate else 64)
+        out_gate_rank = (orig.output_gate_coeffs.weight.shape[0]
+                         if orig.use_output_gate else 8)
+
+        kw = dict(
+            n_templates=orig.n_templates,
+            chunk_routing_size=orig.chunk_routing_size,
+            use_basis_gate=orig.use_basis_gate,
+            use_output_gate=orig.use_output_gate,
+            use_context=orig.use_context,
+            basis_gate_mode=getattr(orig, 'basis_gate_mode', 'linear'),
+            output_gate_rank=out_gate_rank,
+            gate_temperature=orig.gate_temperature,
+            template_routing_learned=(isinstance(orig.template_route, nn.Parameter)
+                                      if orig.template_route is not None else False),
+            template_topk=getattr(orig, 'template_topk', 0),
+            use_quantile_route=getattr(orig, 'use_quantile_route', 0),
+        )
+        fused = cls(
+            in_features=orig.basis.weight.shape[1],
+            out_features=orig.template_bank.shape[1],
+            context_dim=ctx_dim,
+            basis_size=orig.basis_size,
+            remixed_linear_kwargs=kw,
+            scale_basis=False,            # already scaled in orig
+            film_gate=getattr(orig, '_film_gate_flag', False),
+            routing_scope=orig.routing_scope,
+        )
+
+        # Copy matching parameters and buffers
+        orig_sd = orig.state_dict()
+        fused_sd = fused.state_dict()
+        for key in fused_sd:
+            if key in orig_sd and fused_sd[key].shape == orig_sd[key].shape:
+                fused_sd[key].copy_(orig_sd[key])
+        fused.load_state_dict(fused_sd)
+        return fused
+
+    # ── torch.compile integration ────────────────────────────────────────
+
+    def compile(self, mode='reduce-overhead', fullgraph=True):
+        """Compile the forward pass for elementwise fusion (LN + gate + bias).
+
+        This fuses the remaining elementwise operations (LayerNorm, sigmoid
+        gate, output gate tanh, bias add) into fewer GPU kernel launches on
+        top of the GEMM/bmm optimizations.
+
+        Args:
+            mode: torch.compile mode.
+                  'reduce-overhead' — best for inference (uses CUDA graphs).
+                  'default'         — best for training (no CUDA graph overhead).
+            fullgraph: If True, compile the entire forward as a single graph.
+                       Set False if you hit graph-break issues.
+
+        Returns:
+            self (with forward replaced by the compiled version).
+        """
+        self.forward = torch.compile(self.forward, mode=mode, fullgraph=fullgraph)
+        return self
+
+    # ── Forward pass ─────────────────────────────────────────────────────
+
+    def forward(self, x, context_state=None, route_weights=None, **kwargs):
+        dtype = x.dtype
+        B, T_len, C = x.shape
+        K = self.n_templates
+        O = self.out_features
+        B_sz = self.basis_size
+        chunk = self.chunk_routing_size
+
+        # ── Step 1: Basis projection + LayerNorm ──────────────────────
+        _ln_dtype = self.ln_basis.weight.dtype
+        h = self.ln_basis(self.basis(x).to(dtype=_ln_dtype)).to(dtype=dtype)
+
+        # ── Step 2-3: Context gating ──────────────────────────────────
+        gate_out = None
+        if context_state is not None:
+            ctx = context_state.to(dtype=dtype)
+
+            # Basis gate (optional — skip multiply when disabled)
+            if self.use_basis_gate and self.basis_modulator is not None:
+                gate_logits = self.basis_modulator(ctx)
+                h = h * torch.sigmoid(gate_logits / self.gate_temperature).to(dtype=dtype)
+
+            # Output gate (low-rank centered: 1 + tanh(s · coeffs @ basis))
+            if self.use_output_gate:
+                coeffs = self.output_gate_coeffs(ctx)                          # (B, T, r)
+                gl = torch.matmul(coeffs, self.output_gate_basis.to(dtype=dtype))  # (B, T, O)
+                gate_out = 1.0 + torch.tanh(self.output_gate_scale.to(dtype=dtype) * gl)
+
+        # ── Step 4-5: Chunk routing with GEMM / bmm ──────────────────
+        T_stack = self.template_bank.to(dtype=dtype)   # (K, O, B_sz)
+        n_chunks = (T_len + chunk - 1) // chunk
+        pad = n_chunks * chunk - T_len
+
+        # Pad to clean multiple of chunk size
+        x_p = F.pad(x, (0, 0, 0, pad)) if pad > 0 else x
+        h_p = F.pad(h, (0, 0, 0, pad)) if pad > 0 else h
+
+        # Routing anchors: first token of each chunk
+        x_anchors = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :]  # (B, n_chunks, C)
+
+        # ── Routing: quantile-balanced or standard matmul+softmax ─────
+        if self._qrouter is not None:
+            # EMA quantile router: expects (B', T', D), returns (B', T', K)
+            # Reshape anchors to (B*n_chunks, 1, C) → router → (B*n_chunks, 1, K)
+            anchor_flat = x_anchors.reshape(B * n_chunks, 1, C)
+            weights_flat = self._qrouter(anchor_flat)              # (BN, 1, K)
+            weights_all = weights_flat.reshape(B, n_chunks, K).to(dtype)
+        elif self.template_route is not None:
+            logits_all = x_anchors.float() @ self.template_route.float()  # (B, n_chunks, K)
+
+            if self.template_topk > 0 and self.template_topk < K:
+                topk_vals, topk_idx = logits_all.topk(self.template_topk, dim=-1)
+                weights_all = torch.zeros_like(logits_all).scatter_(
+                    -1, topk_idx, F.softmax(topk_vals, dim=-1)
+                ).to(dtype)
+            else:
+                weights_all = F.softmax(logits_all, dim=-1).to(dtype)  # (B, n_chunks, K)
+        else:
+            raise RuntimeError("RemixedLinearFused: no routing method configured "
+                               "(need template_route or _qrouter)")
+
+        # ── OPT 1: Template assembly — single GEMM ───────────────────
+        # einsum('bnk,koc→bnoc') → (BN, K) @ (K, O*B_sz) → reshape
+        BN = B * n_chunks
+        W_eff_flat = weights_all.reshape(BN, K) @ T_stack.reshape(K, O * B_sz)
+        # W_eff_flat: (BN, O * B_sz)
+
+        # ── OPT 2: Chunk mixing — torch.bmm ──────────────────────────
+        # einsum('bnsc,bnoc→bnso') → bmm((BN, chunk, B_sz), (BN, B_sz, O))
+        h_chunked = h_p.reshape(BN, chunk, B_sz)
+        W_eff_t = W_eff_flat.reshape(BN, O, B_sz).transpose(1, 2)  # (BN, B_sz, O)
+        pre_output = torch.bmm(h_chunked, W_eff_t)                 # (BN, chunk, O)
+        pre_output = pre_output.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
+
+        # Entropy tracking (no-grad diagnostic — skip under torch.compile)
+        if not torch.compiler.is_compiling():
+            with torch.no_grad():
+                if self.template_route is not None:
+                    w_f = F.softmax(x.float() @ self.template_route.float(), dim=-1)
+                else:
+                    w_f = weights_all.float()
+                ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                self._template_entropy_buf.copy_(ent.detach())
+
+        # ── Step 6-7: Output gate + bias ──────────────────────────────
+        if gate_out is not None:
+            pre_output = pre_output * gate_out
+
+        return (pre_output + self.bias.to(dtype=dtype)).to(dtype=dtype)
 
 
 class DualGateLinear(nn.Module):
@@ -4333,9 +4660,10 @@ class QuantileBalancedRouter(nn.Module):
     @torch.compiler.disable()
     def _update_ema(self, scores: torch.Tensor, topk: int, K: int):
         with torch.no_grad():
-            flat = scores.detach().reshape(-1, K)                     # (N, K)
-            target_q = 1.0 - topk / K                                 # target fraction selected
-            batch_q  = torch.quantile(flat, float(target_q), dim=0)   # (K,)
+            flat = scores.detach().float().reshape(-1, K)                # (N, K)
+            target_q = 1.0 - topk / K                                   # target fraction selected
+            batch_q  = torch.quantile(flat, float(target_q), dim=0)     # (K,) float32
+            batch_q  = batch_q.to(dtype=self.ema_thresholds.dtype)       # match buffer dtype
             if not self._ema_init.item():
                 self.ema_thresholds.copy_(batch_q)
                 self._ema_init.fill_(True)
@@ -4472,9 +4800,10 @@ class QuantileCrossAttentionRouter(nn.Module):
         
         if self.training:
             with torch.no_grad():
-                flat = scores.detach().reshape(-1, K)
+                flat = scores.detach().float().reshape(-1, K)
                 target_q = 1.0 - topk / K
                 batch_q  = torch.quantile(flat, float(target_q), dim=0)
+                batch_q  = batch_q.to(dtype=self.ema_thresholds.dtype)
                 if not self._ema_init.item():
                     self.ema_thresholds.copy_(batch_q)
                     self._ema_init.fill_(True)
@@ -4993,9 +5322,17 @@ class RemixedFeedForward(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
+            # Auto-select RemixedLinearFused for 29C chunk routing (n_templates>1, chunk>0)
+            _is_29c_fused = (
+                kwargs.get('n_templates', 1) > 1
+                and int(kwargs.get('chunk_routing_size', 0)) > 0
+                and not lokr_expert and not tiny_expert
+                and kwargs.get('global_bank_mode', 'none') == 'none'
+            )
             _linear_cls = (
                 DualGateLinear if getattr(config, 'remix_use_dual_gate', False)
                 else OutputGatedLinear if getattr(config, 'p26_output_gated_linear', 0)
+                else RemixedLinearFused if _is_29c_fused
                 else RemixedLinear
             )
             self.c_fc   = _linear_cls(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
@@ -5009,10 +5346,10 @@ class RemixedFeedForward(nn.Module):
     def forward(self, x, context_state, route_weights=None, context_gates=None, p24_shared=None):
         """route_weights:  optional dict from SharedBlockRouter with 'c_fc'/'c_proj_ffn' keys.
         context_gates:  optional dict from SharedContextGates with layer-key sub-dicts."""
-        rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   (RemixedLinear, OutputGatedLinear))) else None
-        rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, (RemixedLinear, OutputGatedLinear))) else None
-        cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   (RemixedLinear, OutputGatedLinear))) else None
-        cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, (RemixedLinear, OutputGatedLinear))) else None
+        rw_fc   = route_weights['c_fc']      if (route_weights and isinstance(self.c_fc,   (RemixedLinear, RemixedLinearFused, OutputGatedLinear))) else None
+        rw_proj = route_weights['c_proj_ffn'] if (route_weights and isinstance(self.c_proj, (RemixedLinear, RemixedLinearFused, OutputGatedLinear))) else None
+        cg_fc   = context_gates['c_fc']      if (context_gates and isinstance(self.c_fc,   (RemixedLinear, RemixedLinearFused, OutputGatedLinear))) else None
+        cg_proj = context_gates['c_proj_ffn'] if (context_gates and isinstance(self.c_proj, (RemixedLinear, RemixedLinearFused, OutputGatedLinear))) else None
         route_in = p24_shared.get('route_input') if p24_shared is not None else None
         gate_in = p24_shared.get('gate_input') if p24_shared is not None else None
         x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
@@ -5201,9 +5538,17 @@ class RemixedMultiAttention(nn.Module):
             if attn_qk_K > 0:
                 kwargs_qk['n_templates'] = attn_qk_K
             # Attention layers use per-sequence routing (one routing decision per sequence)
+            # Auto-select RemixedLinearFused for 29C chunk routing (n_templates>1, chunk>0)
+            _is_29c_fused = (
+                kwargs.get('n_templates', 1) > 1
+                and int(kwargs.get('chunk_routing_size', 0)) > 0
+                and not lokr_expert and not tiny_expert
+                and kwargs.get('global_bank_mode', 'none') == 'none'
+            )
             _linear_cls = (
                 DualGateLinear if getattr(config, 'remix_use_dual_gate', False)
                 else OutputGatedLinear if getattr(config, 'p26_output_gated_linear', 0)
+                else RemixedLinearFused if _is_29c_fused
                 else RemixedLinear
             )
             self.c_q    = _linear_cls(self.n_embd, self.n_head * self.head_dim,      context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs_qk,   scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
@@ -5216,7 +5561,7 @@ class RemixedMultiAttention(nn.Module):
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state, route_weights=None):
         """route_weights: optional dict from SharedBlockRouter with 'c_q','c_k','c_v','c_proj_attn'."""
-        is_rl = isinstance(self.c_q, (RemixedLinear, OutputGatedLinear))  # True for weight-mod path
+        is_rl = isinstance(self.c_q, (RemixedLinear, RemixedLinearFused, OutputGatedLinear))  # True for weight-mod path
         rw = route_weights if (route_weights is not None and is_rl) else None
         B, T, C = x.size()
         if self._attn_mode == 'ckr_ffn':
@@ -5614,7 +5959,7 @@ class RemixedBlock(nn.Module):
                 (m for m in [self.attn.c_q, self.attn.c_k, self.attn.c_v,
                               getattr(self.attn, 'c_proj', None),
                               self.ffwd.c_fc, self.ffwd.c_proj]
-                 if isinstance(m, RemixedLinear)),
+                 if isinstance(m, (RemixedLinear, RemixedLinearFused))),
                 None
             )
             if _first_rl is not None and not getattr(_first_rl, 'lokr_expert', False):
@@ -5640,7 +5985,7 @@ class RemixedBlock(nn.Module):
             _attn_rl = [m for m in [
                 getattr(self.attn, 'c_q', None), getattr(self.attn, 'c_k', None),
                 getattr(self.attn, 'c_v', None), getattr(self.attn, 'c_proj', None),
-            ] if isinstance(m, RemixedLinear)]
+            ] if isinstance(m, (RemixedLinear, RemixedLinearFused))]
             if _attn_rl:
                 self._attn_rl_layers = _attn_rl
                 _bs = _attn_rl[0].basis_size  # basis_size may differ if auto-scaled
@@ -7571,7 +7916,7 @@ class GPT(nn.Module):
                     continue
                 # FFN layers always get the bank
                 for sub in [getattr(block.ffwd, 'c_fc', None), getattr(block.ffwd, 'c_proj', None)]:
-                    if isinstance(sub, RemixedLinear) and sub._use_global_bank:
+                    if isinstance(sub, (RemixedLinear, RemixedLinearFused)) and sub._use_global_bank:
                         sub._global_bank = self.p28_global_bank
                         sub._layer_idx_for_bank = layer_idx
                         # bank_key is already set in __init__ based on in/out dim ratio
@@ -7579,7 +7924,7 @@ class GPT(nn.Module):
                 if _bank_mode == 'all':
                     for sub in [getattr(block.attn, 'c_q', None), getattr(block.attn, 'c_k', None),
                                  getattr(block.attn, 'c_v', None), getattr(block.attn, 'c_proj', None)]:
-                        if isinstance(sub, RemixedLinear) and sub._use_global_bank:
+                        if isinstance(sub, (RemixedLinear, RemixedLinearFused)) and sub._use_global_bank:
                             sub._global_bank = self.p28_global_bank
                             sub._layer_idx_for_bank = layer_idx
             print0(f"[P28] GlobalTemplateBank created: mode={_bank_mode}, K={_n_templates}, "
@@ -7728,7 +8073,7 @@ class GPT(nn.Module):
                     # FSI/AESP/CKR modes have ctx_stream=None (no context stream needed).
                     if sub.ctx_stream is not None:
                         _init_ctx_stream(sub.ctx_stream)
-                if isinstance(sub, RemixedLinear):
+                if isinstance(sub, (RemixedLinear, RemixedLinearFused)):
                     torch.nn.init.orthogonal_(sub.basis.weight)
                     if sub.template_mixing is not None:
                         torch.nn.init.kaiming_normal_(sub.template_mixing)
@@ -8167,8 +8512,17 @@ class GPT(nn.Module):
         # Flat scan over all submodules for MoE/P24 inactive param accounting.
         # Note: SlicedWeightLinear/FoldedModulationLinear/SequenceGatedLinear are NOT
         # necessarily inside a RemixedLinear, so we must scan the full module tree.
+        #
+        # derived_matmul_flops: FLOPs from matmuls on derived weight matrices (e.g. W_eff
+        # in chunk routing) that the 6N parameter-counting proxy cannot capture because
+        # the derived matrix is an intermediate tensor, not an nn.Parameter.
+        # For chunk routing, the forward does TWO ops with template_bank:
+        #   1. Assembly: einsum('bnk,koc->bnoc') — captured by amortized param count
+        #   2. Mixing:   einsum('bnsc,bnoc->bnso') — NOT captured (W_eff is derived)
+        # We add 6 * out_features * basis_size per such projection to compensate.
+        derived_matmul_flops = 0
         for submod in self.modules():
-            if isinstance(submod, RemixedLinear):
+            if isinstance(submod, (RemixedLinear, RemixedLinearFused)):
                 if getattr(submod, 'tiny_expert', False) and submod.n_templates > 1:
                     topk = submod.tiny_expert_topk
                     K = submod.n_templates
@@ -8201,6 +8555,15 @@ class GPT(nn.Module):
                         # inactive = total - active_per_token
                         inactive = (template_params + route_params) - active_per_token
                         inactive_expert_params += int(inactive)
+
+                        # Fix: the mixing matmul (W_eff × h_gated) performs
+                        # 2 * out_features * basis_size FLOPs per token (forward), i.e.
+                        # 6 * out_features * basis_size per token (fwd+bwd). W_eff is a
+                        # derived tensor constructed from template_bank, not an nn.Parameter,
+                        # so the 6N formula doesn't see it. We must add it explicitly.
+                        out_features = submod.template_bank.shape[1]
+                        basis_size = submod.template_bank.shape[2]
+                        derived_matmul_flops += 6 * out_features * basis_size
                     else:
                         # Legacy template bank with hard top-k routing
                         topk = getattr(submod, 'template_topk', 0)
@@ -8235,6 +8598,7 @@ class GPT(nn.Module):
             # No inactive params — total and active are equal by construction. No adjustment needed.
             # SequenceGatedLinear: weight is identical to dense baseline. total == active.
 
+        total_flops = total_flops + derived_matmul_flops
         active_flops = total_flops - 6 * inactive_expert_params
         active_params = nparams - inactive_expert_params
         return total_flops, active_flops, active_params
@@ -8885,7 +9249,7 @@ class GPT(nn.Module):
             if orth_lambda > 0.0 and loss_reduction == 'mean':
                 orth_terms = []
                 for mod in self.modules():
-                    if isinstance(mod, RemixedLinear) and mod._last_orth_loss is not None:
+                    if isinstance(mod, (RemixedLinear, RemixedLinearFused)) and mod._last_orth_loss is not None:
                         orth_terms.append(mod._last_orth_loss.to(dtype=loss.dtype))
                 if orth_terms:
                     loss = loss + orth_lambda * torch.stack(orth_terms).mean()
