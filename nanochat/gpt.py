@@ -2237,6 +2237,8 @@ class RemixedLinearFused(nn.Module):
         self.tiny_expert = False
         self._use_global_bank = False
         self._global_bank = None
+        self.basis_gate_content = None
+        self.basis_gate_context = None
 
         # ── Structural parameters ────────────────────────────────────────
         self.basis = Linear(in_features, basis_size, bias=False)
