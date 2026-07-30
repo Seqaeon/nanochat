@@ -4643,26 +4643,20 @@ class ResidualAdaptiveLinear(nn.Module):
 
 
 class QuantileBalancedRouter(nn.Module):
-    """Per-expert EMA quantile thresholding for balanced MoE routing.
+    """Auxiliary-Loss-Free Additive Bias Load Balancing Router (DeepSeek-V3 style).
 
-    Instead of softmax + auxiliary load-balancing loss, this module:
-    1. Computes raw affinity scores: (B, T, K)
-    2. Maintains a running EMA of per-expert score quantiles
-    3. Assigns a token to expert k if its score > ema_threshold[k]
-    4. Guarantees at least topk experts per token via union with hard top-k
-
-    Result: ~1/K of tokens route to each expert by construction, with no
-    explicit load-balancing loss term fighting against the primary objective.
-
-    At inference time falls back to plain top-k softmax routing (no EMA update).
+    Computes scores = x @ route_proj^T + expert_bias
+    Dynamically adjusts expert_bias in-place without torch.compile graph breaks,
+    guaranteeing uniform load balancing with 0 extra memory overhead.
     """
 
     def __init__(self, in_features: int, n_experts: int, topk: int,
-                 learned: bool = True, ema_decay: float = 0.99):
+                 learned: bool = True, bias_rate: float = 0.001):
         super().__init__()
         self.n_experts = n_experts
         self.topk      = topk
-        self.ema_decay = ema_decay
+        self.bias_rate = bias_rate
+        
         # Affinity projection: (K, D) — frozen or learned
         if learned:
             self.route_proj = nn.Parameter(torch.empty(n_experts, in_features))
@@ -4670,109 +4664,62 @@ class QuantileBalancedRouter(nn.Module):
         else:
             self.register_buffer('route_proj',
                 torch.randn(n_experts, in_features) / (in_features ** 0.5))
-        # EMA quantile thresholds — one per expert, initialised lazily on first step
-        self.register_buffer('ema_thresholds',  torch.zeros(n_experts))
-        self.register_buffer('_ema_init',       torch.zeros(1, dtype=torch.bool))
+        
+        # Dynamic expert routing bias buffer (Aux-Loss-Free load balancing)
+        self.register_buffer('expert_bias', torch.zeros(n_experts))
 
     def gate_parameters(self):
         if isinstance(self.route_proj, nn.Parameter):
             yield self.route_proj
 
-    @torch.compiler.disable()
-    def _update_ema(self, scores: torch.Tensor, topk: int, K: int):
-        with torch.no_grad():
-            flat = scores.detach().float().reshape(-1, K)                # (N, K)
-            target_q = 1.0 - topk / K                                   # target fraction selected
-            batch_q  = torch.quantile(flat, float(target_q), dim=0)     # (K,) float32
-            batch_q  = batch_q.to(dtype=self.ema_thresholds.dtype)       # match buffer dtype
-            if not self._ema_init.item():
-                self.ema_thresholds.copy_(batch_q)
-                self._ema_init.fill_(True)
-            else:
-                self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
-
-    def forward(self, x: 'Tensor') -> 'Tensor':
-        """x: (B, T, D) → weights: (B, T, K) normalised expert weights."""
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, T, D) → weights: (B, T, K) normalized top-k weights."""
         B, T, D = x.shape
         K = self.n_experts
         topk = max(1, min(self.topk, K))
 
-        # ── Affinity scores (sequence-level pooled for stability) ───────────────
-        x_pool  = x.float().mean(dim=1, keepdim=True)                    # (B, 1, D)
-        scores  = F.linear(x_pool, self.route_proj.float())              # (B, 1, K)
-        scores  = scores.expand(B, T, K)                                  # (B, T, K)
+        x_pool = x.float().mean(dim=1, keepdim=True) if x.ndim == 3 else x.float()
+        raw_scores = F.linear(x_pool, self.route_proj.float())  # (B, 1, K) or (B, K)
+        
+        biased_scores = raw_scores + self.expert_bias.to(raw_scores.device)
+        if biased_scores.ndim == 2:
+            biased_scores = biased_scores.unsqueeze(1)
+        biased_scores = biased_scores.expand(B, T, K)
 
         if self.training:
-            # Guard torch.quantile from torch.compile by calling a decorated separate method.
-            # This causes one graph break per layer (for the EMA side effect only), which is
-            # acceptable since _update_ema runs under torch.no_grad() and doesn't touch the
-            # backward graph.
-            self._update_ema(scores, topk, K)
+            with torch.no_grad():
+                _, topk_idx = biased_scores.topk(topk, dim=-1)
+                counts = torch.zeros(K, device=x.device, dtype=torch.float32).scatter_add_(
+                    0, topk_idx.reshape(-1), torch.ones(topk_idx.numel(), device=x.device, dtype=torch.float32)
+                )
+                target_count = (B * T * topk) / K
+                self.expert_bias.add_((target_count - counts) * self.bias_rate)
 
-            thresh = self.ema_thresholds.to(scores.device)               # (K,)
-            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
-
-            # Guarantee exactly topk via hard top-k fallback
-            _, topk_idx = scores.topk(topk, dim=-1)                      # (B, T, topk)
-            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
-            mask        = q_mask | hard_mask                              # union
-
-            # Always trim to exactly topk — compile-safe: no data-dependent branch.
-            # When mask already has ≤topk True entries (normal case after EMA converges),
-            # topk on -inf-filled scores returns the same set → no-op semantically.
-            # Eliminates the CPU-GPU sync from `if (n_selected > topk).any()` which was
-            # splitting the compiled graph into 3 segments every forward pass.
-            masked_scores = scores.masked_fill(~mask, -1e9)
-            _, top_idx    = masked_scores.topk(topk, dim=-1)
-            mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
-
-            # Soft weights via masked softmax (preserves differentiability)
-            gated   = scores.masked_fill(~mask, -1e9)
-            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)       # (B, T, K)
-        else:
-            # Inference: simple top-k softmax (no EMA update)
-            topk_s, topk_idx = scores.topk(topk, dim=-1)               # (B, T, topk)
-            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
-            weights.scatter_(-1, topk_idx,
-                F.softmax(topk_s.float(), dim=-1).to(x.dtype))
-
+        topk_vals, topk_idx = biased_scores.topk(topk, dim=-1)
+        topk_weights = F.softmax(topk_vals.float(), dim=-1).to(x.dtype)
+        weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype).scatter_(-1, topk_idx, topk_weights)
         return weights
 
 
 class QuantileCrossAttentionRouter(nn.Module):
-    """Linear Causal Cross-Attention routing for MoE.
-    
-    Experts act as static Queries. Tokens project to Keys and Values.
-    We maintain a causal running sum of expert interactions (Linear Attention):
-        N_{k,t} = sum_{i=1}^t elu(Q_k * K_i + 1) * V_i
-        Z_{k,t} = sum_{i=1}^t elu(Q_k * K_i + 1)
-        C_{k,t} = N_{k,t} / Z_{k,t}
-    
-    Tokens cast their own Query (Q_tok) against the Expert's continuous Context (C_k):
-        Score_{t, k} = C_{k, t} \\cdot Q_{tok, t}
-        
-    These continuous causal scores are then passed into the Quantile EMA threshold logic.
-    """
+    """Linear Causal Cross-Attention routing with Additive Bias Load Balancing."""
+
     def __init__(self, in_features: int, n_experts: int, topk: int,
-                 head_dim: int = 64, ema_decay: float = 0.99):
+                 head_dim: int = 64, bias_rate: float = 0.001):
         super().__init__()
         self.n_experts = n_experts
         self.topk = topk
         self.head_dim = head_dim
-        self.ema_decay = ema_decay
+        self.bias_rate = bias_rate
         
-        # Expert Queries
         self.q_exp = nn.Parameter(torch.empty(n_experts, head_dim))
         nn.init.normal_(self.q_exp, std=head_dim ** -0.5)
         
-        # Token Projections
         self.k_proj = nn.Linear(in_features, head_dim, bias=False)
         self.v_proj = nn.Linear(in_features, head_dim, bias=False)
         self.q_tok_proj = nn.Linear(in_features, head_dim, bias=False)
         
-        # EMA quantile thresholds
-        self.register_buffer('ema_thresholds',  torch.zeros(n_experts))
-        self.register_buffer('_ema_init',       torch.zeros(1, dtype=torch.bool))
+        self.register_buffer('expert_bias', torch.zeros(n_experts))
 
     def gate_parameters(self):
         yield self.q_exp
@@ -4790,7 +4737,6 @@ class QuantileCrossAttentionRouter(nn.Module):
         v = self.v_proj(x_in)       # (B, T, D_h)
         q_tok = self.q_tok_proj(x_in) # (B, T, D_h)
         
-        # Activation: elu(q * k^T) + 1  => always positive
         qk = torch.einsum('bth,kh->btk', k, self.q_exp)
         S = F.elu(qk) + 1.0     # (B, T, K)
         
@@ -4798,60 +4744,36 @@ class QuantileCrossAttentionRouter(nn.Module):
             prev_N = kv_state.get('qca_N', torch.zeros(B, K, D_h, dtype=x.dtype, device=x.device))
             prev_Z = kv_state.get('qca_Z', torch.zeros(B, K, dtype=x.dtype, device=x.device))
             
-            # Since generation proceeds 1 token at a time:
-            N = prev_N + torch.einsum('btk,bth->bkh', S, v)  # (B, K, D_h)
-            Z = prev_Z + S.squeeze(1)                        # (B, K)
+            N = prev_N + torch.einsum('btk,bth->bkh', S, v)
+            Z = prev_Z + S.squeeze(1)
             
             kv_state['qca_N'] = N.clone()
             kv_state['qca_Z'] = Z.clone()
             
-            # Expand to (B, T, K, D_h) for generalized calculation below
             N = N.unsqueeze(1)
             Z = Z.unsqueeze(1)
         else:
-            # Training mode: cumulative sum over sequence
             terms_N = S.unsqueeze(-1) * v.unsqueeze(2)
-            N = torch.cumsum(terms_N.float(), dim=1).to(x.dtype) # (B, T, K, D_h)
-            Z = torch.cumsum(S.float(), dim=1).to(x.dtype)       # (B, T, K)
+            N = torch.cumsum(terms_N.float(), dim=1).to(x.dtype)
+            Z = torch.cumsum(S.float(), dim=1).to(x.dtype)
             
-        # Context vectors C_{b, t, k, h} = N / Z
-        C = N / (Z.unsqueeze(-1) + 1e-6)  # (B, T, K, D_h)
+        C = N / (Z.unsqueeze(-1) + 1e-6)
+        raw_scores = torch.einsum('btkh,bth->btk', C.to(dtype=q_tok.dtype), q_tok)
         
-        # Final scores = C * q_tok => (B, T, K)
-        scores = torch.einsum('btkh,bth->btk', C.to(dtype=q_tok.dtype), q_tok)
-        
+        biased_scores = raw_scores + self.expert_bias.to(raw_scores.device)
+
         if self.training:
             with torch.no_grad():
-                flat = scores.detach().float().reshape(-1, K)
-                target_q = 1.0 - topk / K
-                batch_q  = torch.quantile(flat, float(target_q), dim=0)
-                batch_q  = batch_q.to(dtype=self.ema_thresholds.dtype)
-                if not self._ema_init.item():
-                    self.ema_thresholds.copy_(batch_q)
-                    self._ema_init.fill_(True)
-                else:
-                    self.ema_thresholds.lerp_(batch_q, 1.0 - self.ema_decay)
-            
-            thresh = self.ema_thresholds.to(scores.device)
-            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)
-            
-            _, topk_idx = scores.topk(topk, dim=-1)
-            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
-            mask        = q_mask | hard_mask
-            
-            n_selected  = mask.sum(dim=-1, keepdim=True)
-            if (n_selected > topk).any():
-                masked_scores = scores.masked_fill(~mask, -1e9)
-                _, top_idx    = masked_scores.topk(topk, dim=-1)
-                mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
-            
-            gated   = scores.masked_fill(~mask, -1e9)
-            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)
-        else:
-            topk_s, topk_idx = scores.topk(topk, dim=-1)
-            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
-            weights.scatter_(-1, topk_idx, F.softmax(topk_s.float(), dim=-1).to(x.dtype))
-            
+                _, topk_idx = biased_scores.topk(topk, dim=-1)
+                counts = torch.zeros(K, device=x.device, dtype=torch.float32).scatter_add_(
+                    0, topk_idx.reshape(-1), torch.ones(topk_idx.numel(), device=x.device, dtype=torch.float32)
+                )
+                target_count = (B * T * topk) / K
+                self.expert_bias.add_((target_count - counts) * self.bias_rate)
+
+        topk_vals, topk_idx = biased_scores.topk(topk, dim=-1)
+        topk_weights = F.softmax(topk_vals.float(), dim=-1).to(x.dtype)
+        weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype).scatter_(-1, topk_idx, topk_weights)
         return weights
 
 
