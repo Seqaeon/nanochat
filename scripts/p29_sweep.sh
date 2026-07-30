@@ -290,6 +290,7 @@ else
       --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
       --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+      --p31-route-side basis --p31-basis-side-templates -1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
