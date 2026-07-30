@@ -13,9 +13,26 @@ The fusion avoids materializing W_eff in HBM (the primary bottleneck).
 Strategy:
     - Grid over (num_chunks, token_tiles, output_tiles)
     - For each output tile, accumulate over B in chunks (BLOCK_K)
-    - For each B-tile: load h once, then for each template k:
-        load T[k, rn, rb], scale by α[c,k], accumulate dot product
-    - All accumulation in float32 to avoid bf16 precision loss
+    - For each B-tile: load h once, compose the W_eff tile from all K templates
+      into registers, then issue ONE tl.dot
+    - Accumulation in float32; operands kept in native dtype for tensor cores
+
+Arithmetic overhead vs a dense GEMM is K/BLOCK_M (composing costs K FMAs on a
+(BLOCK_B, BLOCK_N) tile per B-step), so ~12% at BLOCK_M=64, K=8.
+
+STATUS / caveats
+    - bf16 forward and all three gradients are bit-identical to
+      _naive_template_mix.  In float32, tl.dot uses TF32, so expect ~1e-3
+      relative error against a true-fp32 reference; bf16 is the production path.
+    - The win depends on the template bank staying resident in L2 across chunks,
+      i.e. L2 >= K * d_out * B.  For d12 c_fc that is 8*3072*768*2 = 37.7 MB:
+      fine on H200 (60 MB L2), impossible on a small consumer GPU (2 MB), where
+      this kernel measures roughly break-even against compose+bmm.
+    - Tiles are NOT tuned for H200.  BLOCK_M is capped by chunk_routing_size
+      (alpha must be constant within an M-tile), which limits the achievable
+      fraction of cuBLAS at chunk=64.  Tune before drawing conclusions.
+    - Only grad_h is fused; grad_T/grad_alpha go through the (C, d_out, B)
+      outer-product tensor G, so the backward still materializes it.
 """
 from __future__ import annotations
 
@@ -77,29 +94,36 @@ if HAS_TRITON:
             rb = b_start + tl.arange(0, BLOCK_B)
             mask_b = rb < B
 
-            # Load h[c, rm, rb] -> (BLOCK_M, BLOCK_B), cast to f32
+            # Load h[c, rm, rb] -> (BLOCK_M, BLOCK_B).  Kept in its native dtype:
+            # upcasting to f32 before tl.dot drops off the bf16 tensor cores and
+            # roughly halves throughput on Ampere/Hopper.
             h_tile = tl.load(
                 H_ptr + pid_c * stride_hc + rm[:, None] * stride_ht + rb[None, :] * stride_hb,
                 mask=mask_m[:, None] & mask_b[None, :],
                 other=0.0,
-            ).to(tl.float32)
+            )
 
-            # For each template, load T[k, rn, rb] and accumulate
+            # Compose the W_eff tile FIRST, then do a single dot.
+            #
+            # The obvious-looking alternative — `for k: acc += a_k * tl.dot(h, T_k)`
+            # — issues K tensor-core dots and therefore does K x the MACs of a dense
+            # GEMM.  That is the output-mixing formulation, and it is strictly worse
+            # than just materializing W_eff (measured ~10x slower).  Composing into
+            # registers costs K cheap FMAs on a (BLOCK_B, BLOCK_N) tile, so the
+            # arithmetic overhead is only K/BLOCK_M, and W_eff never reaches HBM.
+            w_tile = tl.zeros((BLOCK_B, BLOCK_N), dtype=tl.float32)
             for k in tl.static_range(K):
-                # Load alpha for this template
                 a_k = tl.load(A_ptr + pid_c * stride_ac + k * stride_ak).to(tl.float32)
-
-                # Load T[k, rn, rb] -> (BLOCK_N, BLOCK_B), cast to f32
+                # Load T[k, rn, rb] transposed into (BLOCK_B, BLOCK_N)
                 t_tile = tl.load(
-                    T_ptr + k * stride_tk + rn[:, None] * stride_tn + rb[None, :] * stride_tb,
-                    mask=mask_n[:, None] & mask_b[None, :],
+                    T_ptr + k * stride_tk + rn[None, :] * stride_tn + rb[:, None] * stride_tb,
+                    mask=mask_n[None, :] & mask_b[:, None],
                     other=0.0,
-                ).to(tl.float32)
+                )
+                w_tile += a_k * t_tile.to(tl.float32)
 
-                # acc += a_k * (h_tile @ t_tile.T)
-                # h_tile: (BLOCK_M, BLOCK_B)  t_tile: (BLOCK_N, BLOCK_B)
-                # h_tile @ t_tile.T -> (BLOCK_M, BLOCK_N)
-                acc += a_k * tl.dot(h_tile, tl.trans(t_tile))
+            # h_tile: (BLOCK_M, BLOCK_B)  w_tile: (BLOCK_B, BLOCK_N) -> (BLOCK_M, BLOCK_N)
+            acc += tl.dot(h_tile, w_tile.to(h_tile.dtype))
 
         # Store result
         tl.store(
@@ -143,25 +167,27 @@ if HAS_TRITON:
             rk = n_start + tl.arange(0, BLOCK_K)
             mask_k = rk < d_out
 
-            # Load grad_y[c, rm, rk] -> (BLOCK_M, BLOCK_K)
+            # Load grad_y[c, rm, rk] -> (BLOCK_M, BLOCK_K), native dtype (see fwd)
             gy_tile = tl.load(
                 GY_ptr + pid_c * stride_gyc + rm[:, None] * stride_gyt + rk[None, :] * stride_gyn,
                 mask=mask_m[:, None] & mask_k[None, :],
                 other=0.0,
-            ).to(tl.float32)
+            )
 
+            # Compose the W_eff tile first, then one dot (see the fwd kernel for why
+            # the per-template dot is K x the tensor-core work).
+            w_tile = tl.zeros((BLOCK_K, BLOCK_N), dtype=tl.float32)
             for k in tl.static_range(K):
                 a_k = tl.load(A_ptr + pid_c * stride_ac + k * stride_ak).to(tl.float32)
-
                 # Load T[k, rk, rn] -> (BLOCK_K, BLOCK_N)
                 t_tile = tl.load(
                     T_ptr + k * stride_tk + rk[:, None] * stride_tn + rn[None, :] * stride_tb,
                     mask=mask_k[:, None] & mask_n[None, :],
                     other=0.0,
-                ).to(tl.float32)
+                )
+                w_tile += a_k * t_tile.to(tl.float32)
 
-                # acc += a_k * (gy_tile @ t_tile)
-                acc += a_k * tl.dot(gy_tile, t_tile)
+            acc += tl.dot(gy_tile, w_tile.to(gy_tile.dtype))
 
         tl.store(
             GH_ptr + pid_c * stride_ghc + rm[:, None] * stride_ght + rn[None, :] * stride_ghb,
@@ -250,9 +276,18 @@ class FusedTemplateMix(torch.autograd.Function):
             num_stages=1, num_warps=4,
         )
 
-        # grad_T and grad_alpha via PyTorch (not the bottleneck)
-        grad_T = torch.einsum('ck, ctn, ctb -> knb', alpha.float(), grad_y.float(), h.float()).to(T_bank.dtype)
-        grad_alpha = torch.einsum('ctn, knb, ctb -> ck', grad_y.float(), T_bank.float(), h.float()).to(alpha.dtype)
+        # grad_T and grad_alpha.  Both factor through the per-chunk outer product
+        #     G[c,n,b] = sum_t grad_y[c,t,n] h[c,t,b]
+        # which costs one apply, after which
+        #     grad_T[k]     = sum_c alpha[c,k] G[c]      (one compose)
+        #     grad_alpha[c,k] = <G[c], T[k]>             (one compose)
+        #
+        # Contracting 'ctn,knb,ctb->ck' directly instead — as this previously did —
+        # costs C*T*N*B*K, i.e. K x the apply, and in float32 on top of that. That
+        # backward alone would have erased any saving from fusing the forward.
+        G = torch.bmm(grad_y.transpose(1, 2), h)                     # (C, N, B)
+        grad_T = torch.einsum('ck,cnb->knb', alpha.to(G.dtype), G).to(T_bank.dtype)
+        grad_alpha = torch.einsum('cnb,knb->ck', G, T_bank.to(G.dtype)).to(alpha.dtype)
 
         return grad_h, grad_T, grad_alpha
 

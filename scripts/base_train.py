@@ -180,6 +180,9 @@ parser.add_argument("--p28-chunk-routing-size", type=int, default=0, help="28D: 
 parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode ('none'=off, 'ffn'=FFN only, 'all'=FFN+attn)")
 parser.add_argument("--p28-attn-proj-templates", type=int, default=0, help="28C2: override n_templates for attn c_proj per-layer (0=use default from remixed_linear_kwargs)")
 parser.add_argument("--p28-attn-qk-templates",   type=int, default=0, help="28C3: override n_templates for attn c_q and c_k per-layer (0=use default)")
+parser.add_argument("--p31-chunk-route-impl", type=str, default="compose", choices=["compose", "grouped"], help="31: chunk-routing evaluation. 'compose' materializes per-chunk W_eff (legacy); 'grouped' (topk=1 only) permutes chunks by template and runs one GEMM per template — same math, no W_eff in HBM")
+parser.add_argument("--p31-top1-gate", type=str, default="ones", choices=["ones", "switch"], help="31: top-1 routing coefficient. 'ones'=legacy (softmax over a single logit is exactly 1.0, so the router gets zero gradient); 'switch'=full-softmax probability of the selected template (differentiable)")
+parser.add_argument("--p31-template-delta-rank", type=int, default=0, help="31: replace the (K, out, basis) template bank with a shared base + K rank-r deltas (0=off). Soft mixing over all K becomes three dense GEMMs with no per-chunk W_eff in HBM, so cost is K*r*(basis+out) per token instead of K*out*basis per chunk")
 parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active (topk/chunk-adjusted) params instead of total params when computing target_tokens")
 parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode (basis_gate_mode=lowrank)")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
@@ -716,6 +719,10 @@ def build_model_meta(depth):
             basis_gate_rank=getattr(args, 'remix_basis_gate_rank', 8),
             # Phase 30: LayerNorm ablation
             disable_ln_basis=bool(getattr(args, 'remix_disable_ln_basis', 0)),
+            # Phase 31: chunk-routing throughput
+            chunk_route_impl=getattr(args, 'p31_chunk_route_impl', 'compose'),
+            top1_gate=getattr(args, 'p31_top1_gate', 'ones'),
+            template_delta_rank=getattr(args, 'p31_template_delta_rank', 0),
         ),
 
         # Fix 1A

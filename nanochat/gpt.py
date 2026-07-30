@@ -1439,6 +1439,86 @@ class CCLBlock(nn.Module):
         return x, ctx.detach() if is_local else ctx
 
 
+# Phase 31: set True only if torch._grouped_mm actually raises, so we stop
+# retrying it.  Device/dtype eligibility is checked per call — caching that
+# would let one CPU call disable the fused path for CUDA.
+_GROUPED_MM_FAILED = False
+
+
+def _can_grouped_mm(t):
+    return (not _GROUPED_MM_FAILED) and hasattr(torch, '_grouped_mm') \
+        and t.is_cuda and t.dtype in (torch.bfloat16, torch.float16)
+
+
+def _grouped_top1_chunk_apply(h_p, idx, T_stack, coef):
+    """Phase 31: apply top-1 chunk routing as K dense GEMMs instead of composing
+    a per-chunk effective weight matrix.
+
+    The compose formulation (`einsum('bnk,koc->bnoc')`) contracts over all K
+    templates whether the routing weights are one-hot or not, so top-1 costs
+    exactly what soft routing costs and materializes B*n_chunks matrices of
+    (out, basis) in HBM.  With top-1 there are at most K *distinct* effective
+    weights, so the right formulation is the standard MoE one: permute chunks
+    into template-contiguous order, run one GEMM per template, permute back.
+    The template bank is then read K times total rather than B*n_chunks times.
+
+    Args:
+        h_p:     (B, n_chunks * chunk, basis) — gated basis, chunk-padded.
+        idx:     (B, n_chunks) int64 — selected template per chunk.
+        T_stack: (K, out_features, basis) — template bank in h_p's dtype.
+        coef:    (B, n_chunks, 1) — per-chunk routing coefficient, or None.
+
+    Returns:
+        (B, n_chunks * chunk, out_features)
+    """
+    global _GROUPED_MM_FAILED
+    B, T_pad, basis_sz = h_p.shape
+    n_chunks = idx.shape[1]
+    chunk = T_pad // n_chunks
+    K, out_features, _ = T_stack.shape
+    BN = B * n_chunks
+
+    flat_idx = idx.reshape(-1)                                    # (BN,)
+    order = torch.argsort(flat_idx)                               # chunk -> sorted slot
+    counts = torch.bincount(flat_idx, minlength=K)                # (K,)
+    h_sorted = h_p.reshape(BN, chunk, basis_sz).index_select(0, order)
+
+    out_sorted = None
+    if _can_grouped_mm(h_p):
+        # Single fused grouped GEMM over the K variable-sized token groups.
+        offs = torch.cumsum(counts * chunk, dim=0).to(torch.int32)
+        try:
+            out_sorted = torch._grouped_mm(
+                h_sorted.reshape(BN * chunk, basis_sz),
+                T_stack.transpose(1, 2),                          # (K, basis, out)
+                offs=offs,
+            )
+        except (RuntimeError, NotImplementedError, AttributeError):
+            _GROUPED_MM_FAILED = True                             # fall back for good
+            out_sorted = None
+
+    if out_sorted is None:
+        # Portable fallback: K dense GEMMs on contiguous slices.  Group sizes are
+        # data-dependent, so .tolist() forces a sync — acceptable, and still far
+        # cheaper than materializing B*n_chunks weight matrices.
+        h_flat = h_sorted.reshape(BN * chunk, basis_sz)
+        segs, start = [], 0
+        for k, n_k in enumerate(counts.tolist()):
+            if n_k == 0:
+                continue
+            segs.append(h_flat[start * chunk:(start + n_k) * chunk] @ T_stack[k].t())
+            start += n_k
+        out_sorted = torch.cat(segs, dim=0)
+
+    out_sorted = out_sorted.reshape(BN, chunk, out_features)
+    inv = torch.empty_like(order)
+    inv.scatter_(0, order, torch.arange(BN, device=order.device))
+    out = out_sorted.index_select(0, inv)                          # (BN, chunk, out)
+    if coef is not None:
+        out = out * coef.reshape(BN, 1, 1)
+    return out.reshape(B, T_pad, out_features)
+
+
 class RemixedLinear(nn.Module):
     def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False, routing_scope='per_sequence'):
         super().__init__()
@@ -1491,6 +1571,23 @@ class RemixedLinear(nn.Module):
         # Phase 28: FLOPs-efficient routing
         # 28D: amortize template routing over N-token chunks (0 = per-token, N = chunk size)
         self.chunk_routing_size = int(remixed_linear_kwargs.get('chunk_routing_size', 0))
+        # Phase 31: how the chunk-routed product is evaluated.
+        #   'compose' — build W_eff = sum_k a_k T_k per chunk, then contract (legacy).
+        #   'grouped' — top-1 only: permute chunks by template, one GEMM per template.
+        # Numerically equivalent for topk=1; 'compose' is kept as the default so
+        # existing runs and checkpoints are unaffected.
+        self.chunk_route_impl = remixed_linear_kwargs.get('chunk_route_impl', 'compose')
+        # Phase 31: top-1 routing coefficient.
+        #   'ones'   — legacy. softmax over a single selected logit is *exactly* 1.0,
+        #              so the router receives zero gradient: top-1 trains with a
+        #              frozen random routing projection.
+        #   'switch' — coefficient is the full-softmax probability of the selected
+        #              template (Switch-Transformer style), which is differentiable.
+        self.top1_gate = remixed_linear_kwargs.get('top1_gate', 'ones')
+        # Phase 31: low-rank template deltas. 0 = off (full (K, out, basis) bank).
+        # r > 0 replaces the bank with a shared base plus K rank-r deltas, which
+        # removes the per-chunk (out, basis) materialization from soft routing.
+        self.template_delta_rank = int(remixed_linear_kwargs.get('template_delta_rank', 0))
         # 28E/F: use global template bank (injected by GPT after construction) instead of per-layer template_bank
         # When True AND self._global_bank is set, forward uses global bank and skips local template_bank.
         _global_bank_mode = remixed_linear_kwargs.get('global_bank_mode', 'none')
@@ -1507,6 +1604,9 @@ class RemixedLinear(nn.Module):
         # gate_parameters() can always use `is not None` checks on every code path.
         self.template_bank = None
         self.template_mixing = None
+        self.template_base = None      # Phase 31 delta mode: shared base (out, basis)
+        self.template_delta_v = None   # Phase 31 delta mode: (basis, K*r)
+        self.template_delta_u = None   # Phase 31 delta mode: (K*r, out)
         self.expert_up_w = None    # 3D stacked: (K, expert_dim, basis_size)
         self.expert_down_w = None  # 3D stacked: (K, out_features, expert_dim)
         self.template_route = None
@@ -1601,6 +1701,39 @@ class RemixedLinear(nn.Module):
                 self.template_bank = None
                 self.template_mixing = None
                 self.template_route = None
+                self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+            elif self.template_delta_rank > 0:
+                # Phase 31: shared base + K rank-r deltas.  T_k = T_0 + U_k V_k^T, so
+                #     y = h T_0^T + sum_k a_k (h V_k) U_k^T
+                # Soft mixing over all K templates becomes three dense GEMMs and never
+                # forms an (out, basis) matrix, so nothing is written to HBM per chunk.
+                # Extra cost over dense is K*r*(in+out) per token instead of K*out*basis
+                # per chunk, which also makes per-token routing affordable again.
+                _r = self.template_delta_rank
+                self.template_bank = None
+                self.template_base = nn.Parameter(torch.randn(out_features, basis_size))
+                self.template_delta_v = nn.Parameter(
+                    torch.randn(basis_size, self.n_templates * _r) / (basis_size ** 0.5)
+                )
+                # Zero-init U so every delta starts at exactly zero: the layer begins
+                # life as the K=1 factorized layer, matching the identity-preserving
+                # init used for output_gate_basis and lokr_up_w.
+                self.template_delta_u = nn.Parameter(
+                    torch.zeros(self.n_templates * _r, out_features)
+                )
+                if self.use_quantile_route == 2:
+                    self._qrouter = QuantileCrossAttentionRouter(in_features, self.n_templates, self.template_topk)
+                    self.template_route = None
+                elif self.use_quantile_route == 1:
+                    self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, self.template_topk, learned=self.template_routing_learned)
+                    self.template_route = None
+                else:
+                    route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+                    if self.template_routing_learned:
+                        self.template_route = nn.Parameter(route_init)
+                    else:
+                        self.register_buffer('template_route', route_init)
+                    self._qrouter = None
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
             else:
                 # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
@@ -1812,6 +1945,31 @@ class RemixedLinear(nn.Module):
                 yield self.basis_gate_vectors
                 yield self.basis_gate_lr_scale
 
+    def _template_weights(self, sig, dtype):
+        """Routing weights from a float32 signal (B, N, in_features) → (B, N, K).
+
+        Mirrors the topk/softmax logic of the compose paths; used by the Phase 31
+        delta path, where the same code serves chunk-level and per-token routing.
+        """
+        K = self.n_templates
+        if getattr(self, '_qrouter', None) is not None:
+            return self._qrouter(sig).to(dtype)
+        if self.template_route is None:
+            return torch.full(sig.shape[:-1] + (K,), 1.0 / K,
+                              device=sig.device, dtype=dtype)
+        logits = torch.einsum('bnc,ck->bnk', sig, self.template_route.float())
+        topk = getattr(self, 'template_topk', 0)
+        if 0 < topk < K:
+            vals, idx = logits.topk(topk, dim=-1)
+            if topk == 1 and self.top1_gate == 'switch':
+                # Coefficient from the full softmax, so the router gets a gradient.
+                probs = F.softmax(logits, dim=-1)
+                return (F.one_hot(idx.squeeze(-1), K).to(dtype)
+                        * probs.gather(-1, idx).to(dtype))
+            one_hot = F.one_hot(idx, K).to(dtype)
+            return (one_hot * F.softmax(vals, dim=-1).unsqueeze(-1).to(dtype)).sum(dim=-2)
+        return F.softmax(logits, dim=-1).to(dtype)
+
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing/experts, bias) — Muon/normal LR."""
         yield self.basis.weight
@@ -1819,6 +1977,11 @@ class RemixedLinear(nn.Module):
             yield self.template_mixing
         if self.template_bank is not None:
             yield self.template_bank
+        # Phase 31 low-rank template deltas
+        if self.template_base is not None:
+            yield self.template_base
+            yield self.template_delta_v
+            yield self.template_delta_u
         # Tiny Expert stacked 3D weight tensors → structural AdamW group (ndim=3)
         if self.expert_up_w is not None:
             yield self.expert_up_w
@@ -2066,7 +2229,52 @@ class RemixedLinear(nn.Module):
                 # Soft routing: weighted sum over all K experts
                 pre_output = (all_out * rw.unsqueeze(-1)).sum(dim=2)         # (B,T,O)
         elif self.n_templates > 1:
-            if self._global_bank is not None:
+            if self.template_base is not None:
+                # ──────────────────────────────────────────────────────────────
+                # Phase 31: shared base + K low-rank deltas.
+                #   W_eff = T_0 + sum_k a_k U_k V_k^T
+                #   y     = h T_0^T + ((h V) * a) U^T
+                # Three dense GEMMs.  Soft mixing over all K templates costs
+                # K*r*(basis+out) per token instead of K*out*basis per chunk, and
+                # nothing of shape (out, basis) is ever written to HBM — so this
+                # path is insensitive to chunk_routing_size and works equally well
+                # per-token.
+                # ──────────────────────────────────────────────────────────────
+                r = self.template_delta_rank
+                K = self.n_templates
+                B, T_len, C = x.shape
+                base = F.linear(h_gated, self.template_base.to(dtype=dtype))   # (B,T,out)
+                z = h_gated @ self.template_delta_v.to(dtype=dtype)            # (B,T,K*r)
+
+                if self.chunk_routing_size > 0:
+                    chunk = self.chunk_routing_size
+                    n_chunks = (T_len + chunk - 1) // chunk
+                    pad = n_chunks * chunk - T_len
+                    x_p = F.pad(x, (0, 0, 0, pad)) if pad > 0 else x
+                    z_p = F.pad(z, (0, 0, 0, pad)) if pad > 0 else z
+                    sig = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()
+                    weights_all = self._template_weights(sig, dtype)           # (B,n_chunks,K)
+                    # Broadcast the chunk-constant coefficient over the chunk's tokens
+                    # instead of expanding it into a (B, T, K) tensor.
+                    z_p = (z_p.reshape(B, n_chunks, chunk, K, r)
+                           * weights_all.reshape(B, n_chunks, 1, K, 1))
+                    z = z_p.reshape(B, n_chunks * chunk, K * r)[:, :T_len, :]
+                else:
+                    # Route per token, matching the legacy per-token compose branch
+                    # below — which ignores routing_scope even though every projection
+                    # is built with routing_scope='per_sequence'. Mirroring it keeps
+                    # delta mode a pure throughput change and nothing else.
+                    weights_all = self._template_weights(x.float(), dtype)     # (B,T,K)
+                    z = (z.reshape(B, T_len, K, r)
+                         * weights_all.reshape(B, T_len, K, 1)).reshape(B, T_len, K * r)
+
+                pre_output = base + (z @ self.template_delta_u.to(dtype=dtype))
+
+                with torch.no_grad():
+                    w_f = weights_all.float()
+                    ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+                    self._template_entropy_buf.copy_(ent.detach())
+            elif self._global_bank is not None:
                 # Phase 28E/F: global template bank — compute W_eff once per forward, apply as bmm.
                 # Routing is done by the per-layer router inside GlobalTemplateBank.
                 W_eff = self._global_bank.get_effective_weight(
@@ -2094,29 +2302,66 @@ class RemixedLinear(nn.Module):
                 x_anchors = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()  # (B, n_chunks, C)
 
                 # Route all chunks: (B, n_chunks, K)
+                topk = getattr(self, 'template_topk', 0)
+                # Phase 31: top-1 + 'grouped' skips the W_eff materialization entirely.
+                # Only the plain (non-quantile) router can take this path, since
+                # _qrouter returns weights rather than logits.
+                _grouped = (
+                    self.chunk_route_impl == 'grouped'
+                    and topk == 1
+                    and getattr(self, '_qrouter', None) is None
+                    and self.template_route is not None
+                )
                 if getattr(self, '_qrouter', None) is not None:
                     weights_all = self._qrouter(x_anchors).to(dtype)
                 elif hasattr(self, 'template_route') and self.template_route is not None:
                     logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
-                    topk = getattr(self, 'template_topk', 0)
-                    if topk > 0 and topk < self.n_templates:
+                    if _grouped:
+                        # topk (not argmax) so tie-breaking matches the compose path
+                        # exactly and the two impls stay bit-identical.
+                        sel_vals, sel_idx = logits_all.topk(1, dim=-1)            # (B, n_chunks, 1)
+                        sel_idx = sel_idx.squeeze(-1)                            # (B, n_chunks)
+                        if self.top1_gate == 'switch':
+                            # Full softmax over all K, so the selected probability
+                            # carries a gradient to template_route (see __init__).
+                            probs_all = F.softmax(logits_all, dim=-1)            # (B, n_chunks, K)
+                            coef = probs_all.gather(-1, sel_idx.unsqueeze(-1)).to(dtype)
+                            weights_all = probs_all.to(dtype)                    # diagnostics only
+                        else:
+                            # Legacy coefficient: softmax over a single logit is
+                            # exactly 1.0, so this multiply is a numerical no-op.
+                            # It is kept (rather than skipped) to preserve the
+                            # autograd edge to template_route — DDP errors on a
+                            # parameter that requires grad but receives none.
+                            coef = F.softmax(sel_vals.float(), dim=-1).to(dtype)
+                            weights_all = F.one_hot(sel_idx, self.n_templates).to(dtype)
+                    elif topk > 0 and topk < self.n_templates:
                         topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
-                        weights_all = torch.zeros_like(logits_all).scatter_(
-                            -1, topk_idx, F.softmax(topk_vals, dim=-1)
-                        ).to(dtype)
+                        if topk == 1:
+                            one_hot = F.one_hot(topk_idx.squeeze(-1), num_classes=self.n_templates).to(dtype)
+                            weights_all = one_hot * F.softmax(topk_vals.float(), dim=-1).to(dtype)
+                        else:
+                            one_hot = F.one_hot(topk_idx, num_classes=self.n_templates).to(dtype)
+                            weights_all = (one_hot * F.softmax(topk_vals.float(), dim=-1).unsqueeze(-1).to(dtype)).sum(dim=-2)
                     else:
-                        weights_all = F.softmax(logits_all, dim=-1).to(dtype)
+                        weights_all = F.softmax(logits_all.float(), dim=-1).to(dtype)
                 else:
+                    _grouped = False
                     weights_all = torch.full((B, n_chunks, self.n_templates), 1.0 / self.n_templates, device=x.device, dtype=dtype)
 
-                # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
-                W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
-
-                # Apply: reshape h to (B, n_chunks, chunk, basis), batch-contract on basis
                 basis_sz = h_p.shape[-1]
-                h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)            # (B, n_chunks, chunk, basis)
-                out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)  # (B, n_chunks, chunk, out)
-                pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
+                if _grouped:
+                    # K dense GEMMs, template bank read K times instead of B*n_chunks.
+                    out_p = _grouped_top1_chunk_apply(h_p, sel_idx, T_stack, coef)
+                    pre_output = out_p[:, :T_len, :]
+                else:
+                    # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
+                    W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
+
+                    # Apply: reshape h to (B, n_chunks, chunk, basis), batch-contract on basis
+                    h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)            # (B, n_chunks, chunk, basis)
+                    out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)  # (B, n_chunks, chunk, out)
+                    pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
 
                 with torch.no_grad():
                     w_f = weights_all.float()
@@ -2469,11 +2714,14 @@ class RemixedLinearFused(nn.Module):
             topk = self.template_topk
             if topk > 0 and topk < K:
                 topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
-                weights_all = torch.zeros_like(logits_all).scatter_(
-                    -1, topk_idx, F.softmax(topk_vals, dim=-1)
-                ).to(dtype)
+                if topk == 1:
+                    one_hot = F.one_hot(topk_idx.squeeze(-1), num_classes=K).to(dtype)
+                    weights_all = one_hot * F.softmax(topk_vals.float(), dim=-1).to(dtype)
+                else:
+                    one_hot = F.one_hot(topk_idx, num_classes=K).to(dtype)
+                    weights_all = (one_hot * F.softmax(topk_vals.float(), dim=-1).unsqueeze(-1).to(dtype)).sum(dim=-2)
             else:
-                weights_all = F.softmax(logits_all, dim=-1).to(dtype)  # (B, n_chunks, K)
+                weights_all = F.softmax(logits_all.float(), dim=-1).to(dtype)  # (B, n_chunks, K)
         else:
             raise RuntimeError("RemixedLinearFused: no routing method configured "
                                "(need template_route or _qrouter)")
@@ -8039,6 +8287,12 @@ class GPT(nn.Module):
                                 torch.nn.init.kaiming_normal_(sub.template_bank.data[k])
                         else:
                             torch.nn.init.kaiming_normal_(sub.template_bank)
+                    # Phase 31 low-rank template deltas: base gets the same init the
+                    # bank would have; U stays zero so each delta starts at exactly 0.
+                    if sub.template_base is not None:
+                        torch.nn.init.kaiming_normal_(sub.template_base)
+                        torch.nn.init.kaiming_uniform_(sub.template_delta_v, a=math.sqrt(5))
+                        torch.nn.init.zeros_(sub.template_delta_u)
                     # Phase 23 Stacked Tiny Experts
                     if sub.expert_up_w is not None:
                         K, H, B_sz = sub.expert_up_w.shape
@@ -8485,6 +8739,10 @@ class GPT(nn.Module):
                         expert_params = submod.expert_up_w.numel() + submod.expert_down_w.numel()
                         inactive_frac = 1.0 - (topk / K)
                         inactive_expert_params += int(expert_params * inactive_frac)
+                # Phase 31 delta mode (template_bank is None, template_base is set) is
+                # deliberately excluded: every delta param is read for every token, so
+                # there are no inactive params and no derived W_eff matmul. The plain
+                # 6N proxy is already exact — active and hardware FLOPs coincide.
                 elif (not getattr(submod, 'tiny_expert', False)
                       and not getattr(submod, 'lokr_expert', False)
                       and getattr(submod, 'n_templates', 1) > 1
