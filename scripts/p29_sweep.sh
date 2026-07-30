@@ -288,7 +288,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p23-quantile-route 0\
+      --p22-n-templates 8 --p23-quantile-route 0 p31-template-delta-rank 16 \
       --p28-chunk-routing-size 256 --p22-template-topk 0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
