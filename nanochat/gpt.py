@@ -5330,6 +5330,8 @@ class RemixedFeedForward(nn.Module):
             if lokr_expert or tiny_expert or True:  # always copy to add p28 fields safely
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
+                kwargs['template_topk'] = int(getattr(config, 'p22_template_topk', kwargs.get('template_topk', 0)))
+                kwargs['n_templates'] = int(getattr(config, 'p22_n_templates', kwargs.get('n_templates', 1)))
             # Phase 28: tag with layer_role and p28 routing settings
             kwargs['layer_role'] = 'ffn'
             kwargs['global_bank_mode'] = getattr(config, 'p28_global_template_bank', 'none')
@@ -5536,6 +5538,7 @@ class RemixedMultiAttention(nn.Module):
             if lokr_expert or tiny_expert or True:  # always copy to add p28 fields safely
                 kwargs = dict(kwargs)  # shallow copy
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
+                kwargs['template_topk'] = int(getattr(config, 'p22_template_topk', kwargs.get('template_topk', 0)))
             # Phase 28: tag with layer_role so global bank knows not to replace attn (mode='ffn')
             kwargs['layer_role'] = 'attn'
             kwargs['global_bank_mode'] = getattr(config, 'p28_global_template_bank', 'none')
