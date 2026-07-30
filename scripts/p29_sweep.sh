@@ -267,6 +267,8 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 #
 
 
+
+#      --remix-basis-size $MODEL_DIM_C4 \
 # ══════════════════════════════════════════════════════
 # 29C: Chunk Routing N=64 (Full Rank Baseline)
 #   - Soft routing over 8 templates, amortized over 64 tokens
@@ -286,7 +288,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 \
+      --p22-n-templates 8 --p23-quantile-route 1 \
       --p28-chunk-routing-size 64 --p22-template-topk 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"

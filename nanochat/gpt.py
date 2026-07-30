@@ -1608,14 +1608,22 @@ class RemixedLinear(nn.Module):
                     torch.randn(self.n_templates, out_features, basis_size)
                 )
                 self.template_mixing = None  # use template_bank instead
-                # Content routing for template selection
-                route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
-                if self.template_routing_learned:
-                    self.template_route = nn.Parameter(route_init)
+                # Quantile routing or standard routing for template selection
+                if self.use_quantile_route == 2:
+                    self._qrouter = QuantileCrossAttentionRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0))
+                    self.template_route = None
+                elif self.use_quantile_route == 1:
+                    self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0), learned=self.template_routing_learned)
+                    self.template_route = None
                 else:
-                    if hasattr(self, 'template_route') and not isinstance(self.template_route, (nn.Parameter, torch.Tensor)):
-                        del self.template_route
-                    self.register_buffer('template_route', route_init)
+                    route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+                    if self.template_routing_learned:
+                        self.template_route = nn.Parameter(route_init)
+                    else:
+                        if hasattr(self, 'template_route') and not isinstance(self.template_route, (nn.Parameter, torch.Tensor)):
+                            del self.template_route
+                        self.register_buffer('template_route', route_init)
+                    self._qrouter = None
                 # Diagnostics
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
         else:
@@ -2085,17 +2093,21 @@ class RemixedLinear(nn.Module):
                 # Reshape → (B, n_chunks, chunk, C), take index 0 along the chunk dim.
                 x_anchors = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()  # (B, n_chunks, C)
 
-                # Route all chunks in one matmul: (B, n_chunks, K)
-                logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
-                
-                topk = getattr(self, 'template_topk', 0)
-                if topk > 0 and topk < self.n_templates:
-                    topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
-                    weights_all = torch.zeros_like(logits_all).scatter_(
-                        -1, topk_idx, F.softmax(topk_vals, dim=-1)
-                    ).to(dtype)
+                # Route all chunks: (B, n_chunks, K)
+                if getattr(self, '_qrouter', None) is not None:
+                    weights_all = self._qrouter(x_anchors).to(dtype)
+                elif hasattr(self, 'template_route') and self.template_route is not None:
+                    logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
+                    topk = getattr(self, 'template_topk', 0)
+                    if topk > 0 and topk < self.n_templates:
+                        topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
+                        weights_all = torch.zeros_like(logits_all).scatter_(
+                            -1, topk_idx, F.softmax(topk_vals, dim=-1)
+                        ).to(dtype)
+                    else:
+                        weights_all = F.softmax(logits_all, dim=-1).to(dtype)
                 else:
-                    weights_all = F.softmax(logits_all, dim=-1).to(dtype)            # (B, n_chunks, K)
+                    weights_all = torch.full((B, n_chunks, self.n_templates), 1.0 / self.n_templates, device=x.device, dtype=dtype)
 
                 # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
                 W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
