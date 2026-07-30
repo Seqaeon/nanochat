@@ -4643,19 +4643,18 @@ class ResidualAdaptiveLinear(nn.Module):
 
 
 class QuantileBalancedRouter(nn.Module):
-    """Auxiliary-Loss-Free Additive Bias Load Balancing Router (DeepSeek-V3 style).
+    """Per-Batch Quantile Load Balancing Router (No EMA).
 
-    Computes scores = x @ route_proj^T + expert_bias
-    Dynamically adjusts expert_bias in-place without torch.compile graph breaks,
-    guaranteeing uniform load balancing with 0 extra memory overhead.
+    Computes raw affinity scores (B, T, K) and dynamically calculates
+    per-batch quantile thresholds to balance expert utilization per step
+    without stateful EMA buffers or aux loss penalties.
     """
 
     def __init__(self, in_features: int, n_experts: int, topk: int,
-                 learned: bool = True, bias_rate: float = 0.001):
+                 learned: bool = True, **kwargs):
         super().__init__()
         self.n_experts = n_experts
         self.topk      = topk
-        self.bias_rate = bias_rate
         
         # Affinity projection: (K, D) — frozen or learned
         if learned:
@@ -4664,9 +4663,6 @@ class QuantileBalancedRouter(nn.Module):
         else:
             self.register_buffer('route_proj',
                 torch.randn(n_experts, in_features) / (in_features ** 0.5))
-        
-        # Dynamic expert routing bias buffer (Aux-Loss-Free load balancing)
-        self.register_buffer('expert_bias', torch.zeros(n_experts))
 
     def gate_parameters(self):
         if isinstance(self.route_proj, nn.Parameter):
@@ -4679,38 +4675,46 @@ class QuantileBalancedRouter(nn.Module):
         topk = max(1, min(self.topk, K))
 
         x_pool = x.float().mean(dim=1, keepdim=True) if x.ndim == 3 else x.float()
-        raw_scores = F.linear(x_pool, self.route_proj.float())  # (B, 1, K) or (B, K)
-        
-        biased_scores = raw_scores + self.expert_bias.to(raw_scores.device)
-        if biased_scores.ndim == 2:
-            biased_scores = biased_scores.unsqueeze(1)
-        biased_scores = biased_scores.expand(B, T, K)
+        scores = F.linear(x_pool, self.route_proj.float())  # (B, 1, K) or (B, K)
+        if scores.ndim == 2:
+            scores = scores.unsqueeze(1)
+        scores = scores.expand(B, T, K)
 
         if self.training:
-            with torch.no_grad():
-                _, topk_idx = biased_scores.topk(topk, dim=-1)
-                counts = torch.zeros(K, device=x.device, dtype=torch.float32).scatter_add_(
-                    0, topk_idx.reshape(-1), torch.ones(topk_idx.numel(), device=x.device, dtype=torch.float32)
-                )
-                target_count = (B * T * topk) / K
-                self.expert_bias.add_((target_count - counts) * self.bias_rate)
+            # Per-batch quantile thresholding (no EMA)
+            flat = scores.detach().float().reshape(-1, K)
+            target_q = 1.0 - topk / K
+            thresh = torch.quantile(flat, float(target_q), dim=0)       # (K,)
+            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
 
-        topk_vals, topk_idx = biased_scores.topk(topk, dim=-1)
-        topk_weights = F.softmax(topk_vals.float(), dim=-1).to(x.dtype)
-        weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype).scatter_(-1, topk_idx, topk_weights)
+            # Guarantee topk via hard top-k union
+            _, topk_idx = scores.topk(topk, dim=-1)
+            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
+            mask        = q_mask | hard_mask
+
+            masked_scores = scores.masked_fill(~mask, -1e9)
+            _, top_idx    = masked_scores.topk(topk, dim=-1)
+            mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
+
+            gated   = scores.masked_fill(~mask, -1e9)
+            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)
+        else:
+            topk_s, topk_idx = scores.topk(topk, dim=-1)
+            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
+            weights.scatter_(-1, topk_idx, F.softmax(topk_s.float(), dim=-1).to(x.dtype))
+
         return weights
 
 
 class QuantileCrossAttentionRouter(nn.Module):
-    """Linear Causal Cross-Attention routing with Additive Bias Load Balancing."""
+    """Linear Causal Cross-Attention routing with Per-Batch Quantile Load Balancing (No EMA)."""
 
     def __init__(self, in_features: int, n_experts: int, topk: int,
-                 head_dim: int = 64, bias_rate: float = 0.001):
+                 head_dim: int = 64, **kwargs):
         super().__init__()
         self.n_experts = n_experts
         self.topk = topk
         self.head_dim = head_dim
-        self.bias_rate = bias_rate
         
         self.q_exp = nn.Parameter(torch.empty(n_experts, head_dim))
         nn.init.normal_(self.q_exp, std=head_dim ** -0.5)
@@ -4718,8 +4722,6 @@ class QuantileCrossAttentionRouter(nn.Module):
         self.k_proj = nn.Linear(in_features, head_dim, bias=False)
         self.v_proj = nn.Linear(in_features, head_dim, bias=False)
         self.q_tok_proj = nn.Linear(in_features, head_dim, bias=False)
-        
-        self.register_buffer('expert_bias', torch.zeros(n_experts))
 
     def gate_parameters(self):
         yield self.q_exp
@@ -4758,22 +4760,31 @@ class QuantileCrossAttentionRouter(nn.Module):
             Z = torch.cumsum(S.float(), dim=1).to(x.dtype)
             
         C = N / (Z.unsqueeze(-1) + 1e-6)
-        raw_scores = torch.einsum('btkh,bth->btk', C.to(dtype=q_tok.dtype), q_tok)
-        
-        biased_scores = raw_scores + self.expert_bias.to(raw_scores.device)
+        scores = torch.einsum('btkh,bth->btk', C.to(dtype=q_tok.dtype), q_tok)
 
         if self.training:
-            with torch.no_grad():
-                _, topk_idx = biased_scores.topk(topk, dim=-1)
-                counts = torch.zeros(K, device=x.device, dtype=torch.float32).scatter_add_(
-                    0, topk_idx.reshape(-1), torch.ones(topk_idx.numel(), device=x.device, dtype=torch.float32)
-                )
-                target_count = (B * T * topk) / K
-                self.expert_bias.add_((target_count - counts) * self.bias_rate)
+            # Per-batch quantile thresholding (no EMA)
+            flat = scores.detach().float().reshape(-1, K)
+            target_q = 1.0 - topk / K
+            thresh = torch.quantile(flat, float(target_q), dim=0)       # (K,)
+            q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
 
-        topk_vals, topk_idx = biased_scores.topk(topk, dim=-1)
-        topk_weights = F.softmax(topk_vals.float(), dim=-1).to(x.dtype)
-        weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype).scatter_(-1, topk_idx, topk_weights)
+            # Guarantee topk via hard top-k union
+            _, topk_idx = scores.topk(topk, dim=-1)
+            hard_mask   = torch.zeros_like(q_mask).scatter_(-1, topk_idx, True)
+            mask        = q_mask | hard_mask
+
+            masked_scores = scores.masked_fill(~mask, -1e9)
+            _, top_idx    = masked_scores.topk(topk, dim=-1)
+            mask          = torch.zeros_like(mask).scatter_(-1, top_idx, True)
+
+            gated   = scores.masked_fill(~mask, -1e9)
+            weights = F.softmax(gated.float(), dim=-1).to(x.dtype)
+        else:
+            topk_s, topk_idx = scores.topk(topk, dim=-1)
+            weights = torch.zeros(B, T, K, device=x.device, dtype=x.dtype)
+            weights.scatter_(-1, topk_idx, F.softmax(topk_s.float(), dim=-1).to(x.dtype))
+
         return weights
 
 
