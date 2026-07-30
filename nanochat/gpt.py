@@ -1439,62 +1439,6 @@ class CCLBlock(nn.Module):
         return x, ctx.detach() if is_local else ctx
 
 
-class Top1ChunkLinearFunction(torch.autograd.Function):
-    """Memory-Efficient Top-1 Chunk Linear Autograd Function.
-    Saves ONLY (h_p, top1_idx, T_stack) in autograd graph, eliminating the 21.7 GB
-    W_eff 4D activation tensor bloat across the model during backward().
-    """
-    @staticmethod
-    def forward(ctx, h_p, top1_idx, T_stack, chunk):
-        ctx.save_for_backward(h_p, top1_idx, T_stack)
-        ctx.chunk = chunk
-        
-        B, n_chunks = top1_idx.shape
-        basis_sz = h_p.shape[-1]
-        out_dim = T_stack.shape[1]
-        
-        top1_flat = top1_idx.reshape(-1)
-        h_flat = h_p.reshape(-1, chunk, basis_sz)
-        out_flat = torch.empty(B * n_chunks, chunk, out_dim, device=h_p.device, dtype=h_p.dtype)
-        
-        for k in range(T_stack.shape[0]):
-            mask = (top1_flat == k)
-            if mask.any():
-                h_k = h_flat[mask].reshape(-1, basis_sz)
-                out_k = F.linear(h_k, T_stack[k])
-                out_flat[mask] = out_k.reshape(-1, chunk, out_dim)
-                
-        return out_flat.reshape(B, n_chunks * chunk, out_dim)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        h_p, top1_idx, T_stack = ctx.saved_tensors
-        chunk = ctx.chunk
-        
-        B, n_chunks = top1_idx.shape
-        basis_sz = h_p.shape[-1]
-        out_dim = T_stack.shape[1]
-        
-        top1_flat = top1_idx.reshape(-1)
-        grad_flat = grad_output.reshape(-1, chunk, out_dim)
-        
-        grad_h_flat = torch.empty_like(h_p.reshape(-1, chunk, basis_sz))
-        grad_T = torch.zeros_like(T_stack)
-        
-        for k in range(T_stack.shape[0]):
-            mask = (top1_flat == k)
-            if mask.any():
-                g_k = grad_flat[mask].reshape(-1, out_dim)
-                h_k = h_p.reshape(-1, chunk, basis_sz)[mask].reshape(-1, basis_sz)
-                
-                grad_h_k = g_k @ T_stack[k]
-                grad_h_flat[mask] = grad_h_k.reshape(-1, chunk, basis_sz)
-                
-                grad_T[k] = g_k.T @ h_k
-                
-        return grad_h_flat.reshape_as(h_p), None, grad_T, None
-
-
 class RemixedLinear(nn.Module):
     def __init__(self, in_features, out_features, context_dim, basis_size=64, remixed_linear_kwargs=None, scale_basis=True, film_gate=False, routing_scope='per_sequence'):
         super().__init__()
@@ -2167,9 +2111,13 @@ class RemixedLinear(nn.Module):
 
                 topk = getattr(self, 'template_topk', 0)
                 if topk == 1:
-                    # Memory-Efficient Top-1 Autograd Function: 0 W_eff activation memory saved for backward
+                    # 100% torch.compile traceable Top-1 Direct Index Gather (0 graph breaks, 0 autograd bloat)
                     top1_idx = weights_all.argmax(dim=-1)  # (B, n_chunks)
-                    pre_output = Top1ChunkLinearFunction.apply(h_p, top1_idx, T_stack, chunk)[:, :T_len, :]
+                    W_eff_all = T_stack[top1_idx]           # (B, n_chunks, out, basis)
+                    basis_sz = h_p.shape[-1]
+                    h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)
+                    out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
+                    pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]
                 elif topk > 1 and topk < self.n_templates:
                     # Top-k Sparse Gather path (only gathers the k active templates per chunk)
                     topk_vals, topk_idx = weights_all.topk(topk, dim=-1) # (B, n_chunks, topk)
@@ -2551,9 +2499,12 @@ class RemixedLinearFused(nn.Module):
         # ── Step 5: Execution (Top-1 Fast Path vs Top-k Sparse vs Dense) ─
         topk = self.template_topk
         if topk == 1:
-            # Memory-Efficient Top-1 Autograd Function: 0 W_eff activation memory saved for backward
+            # 100% torch.compile traceable Top-1 Direct Index Gather (0 graph breaks, 0 autograd bloat)
             top1_idx = weights_all.argmax(dim=-1)  # (B, n_chunks)
-            pre_output = Top1ChunkLinearFunction.apply(h_p, top1_idx, T_stack, chunk)[:, :T_len, :]
+            W_eff_all = T_stack[top1_idx]           # (B, n_chunks, O, B_sz)
+            h_chunked = h_p.reshape(B, n_chunks, chunk, B_sz)
+            out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
+            pre_output = out_chunked.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
         elif topk > 1 and topk < K:
             topk_vals, topk_idx = weights_all.topk(topk, dim=-1) # (B, n_chunks, topk)
             topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype) # (B, n_chunks, topk)
