@@ -2119,14 +2119,19 @@ class RemixedLinear(nn.Module):
                 pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
 
                 with torch.no_grad():
-                    w_f = F.softmax(x.float() @ self.template_route.float(), dim=-1)
+                    w_f = weights_all.float()
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
             else:
                 # Legacy Phase 22: MoE-style per-token template routing
-                route_logits = x.float() @ self.template_route.float()  # (B, T, K)
+                if getattr(self, '_qrouter', None) is not None:
+                    route_logits = self._qrouter(x)
+                elif hasattr(self, 'template_route') and self.template_route is not None:
+                    route_logits = x.float() @ self.template_route.float()  # (B, T, K)
+                else:
+                    route_logits = torch.zeros(x.shape[0], x.shape[1], self.n_templates, device=x.device)
                 with torch.no_grad():
-                    w_f = F.softmax(route_logits, dim=-1)
+                    w_f = F.softmax(route_logits.float(), dim=-1)
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
                 topk = getattr(self, 'template_topk', 0)
