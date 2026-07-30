@@ -289,7 +289,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 --p23-quantile-route 0 \
-      --p28-chunk-routing-size 64 --p22-template-topk 1 --remix-basis-size $MODEL_DIM_C2 \
+      --p28-chunk-routing-size 128 --p22-template-topk 1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
         mark_completed "$TAG"
