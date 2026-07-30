@@ -65,25 +65,38 @@ def test_resolution():
     that have no W_b/W_m pair to swap."""
     print("\n  ── route_side resolution ──")
     # want_basis = "a separate shared W_b still exists".  route_side='basis' means
-    # the bank *is* the input map, so W_b must be gone in that case.
+    # the bank *is* the input map, so W_b must be gone in that case.  drop_basis_proj
+    # also removes W_b, but only where in_features <= basis_size.
     cases = [
         ("c_fc   512->2048", 512, 2048, 512, dict(route_side='narrow'), 'basis', False),
         ("c_proj 2048->512", 2048, 512, 512, dict(route_side='narrow'), 'output', True),
         ("attn   512->512",  512, 512, 512, dict(route_side='narrow'), 'output', True),
         ("explicit basis",   2048, 512, 512, dict(route_side='basis'), 'basis', False),
-        ("drop_W_b",         512, 2048, 512, dict(drop_basis_proj=True), 'output', False),
+        # drop_basis_proj: applies at in<=basis, gated out at in>basis
+        ("drop c_fc  (in=b)", 512, 2048, 512, dict(drop_basis_proj=True), 'output', False),
+        ("drop attn  (in=b)", 512, 512, 512, dict(drop_basis_proj=True), 'output', False),
+        ("drop c_proj GATED", 2048, 512, 512, dict(drop_basis_proj=True), 'output', True),
+        # a gated-out drop must fall through to route_side rather than being stuck
+        ("drop+narrow c_fc",  512, 2048, 512, dict(drop_basis_proj=True, route_side='narrow'), 'output', False),
+        ("drop+basis c_proj", 2048, 512, 512, dict(drop_basis_proj=True, route_side='basis'), 'basis', False),
         ("delta wins",       512, 2048, 512, dict(route_side='narrow', template_delta_rank=8), 'output', True),
         ("K=1 no bank",      512, 2048, 512, dict(route_side='narrow', n_templates=1), 'output', True),
     ]
     ok_all = True
     for name, i, o, b, extra, want_side, want_basis in cases:
         m = make(i, o, b, extra, 'cpu', torch.float32)
-        got_side = m.route_side
-        got_basis = m.basis is not None
-        ok = got_side == want_side and got_basis == want_basis
+        got_side, got_basis = m.route_side, m.basis is not None
+        # drop_basis_proj must self-report whether it actually took effect
+        want_drop = extra.get('drop_basis_proj', False) and i <= b and want_side == 'output'
+        ok = (got_side == want_side and got_basis == want_basis
+              and m.drop_basis_proj == want_drop)
+        # when the drop fires, the bank contracts over in_features
+        if m.drop_basis_proj:
+            ok &= (m.basis_size == i and m.template_bank.shape[2] == i)
         ok_all &= ok
         print(f"    {name:20s} side={got_side:7s} W_b={'yes' if got_basis else 'no ':3s} "
-              f"(want {want_side}/{'yes' if want_basis else 'no'})  {'✓' if ok else '✗'}")
+              f"drop={str(m.drop_basis_proj):5s} (want {want_side}/"
+              f"{'yes' if want_basis else 'no'}/{want_drop})  {'✓' if ok else '✗'}")
     return ok_all
 
 
@@ -179,17 +192,24 @@ def report(depth, device, B, T, iters):
     print(f"{'='*94}")
 
     block_mat = {m: 0.0 for m, _ in MODES}
+    block_p = {m: 0.0 for m, _ in MODES}
+    block_t = {m: [0.0, 0.0] for m, _ in MODES}
     for label, i, o in projs:
         mult = 4 if 'attn' in label else 1
         print(f"\n  {label}  ({i} -> {o})" + (f"  x{mult} per block" if mult > 1 else ""))
         print(f"    {'mode':16s} {'params':>9s} {'MAC/tok':>9s} {'W_eff/chunk':>12s} "
               f"{'fwd ms':>8s} {'f+b ms':>8s} {'peak MB':>8s}")
         for mname, extra in MODES:
-            side = 'basis' if (extra.get('route_side') == 'basis' or
-                               (extra.get('route_side') == 'narrow' and i < o)) else 'output'
-            drop = extra.get('drop_basis_proj', False)
+            # mirror RemixedLinear.__init__: the drop is gated on in <= basis, and a
+            # gated-out drop falls through to route_side
+            drop = extra.get('drop_basis_proj', False) and i <= C
+            side = ('output' if drop else
+                    'basis' if (extra.get('route_side') == 'basis' or
+                                (extra.get('route_side') == 'narrow' and i < o))
+                    else 'output')
             p, macs, mat = cost_model(i, o, C, side, drop, K, chunk, T)
             block_mat[mname] += mult * mat
+            block_p[mname] += mult * p
             try:
                 m = make(i, o, C, extra, device, dtype, chunk=chunk)
                 x = torch.randn(B, T, i, device=device, dtype=dtype)
@@ -218,18 +238,24 @@ def report(depth, device, B, T, iters):
                 bwd, mb = run(True)
                 del m, x, ctx
                 torch.cuda.empty_cache()
+                block_t[mname][0] += mult * f * 1e3
+                block_t[mname][1] += mult * bwd * 1e3
                 tstr = f"{f*1e3:8.2f} {bwd*1e3:8.2f} {max(mf,mb):8.0f}"
             except Exception as e:
                 tstr = f"  {type(e).__name__}"
             print(f"    {mname:16s} {p/1e6:8.2f}M {macs/1e6:8.2f}M {mat/1e6:11.2f}M "
                   f"{tstr}")
 
-    print(f"\n  Per-block materialized W_eff (all 6 projections, elements/chunk):")
-    ref = block_mat['output (legacy)']
+    print(f"\n  Per-block totals (4x attn + c_fc + c_proj):")
+    print(f"    {'mode':16s} {'params':>9s} {'W_eff/chunk':>12s} {'fwd ms':>9s} "
+          f"{'vs legacy':>10s} {'f+b ms':>9s} {'vs legacy':>10s}")
+    ref_m, ref_f, ref_b = (block_mat['output (legacy)'], block_t['output (legacy)'][0],
+                           block_t['output (legacy)'][1])
     for mname, _ in MODES:
-        v = block_mat[mname]
-        print(f"    {mname:16s} {v/1e6:7.2f}M   {ref/v:5.2f}x vs legacy"
-              f"  {'(less is better)' if mname == 'output (legacy)' else ''}")
+        v, p = block_mat[mname], block_p[mname]
+        f, b = block_t[mname]
+        print(f"    {mname:16s} {p/1e6:8.2f}M {v/1e6:11.2f}M {f:9.2f} "
+              f"{ref_f/f:9.2f}x {b:9.2f} {ref_b/b:9.2f}x")
 
 
 def main():

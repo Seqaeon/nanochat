@@ -751,7 +751,7 @@ if __name__ == "__main__":
     parser.add_argument("--p31-template-delta-rank", type=int, default=0, help="31: replace the (K, out, basis) template bank with a shared base + K rank-r deltas (0=off)")
     parser.add_argument("--p31-route-side", type=str, default="output", choices=["output", "basis", "narrow"], help="31: which factor carries the routing. 'output'=route W_m (legacy); 'basis'=route W_b with shared W_m; 'narrow'=route the smaller factor per projection")
     parser.add_argument("--p31-basis-side-templates", type=int, default=0, help="31: template count for basis-routed projections (0=use n_templates, -1=auto scale by out//basis for param parity)")
-    parser.add_argument("--p31-drop-basis-proj", type=int, default=0, choices=[0, 1], help="31: drop W_b entirely — h=LN(x) then a routed (out,in) template (dense FLOPs)")
+    parser.add_argument("--p31-drop-basis-proj", type=int, default=0, choices=[0, 1], help="31: drop W_b entirely — h=LN(x) then a routed (out,in) template. Applied only where in_features <= basis_size (c_fc, attention); skipped on c_proj")
     parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank")
     parser.add_argument("--remix-template-lr-scale",   type=float, default=1.0, help="29: LR multiplier for template_bank Muon group")
     parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")

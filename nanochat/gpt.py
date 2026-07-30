@@ -1658,7 +1658,20 @@ class RemixedLinear(nn.Module):
         _legacy_bank = (self.n_templates > 1 and not self.tiny_expert
                         and not self.lokr_expert and not self._use_global_bank
                         and self.template_delta_rank == 0)
-        if self.drop_basis_proj and _legacy_bank:
+        # Gate drop_basis_proj on in_features <= basis_size.  Removing W_b forces the
+        # bank's contraction dim from basis_size to in_features, so for a contracting
+        # projection (c_proj: in = 4*basis) every one of the K templates grows 4x —
+        # costing K*(in-basis)*out extra parameters and quadrupling the per-chunk
+        # materialized matrix, to save one matmul.  Measured at d8 that made c_proj
+        # 0.45x fwd / 0.26x f+b and added ~5.2M params, swamping the gain elsewhere.
+        # Where in == basis (c_fc, attention) the bank is unchanged and W_b is pure
+        # overhead, so the drop is a clean win.
+        # Note: if in < basis strictly, this also shrinks the contraction dim — with
+        # scale_basis and remix_basis_size = model_dim, in <= basis only ever holds
+        # as in == basis, so no rank is lost in practice.
+        self.drop_basis_proj = (self.drop_basis_proj and _legacy_bank
+                                and in_features <= basis_size)
+        if self.drop_basis_proj:
             # No W_b at all: LN acts on x directly, so the bank's contraction dim
             # is in_features and the templates are (out, in).
             basis_size = in_features
@@ -1669,8 +1682,9 @@ class RemixedLinear(nn.Module):
                                            or in_features < out_features)
                                else 'output')
         else:
+            # Either not a legacy bank, or route_side left at 'output'.  A projection
+            # whose drop was gated out lands here and stays exactly legacy.
             self.route_side = 'output'
-            self.drop_basis_proj = False
         # Phase 31: the materialized per-chunk matrix on the basis side is
         # (basis, in) — its size does NOT depend on K.  So a basis-routed
         # projection can afford out/basis times more templates at the *same*
