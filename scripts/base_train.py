@@ -183,6 +183,9 @@ parser.add_argument("--p28-attn-qk-templates",   type=int, default=0, help="28C3
 parser.add_argument("--p31-chunk-route-impl", type=str, default="compose", choices=["compose", "grouped"], help="31: chunk-routing evaluation. 'compose' materializes per-chunk W_eff (legacy); 'grouped' (topk=1 only) permutes chunks by template and runs one GEMM per template — same math, no W_eff in HBM")
 parser.add_argument("--p31-top1-gate", type=str, default="ones", choices=["ones", "switch"], help="31: top-1 routing coefficient. 'ones'=legacy (softmax over a single logit is exactly 1.0, so the router gets zero gradient); 'switch'=full-softmax probability of the selected template (differentiable)")
 parser.add_argument("--p31-template-delta-rank", type=int, default=0, help="31: replace the (K, out, basis) template bank with a shared base + K rank-r deltas (0=off). Soft mixing over all K becomes three dense GEMMs with no per-chunk W_eff in HBM, so cost is K*r*(basis+out) per token instead of K*out*basis per chunk")
+parser.add_argument("--p31-route-side", type=str, default="output", choices=["output", "basis", "narrow"], help="31: which factor carries the routing. 'output'=route W_m (out,basis), legacy; 'basis'=route W_b (basis,in) with a shared W_m; 'narrow'=route whichever is smaller per projection (basis for c_fc, output for c_proj/attn). Shrinks the per-chunk materialized matrix without reducing any rank")
+parser.add_argument("--p31-basis-side-templates", type=int, default=0, help="31: template count for projections that route the basis side (0=use --p22-n-templates, -1=auto scale by out//basis for parameter parity with output-side routing). The per-chunk materialized matrix on the basis side is (basis,in) and independent of K, so more templates cost nothing extra in bandwidth")
+parser.add_argument("--p31-drop-basis-proj", type=int, default=0, choices=[0, 1], help="31: drop W_b entirely — h=LN(x) then a routed (out,in) template. One matmul per projection (dense FLOPs), but the routed factor grows for contracting projections")
 parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active (topk/chunk-adjusted) params instead of total params when computing target_tokens")
 parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode (basis_gate_mode=lowrank)")
 parser.add_argument("--p23-lokr-rank", type=int, default=4, help="23: low-rank bottleneck for each LoKR expert")
@@ -723,6 +726,9 @@ def build_model_meta(depth):
             chunk_route_impl=getattr(args, 'p31_chunk_route_impl', 'compose'),
             top1_gate=getattr(args, 'p31_top1_gate', 'ones'),
             template_delta_rank=getattr(args, 'p31_template_delta_rank', 0),
+            route_side=getattr(args, 'p31_route_side', 'output'),
+            drop_basis_proj=bool(getattr(args, 'p31_drop_basis_proj', 0)),
+            basis_side_templates=getattr(args, 'p31_basis_side_templates', 0),
         ),
 
         # Fix 1A

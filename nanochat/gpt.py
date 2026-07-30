@@ -1588,6 +1588,20 @@ class RemixedLinear(nn.Module):
         # r > 0 replaces the bank with a shared base plus K rank-r deltas, which
         # removes the per-chunk (out, basis) materialization from soft routing.
         self.template_delta_rank = int(remixed_linear_kwargs.get('template_delta_rank', 0))
+        # Phase 31: which of the two factors carries the routing.
+        #   'output' — route W_m (out, basis); W_b is a single shared matrix. Legacy.
+        #   'basis'  — route W_b (basis, in);  W_m is a single shared matrix.
+        #   'narrow' — pick whichever routed factor has fewer elements, per
+        #              projection.  basis*in < out*basis  <=>  in < out, so this
+        #              resolves to 'basis' for expanding projections (c_fc) and
+        #              'output' for contracting ones (c_proj) and square ones.
+        # The point is that the per-chunk materialized matrix is the *routed*
+        # factor, so routing the narrow side shrinks it without touching rank.
+        self._route_side_req = remixed_linear_kwargs.get('route_side', 'output')
+        # Phase 31: drop W_b entirely — h = LN(x), then a routed (out, in) template.
+        # Exactly one matmul per projection, i.e. dense FLOPs, at the cost of a
+        # larger routed factor for contracting projections.
+        self.drop_basis_proj = bool(remixed_linear_kwargs.get('drop_basis_proj', False))
         # 28E/F: use global template bank (injected by GPT after construction) instead of per-layer template_bank
         # When True AND self._global_bank is set, forward uses global bank and skips local template_bank.
         _global_bank_mode = remixed_linear_kwargs.get('global_bank_mode', 'none')
@@ -1638,7 +1652,43 @@ class RemixedLinear(nn.Module):
             basis_size = b_shrunk
             self.basis_size = b_shrunk   # keep self.basis_size consistent with actual self.basis output
 
-        self.basis = Linear(in_features, basis_size, bias=False)
+        # ── Phase 31: resolve route_side / drop_basis_proj ───────────────────
+        # Both are only meaningful for the legacy multi-template bank; the tiny-expert,
+        # LoKR, global-bank and delta paths have no separate W_b/W_m pair to swap.
+        _legacy_bank = (self.n_templates > 1 and not self.tiny_expert
+                        and not self.lokr_expert and not self._use_global_bank
+                        and self.template_delta_rank == 0)
+        if self.drop_basis_proj and _legacy_bank:
+            # No W_b at all: LN acts on x directly, so the bank's contraction dim
+            # is in_features and the templates are (out, in).
+            basis_size = in_features
+            self.basis_size = in_features
+            self.route_side = 'output'
+        elif _legacy_bank and self._route_side_req in ('basis', 'narrow'):
+            self.route_side = ('basis' if (self._route_side_req == 'basis'
+                                           or in_features < out_features)
+                               else 'output')
+        else:
+            self.route_side = 'output'
+            self.drop_basis_proj = False
+        # Phase 31: the materialized per-chunk matrix on the basis side is
+        # (basis, in) — its size does NOT depend on K.  So a basis-routed
+        # projection can afford out/basis times more templates at the *same*
+        # compose cost and the same materialization, which is how you keep
+        # parameter count matched to the output-side config instead of losing
+        # K*(out-basis)*basis parameters.
+        #   N > 0  : use exactly N templates here
+        #   N == -1: auto — scale to n_templates * (out // basis), i.e. iso-param
+        if self.route_side == 'basis':
+            _bst = int(remixed_linear_kwargs.get('basis_side_templates', 0))
+            if _bst == -1:
+                self.n_templates = self.n_templates * max(1, out_features // basis_size)
+            elif _bst > 0:
+                self.n_templates = _bst
+        # W_b exists only when the shared input map is still a separate matrix.
+        self._has_basis_proj = not (self.drop_basis_proj or self.route_side == 'basis')
+
+        self.basis = Linear(in_features, basis_size, bias=False) if self._has_basis_proj else None
         if self.lokr_expert:
             # Low-rank expert adapters: stacked tensors for efficient batched matmul
             # lokr_down_w: (K, rank, in_features)  — projects x to rank-r subspace
@@ -1735,8 +1785,33 @@ class RemixedLinear(nn.Module):
                         self.register_buffer('template_route', route_init)
                     self._qrouter = None
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+            elif self.route_side == 'basis':
+                # Phase 31: the routed factor is W_b. Bank is (K, basis, in) and the
+                # output map W_m is a single shared (out, basis) matrix. For an
+                # expanding projection this shrinks the per-chunk materialized matrix
+                # by out/basis (4x at c_fc) and turns the *large* basis→out matmul
+                # into a weight-shared dense GEMM, without reducing any rank.
+                self.template_bank = nn.Parameter(
+                    torch.randn(self.n_templates, basis_size, in_features)
+                )
+                self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
+                if self.use_quantile_route == 2:
+                    self._qrouter = QuantileCrossAttentionRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0))
+                    self.template_route = None
+                elif self.use_quantile_route == 1:
+                    self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0), learned=self.template_routing_learned)
+                    self.template_route = None
+                else:
+                    route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
+                    if self.template_routing_learned:
+                        self.template_route = nn.Parameter(route_init)
+                    else:
+                        self.register_buffer('template_route', route_init)
+                    self._qrouter = None
+                self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
             else:
                 # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
+                # With drop_basis_proj this is (out, in) — LN acts on x directly.
                 self.template_bank = nn.Parameter(
                     torch.randn(self.n_templates, out_features, basis_size)
                 )
@@ -1970,9 +2045,63 @@ class RemixedLinear(nn.Module):
             return (one_hot * F.softmax(vals, dim=-1).unsqueeze(-1).to(dtype)).sum(dim=-2)
         return F.softmax(logits, dim=-1).to(dtype)
 
+    def _routed_basis_proj(self, x, dtype):
+        """Phase 31 route_side='basis': h_pre = x @ W_b_eff(chunk)^T.
+
+        Identical machinery to the output-side chunk routing, applied to the *input*
+        map instead: the bank is (K, basis, in) and the result is (B, T, basis),
+        which then flows through ln_basis and the gates exactly as before.
+        """
+        B, T_len, C = x.shape
+        K = self.n_templates
+        B_stack = self.template_bank.to(dtype=dtype)          # (K, basis, in)
+        chunk = self.chunk_routing_size
+
+        if chunk <= 0:
+            # Per-token routing. Apply-first (all K, then mix) is the only option
+            # here without materializing a matrix per token.
+            weights_all = self._template_weights(x.float(), dtype)          # (B,T,K)
+            all_h = torch.einsum('btc,kdc->btkd', x, B_stack)               # (B,T,K,basis)
+            h_pre = (all_h * weights_all.unsqueeze(-1)).sum(dim=2)
+        else:
+            n_chunks = (T_len + chunk - 1) // chunk
+            pad = n_chunks * chunk - T_len
+            x_p = F.pad(x, (0, 0, 0, pad)) if pad > 0 else x
+            sig = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()
+            topk = getattr(self, 'template_topk', 0)
+            _grouped = (self.chunk_route_impl == 'grouped' and topk == 1
+                        and getattr(self, '_qrouter', None) is None
+                        and self.template_route is not None)
+            if _grouped:
+                logits_all = torch.einsum('bnc,ck->bnk', sig, self.template_route.float())
+                sel_vals, sel_idx = logits_all.topk(1, dim=-1)
+                sel_idx = sel_idx.squeeze(-1)
+                if self.top1_gate == 'switch':
+                    probs_all = F.softmax(logits_all, dim=-1)
+                    coef = probs_all.gather(-1, sel_idx.unsqueeze(-1)).to(dtype)
+                    weights_all = probs_all.to(dtype)
+                else:
+                    coef = F.softmax(sel_vals.float(), dim=-1).to(dtype)
+                    weights_all = F.one_hot(sel_idx, K).to(dtype)
+                h_p = _grouped_top1_chunk_apply(x_p, sel_idx, B_stack, coef)
+                h_pre = h_p[:, :T_len, :]
+            else:
+                weights_all = self._template_weights(sig, dtype)            # (B,n_chunks,K)
+                W_eff_all = torch.einsum('bnk,kdc->bndc', weights_all, B_stack)
+                x_chunked = x_p.reshape(B, n_chunks, chunk, C)
+                h_chunked = torch.einsum('bnsc,bndc->bnsd', x_chunked, W_eff_all)
+                h_pre = h_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]
+
+        with torch.no_grad():
+            w_f = weights_all.float()
+            ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
+            self._template_entropy_buf.copy_(ent.detach())
+        return h_pre
+
     def non_gate_parameters(self):
         """Yield structural parameters (basis, template_mixing/experts, bias) — Muon/normal LR."""
-        yield self.basis.weight
+        if self.basis is not None:
+            yield self.basis.weight
         if self.template_mixing is not None:
             yield self.template_mixing
         if self.template_bank is not None:
@@ -2020,7 +2149,15 @@ class RemixedLinear(nn.Module):
             h_basis = _injected_h_basis.to(dtype=dtype)
         else:
             _ln_dtype = self.ln_basis.weight.dtype if hasattr(self.ln_basis, 'weight') else dtype
-            h_basis = self.ln_basis(self.basis(x).to(dtype=_ln_dtype)).to(dtype=dtype)
+            if self.route_side == 'basis':
+                # Phase 31: routing lives in the input map — W_b is per-chunk, W_m shared.
+                _pre = self._routed_basis_proj(x, dtype)
+            elif self.basis is None:
+                # Phase 31 drop_basis_proj: no input map at all, LN acts on x.
+                _pre = x
+            else:
+                _pre = self.basis(x)
+            h_basis = self.ln_basis(_pre.to(dtype=_ln_dtype)).to(dtype=dtype)
 
         if self.use_context and context_state is not None:
             ctx = context_state.to(dtype=dtype)
@@ -2122,7 +2259,12 @@ class RemixedLinear(nn.Module):
 
         h_gated = (h_basis * gate_basis).to(dtype=dtype)
 
-        if self.lokr_expert:
+        if self.route_side == 'basis':
+            # Phase 31: routing was already applied to W_b above, so the output map
+            # is a single shared matrix — one full-efficiency dense GEMM, and for an
+            # expanding projection this is the *large* one.
+            pre_output = F.linear(h_gated, self.template_mixing.to(dtype=dtype))
+        elif self.lokr_expert:
             # ──────────────────────────────────────────────────────────────
             # LoKR-Remix forward: shared base + top-k low-rank expert deltas
             # ──────────────────────────────────────────────────────────────
@@ -2600,6 +2742,12 @@ class RemixedLinearFused(nn.Module):
         assert isinstance(orig, RemixedLinear), "Expected a RemixedLinear instance"
         assert orig.n_templates > 1, "Requires multi-template RemixedLinear"
         assert orig.chunk_routing_size > 0, "Requires chunk routing (chunk_routing_size > 0)"
+        # This class assumes the bank is (K, out, basis) and W_b is a separate shared
+        # matrix, which Phase 31's route_side='basis' / drop_basis_proj both break.
+        assert getattr(orig, 'route_side', 'output') == 'output', \
+            "RemixedLinearFused does not support route_side='basis'"
+        assert not getattr(orig, 'drop_basis_proj', False), \
+            "RemixedLinearFused does not support drop_basis_proj"
 
         ctx_dim = (orig.output_gate_coeffs.weight.shape[1]
                    if orig.use_output_gate else 64)
@@ -8277,7 +8425,9 @@ class GPT(nn.Module):
                     if sub.ctx_stream is not None:
                         _init_ctx_stream(sub.ctx_stream)
                 if isinstance(sub, (RemixedLinear, RemixedLinearFused)):
-                    torch.nn.init.orthogonal_(sub.basis.weight)
+                    # basis is None under Phase 31 route_side='basis' / drop_basis_proj
+                    if getattr(sub, 'basis', None) is not None:
+                        torch.nn.init.orthogonal_(sub.basis.weight)
                     if sub.template_mixing is not None:
                         torch.nn.init.kaiming_normal_(sub.template_mixing)
                     if sub.template_bank is not None:

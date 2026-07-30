@@ -140,6 +140,9 @@ def run_training_sweep(args):
         "--p31-chunk-route-impl", str(getattr(args, 'p31_chunk_route_impl', 'compose')),
         "--p31-top1-gate", str(getattr(args, 'p31_top1_gate', 'ones')),
         "--p31-template-delta-rank", str(getattr(args, 'p31_template_delta_rank', 0)),
+        "--p31-route-side", str(getattr(args, 'p31_route_side', 'output')),
+        "--p31-drop-basis-proj", str(getattr(args, 'p31_drop_basis_proj', 0)),
+        "--p31-basis-side-templates", str(getattr(args, 'p31_basis_side_templates', 0)),
         "--remix-template-block-diag", str(getattr(args, 'remix_template_block_diag', 0)),
         "--remix-template-lr-scale",   str(getattr(args, 'remix_template_lr_scale', 1.0)),
         "--target-active-params",     str(getattr(args, 'target_active_params', 0)),
@@ -746,6 +749,9 @@ if __name__ == "__main__":
     parser.add_argument("--p31-chunk-route-impl", type=str, default="compose", choices=["compose", "grouped"], help="31: chunk-routing evaluation. 'compose'=materialize per-chunk W_eff (legacy); 'grouped' (topk=1 only)=one GEMM per template, no W_eff in HBM")
     parser.add_argument("--p31-top1-gate", type=str, default="ones", choices=["ones", "switch"], help="31: top-1 routing coefficient. 'ones'=legacy (zero router gradient); 'switch'=full-softmax prob of selected template (differentiable)")
     parser.add_argument("--p31-template-delta-rank", type=int, default=0, help="31: replace the (K, out, basis) template bank with a shared base + K rank-r deltas (0=off)")
+    parser.add_argument("--p31-route-side", type=str, default="output", choices=["output", "basis", "narrow"], help="31: which factor carries the routing. 'output'=route W_m (legacy); 'basis'=route W_b with shared W_m; 'narrow'=route the smaller factor per projection")
+    parser.add_argument("--p31-basis-side-templates", type=int, default=0, help="31: template count for basis-routed projections (0=use n_templates, -1=auto scale by out//basis for param parity)")
+    parser.add_argument("--p31-drop-basis-proj", type=int, default=0, choices=[0, 1], help="31: drop W_b entirely — h=LN(x) then a routed (out,in) template (dense FLOPs)")
     parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank")
     parser.add_argument("--remix-template-lr-scale",   type=float, default=1.0, help="29: LR multiplier for template_bank Muon group")
     parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")
