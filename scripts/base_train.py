@@ -189,6 +189,7 @@ parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-
 parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
 parser.add_argument("--remix-shared-context-gates", type=int, default=0, choices=[0, 1], help="23: batch all 6 per-RL context gate computations into 3 block-level matmuls (~6x fewer gate kernel launches)")
 parser.add_argument("--remix-use-dual-gate", type=int, default=0, choices=[0, 1], help="25: use DualGateLinear instead of RemixedLinear (single dense W + dual D-dim gate, no basis compression)")
+parser.add_argument("--remix-use-fused", type=int, default=0, choices=[0, 1], help="enable RemixedLinearFused for 29C chunk routing (default 0=use standard RemixedLinear)")
 parser.add_argument("--gate-stats-every", type=int, default=50, help="log gate activation/gradient stats every N steps to gate_stats.log (0=off); only active when --use-remix-linear")
 parser.add_argument("--remix-basis-scale-factor", type=int, default=4, help="basis compression ratio: factor=4 → C//4 (default), factor=1 → full rank C. Depth-adaptive via min(in,out)//factor")
 parser.add_argument("--remix-output-gate-rank", type=int, default=16, help="rank of the low-rank output gate in RemixedLinear (default 16)")
@@ -844,6 +845,7 @@ def build_model_meta(depth):
         p23_quantile_route=getattr(args, 'p23_quantile_route', 0),
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
         remix_use_dual_gate=bool(getattr(args, 'remix_use_dual_gate', 0)),
+        remix_use_fused=bool(getattr(args, 'remix_use_fused', 0)),
         p26_output_gated_linear=getattr(args, 'p26_output_gated_linear', 0),
         # Phase 28: FLOPs-efficient template routing
         p28_shared_basis=getattr(args, 'p28_shared_basis', 0),

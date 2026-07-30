@@ -69,6 +69,8 @@ class GPTConfig:
     scale_basis_size: bool = True
     # Use DualGateLinear instead of RemixedLinear (single dense + dual D-dim gate, no basis compression)
     remix_use_dual_gate: bool = False
+    # Explicitly enable RemixedLinearFused for 29C chunk routing (default False: use standard RemixedLinear)
+    remix_use_fused: bool = False
     # Phase 26: OutputGatedLinear — single W + low-rank output gate, no W_b/W_m factorization
     p26_output_gated_linear: int = 0
     # Phase 28: FLOPs-efficient template routing experiments
@@ -5324,9 +5326,10 @@ class RemixedFeedForward(nn.Module):
             elif tiny_expert:
                 kwargs['tiny_expert'] = True
                 kwargs['tiny_expert_topk'] = getattr(config, 'p23_topk', 16)
-            # Auto-select RemixedLinearFused for 29C chunk routing (n_templates>1, chunk>0)
+            # Auto-select RemixedLinearFused for 29C chunk routing only if explicitly enabled via remix_use_fused
             _is_29c_fused = (
-                kwargs.get('n_templates', 1) > 1
+                getattr(config, 'remix_use_fused', False)
+                and kwargs.get('n_templates', 1) > 1
                 and int(kwargs.get('chunk_routing_size', 0)) > 0
                 and not lokr_expert and not tiny_expert
                 and kwargs.get('global_bank_mode', 'none') == 'none'
@@ -5540,9 +5543,10 @@ class RemixedMultiAttention(nn.Module):
             if attn_qk_K > 0:
                 kwargs_qk['n_templates'] = attn_qk_K
             # Attention layers use per-sequence routing (one routing decision per sequence)
-            # Auto-select RemixedLinearFused for 29C chunk routing (n_templates>1, chunk>0)
+            # Auto-select RemixedLinearFused for 29C chunk routing only if explicitly enabled via remix_use_fused
             _is_29c_fused = (
-                kwargs.get('n_templates', 1) > 1
+                getattr(config, 'remix_use_fused', False)
+                and kwargs.get('n_templates', 1) > 1
                 and int(kwargs.get('chunk_routing_size', 0)) > 0
                 and not lokr_expert and not tiny_expert
                 and kwargs.get('global_bank_mode', 'none') == 'none'
