@@ -4785,9 +4785,10 @@ class QuantileCrossAttentionRouter(nn.Module):
         K, D_h = self.n_experts, self.head_dim
         topk = max(1, min(self.topk, K))
         
-        k = self.k_proj(x)       # (B, T, D_h)
-        v = self.v_proj(x)       # (B, T, D_h)
-        q_tok = self.q_tok_proj(x) # (B, T, D_h)
+        x_in = x.to(dtype=self.k_proj.weight.dtype)
+        k = self.k_proj(x_in)       # (B, T, D_h)
+        v = self.v_proj(x_in)       # (B, T, D_h)
+        q_tok = self.q_tok_proj(x_in) # (B, T, D_h)
         
         # Activation: elu(q * k^T) + 1  => always positive
         qk = torch.einsum('bth,kh->btk', k, self.q_exp)
@@ -4817,7 +4818,7 @@ class QuantileCrossAttentionRouter(nn.Module):
         C = N / (Z.unsqueeze(-1) + 1e-6)  # (B, T, K, D_h)
         
         # Final scores = C * q_tok => (B, T, K)
-        scores = torch.einsum('btkh,bth->btk', C, q_tok)
+        scores = torch.einsum('btkh,bth->btk', C.to(dtype=q_tok.dtype), q_tok)
         
         if self.training:
             with torch.no_grad():
