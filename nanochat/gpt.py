@@ -2531,16 +2531,14 @@ class RemixedLinearFused(nn.Module):
 
         # ── Routing: quantile-balanced or standard matmul+softmax ─────
         if self._qrouter is not None:
-            # EMA quantile router: expects (B', T', D), returns (B', T', K)
-            # Reshape anchors to (B*n_chunks, 1, C) → router → (B*n_chunks, 1, K)
             anchor_flat = x_anchors.reshape(B * n_chunks, 1, C)
             weights_flat = self._qrouter(anchor_flat)              # (BN, 1, K)
             weights_all = weights_flat.reshape(B, n_chunks, K).to(dtype)
         elif self.template_route is not None:
             logits_all = x_anchors.float() @ self.template_route.float()  # (B, n_chunks, K)
-
-            if self.template_topk > 0 and self.template_topk < K:
-                topk_vals, topk_idx = logits_all.topk(self.template_topk, dim=-1)
+            topk = self.template_topk
+            if topk > 0 and topk < K:
+                topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
                 weights_all = torch.zeros_like(logits_all).scatter_(
                     -1, topk_idx, F.softmax(topk_vals, dim=-1)
                 ).to(dtype)
@@ -2550,26 +2548,30 @@ class RemixedLinearFused(nn.Module):
             raise RuntimeError("RemixedLinearFused: no routing method configured "
                                "(need template_route or _qrouter)")
 
-        # ── OPT 1: Template assembly — single GEMM ───────────────────
-        # einsum('bnk,koc→bnoc') → (BN, K) @ (K, O*B_sz) → reshape
-        BN = B * n_chunks
-        W_eff_flat = weights_all.reshape(BN, K) @ T_stack.reshape(K, O * B_sz)
-        # W_eff_flat: (BN, O * B_sz)
-
-        # ── OPT 2: Chunk mixing — torch.bmm ──────────────────────────
-        # einsum('bnsc,bnoc→bnso') → bmm((BN, chunk, B_sz), (BN, B_sz, O))
-        h_chunked = h_p.reshape(BN, chunk, B_sz)
-        W_eff_t = W_eff_flat.reshape(BN, O, B_sz).transpose(1, 2)  # (BN, B_sz, O)
-        pre_output = torch.bmm(h_chunked, W_eff_t)                 # (BN, chunk, O)
-        pre_output = pre_output.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
+        # ── Step 5: Execution (Top-1 Fast Path vs Top-k Sparse vs Dense) ─
+        topk = self.template_topk
+        if topk == 1:
+            # Memory-Efficient Top-1 Autograd Function: 0 W_eff activation memory saved for backward
+            top1_idx = weights_all.argmax(dim=-1)  # (B, n_chunks)
+            pre_output = Top1ChunkLinearFunction.apply(h_p, top1_idx, T_stack, chunk)[:, :T_len, :]
+        elif topk > 1 and topk < K:
+            topk_vals, topk_idx = weights_all.topk(topk, dim=-1) # (B, n_chunks, topk)
+            topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype) # (B, n_chunks, topk)
+            W_eff_all = (topk_weights.unsqueeze(-1).unsqueeze(-1) * T_stack[topk_idx]).sum(dim=2)
+            h_chunked = h_p.reshape(B, n_chunks, chunk, B_sz)
+            out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
+            pre_output = out_chunked.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
+        else:
+            BN = B * n_chunks
+            W_eff_flat = weights_all.reshape(BN, K) @ T_stack.reshape(K, O * B_sz)
+            h_chunked = h_p.reshape(BN, chunk, B_sz)
+            W_eff_t = W_eff_flat.reshape(BN, O, B_sz).transpose(1, 2)  # (BN, B_sz, O)
+            pre_output = torch.bmm(h_chunked, W_eff_t).reshape(B, n_chunks * chunk, O)[:, :T_len, :]
 
         # Entropy tracking (no-grad diagnostic — skip under torch.compile)
         if not torch.compiler.is_compiling():
             with torch.no_grad():
-                if self.template_route is not None:
-                    w_f = F.softmax(x.float() @ self.template_route.float(), dim=-1)
-                else:
-                    w_f = weights_all.float()
+                w_f = weights_all.float()
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
 
