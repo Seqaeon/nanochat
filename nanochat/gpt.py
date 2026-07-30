@@ -2109,32 +2109,14 @@ class RemixedLinear(nn.Module):
                 else:
                     weights_all = torch.full((B, n_chunks, self.n_templates), 1.0 / self.n_templates, device=x.device, dtype=dtype)
 
-                topk = getattr(self, 'template_topk', 0)
-                if topk == 1:
-                    # 100% torch.compile traceable Top-1 Direct Index Gather (0 graph breaks, 0 autograd bloat)
-                    top1_idx = weights_all.argmax(dim=-1)  # (B, n_chunks)
-                    W_eff_all = T_stack[top1_idx]           # (B, n_chunks, out, basis)
-                    basis_sz = h_p.shape[-1]
-                    h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)
-                    out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
-                    pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]
-                elif topk > 1 and topk < self.n_templates:
-                    # Top-k Sparse Gather path (only gathers the k active templates per chunk)
-                    topk_vals, topk_idx = weights_all.topk(topk, dim=-1) # (B, n_chunks, topk)
-                    topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype) # (B, n_chunks, topk)
-                    # Gather only active templates: (B, n_chunks, topk, out, basis) -> sum to (B, n_chunks, out, basis)
-                    W_eff_all = (topk_weights.unsqueeze(-1).unsqueeze(-1) * T_stack[topk_idx]).sum(dim=2)
-                    basis_sz = h_p.shape[-1]
-                    h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)
-                    out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
-                    pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]
-                else:
-                    # Multi-template dense Einsum path (all K templates)
-                    W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
-                    basis_sz = h_p.shape[-1]
-                    h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)            # (B, n_chunks, chunk, basis)
-                    out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)  # (B, n_chunks, chunk, out)
-                    pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
+                # Build one effective weight matrix per chunk: (B, n_chunks, out, basis)
+                W_eff_all = torch.einsum('bnk,koc->bnoc', weights_all, T_stack)
+
+                # Apply: reshape h to (B, n_chunks, chunk, basis), batch-contract on basis
+                basis_sz = h_p.shape[-1]
+                h_chunked = h_p.reshape(B, n_chunks, chunk, basis_sz)            # (B, n_chunks, chunk, basis)
+                out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)  # (B, n_chunks, chunk, out)
+                pre_output = out_chunked.reshape(B, n_chunks * chunk, -1)[:, :T_len, :]  # (B, T, out)
 
                 with torch.no_grad():
                     w_f = weights_all.float()
@@ -2496,28 +2478,18 @@ class RemixedLinearFused(nn.Module):
             raise RuntimeError("RemixedLinearFused: no routing method configured "
                                "(need template_route or _qrouter)")
 
-        # ── Step 5: Execution (Top-1 Fast Path vs Top-k Sparse vs Dense) ─
-        topk = self.template_topk
-        if topk == 1:
-            # 100% torch.compile traceable Top-1 Direct Index Gather (0 graph breaks, 0 autograd bloat)
-            top1_idx = weights_all.argmax(dim=-1)  # (B, n_chunks)
-            W_eff_all = T_stack[top1_idx]           # (B, n_chunks, O, B_sz)
-            h_chunked = h_p.reshape(B, n_chunks, chunk, B_sz)
-            out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
-            pre_output = out_chunked.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
-        elif topk > 1 and topk < K:
-            topk_vals, topk_idx = weights_all.topk(topk, dim=-1) # (B, n_chunks, topk)
-            topk_weights = F.softmax(topk_vals.float(), dim=-1).to(dtype) # (B, n_chunks, topk)
-            W_eff_all = (topk_weights.unsqueeze(-1).unsqueeze(-1) * T_stack[topk_idx]).sum(dim=2)
-            h_chunked = h_p.reshape(B, n_chunks, chunk, B_sz)
-            out_chunked = torch.einsum('bnsc,bnoc->bnso', h_chunked, W_eff_all)
-            pre_output = out_chunked.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
-        else:
-            BN = B * n_chunks
-            W_eff_flat = weights_all.reshape(BN, K) @ T_stack.reshape(K, O * B_sz)
-            h_chunked = h_p.reshape(BN, chunk, B_sz)
-            W_eff_t = W_eff_flat.reshape(BN, O, B_sz).transpose(1, 2)  # (BN, B_sz, O)
-            pre_output = torch.bmm(h_chunked, W_eff_t).reshape(B, n_chunks * chunk, O)[:, :T_len, :]
+        # ── OPT 1: Template assembly — single GEMM ───────────────────
+        # einsum('bnk,koc→bnoc') → (BN, K) @ (K, O*B_sz) → reshape
+        BN = B * n_chunks
+        W_eff_flat = weights_all.reshape(BN, K) @ T_stack.reshape(K, O * B_sz)
+        # W_eff_flat: (BN, O * B_sz)
+
+        # ── OPT 2: Chunk mixing — torch.bmm ──────────────────────────
+        # einsum('bnsc,bnoc→bnso') → bmm((BN, chunk, B_sz), (BN, B_sz, O))
+        h_chunked = h_p.reshape(BN, chunk, B_sz)
+        W_eff_t = W_eff_flat.reshape(BN, O, B_sz).transpose(1, 2)  # (BN, B_sz, O)
+        pre_output = torch.bmm(h_chunked, W_eff_t)                 # (BN, chunk, O)
+        pre_output = pre_output.reshape(B, n_chunks * chunk, O)[:, :T_len, :]
 
         # Entropy tracking (no-grad diagnostic — skip under torch.compile)
         if not torch.compiler.is_compiling():
