@@ -277,6 +277,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --p31-chunk-route-impl|--p31-top1-gate|--p31-template-delta-rank)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
 
         --warmup-ratio|--warmdown-ratio|--final-lr-frac)
             EXTRA_ARGS+=("$1" "$2")

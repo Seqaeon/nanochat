@@ -137,6 +137,9 @@ def run_training_sweep(args):
         "--p28-global-template-bank", str(getattr(args, 'p28_global_template_bank', 'none')),
         "--p28-attn-proj-templates", str(getattr(args, 'p28_attn_proj_templates', 0)),
         "--p28-attn-qk-templates",   str(getattr(args, 'p28_attn_qk_templates', 0)),
+        "--p31-chunk-route-impl", str(getattr(args, 'p31_chunk_route_impl', 'compose')),
+        "--p31-top1-gate", str(getattr(args, 'p31_top1_gate', 'ones')),
+        "--p31-template-delta-rank", str(getattr(args, 'p31_template_delta_rank', 0)),
         "--remix-template-block-diag", str(getattr(args, 'remix_template_block_diag', 0)),
         "--remix-template-lr-scale",   str(getattr(args, 'remix_template_lr_scale', 1.0)),
         "--target-active-params",     str(getattr(args, 'target_active_params', 0)),
@@ -740,6 +743,9 @@ if __name__ == "__main__":
     parser.add_argument("--p28-global-template-bank", type=str, default="none", choices=["none", "ffn", "all"], help="28E/F: cross-layer global template bank mode")
     parser.add_argument("--p28-attn-proj-templates", type=int, default=0, help="28C2: override n_templates for attn c_proj (0=default)")
     parser.add_argument("--p28-attn-qk-templates",   type=int, default=0, help="28C3: override n_templates for attn c_q/c_k (0=default)")
+    parser.add_argument("--p31-chunk-route-impl", type=str, default="compose", choices=["compose", "grouped"], help="31: chunk-routing evaluation. 'compose'=materialize per-chunk W_eff (legacy); 'grouped' (topk=1 only)=one GEMM per template, no W_eff in HBM")
+    parser.add_argument("--p31-top1-gate", type=str, default="ones", choices=["ones", "switch"], help="31: top-1 routing coefficient. 'ones'=legacy (zero router gradient); 'switch'=full-softmax prob of selected template (differentiable)")
+    parser.add_argument("--p31-template-delta-rank", type=int, default=0, help="31: replace the (K, out, basis) template bank with a shared base + K rank-r deltas (0=off)")
     parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank")
     parser.add_argument("--remix-template-lr-scale",   type=float, default=1.0, help="29: LR multiplier for template_bank Muon group")
     parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")
