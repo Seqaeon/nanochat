@@ -1,0 +1,115 @@
+% MST architecture figure. \input inside a figure environment.
+% Requires tikz + libraries positioning, arrows.meta, calc, decorations.pathreplacing.
+% Requires colors mstorange, denseblue, ink1, ink2 from the preamble.
+%
+% Read bottom to top, like a standard transformer block diagram. Every box is
+% named. Colour encodes width and nothing else: BLUE operates at D, ORANGE at d.
+% Repetition is the "x L" bracket rather than something drawn out.
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=1.7mm,width=1.5mm]},
+  boxD/.style={draw=denseblue!80, line width=0.5pt, fill=denseblue!14,
+               rounded corners=2pt, align=center, inner sep=3pt},
+  boxd/.style={draw=mstorange!85, line width=0.5pt, fill=mstorange!14,
+               rounded corners=2pt, align=center, inner sep=3pt},
+  boxc/.style={draw=mstorange!85, line width=0.5pt, fill=mstorange!26,
+               rounded corners=2pt, align=center, inner sep=3pt},
+  ar/.style={->, draw=ink2, line width=0.5pt},
+  arS/.style={->, draw=gray!62, line width=0.45pt},
+  arO/.style={->, draw=mstorange!85, line width=0.5pt},
+  plus/.style={draw=ink2, line width=0.5pt, circle, fill=white, inner sep=0pt,
+               minimum size=3.4mm, font=\scriptsize},
+  tag/.style={font=\scriptsize, text=ink2, inner sep=1.5pt},
+  tagO/.style={font=\scriptsize, text=mstorange!95, inner sep=1.5pt},
+  brc/.style={decorate, decoration={brace, amplitude=3pt}, draw=ink2,
+              line width=0.45pt}
+]
+
+% ==== column geometry
+\def\ca{2.20}   \def\cb{6.30}   \def\cc{11.30}   % stream 1, stream 2, stream N
+\def\bw{36mm}
+\def\xl{0.40}   \def\xr{13.10}
+\pgfmathsetmacro{\cmid}{(\xl+\xr)/2}
+\def\xel{8.80}                                    % x of the elision
+\def\sk{2.05}                                     % residual offset from column centre
+
+% ==== bottom: embedding and the split
+\node[boxD, minimum width=86mm] (emb) at (\cmid,0.30)
+     {Token embedding ($\dmodel$)\ \ $\to$\ \ $\nsub$ separate Linear $\dmodel\!\to\!\dsub$};
+\foreach \c/\i in {\ca/1, \cb/2, \cc/N} {
+  \draw[ar] (\cmid,0.58) -- (\cmid,0.92) -- (\c,0.92) -- (\c,1.30);
+}
+
+% ==== per-stream sublayers
+\foreach \c/\i/\w in {\ca/1/{$w_1{=}32$}, \cb/2/{$w_2{=}127$}, \cc/N/{$w_{\nsub}=\infty$}} {
+  \draw[ar] (\c,1.30) -- (\c,1.62);
+  \node[boxd, minimum width=\bw] (at\i) at (\c,1.98)
+       {Multi-Head Attention$_{\i}$\\[-1pt]\scriptsize pre-norm\ \ $\cdot$\ \ window \w};
+  \node[plus] (p\i) at (\c,2.94) {$+$};
+  \draw[ar] (\c,2.34) -- (p\i);
+  \draw[arS] ({\c-\sk},1.46) -- ({\c-\sk},2.94) -- (p\i);
+
+  \node[boxd, minimum width=\bw] (ff\i) at (\c,3.86)
+       {Feed-Forward$_{\i}$\\[-1pt]\scriptsize pre-norm\ \ $\cdot$\ \ $\dsub\!\to\!4\dsub\!\to\!\dsub$};
+  \draw[ar] (p\i) -- (\c,3.50);
+  \node[plus] (q\i) at (\c,4.82) {$+$};
+  \draw[ar] (\c,4.22) -- (q\i);
+  \draw[arS] ({\c+\sk},2.94) -- ({\c+\sk},4.82) -- (q\i);
+}
+
+% ==== the stream continues straight through the coupling
+% drawn FIRST so the coupling boxes sit on top of it: the line visibly passes
+% behind the shared module and re-emerges, which is what a residual does.
+\foreach \c/\i in {\ca/1, \cb/2, \cc/N} {
+  \draw[draw=gray!62, line width=0.45pt] (\c,5.00) -- (\c,8.42);
+}
+
+% ==== coupling: gather, bottleneck, scatter
+\foreach \c/\i in {\ca/1, \cb/2, \cc/N} {
+  \draw[arO] (\c,5.30) -- (\cmid,5.30) -- (\cmid,5.72);
+}
+\node[boxc, minimum width=82mm] (rt) at (\cmid,6.20)
+     {Route and aggregate\ \ $a=\sum_i \mathrm{softmax}(W^{R}\bar{X})_i\,X_i$\\[-1pt]
+      \scriptsize one $\dsub$-vector carries everything the streams exchange};
+\node[boxD, minimum width=82mm] (bn) at (\cmid,7.24)
+     {Linear $\dsub\!\to\!\dmodel$\ \ $\to$\ \ $\mathrm{relu}^2$\ \ $\to$\ \ Linear $\dmodel\!\to\!\dsub$};
+\draw[arO] (rt) -- (bn);
+
+\foreach \c/\i in {\ca/1, \cb/2, \cc/N} {
+  \draw[arO] (\cmid,7.52) -- (\cmid,7.82) -- (\c,7.82) -- (\c,8.10);
+  \node[boxd, minimum width=\bw] (rd\i) at (\c,8.38) {Linear\ \ $\dsub\!\to\!\dsub$};
+  \node[plus] (r\i) at (\c,8.98) {$+$};
+  \draw[ar] (\c,8.64) -- (r\i);
+  \draw[draw=gray!62, line width=0.45pt] (\c,8.42) -- (r\i);
+}
+
+% ==== repetition bracket
+\draw[brc] ({\xl-0.55},9.22) -- ({\xl-0.55},1.46);
+\node[tag, rotate=90, anchor=south] at ({\xl-0.88},5.34) {$\times\,L$ layers};
+
+% ==== top: recombine and predict
+\foreach \c/\i in {\ca/1, \cb/2, \cc/N} {
+  \draw[ar] (\c,9.16) -- (\c,9.36) -- (\cmid,9.36) -- (\cmid,9.56);
+}
+\node[boxD, minimum width=86mm] (cat) at (\cmid,9.84)
+     {Concatenate ($\nsub\!\times\!\dsub=\dmodel$)\ \ $\to$\ \ Linear $\dmodel\!\to\!\dmodel$\ \ $\to$\ \ Linear $\dmodel\!\to\!$ vocab};
+\draw[ar] (\cmid,10.12) -- (\cmid,10.42);
+\node[tag, anchor=south] at (\cmid,10.44) {output probabilities};
+
+% ==== stream captions and elision
+\foreach \y in {1.98, 3.86, 8.38} { \node[tag] at (\xel,\y) {$\cdots$}; }
+
+% ==== legend
+\node[boxD, minimum width=4.5mm, minimum height=2.8mm, inner sep=1pt]
+     at ({\xl+0.25},11.12) {};
+\node[tag, anchor=west] at ({\xl+0.50},11.12) {width $\dmodel$};
+\node[boxd, minimum width=4.5mm, minimum height=2.8mm, inner sep=1pt]
+     at ({\xl+2.55},11.12) {};
+\node[tag, anchor=west] at ({\xl+2.80},11.12) {width $\dsub=\dmodel/\nsub$};
+\node[boxc, minimum width=4.5mm, minimum height=2.8mm, inner sep=1pt]
+     at ({\xl+6.30},11.12) {};
+\node[tag, anchor=west] at ({\xl+6.55},11.12)
+     {coupling: the only path between streams};
+\node[tag, anchor=west, text=gray!70] at ({\xl+11.00},11.12) {grey = residual};
+
+\end{tikzpicture}

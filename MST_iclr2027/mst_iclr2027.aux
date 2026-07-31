@@ -1,0 +1,148 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{shazeer2017moe,fedus2022switch}
+\citation{raposo2024mod}
+\citation{csordas2024moeut}
+\citation{bae2025mor}
+\citation{ternovtsii2026mol}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\citation{ternovtsii2026equifinality}
+\citation{ternovtsii2026mol}
+\citation{yang2025uoe}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Three ways to make a transformer block narrow, all drawn at the same total width $D$. Projecting into a narrow block costs a $W_{\mathrm  {down}}$/$W_{\mathrm  {up}}$ wrapper on \emph  {every} block. Partitioning costs nothing, because each block sits directly on its own slice of the stream and the $N$ slices concatenated are the representation. The single coupling that replaces the wrappers is detailed in Figure~\ref {fig:arch}.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:threeways}{{1}{2}{Three ways to make a transformer block narrow, all drawn at the same total width $\dmodel $. Projecting into a narrow block costs a $W_{\mathrm {down}}$/$W_{\mathrm {up}}$ wrapper on \emph {every} block. Partitioning costs nothing, because each block sits directly on its own slice of the stream and the $\nsub $ slices concatenated are the representation. The single coupling that replaces the wrappers is detailed in Figure~\ref {fig:arch}}{figure.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Narrow parallel blocks.}{2}{section*.1}\protected@file@percent }
+\citation{hyperconnections2025,xie2026mhc}
+\citation{baykal2023altup}
+\citation{burtsev2021multistream}
+\citation{shape2026}
+\citation{dualstream2026}
+\citation{wu2024mhmoe}
+\citation{zhang2026flashmhf}
+\citation{raposo2024mod,csordas2024moeut,bae2025mor}
+\citation{dao2022monarch}
+\citation{lee2024blast}
+\citation{sukhbaatar2019adaptive,beltagy2020longformer,fu2024moa,zhang2025mswa}
+\citation{su2021roformer}
+\@writefile{toc}{\contentsline {paragraph}{Residual-stream structure.}{3}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Partial partitions.}{3}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Structured matrices and attention spans.}{3}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Method}{3}{section.3}\protected@file@percent }
+\newlabel{sec:method}{{3}{3}{Method}{section.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Notation.}{3}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}The layer}{3}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Per stream: nothing new.}{3}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Coupling: the whole mechanism, in one line.}{3}{section*.7}\protected@file@percent }
+\newlabel{eq:coupling}{{2}{3}{Coupling: the whole mechanism, in one line}{equation.3.2}{}}
+\citation{fedus2022switch}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces One MST layer, read bottom to top. Colour encodes width and nothing else: blue operates at $D$, orange at $d=D/N$. The $N$ streams run ordinary transformer sublayers in parallel and never read each other's channels; the coupling is the only path between them, and everything they exchange passes through the single $d$-vector $a$. Grey lines are residual connections, which carry each stream past the coupling unchanged.}}{4}{figure.2}\protected@file@percent }
+\newlabel{fig:arch}{{2}{4}{One MST layer, read bottom to top. Colour encodes width and nothing else: blue operates at $\dmodel $, orange at $\dsub =\dmodel /\nsub $. The $\nsub $ streams run ordinary transformer sublayers in parallel and never read each other's channels; the coupling is the only path between them, and everything they exchange passes through the single $\dsub $-vector $a$. Grey lines are residual connections, which carry each stream past the coupling unchanged}{figure.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{The head budget is conserved.}{4}{section*.8}\protected@file@percent }
+\citation{jordan2024muon,amsel2025polar}
+\citation{yang2021mup}
+\citation{zhou2024resformer}
+\citation{karpathy2025nanochat}
+\citation{bergsma2025powerlines}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Multi-scale sub-windows}{5}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:windows}{{3.2}{5}{Multi-scale sub-windows}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Optimizing partitioned weights}{5}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:optim}{{3.3}{5}{Optimizing partitioned weights}{subsection.3.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Cost accounting}{5}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:cost}{{3.4}{5}{Cost accounting}{subsection.3.4}{}}
+\newlabel{eq:budget}{{3}{5}{Cost accounting}{equation.3.3}{}}
+\citation{hoffmann2022chinchilla}
+\citation{penedo2024fineweb}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Cost and quality. MST is $N{=}4$ with all components of Section~\ref {sec:method}. Dense is the matched baseline at the same $D= 64L$ ladder. ``Matrices'' excludes embeddings and value embeddings.}}{6}{table.1}\protected@file@percent }
+\newlabel{tab:cost}{{1}{6}{Cost and quality. MST is $\nsub {=}4$ with all components of Section~\ref {sec:method}. Dense is the matched baseline at the same $\dmodel = 64L$ ladder. ``Matrices'' excludes embeddings and value embeddings}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experimental setup}{6}{section.4}\protected@file@percent }
+\newlabel{sec:experiments}{{4}{6}{Experimental setup}{section.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Results}{6}{section.5}\protected@file@percent }
+\newlabel{sec:results}{{5}{6}{Results}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Pareto dominance}{6}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Scaling exponents}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces MST lies below the dense scaling curve on all three cost axes. Points are measured runs; lines are power-law fits (Table~\ref {tab:fits}). Hollow markers are MST models below the amortization threshold, which are excluded from the MST fit. Each panel states the multiplier a dense model needs to reach the same bits-per-byte, averaged over $L\!\in \![16,32]$.}}{7}{figure.3}\protected@file@percent }
+\newlabel{fig:pareto}{{3}{7}{MST lies below the dense scaling curve on all three cost axes. Points are measured runs; lines are power-law fits (Table~\ref {tab:fits}). Hollow markers are MST models below the amortization threshold, which are excluded from the MST fit. Each panel states the multiplier a dense model needs to reach the same bits-per-byte, averaged over $L\!\in \![16,32]$}{figure.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Resource multiplier a dense model needs to match each MST model, obtained by inverting the dense power-law fit. The multiplier is stable across the range.}}{7}{table.2}\protected@file@percent }
+\newlabel{tab:ratio}{{2}{7}{Resource multiplier a dense model needs to match each MST model, obtained by inverting the dense power-law fit. The multiplier is stable across the range}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Downstream transfer}{7}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Throughput, memory and hardware utilization}{7}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Ablations}{7}{section.6}\protected@file@percent }
+\newlabel{sec:ablations}{{6}{7}{Ablations}{section.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Ablation transfer.}{7}{section*.9}\protected@file@percent }
+\citation{dai2024deepseekmoe}
+\citation{ternovtsii2026equifinality}
+\citation{shoeybi2021megatron}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Power-law fits $\textsc  {bpb}= a x^{b}$, MST $L\!\in \![16,32]$ and dense $L\!\in \![12,30]$.}}{8}{table.3}\protected@file@percent }
+\newlabel{tab:fits}{{3}{8}{Power-law fits $\bpb = a x^{b}$, MST $L\!\in \![16,32]$ and dense $L\!\in \![12,30]$}{table.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Zero-shot accuracy (\%). MST is compared against a dense model matched on total parameters and a dense model matched on FLOPs per token.}}{8}{table.4}\protected@file@percent }
+\newlabel{tab:downstream}{{4}{8}{Zero-shot accuracy (\%). MST is compared against a dense model matched on total parameters and a dense model matched on FLOPs per token}{table.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Granularity.}{8}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Enriching the coupling does not help.}{8}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Analysis}{8}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Device parallelism.}{8}{section*.12}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Measured throughput and memory. Weights are randomly initialized; these are architecture-level measurements and do not depend on training.}}{9}{table.5}\protected@file@percent }
+\newlabel{tab:speed}{{5}{9}{Measured throughput and memory. Weights are randomly initialized; these are architecture-level measurements and do not depend on training}{table.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The utilization gap is a head-dimension kernel effect, not an architectural one.}}{9}{figure.4}\protected@file@percent }
+\newlabel{fig:kernels}{{4}{9}{The utilization gap is a head-dimension kernel effect, not an architectural one}{figure.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Limitations}{9}{section.8}\protected@file@percent }
+\newlabel{sec:limitations}{{8}{9}{Limitations}{section.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only.}}{10}{table.6}\protected@file@percent }
+\newlabel{tab:transfer}{{6}{10}{Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only}{table.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Ablations at $L{=}8$, $D{=}512$, $N{=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better.}}{10}{table.7}\protected@file@percent }
+\newlabel{tab:ablation}{{7}{10}{Ablations at $L{=}8$, $\dmodel {=}512$, $\nsub {=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better}{table.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{10}{section.9}\protected@file@percent }
+\citation{penedo2024fineweb}
+\bibdata{mst}
+\bibcite{amsel2025polar}{{1}{2025}{{Amsel et~al.}}{{Amsel, Persson, Musco, and Gower}}}
+\bibcite{dualstream2026}{{2}{2026{a}}{{Anonymous}}{{}}}
+\bibcite{shape2026}{{3}{2026{b}}{{Anonymous}}{{}}}
+\bibcite{bae2025mor}{{4}{2025}{{Bae et~al.}}{{}}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Every stream carries load, the streams stay close to maximally decorrelated, and the multi-scale prior is used.}}{11}{figure.5}\protected@file@percent }
+\newlabel{fig:subablate}{{5}{11}{Every stream carries load, the streams stay close to maximally decorrelated, and the multi-scale prior is used}{figure.5}{}}
+\bibcite{baykal2023altup}{{5}{2023}{{Baykal et~al.}}{{Baykal, Cutler, Dikkala, Ghosh, Panigrahy, and Wang}}}
+\bibcite{beltagy2020longformer}{{6}{2020}{{Beltagy et~al.}}{{Beltagy, Peters, and Cohan}}}
+\bibcite{bergsma2025powerlines}{{7}{2025}{{Bergsma et~al.}}{{}}}
+\bibcite{burtsev2021multistream}{{8}{2021}{{Burtsev \& Rumshisky}}{{Burtsev and Rumshisky}}}
+\bibcite{csordas2024moeut}{{9}{2024}{{Csord{\'a}s et~al.}}{{Csord{\'a}s, Irie, Schmidhuber, Potts, and Manning}}}
+\bibcite{dai2024deepseekmoe}{{10}{2024}{{Dai et~al.}}{{}}}
+\bibcite{dao2022monarch}{{11}{2022}{{Dao et~al.}}{{Dao, Chen, Sohoni, Desai, Poli, Grogan, Liu, Rao, Rudra, and R{\'e}}}}
+\bibcite{fedus2022switch}{{12}{2022}{{Fedus et~al.}}{{Fedus, Zoph, and Shazeer}}}
+\bibcite{fu2024moa}{{13}{2024}{{Fu et~al.}}{{}}}
+\bibcite{hoffmann2022chinchilla}{{14}{2022}{{Hoffmann et~al.}}{{}}}
+\bibcite{jordan2024muon}{{15}{2024}{{Jordan et~al.}}{{Jordan, Jin, Boza, You, Cesista, Newhouse, and Bernstein}}}
+\bibcite{karpathy2025nanochat}{{16}{2025}{{Karpathy}}{{}}}
+\bibcite{lee2024blast}{{17}{2024}{{Lee et~al.}}{{}}}
+\bibcite{shoeybi2021megatron}{{18}{2021}{{Narayanan et~al.}}{{}}}
+\bibcite{penedo2024fineweb}{{19}{2024}{{Penedo et~al.}}{{}}}
+\bibcite{raposo2024mod}{{20}{2024}{{Raposo et~al.}}{{Raposo, Ritter, Richards, Lillicrap, Humphreys, and Santoro}}}
+\bibcite{shazeer2017moe}{{21}{2017}{{Shazeer et~al.}}{{Shazeer, Mirhoseini, Maziarz, Davis, Le, Hinton, and Dean}}}
+\bibcite{su2021roformer}{{22}{2021}{{Su et~al.}}{{Su, Lu, Pan, Murtadha, Wen, and Liu}}}
+\bibcite{sukhbaatar2019adaptive}{{23}{2019}{{Sukhbaatar et~al.}}{{Sukhbaatar, Grave, Bojanowski, and Joulin}}}
+\bibcite{ternovtsii2026equifinality}{{24}{2026{a}}{{Ternovtsii \& Bilak}}{{Ternovtsii and Bilak}}}
+\bibcite{ternovtsii2026mol}{{25}{2026{b}}{{Ternovtsii \& Bilak}}{{Ternovtsii and Bilak}}}
+\bibcite{wu2024mhmoe}{{26}{2024}{{Wu et~al.}}{{Wu, Huang, Wang, and Wei}}}
+\bibcite{xie2026mhc}{{27}{2026}{{Xie et~al.}}{{}}}
+\bibcite{yang2021mup}{{28}{2021}{{Yang et~al.}}{{Yang, Hu, Babuschkin, Sidor, Liu, Farhi, Ryder, Pachocki, Chen, and Gao}}}
+\bibcite{yang2025uoe}{{29}{2025}{{Yang et~al.}}{{Yang, Lian, and Li}}}
+\bibcite{zhang2026flashmhf}{{30}{2026}{{Zhang et~al.}}{{Zhang, Hu, Li, Wu, and Tu}}}
+\bibcite{zhang2025mswa}{{31}{2025}{{Zhang et~al.}}{{}}}
+\bibcite{zhou2024resformer}{{32}{2024}{{Zhou et~al.}}{{}}}
+\bibcite{hyperconnections2025}{{33}{2025}{{Zhu et~al.}}{{Zhu, Huang, Huang, Zeng, Mao, Wu, Min, and Zhou}}}
+\bibstyle{iclr2027_conference}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Per-layer parameter budget}{13}{appendix.A}\protected@file@percent }
+\newlabel{app:budget}{{A}{13}{Per-layer parameter budget}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-layer parameter budget. The $N$ sub-transformers cost $12D^2/N$ and the coupling costs a further $3D^2/N$, so a layer costs $15D^2/N$ against $12D^2$ dense: a reduction of $0.8N$, not $N$. The router term $Nd$ is $0.02\%$ of the layer at $D{=}512$ and is omitted from the totals.}}{13}{table.8}\protected@file@percent }
+\newlabel{tab:budget}{{8}{13}{Per-layer parameter budget. The $\nsub $ sub-transformers cost $12\dmodel ^2/\nsub $ and the coupling costs a further $3\dmodel ^2/\nsub $, so a layer costs $15\dmodel ^2/\nsub $ against $12\dmodel ^2$ dense: a reduction of $0.8\nsub $, not $\nsub $. The router term $\nsub \dsub $ is $0.02\%$ of the layer at $\dmodel {=}512$ and is omitted from the totals}{table.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Coupling variants that did not help}{13}{appendix.B}\protected@file@percent }
+\newlabel{app:negative}{{B}{13}{Coupling variants that did not help}{appendix.B}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Coupling variants that did not improve on the routed bottleneck, $L{=}8$.}}{14}{table.9}\protected@file@percent }
+\newlabel{tab:negative}{{9}{14}{Coupling variants that did not improve on the routed bottleneck, $L{=}8$}{table.9}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Rows omitted from Table~\ref {tab:ablation}: the two optimizer interventions applied separately, and the transition bottleneck width sweep. $L{=}8$, three seeds.}}{14}{table.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {C}Additional ablations}{14}{appendix.C}\protected@file@percent }
+\newlabel{app:extra}{{C}{14}{Additional ablations}{appendix.C}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Experimental details}{14}{appendix.D}\protected@file@percent }
+\newlabel{app:details}{{D}{14}{Experimental details}{appendix.D}{}}
+\gdef \@abspage@last{14}

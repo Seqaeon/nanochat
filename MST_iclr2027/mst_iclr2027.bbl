@@ -1,0 +1,211 @@
+\begin{thebibliography}{33}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Amsel et~al.(2025)Amsel, Persson, Musco, and Gower]{amsel2025polar}
+Noah Amsel, David Persson, Christopher Musco, and Robert~M Gower.
+\newblock The polar express: Optimal matrix sign methods and their application
+  to the muon algorithm.
+\newblock \emph{arXiv preprint arXiv:2505.16932}, 2025.
+
+\bibitem[Anonymous(2026{\natexlab{a}})]{dualstream2026}
+Anonymous.
+\newblock The dual-stream transformer: Channelized architecture for
+  interpretable language modeling.
+\newblock \emph{arXiv preprint arXiv:2603.07461}, 2026{\natexlab{a}}.
+
+\bibitem[Anonymous(2026{\natexlab{b}})]{shape2026}
+Anonymous.
+\newblock Revisiting the shape convention of transformer language models.
+\newblock \emph{arXiv preprint arXiv:2602.06471}, 2026{\natexlab{b}}.
+
+\bibitem[Bae et~al.(2025)]{bae2025mor}
+Sangmin Bae et~al.
+\newblock Mixture-of-recursions: Learning dynamic recursive depths for adaptive
+  token-level computation.
+\newblock In \emph{NeurIPS}, 2025.
+
+\bibitem[Baykal et~al.(2023)Baykal, Cutler, Dikkala, Ghosh, Panigrahy, and
+  Wang]{baykal2023altup}
+Cenk Baykal, Dylan Cutler, Nishanth Dikkala, Nikhil Ghosh, Rina Panigrahy, and
+  Xin Wang.
+\newblock Alternating updates for efficient transformers.
+\newblock In \emph{NeurIPS}, 2023.
+
+\bibitem[Beltagy et~al.(2020)Beltagy, Peters, and Cohan]{beltagy2020longformer}
+Iz~Beltagy, Matthew~E Peters, and Arman Cohan.
+\newblock Longformer: The long-document transformer.
+\newblock \emph{arXiv preprint arXiv:2004.05150}, 2020.
+
+\bibitem[Bergsma et~al.(2025)]{bergsma2025powerlines}
+Shane Bergsma et~al.
+\newblock Power lines: Scaling laws for weight decay and batch size in llm
+  pre-training.
+\newblock \emph{arXiv preprint arXiv:2505.13738}, 2025.
+
+\bibitem[Burtsev \& Rumshisky(2021)Burtsev and
+  Rumshisky]{burtsev2021multistream}
+Mikhail~S Burtsev and Anna Rumshisky.
+\newblock Multi-stream transformers.
+\newblock \emph{arXiv preprint arXiv:2107.10342}, 2021.
+
+\bibitem[Csord{\'a}s et~al.(2024)Csord{\'a}s, Irie, Schmidhuber, Potts, and
+  Manning]{csordas2024moeut}
+R{\'o}bert Csord{\'a}s, Kazuki Irie, J{\"u}rgen Schmidhuber, Christopher Potts,
+  and Christopher~D Manning.
+\newblock Moeut: Mixture-of-experts universal transformers.
+\newblock In \emph{NeurIPS}, 2024.
+
+\bibitem[Dai et~al.(2024)]{dai2024deepseekmoe}
+Damai Dai et~al.
+\newblock Deepseekmoe: Towards ultimate expert specialization in
+  mixture-of-experts language models.
+\newblock \emph{arXiv preprint arXiv:2401.06066}, 2024.
+
+\bibitem[Dao et~al.(2022)Dao, Chen, Sohoni, Desai, Poli, Grogan, Liu, Rao,
+  Rudra, and R{\'e}]{dao2022monarch}
+Tri Dao, Beidi Chen, Nimit~S Sohoni, Arjun Desai, Michael Poli, Jessica Grogan,
+  Alexander Liu, Aniruddh Rao, Atri Rudra, and Christopher R{\'e}.
+\newblock Monarch: Expressive structured matrices for efficient and accurate
+  training.
+\newblock In \emph{ICML}, 2022.
+
+\bibitem[Fedus et~al.(2022)Fedus, Zoph, and Shazeer]{fedus2022switch}
+William Fedus, Barret Zoph, and Noam Shazeer.
+\newblock Switch transformers: Scaling to trillion parameter models with simple
+  and efficient sparsity.
+\newblock \emph{JMLR}, 23:\penalty0 1--39, 2022.
+
+\bibitem[Fu et~al.(2024)]{fu2024moa}
+Tianyu Fu et~al.
+\newblock Moa: Mixture of sparse attention for automatic large language model
+  compression.
+\newblock \emph{arXiv preprint arXiv:2406.14909}, 2024.
+
+\bibitem[Hoffmann et~al.(2022)]{hoffmann2022chinchilla}
+Jordan Hoffmann et~al.
+\newblock Training compute-optimal large language models.
+\newblock \emph{arXiv preprint arXiv:2203.15556}, 2022.
+
+\bibitem[Jordan et~al.(2024)Jordan, Jin, Boza, You, Cesista, Newhouse, and
+  Bernstein]{jordan2024muon}
+Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker
+  Newhouse, and Jeremy Bernstein.
+\newblock Muon: An optimizer for hidden layers in neural networks.
+\newblock \url{https://kellerjordan.github.io/posts/muon/}, 2024.
+
+\bibitem[Karpathy(2025)]{karpathy2025nanochat}
+Andrej Karpathy.
+\newblock nanochat: The best chatgpt that \$100 can buy.
+\newblock \url{https://github.com/karpathy/nanochat}, 2025.
+
+\bibitem[Lee et~al.(2024)]{lee2024blast}
+Changwoo Lee et~al.
+\newblock Blast: Block-level adaptive structured matrices for efficient deep
+  neural network inference.
+\newblock In \emph{NeurIPS}, 2024.
+
+\bibitem[Narayanan et~al.(2021)]{shoeybi2021megatron}
+Deepak Narayanan et~al.
+\newblock Efficient large-scale language model training on gpu clusters using
+  megatron-lm.
+\newblock In \emph{SC}, 2021.
+
+\bibitem[Penedo et~al.(2024)]{penedo2024fineweb}
+Guilherme Penedo et~al.
+\newblock The fineweb datasets: Decanting the web for the finest text data at
+  scale.
+\newblock \emph{NeurIPS Datasets and Benchmarks}, 2024.
+
+\bibitem[Raposo et~al.(2024)Raposo, Ritter, Richards, Lillicrap, Humphreys, and
+  Santoro]{raposo2024mod}
+David Raposo, Sam Ritter, Blake Richards, Timothy Lillicrap, Peter~Conway
+  Humphreys, and Adam Santoro.
+\newblock Mixture-of-depths: Dynamically allocating compute in
+  transformer-based language models.
+\newblock In \emph{ICML}, 2024.
+
+\bibitem[Shazeer et~al.(2017)Shazeer, Mirhoseini, Maziarz, Davis, Le, Hinton,
+  and Dean]{shazeer2017moe}
+Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le,
+  Geoffrey Hinton, and Jeff Dean.
+\newblock Outrageously large neural networks: The sparsely-gated
+  mixture-of-experts layer.
+\newblock In \emph{ICLR}, 2017.
+
+\bibitem[Su et~al.(2021)Su, Lu, Pan, Murtadha, Wen, and Liu]{su2021roformer}
+Jianlin Su, Yu~Lu, Shengfeng Pan, Ahmed Murtadha, Bo~Wen, and Yunfeng Liu.
+\newblock Roformer: Enhanced transformer with rotary position embedding.
+\newblock \emph{arXiv preprint arXiv:2104.09864}, 2021.
+
+\bibitem[Sukhbaatar et~al.(2019)Sukhbaatar, Grave, Bojanowski, and
+  Joulin]{sukhbaatar2019adaptive}
+Sainbayar Sukhbaatar, Edouard Grave, Piotr Bojanowski, and Armand Joulin.
+\newblock Adaptive attention span in transformers.
+\newblock \emph{ACL}, 2019.
+
+\bibitem[Ternovtsii \& Bilak(2026{\natexlab{a}})Ternovtsii and
+  Bilak]{ternovtsii2026equifinality}
+Ivan Ternovtsii and Yurii Bilak.
+\newblock Equifinality in mixture of experts: Routing topology does not
+  determine language modeling quality.
+\newblock \emph{arXiv preprint arXiv:2604.14419}, 2026{\natexlab{a}}.
+
+\bibitem[Ternovtsii \& Bilak(2026{\natexlab{b}})Ternovtsii and
+  Bilak]{ternovtsii2026mol}
+Ivan Ternovtsii and Yurii Bilak.
+\newblock Mixture of layers with hybrid attention: Parallel thin blocks for
+  sparse transformer compute.
+\newblock \emph{arXiv preprint arXiv:2605.09516}, 2026{\natexlab{b}}.
+
+\bibitem[Wu et~al.(2024)Wu, Huang, Wang, and Wei]{wu2024mhmoe}
+Xun Wu, Shaohan Huang, Wenhui Wang, and Furu Wei.
+\newblock Multi-head mixture-of-experts.
+\newblock In \emph{NeurIPS}, 2024.
+
+\bibitem[Xie et~al.(2026)]{xie2026mhc}
+Xie et~al.
+\newblock Manifold-constrained hyper-connections.
+\newblock \emph{arXiv preprint}, 2026.
+
+\bibitem[Yang et~al.(2021)Yang, Hu, Babuschkin, Sidor, Liu, Farhi, Ryder,
+  Pachocki, Chen, and Gao]{yang2021mup}
+Greg Yang, Edward~J Hu, Igor Babuschkin, Szymon Sidor, Xiaodong Liu, David
+  Farhi, Nick Ryder, Jakub Pachocki, Weizhu Chen, and Jianfeng Gao.
+\newblock Tensor programs v: Tuning large neural networks via zero-shot
+  hyperparameter transfer.
+\newblock \emph{arXiv preprint arXiv:2203.03466}, 2021.
+
+\bibitem[Yang et~al.(2025)Yang, Lian, and Li]{yang2025uoe}
+Yujiao Yang, Jing Lian, and Linhui Li.
+\newblock Union of experts: Adapting hierarchical routing to equivalently
+  decomposed transformer.
+\newblock \emph{arXiv preprint arXiv:2503.02495}, 2025.
+
+\bibitem[Zhang et~al.(2026)Zhang, Hu, Li, Wu, and Tu]{zhang2026flashmhf}
+Minshen Zhang, Xiang Hu, Jianguo Li, Wei Wu, and Kewei Tu.
+\newblock Flash multi-head feed-forward network.
+\newblock \emph{arXiv preprint arXiv:2512.06989}, 2026.
+
+\bibitem[Zhang et~al.(2025)]{zhang2025mswa}
+Yixing Zhang et~al.
+\newblock Mswa: Refining local attention with multi-scale window attention.
+\newblock \emph{arXiv preprint arXiv:2501.01039}, 2025.
+
+\bibitem[Zhou et~al.(2024)]{zhou2024resformer}
+Zhanchao Zhou et~al.
+\newblock Value residual learning for alleviating attention concentration in
+  transformers.
+\newblock \emph{arXiv preprint arXiv:2410.17897}, 2024.
+
+\bibitem[Zhu et~al.(2025)Zhu, Huang, Huang, Zeng, Mao, Wu, Min, and
+  Zhou]{hyperconnections2025}
+Defa Zhu, Hongzhi Huang, Zihao Huang, Yutao Zeng, Yunyao Mao, Banggu Wu, Qiyang
+  Min, and Xun Zhou.
+\newblock Hyper-connections.
+\newblock In \emph{ICLR}, 2025.
+
+\end{thebibliography}

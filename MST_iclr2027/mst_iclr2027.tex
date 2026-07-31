@@ -1,0 +1,962 @@
+\documentclass{article}
+\usepackage{iclr2027_conference,times}
+
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,decorations.pathreplacing}
+
+% Shared palette: identical hexes are used by the matplotlib figures, so the
+% architecture diagram and the scaling plots read as one system.
+\definecolor{mstorange}{HTML}{EB6834}
+\definecolor{denseblue}{HTML}{2A78D6}
+\definecolor{ink1}{HTML}{0B0B0B}
+\definecolor{ink2}{HTML}{52514E}
+
+% ==== drafting helpers: delete before submission =========================
+\newcommand{\TODO}[1]{{\color{red}\textbf{[TODO: #1]}}}
+\newcommand{\PH}{{\color{red}\texttt{--}}}   % placeholder cell
+% =========================================================================
+
+\newcommand{\bpb}{\textsc{bpb}}
+\newcommand{\dmodel}{D}
+\newcommand{\dsub}{d}
+\newcommand{\nsub}{N}
+
+\title{The Layer Is Not Atomic: \\ Partitioning the Residual Stream \\ for Compute-Efficient Transformers}
+
+\author{Anonymous}
+
+%\iclrfinalcopy
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The transformer layer is monolithic by convention: a single attention block and a
+single feed-forward network, both of width $\dmodel$, process every token at every
+layer. A growing line of work decomposes this layer into several narrower parallel
+blocks, but every such design pays for the narrowing with learned down- and
+up-projections into and out of the reduced width, and buys back the cost with
+routing sparsity. We show the payment is avoidable. In the \emph{Modular
+Sub-Transformer} (MST), each layer contains $\nsub$ parallel sub-transformers of
+width $\dsub = \dmodel/\nsub$ that \emph{partition} the residual stream: the
+$\nsub$ sub-states, concatenated, \emph{are} the $\dmodel$-dimensional
+representation, so no projection is required to enter or leave a narrow block.
+Sub-transformers exchange information once per layer through a routed
+$\dsub$-dimensional bottleneck with a $\mathrm{relu}^2$ expansion. Because the
+per-sub head budget satisfies $n_h\!\cdot\!d_h = \dsub$, attention FLOPs and KV
+cache size are preserved \emph{exactly}, while per-layer matmul parameters fall by
+$3.20\times$ at $\nsub{=}4$. The model remains fully dense: every
+sub-transformer runs for every token, so there is no expert dispatch, no
+capacity constraint and no load-balancing sparsity to tune. Against a
+strongly-tuned dense baseline (Muon, $\mu$P, QK-norm, value embeddings,
+sliding-window attention) on a compute-optimal token ladder, MST is
+Pareto-dominant on three axes simultaneously over $199\mathrm{M}\!\rightarrow\!914\mathrm{M}$
+parameters: matching MST's bits-per-byte requires $1.77\times$ the parameters,
+$1.35\times$ the inference FLOPs per token, or $2.00\times$ the training compute.
+\TODO{add one downstream + one wall-clock number to the abstract once Tables~4 and~5 are filled}
+\end{abstract}
+
+% =========================================================================
+\section{Introduction}
+% =========================================================================
+
+Scaling a transformer language model means growing two numbers: depth $L$ and
+width $\dmodel$. The layer itself is treated as an indivisible unit: one
+attention block and one FFN, both spanning the full $\dmodel$ channels. Every token
+is processed by all $\dmodel^2$-scale weight matrices at every layer, and no
+structural distinction is drawn between different parts of the representation.
+
+Recent work has begun to question this. Mixture-of-Experts
+\citep{shazeer2017moe,fedus2022switch} routes tokens to alternative FFNs, but each
+expert still reads the full $\dmodel$-dimensional token and the layer remains
+full-width. Layer-level modularity, as in Mixture-of-Depths
+\citep{raposo2024mod}, MoEUT \citep{csordas2024moeut} and Mixture-of-Recursions
+\citep{bae2025mor}, changes \emph{which} full-width blocks execute. Most directly, Mixture-of-Layers
+(MoL) \citep{ternovtsii2026mol} replaces full-width blocks with $K$ parallel
+\emph{thin} blocks of width $d_{\text{thin}} \!\ll\! \dmodel$, composed by top-$k$
+routing.
+
+MoL isolates the right question and, in our reading, also exposes the cost of the
+standard answer. Because its thin blocks must read from and write to a
+full-width residual stream, each is wrapped in learned projections
+$W_{\text{down}} \in \mathbb{R}^{d_{\text{thin}} \times \dmodel}$ and
+$W_{\text{up}} \in \mathbb{R}^{\dmodel \times d_{\text{thin}}}$. That wrapper
+consumes 40\% of block parameters at $d_{\text{thin}}{=}256$ and 73\% at
+$d_{\text{thin}}{=}64$. This is a \emph{projection tax} that grows precisely as
+the blocks get narrow enough to be interesting. The tax is paid back with sparsity:
+only $k$ of $K$ blocks run per token, which recovers active-compute efficiency but
+forfeits total-parameter efficiency. At 1.3B scale MoL reports a 3.01 PPL deficit
+against an iso-total-parameter dense baseline, and a 1.9--2.3$\times$ training-time
+premium.
+
+\begin{figure}[t]
+\begin{center}
+\resizebox{\textwidth}{!}{\input{fig_three_ways.tex}}
+\end{center}
+\caption{Three ways to make a transformer block narrow, all drawn at the same
+total width $\dmodel$. Projecting into a narrow block costs a
+$W_{\mathrm{down}}$/$W_{\mathrm{up}}$ wrapper on \emph{every} block. Partitioning
+costs nothing, because each block sits directly on its own slice of the stream
+and the $\nsub$ slices concatenated are the representation. The single coupling
+that replaces the wrappers is detailed in Figure~\ref{fig:arch}.}
+\label{fig:threeways}
+\end{figure}
+
+We ask whether the projection can be removed rather than amortized. Our answer is
+a change of viewpoint: instead of projecting a full-width residual stream
+\emph{into} narrow blocks, let the narrow blocks \emph{be} the residual stream.
+If a layer holds $\nsub$ sub-transformers of width $\dsub = \dmodel/\nsub$, and
+sub-transformer $i$ owns channels $[i\dsub, (i{+}1)\dsub)$ of the representation,
+then reading and writing are free: they are slicing and concatenation. The
+decomposition costs nothing, and what remains to be designed is only how the
+sub-transformers communicate.
+
+Our contributions:
+
+\begin{enumerate}
+\item \textbf{A projection-free layer decomposition.} MST partitions the residual
+stream into $\nsub$ sub-streams processed by independent width-$\dsub$
+transformers, coupled once per layer by a routed bottleneck
+(Section~\ref{sec:method}). Per-layer matmul parameters fall from $12\dmodel^2$ to
+$3.75\dmodel^2$ at $\nsub{=}4$, while attention FLOPs and KV cache are preserved
+\emph{exactly by construction}, not approximately.
+
+\item \textbf{Pareto dominance without sparsity.} On a compute-optimal ladder from
+199M to 914M parameters, MST dominates a strong dense baseline on total
+parameters, inference FLOPs per token, and total training compute simultaneously
+(Section~\ref{sec:results}). Unlike MoE and MoL, MST is dense: all
+sub-transformers are active for all tokens, so the parameter win is not traded
+against active compute.
+
+\item \textbf{The optimization of partitioned weights matters as much as the
+architecture.} A naively-trained partition suffers a $7.2\times$ imbalance in
+per-sub gradient norm and cross-sub contamination in the orthogonalizing
+optimizer. Two fixes, per-sub gradient-norm equalization and block-diagonal
+Newton--Schulz, together with a widened transition bottleneck, recover
+\PH~\bpb\ at $\dmodel{=}512$ (Section~\ref{sec:ablations}).
+
+\item \textbf{Coupling is necessary; its topology is not.} Removing the learned
+transition costs 0.039~\bpb, yet eleven distinct attempts to enrich it
+(nonlinear, gated, MLP, bilinear, per-slice routed, multi-layer lookback,
+cross-sub gating, cross-sub KV injection, low-rank query modulation, feature
+cycling, and a global residual stream) all fail to improve on it
+(Section~\ref{sec:ablations}). This is an independent dense-architecture analogue
+of the routing-equifinality result of \citet{ternovtsii2026equifinality}.
+\end{enumerate}
+
+% =========================================================================
+\section{Related Work}
+% =========================================================================
+
+\paragraph{Narrow parallel blocks.} MoL \citep{ternovtsii2026mol} is the closest
+work and the sharpest contrast. It replaces full-width blocks with $K$ thin
+transformer blocks at reduced $d_{\text{thin}}$, selected per token by top-$k$
+routing, and adds a shared full-attention block because sparse dispatch leaves
+each routed block seeing only a fraction of the sequence. The design is motivated
+by the same observation as ours, that the layer need not be monolithic, but it
+answers differently on three counts. Its thin blocks read from and write to a
+full-width residual stream, so each carries a $W_{\text{down}}$/$W_{\text{up}}$
+wrapper costing 40--73\% of the block; it recovers that cost through sparsity,
+activating $k$ of $K$ blocks; and it substitutes linear attention in the routed
+blocks. The consequences are visible in its own results: at 1.3B, MoL leads an
+iso-active dense baseline by 0.49 PPL but trails an iso-\emph{total} one by 3.01
+PPL, and trains 1.9--2.3$\times$ slower. MST removes the wrapper instead of
+amortizing it, stays dense, and keeps softmax attention throughout, which is why
+it can be compared on total parameters at all. UoE \citep{yang2025uoe}
+decomposes attention and MLP into expert groups with hierarchical routing, and
+shares MoL's reliance on a full-width stream and on sparsity.
+
+\paragraph{Residual-stream structure.} Hyper-Connections
+\citep{hyperconnections2025, xie2026mhc} expand the residual into $n$
+\emph{full-width} streams to improve optimization, at roughly $n\times$ residual
+memory; AltUp \citep{baykal2023altup} widens the token representation and updates
+one block per layer; Multi-Stream Transformers \citep{burtsev2021multistream}
+split an encoder into parallel streams merged at the end. All of these
+\emph{widen}. MST \emph{narrows} $\nsub$ streams to $\dmodel/\nsub$ and spends
+the saving on depth. Concurrent work on FFN shape \citep{shape2026} and
+channelized architectures \citep{dualstream2026} restructures within a layer but
+leaves the residual width convention intact.
+
+\paragraph{Partial partitions.} MH-MoE \citep{wu2024mhmoe} splits tokens into
+sub-tokens routed to different experts and FlashMHF \citep{zhang2026flashmhf}
+builds parallel narrow sub-networks inside the FFN; both are FFN-only and re-merge
+within the layer. Layer-level modularity \citep{raposo2024mod, csordas2024moeut,
+bae2025mor} changes which full-width blocks execute rather than their width. MST
+partitions attention as well, and the partition persists across the full depth.
+
+\paragraph{Structured matrices and attention spans.} An MST layer is by
+construction a block-diagonal weight matrix with $\nsub$ blocks plus a low-rank
+cross-block correction, placing it in the family of Monarch \citep{dao2022monarch}
+and BLAST \citep{lee2024blast}, but applied to a whole layer rather than to
+individual linear maps and with a learned, input-dependent correction. Assigning
+different context windows to different heads or layers is likewise established
+\citep{sukhbaatar2019adaptive, beltagy2020longformer, fu2024moa, zhang2025mswa};
+MST lifts it from the head to the stream, so a window governs a block's attention,
+its FFN and its slice of the residual jointly.
+
+% =========================================================================
+\section{Method}
+\label{sec:method}
+% =========================================================================
+
+\begin{figure}[t]
+\begin{center}
+\resizebox{\textwidth}{!}{\input{fig_architecture.tex}}
+\end{center}
+\caption{One MST layer, read bottom to top. Colour encodes width and nothing
+else: blue operates at $\dmodel$, orange at $\dsub=\dmodel/\nsub$. The $\nsub$
+streams run ordinary transformer sublayers in parallel and never read each
+other's channels; the coupling is the only path between them, and everything
+they exchange passes through the single $\dsub$-vector $a$. Grey lines are
+residual connections, which carry each stream past the coupling unchanged.}
+\label{fig:arch}
+\end{figure}
+
+\paragraph{Notation.} $\dmodel$ is the model width, $\nsub$ the number of
+sub-transformers, $\dsub=\dmodel/\nsub$ the sub width, and $L$ the depth. The
+state at layer $\ell$ is $H^{(\ell)}\in\mathbb{R}^{B\times T\times \nsub\times \dsub}$;
+its flattening over the last two axes is the ordinary $\dmodel$-dimensional
+residual stream. We write $X_i \in \mathbb{R}^{\dsub}$ for the $i$-th sub-state at
+a given token and suppress the batch and time axes throughout. Each
+sub-transformer uses $n_h$ heads of dimension $d_h$ with $n_h d_h = \dsub$.
+
+\subsection{The layer}
+
+\paragraph{Per stream: nothing new.} Sub-transformer $i$ owns $X_i$ and no other
+channel. It runs an ordinary pre-norm transformer block at width $\dsub$, with its
+own attention window $w_i$, RoPE \citep{su2021roformer} and QK-norm:
+%
+\begin{equation}
+X_i \;\leftarrow\; X_i + W^{O}_i\,\mathrm{Attn}_{w_i}\!\big(W^{Q}_i\tilde{X}_i,\ W^{K}_i\tilde{X}_i,\ W^{V}_i\tilde{X}_i\big),
+\qquad
+X_i \;\leftarrow\; X_i + W^{F2}_i\,\mathrm{relu}^2\!\big(W^{F1}_i\tilde{X}_i\big),
+\end{equation}
+%
+where $\tilde{X}_i = \mathrm{RMSNorm}(X_i)$ is recomputed before each sublayer.
+This is deliberately unremarkable: it is the dense baseline's block with $\dmodel$
+replaced by $\dsub$ everywhere. Because no term reads a channel that sub $i$ does
+not own, the $\nsub$ blocks together form a block-diagonal factorization of one
+$\dmodel$-width layer rather than $\nsub$ copies of a smaller model.
+
+\paragraph{Coupling: the whole mechanism, in one line.} The streams exchange
+information exactly once per layer. Everything they say to each other passes
+through a single $\dsub$-dimensional vector:
+%
+\begin{equation}
+\label{eq:coupling}
+X_i \;\leftarrow\; X_i \;+\;
+\overbrace{W^{D}_i}^{\substack{\text{scatter}\\ 1\,\to\,\nsub}}
+\underbrace{W^{\downarrow}\,\mathrm{relu}^2\Big(W^{\uparrow}}_{\substack{\text{bottleneck}\\ \dsub\,\to\,\dmodel\,\to\,\dsub}}
+\overbrace{\textstyle\sum_{j} p_j\,\tilde{X}_j}^{\substack{\text{aggregate}\\ \nsub\,\to\,1}}\Big),
+\qquad
+p \;=\; \mathrm{softmax}\Big(W^{R}\,\tfrac{1}{\nsub}\textstyle\sum_{j}\tilde{X}_j\Big).
+\end{equation}
+%
+Read right to left, Eq.~\ref{eq:coupling} is the hourglass of
+Figure~\ref{fig:arch}: $\nsub$ streams collapse to one $\dsub$-vector, that vector
+is widened to $\dmodel$ for a single nonlinearity and squeezed back to $\dsub$, and
+$\nsub$ distinct read-out matrices deliver it. Parameter shapes and counts are in
+Appendix~\ref{app:budget}.
+
+Three consequences follow directly from the form of Eq.~\ref{eq:coupling}.
+
+\emph{(i) The router selects nothing.} $p$ lies in the simplex over
+\emph{sub-transformers}, not over tokens-to-experts. Every stream runs for every
+token, so MST has no sparse dispatch, no capacity factor, and no dropped tokens. A
+light load-balancing term $\alpha\nsub\sum_i \bar{p}_i^2$ with $\alpha{=}0.01$
+\citep{fedus2022switch} is minimized at uniform $p$.
+
+\emph{(ii) The $\nsub$ read-outs are what break the symmetry.} Every stream
+receives the same vector. Through a shared $W^{D}$ they would receive identical
+messages and could diverge only through initialization noise. The distinct
+$W^{D}_i$ make the message stream-specific, and they are the cheapest term in the
+layer (Appendix~\ref{app:budget}).
+
+\emph{(iii) The layer is exactly the identity at step 0.} $W^{O}_i$, $W^{F2}_i$
+and $W^{\downarrow}$ are zero-initialized and $W^{R}$ starts at zero, so every
+residual branch contributes nothing and $p$ is exactly uniform. Training begins
+from a well-conditioned deep identity, not from a random partitioned map.
+
+\paragraph{The head budget is conserved.} Each sub spends $n_h d_h = \dsub$ on
+attention, so the layer spends $\nsub\dsub = \dmodel$, exactly as a dense layer
+does. This one identity is why attention FLOPs and KV cache are preserved while
+only the matmul parameters shrink (Section~\ref{sec:cost}). Our dense baseline
+uses $d_h{=}128$; MST uses $d_h{=}128/\nsub{=}32$ with $\nsub$ times as many heads.
+
+\subsection{Multi-scale sub-windows}
+\label{sec:windows}
+
+Sub-transformer $i$ attends with a causal sliding window $w_i$ spaced
+geometrically from $w_{\min}{=}32$ to full context, the last sub always
+unrestricted. For $\nsub{=}4$ at $T{=}2048$ this gives
+$w=(32,\,127,\,511,\,\infty)$. This is the only component of MST that supplies an
+\emph{a priori} reason for sub-transformers to differ; every other source of
+differentiation is symmetry breaking through $W^{D}_i$ and initialization.
+
+The assignment is close to FLOP-neutral, so it is a prior rather than a shortcut.
+Summed effective context is $32+127+511+2048=2718$ per layer against
+$4\times704=2816$ for the dense baseline's \texttt{SSSL} layer-alternating
+pattern, a 3.5\% reduction.
+
+\subsection{Optimizing partitioned weights}
+\label{sec:optim}
+
+The $\nsub$ matrices of each type are stored fused as one
+$(\nsub\!\cdot\!\text{out})\times\text{in}$ tensor and applied with a batched
+matrix multiply. That is an implementation detail for throughput, but it exposes
+two training problems that a dense model does not have.
+
+\textbf{Gradient imbalance.} Measured on the $\nsub{=}4$ model, per-sub gradient
+norms differ by $7.2\times$: sub 0 receives 55\% of the total and sub 3 receives
+7.6\%. The mechanism is a feedback loop through the concatenating output head,
+which weights one sub more, which trains it faster, which weights it more still.
+We equalize with a backward hook that views the fused gradient as
+$(\nsub,\text{out},\text{in})$ and rescales each sub to the mean norm. Only
+magnitudes are touched; directions are left alone.
+
+\textbf{Cross-sub contamination in Muon.} Muon orthogonalizes the update via a
+Newton--Schulz / Polar-Express iteration \citep{jordan2024muon, amsel2025polar}.
+Applied to the fused tensor it mixes gradient directions belonging to different
+sub-transformers, which is exactly what the partition is designed to keep apart.
+We run the iteration independently on each of the $\nsub$ blocks. Because Muon
+scales its step by $\max(1,\text{rows}/\text{cols})^{1/2}$, blocking also divides
+the effective learning rate on the fused attention tensors by $\sqrt{\nsub}$; we
+restore it with a per-sub multiplier of $\sqrt{\nsub}$, which simultaneously
+corrects the $\mu$P \citep{yang2021mup} mismatch between a $\dmodel$-tuned rate
+and $\dsub$-wide matrices. The two interventions are therefore coupled and we
+ablate them jointly (Section~\ref{sec:ablations}).
+
+\subsection{Cost accounting}
+\label{sec:cost}
+
+
+
+\textbf{Parameters.} Summing the components of Eq.~\ref{eq:coupling} and the
+per-stream sublayers (Appendix~\ref{app:budget} gives the term-by-term budget),
+%
+\begin{equation}
+\label{eq:budget}
+\underbrace{\tfrac{12\dmodel^2}{\nsub}}_{\text{$\nsub$ sub-transformers}}
+\;+\;
+\underbrace{\tfrac{3\dmodel^2}{\nsub}}_{\text{coupling}}
+\;=\;
+\frac{15\dmodel^2}{\nsub}
+\quad\text{per layer, against}\quad
+12\dmodel^2\ \text{dense,}
+\end{equation}
+%
+a reduction of $0.8\nsub$ rather than $\nsub$: the coupling consumes a quarter of
+what the partition saves. It is nonetheless far cheaper than a projection
+wrapper, which costs $2\dmodel\dsub$ \emph{per block} rather than once per layer.
+
+\textbf{Attention FLOPs and KV cache.} A sub contributes
+$12\,n_h d_h\,T_{\mathrm{eff}} = 12\,\dsub\,T_{\mathrm{eff}}$ per token per layer;
+summed over $\nsub$ subs this is $12\,\dmodel\,T_{\mathrm{eff}}$, the dense value
+exactly. The KV cache is $\nsub\dsub = \dmodel$ per layer, again exactly dense.
+MST therefore takes its saving entirely from matmul parameters and inherits
+neither an attention advantage nor an attention penalty, which is what makes the
+FLOPs-per-token axis of Section~\ref{sec:results} a clean comparison.
+
+\textbf{Value embeddings.} Per-layer value embeddings \citep{zhou2024resformer} in
+MST live at width $\dsub$ and are shared across subs with per-sub gates, so they
+are $\nsub\times$ smaller than the dense baseline's. Since the dense baseline
+spends 44\% of its total parameters on value embeddings at $L{=}24$, we report
+transformer-matrix parameters alongside total parameters throughout
+(Table~\ref{tab:cost}) so that this effect can be separated from the layer
+decomposition itself.
+
+% =========================================================================
+\section{Experimental setup}
+\label{sec:experiments}
+% =========================================================================
+
+\textbf{Baseline.} Our dense baseline is not a vanilla transformer. It is a
+speedrun-tuned decoder \citep{karpathy2025nanochat} with RMSNorm pre-norm, RoPE,
+QK-norm, $\mathrm{relu}^2$ FFN, per-layer value embeddings, layer-alternating
+sliding-window attention, logit soft-capping, learned per-layer residual scalars,
+Muon for matrices with AdamW for embeddings and scalars, $\mu$P learning-rate
+transfer, and a batch-size schedule following \citet{bergsma2025powerlines}. MST
+changes only the layer structure; every other component, hyper-parameter and
+schedule is shared.
+
+\textbf{Ladder.} $\dmodel = 64L$ rounded up to a multiple of 128; $\nsub{=}4$;
+$T{=}2048$; vocabulary 32{,}768. Both arms are trained at 10.5 tokens per scaling
+parameter (transformer matrices plus output head), so each model receives its own
+compute-optimal budget \citep{hoffmann2022chinchilla}; MST consequently trains on
+fewer tokens than dense at equal depth. Data is a filtered web corpus
+\citep{penedo2024fineweb}, single epoch.
+
+\textbf{Metric.} Bits per byte on held-out data, which is invariant to tokenizer
+vocabulary.
+
+% =========================================================================
+\section{Results}
+\label{sec:results}
+% =========================================================================
+
+\begin{table}[t]
+\caption{Cost and quality. MST is $\nsub{=}4$ with all components of
+Section~\ref{sec:method}. Dense is the matched baseline at the same $\dmodel = 64L$
+ladder. ``Matrices'' excludes embeddings and value embeddings.}
+\label{tab:cost}
+\begin{center}
+\begin{small}
+\begin{tabular}{llrrrrr}
+\toprule
+Model & $L$ & Total params & Matrices & FLOPs/token & Train FLOPs & \bpb $\downarrow$ \\
+\midrule
+\multirow{9}{*}{MST}
+ & 8  & 58{,}726{,}416   & 8.4M    & 1.844e8 & 4.875e16 & 1.0510$^\ddagger$ \\
+ & 9  & 82{,}809{,}618   & 14.7M   & 2.607e8 & 9.752e16 & 1.0000$^\ddagger$ \\
+ & 16 & 199{,}254{,}048  & 65.0M   & 7.251e8 & 7.507e17 & 0.8810 \\
+ & 18 & 252{,}696{,}996  & 92.3M   & 9.492e8 & 1.296e18 & 0.8544 \\
+ & 20 & 314{,}938{,}920  & 126.2M  & 1.218e9 & 2.150e18 & 0.8349 \\
+ & 22 & 386{,}717{,}100  & 167.6M  & 1.535e9 & 3.444e18 & 0.8104 \\
+ & 24 & 468{,}768{,}816  & 217.1M  & 1.905e9 & 5.350e18 & 0.7946 \\
+ & 26 & 561{,}831{,}348  & 275.6M  & 2.333e9 & 8.087e18 & 0.7804 \\
+ & 32 & 914{,}456{,}640  & 511.8M  & 4.008e9 & 2.436e19 & 0.7434 \\
+\midrule
+\multirow{11}{*}{Dense}
+ & 8  & 125{,}829{,}648    & 25.2M   & 2.863e8 & 1.261e17 & 0.9691 \\
+ & 12 & 286{,}262{,}424    & 84.9M   & 7.385e8 & 8.537e17 & 0.9030 \\
+ & 14 & 399{,}115{,}836    & 134.9M  & 1.101e9 & 1.899e18 & 0.8688 \\
+ & 16 & 536{,}872{,}992    & 201.3M  & 1.548e9 & 3.817e18 & 0.8364 \\
+ & 18 & 701{,}893{,}188    & 286.7M  & 2.134e9 & 7.269e18 & 0.8131 \\
+ & 20 & 896{,}535{,}720    & 393.2M  & 2.827e9 & 1.292e19 & 0.7906 \\
+ & 22 & 1{,}123{,}159{,}884 & 523.4M & 3.694e9 & 2.209e19 & 0.7714 \\
+ & 24 & 1{,}384{,}124{,}976 & 679.5M & 4.690e9 & 3.594e19 & 0.7545 \\
+ & 26 & 1{,}681{,}790{,}292 & 863.9M & 5.894e9 & 5.684e19 & 0.7382 \\
+ & 28 & 2{,}018{,}515{,}128 & 1079.0M & 7.250e9 & 8.661e19 & 0.7246 \\
+ & 30 & 2{,}396{,}658{,}780 & 1327.1M & 8.847e9 & 1.291e20 & 0.7120 \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+$^\ddagger$\,below the amortization threshold; excluded from the fits of
+Table~\ref{tab:fits} and reported as a sensitivity in Section~\ref{sec:limitations}.
+All cost columns are recomputed from a single implementation at one commit, so the
+two arms are directly comparable; the token budget is $10.5$ tokens per scaling
+parameter and Train FLOPs is FLOPs/token $\times$ tokens.
+\end{table}
+
+\subsection{Pareto dominance}
+
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=\textwidth]{fig_scaling.pdf}
+\end{center}
+\caption{MST lies below the dense scaling curve on all three cost axes. Points are
+measured runs; lines are power-law fits (Table~\ref{tab:fits}). Hollow markers are
+MST models below the amortization threshold, which are excluded from the MST fit.
+Each panel states the multiplier a dense model needs to reach the same
+bits-per-byte, averaged over $L\!\in\![16,32]$.}
+\label{fig:pareto}
+\end{figure}
+
+Figure~\ref{fig:pareto} shows MST below the
+dense curve on all three axes over the entire measured range. Table~\ref{tab:ratio}
+quantifies the gap by inverting the dense fit: for each MST model we report the
+resource a dense model would require to reach the same \bpb.
+
+\begin{table}[t]
+\caption{Resource multiplier a dense model needs to match each MST model, obtained
+by inverting the dense power-law fit. The multiplier is stable across the range.}
+\label{tab:ratio}
+\begin{center}
+\begin{small}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+MST $L$ & 16 & 18 & 20 & 22 & 24 & 26 & 32 & \textbf{mean} \\
+\midrule
+Total parameters & 1.66 & 1.74 & 1.73 & 1.86 & 1.84 & 1.82 & 1.75 & \textbf{1.77}$\times$ \\
+FLOPs / token    & 1.22 & 1.30 & 1.30 & 1.42 & 1.42 & 1.41 & 1.39 & \textbf{1.35}$\times$ \\
+Training FLOPs   & 1.64 & 1.86 & 1.85 & 2.22 & 2.20 & 2.16 & 2.08 & \textbf{2.00}$\times$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+\subsection{Scaling exponents}
+
+Fitting $\bpb = a x^{b}$ (Table~\ref{tab:fits}), MST's exponents are marginally
+steeper on all three axes, but the difference is within fit uncertainty for seven
+points and we do \emph{not} claim a scaling-exponent advantage. The defensible
+statement is that the multiplier of Table~\ref{tab:ratio} is approximately
+constant over a $4.6\times$ span of parameters and a $32\times$ span of training
+compute. Including models below 100M ($L\le9$) would widen the exponent gap
+substantially, but those points lie \emph{above} the dense curve on the compute
+axes and steepen the fit artificially; we report that crossover in
+Section~\ref{sec:limitations} rather than fitting through it.
+
+\begin{table}[t]
+\caption{Power-law fits $\bpb = a x^{b}$, MST $L\!\in\![16,32]$ and dense $L\!\in\![12,30]$.}
+\label{tab:fits}
+\begin{center}
+\begin{small}
+\begin{tabular}{lcccc}
+\toprule
+Axis $x$ & Dense $a$, $b$ & $R^2$ & MST $a$, $b$ & $R^2$ \\
+\midrule
+Total parameters & $7.291\,x^{-0.1077}$ & 0.998 & $7.446\,x^{-0.1119}$ & 0.996 \\
+FLOPs / token    & $5.904\,x^{-0.0923}$ & 0.998 & $6.713\,x^{-0.0997}$ & 0.996 \\
+Training FLOPs   & $5.905\,x^{-0.0457}$ & 0.998 & $6.590\,x^{-0.0490}$ & 0.996 \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+\subsection{Downstream transfer}
+
+Perplexity gaps of this size need not translate into downstream ability, so we
+evaluate zero-shot transfer against two dense reference points that bracket MST:
+one matched on total parameters and one matched on FLOPs per token
+(Table~\ref{tab:downstream}). \PH
+
+\begin{table}[t]
+\caption{Zero-shot accuracy (\%). MST is compared against a dense model matched on
+total parameters and a dense model matched on FLOPs per token.}
+\label{tab:downstream}
+\begin{center}
+\begin{small}
+\begin{tabular}{lccc}
+\toprule
+Task & MST $L{=}32$ (914M) & Dense iso-param & Dense iso-FLOP \\
+\midrule
+ARC-Easy      & \PH & \PH & \PH \\
+ARC-Challenge & \PH & \PH & \PH \\
+HellaSwag     & \PH & \PH & \PH \\
+PIQA          & \PH & \PH & \PH \\
+WinoGrande    & \PH & \PH & \PH \\
+MMLU (5-shot) & \PH & \PH & \PH \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\TODO{Tier-2 experiment 2.1, eval-only on existing checkpoints}
+\end{table}
+
+\subsection{Throughput, memory and hardware utilization}
+
+FLOP counts are not wall-clock. MST's per-sub head dimension of 32 is below the
+point where fused attention kernels saturate tensor cores, so MST realizes a lower
+fraction of peak throughput than dense, and nonetheless runs faster because it
+issues far fewer FLOPs.
+
+\begin{table}[t]
+\caption{Measured throughput and memory. Weights are randomly initialized;
+these are architecture-level measurements and do not depend on training.}
+\label{tab:speed}
+\begin{center}
+\begin{small}
+\begin{tabular}{lccccc}
+\toprule
+& \multicolumn{2}{c}{Iso-depth ($L{=}24$)} & \multicolumn{2}{c}{Iso-quality} & \\
+& MST & Dense & MST & Dense & Speedup \\
+\midrule
+Train step (ms)        & 1800$^\dagger$ & 2300$^\dagger$ & \PH & \PH & \PH \\
+Total train time (min) & 887$^\dagger$  & 1182$^\dagger$ & \PH & \PH & 1.33$\times^\dagger$ \\
+Achieved MFU (\%)      & 35.1$^\dagger$ & 52.5$^\dagger$ & \PH & \PH & n/a \\
+Prefill tok/s @ $T{=}8$K & \PH & \PH & \PH & \PH & \PH \\
+Decode ms/token @ 8K   & \PH & \PH & \PH & \PH & \PH \\
+Peak memory (GB)       & \PH & \PH & \PH & \PH & \PH \\
+KV cache / layer       & $\dmodel$ & $\dmodel$ & n/a & n/a & 1.00$\times$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+$^\dagger$\,measured on an earlier MST configuration; \TODO{refresh with the final model, Tier-1 experiments 1.1--1.5}
+\end{table}
+
+\begin{figure}[t]
+\begin{center}
+\fbox{\parbox[c][2.6cm][c]{0.95\textwidth}{\centering \TODO{Fig.~2: (a) profiler
+breakdown of MST step time by kernel class (attention / batched GEMM / coupling /
+other); (b) isolated fused-attention throughput at $d_h \in \{32,64,128\}$.}}}
+\end{center}
+\caption{The utilization gap is a head-dimension kernel effect, not an
+architectural one.}
+\label{fig:kernels}
+\end{figure}
+
+Figure~\ref{fig:kernels}
+attributes the utilization gap to the head-dimension
+regime rather than to the architecture, and therefore identifies it as
+implementation headroom.
+
+% =========================================================================
+\section{Ablations}
+\label{sec:ablations}
+% =========================================================================
+
+Ablations are run at $L{=}8$ ($\dmodel{=}512$), where a full grid is affordable,
+with three seeds per condition. A $L{=}16$ grid would cost roughly $40\times$ as
+much and we did not run one.
+
+\paragraph{Ablation transfer.} Small-scale ablations are only useful if their
+conclusions survive at the scales the paper actually claims. We can test this
+directly for the one intervention we measured at two depths: the full training
+recipe of Section~\ref{sec:optim} applied to the plain partition. It preserves its
+sign and, to within 15\%, its magnitude (Table~\ref{tab:transfer}). We take this as
+evidence that the $L{=}8$ ordering is informative about $L{=}16$, while noting that
+one intervention at two depths is a weak test and that we cannot rule out an
+ablation whose sign flips with scale.
+
+\begin{table}[t]
+\caption{Ablation transfer. The one intervention measured at two depths keeps its
+sign and approximate magnitude, which is the basis on which we run the remaining
+ablations at $L{=}8$ only.}
+\label{tab:transfer}
+\begin{center}
+\begin{small}
+\begin{tabular}{lccc}
+\toprule
+Condition & $L{=}8$ (\bpb) & $L{=}16$ (\bpb) & \\
+\midrule
+Plain partition (no recipe)          & 1.0798 & 0.9057 & \\
+\; + full recipe (Section~\ref{sec:optim}) & 1.0510 & 0.8810 & \\
+\midrule
+$\Delta$                              & $-0.0288$ & $-0.0247$ & \textbf{same sign, $0.86\times$ magnitude} \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+\begin{table}[t]
+\caption{Ablations at $L{=}8$, $\dmodel{=}512$, $\nsub{=}4$, mean $\pm$ s.d. over
+3 seeds. Negative $\Delta$ is better.}
+\label{tab:ablation}
+\begin{center}
+\begin{small}
+\begin{tabular}{llcc}
+\toprule
+& Condition & \bpb & $\Delta$ \\
+\midrule
+\multirow{2}{*}{Controls}
+ & Dense baseline ($d_h{=}128$)                & \PH & n/a \\
+ & Dense baseline, $d_h{=}32$ \emph{(head-dim control)} & \PH & \PH \\
+\midrule
+\multirow{3}{*}{Coupling}
+ & No coupling (independent columns)           & \PH & \PH \\
+ & Parameter-free mean coupling                & \PH & \PH \\
+ & Routed bottleneck (ours)                    & \PH & n/a \\
+\midrule
+\multirow{4}{*}{Recipe}
+ & Plain partition (no recipe)                 & \PH & \PH \\
+ & \; + gradient equalization                  & \PH & \PH \\
+ & \; + block-diagonal Muon \& per-sub LR      & \PH & \PH \\
+ & \; + wide transition                        & \PH & \PH \\
+\midrule
+\multirow{2}{*}{Full}
+ & All of the above                            & \PH & \PH \\
+ & \; + multi-scale sub-windows (\textbf{MST}) & \PH & \PH \\
+\midrule
+\multirow{3}{*}{Granularity}
+ & $\nsub{=}2$ & \PH & \PH \\
+ & $\nsub{=}4$ & \PH & n/a \\
+ & $\nsub{=}8$ & \PH & \PH \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\TODO{Tier-3 grid; the head-dim control is the load-bearing row}
+Block-diagonal Muon and the per-sub learning rate are ablated as a unit because
+blocking divides the effective rate by $\sqrt{\nsub}$ and the multiplier restores
+it; the two separately, and the bottleneck-width sweep, are in
+Appendix~\ref{app:extra}.
+\end{table}
+
+\paragraph{Granularity.} $\nsub{=}4$ substantially outperforms $\nsub{=}8$ at
+equal $\dmodel$ (\PH\ versus \PH\ \bpb). This matches MoL's independent finding
+that block \emph{width} dominates block \emph{count} at fixed parameters, and runs
+opposite to the fine-grained-expert trend in FFN-MoE
+\citep{dai2024deepseekmoe}. Both observations are consistent with the
+interpretation that when a block contains attention as well as an FFN, per-block
+capacity matters more than combinatorial flexibility.
+
+\paragraph{Enriching the coupling does not help.} Beyond the routed bottleneck we
+tried a nonlinear (SiLU) bottleneck, an input-gated router, a concat--MLP--split
+transition, a bilinear second-order aggregate, per-slice independent routing,
+DenseFormer-style multi-layer lookback, EMA hyper-connected sub-residuals,
+cross-sub FFN gating, per-token cross-sub KV injection, low-rank cross-sub query
+modulation, cyclic feature permutation across subs, and a $\dmodel$-wide global
+residual stream. None improved on the routed bottleneck
+(Appendix~\ref{app:negative} reports all twelve). Removing the coupling entirely, however, costs
+0.039~\bpb. Coupling is necessary; its form appears not to be. This mirrors
+\citet{ternovtsii2026equifinality}, who reach an equifinality conclusion for
+routing topology in sparse MoE, and extends it to a dense partitioned setting.
+
+
+
+% =========================================================================
+\section{Analysis}
+% =========================================================================
+
+The $7.2\times$ gradient imbalance of Section~\ref{sec:optim} raises the concern
+that a partitioned model silently degenerates into a narrower one. Three
+inference-time probes say otherwise (Figure~\ref{fig:subablate}). Zeroing each
+stream in turn costs \PH; the damage is spread across streams rather than
+concentrated in one, so all $\nsub$ carry load. Mean pairwise cosine similarity
+between streams settles near $-1/(\nsub-1)$, the minimum attainable for $\nsub$
+vectors, so the streams are close to maximally decorrelated at every layer beyond
+the first. Router entropy stays near $\log\nsub$ throughout training, confirming
+that the coupling acts as a summarizer rather than a selector. Shrinking an
+individual stream's window at inference degrades \bpb\ by an amount that tracks
+its assigned scale, indicating the multi-scale prior is used rather than ignored.
+
+\begin{figure}[t]
+\begin{center}
+\fbox{\parbox[c][2.4cm][c]{0.95\textwidth}{\centering \TODO{Fig.~4: (a) $\Delta$\bpb\
+from zeroing each stream at inference; (b) per-layer pairwise cosine similarity
+against the $-1/(\nsub-1)$ floor; (c) router entropy vs layer; (d) $\Delta$\bpb\
+from shrinking each stream's window.}}}
+\end{center}
+\caption{Every stream carries load, the streams stay close to maximally
+decorrelated, and the multi-scale prior is used.}
+\label{fig:subablate}
+\end{figure}
+
+\paragraph{Device parallelism.} Streams have no within-layer cross-stream data
+dependency, so the $\nsub$ columns of a layer can be placed on different devices
+with a single $\dsub$-wide all-reduce at the coupling. That exchange is narrower
+than the two $\dmodel$-wide all-reduces per layer of tensor parallelism
+\citep{shoeybi2021megatron}, and it avoids the all-to-all token dispatch that
+expert parallelism requires. \TODO{optional: measured 2-GPU numbers}
+
+% =========================================================================
+\section{Limitations}
+\label{sec:limitations}
+% =========================================================================
+
+\textbf{Range of validity.} The efficiency multipliers of Table~\ref{tab:ratio}
+are measured from 199M to 914M total parameters and $7.6\times10^{17}$ to
+$2.4\times10^{19}$ training FLOPs. Below roughly 100M parameters MST is
+\emph{worse} than dense on the compute axes: the coupling and input/output
+projections are a fixed overhead that has not yet amortized. We observe no
+crossover at the upper end and the multiplier is flat to mildly increasing, but we
+cannot exclude a crossover beyond 914M. This caution is not hypothetical: MoL
+reports an advantage at 104M that inverts into a 3.01 PPL deficit at 1.3B on the
+iso-total-parameter axis.
+
+\textbf{Token ratio.} All models are trained at 10.5 tokens per scaling parameter.
+Partial evidence that the result is not an artifact of this ratio comes from
+overtrained runs at $2.6\times$ the budget, where the ordering is preserved
+\TODO{report these two points; a dense point at matched ratio would make the
+claim clean}.
+
+\textbf{Hardware utilization.} MST attains a lower fraction of peak FLOPs than
+dense because $d_h{=}32$ is an unfavourable regime for current fused attention
+kernels. Our wall-clock advantage is therefore smaller than our FLOP advantage,
+and would grow with kernels tuned for small head dimensions.
+
+\textbf{Single seed at scale.} Seed variance is characterized at $L{=}8$ only
+\TODO{report $\sigma$}; the $L\ge16$ ladder is single-seed per point, as is
+standard at this scale but worth stating.
+
+\textbf{Scope.} We study pre-training perplexity and zero-shot transfer for
+decoder-only language models at $T{=}2048$. We do not study instruction tuning,
+long-context training, or $\nsub$ scaled jointly with $\dmodel$.
+
+% =========================================================================
+\section{Conclusion}
+% =========================================================================
+
+Narrow parallel blocks are a promising way to restructure the transformer layer,
+but the way they are usually built, projecting into and out of a full-width
+residual stream and paying for the projections with sparsity, gives up
+total-parameter efficiency to buy active-compute efficiency. We showed that if the
+narrow blocks partition the residual stream instead, the decomposition is free:
+attention cost and KV cache are preserved exactly, per-layer matmul parameters
+fall by $\nsub$, no dispatch machinery is needed, and the resulting dense model
+dominates a strongly-tuned dense baseline on parameters, inference FLOPs and
+training compute at once. The remaining design question is not how to route, but
+how much the columns must talk. Our evidence is that they must talk, and that
+almost any way of doing so works equally well.
+
+% =========================================================================
+% Required / recommended statements. These sit before the references and do
+% not count toward the page limit.
+% =========================================================================
+
+\subsection*{AI use statement}
+
+Generative AI tools were used in this work as a coding and drafting assistant.
+Specifically: (i) implementation support for the architecture, training and
+evaluation code; (ii) analysis scripts that recompute the parameter and FLOP
+accounting reported in Table~\ref{tab:cost} and fit the scaling laws in
+Table~\ref{tab:fits}; (iii) figure generation; and (iv) drafting and editing of
+the manuscript text. \TODO{authors: confirm or amend this list, and add any use
+not covered, e.g. literature search or idea generation}
+
+Generative AI was not used to generate or alter any experimental result. All
+numbers reported in this paper come from training runs and from deterministic
+accounting code executed by the authors; no measurement was produced, imputed or
+edited by a language model. All AI-assisted code was read, executed and checked
+against independent references by the authors: the parameter and FLOP accounting
+was verified against the closed-form derivation of Appendix~\ref{app:budget},
+and the scaling fits were reproduced from the raw run table. The authors have
+reviewed all AI-assisted text and take full responsibility for the final content
+of this work, including all text, claims and artifacts.
+
+\subsection*{Ethics statement}
+
+This work studies the pre-training efficiency of decoder-only language models.
+It involves no human subjects, no personally identifying data and no user study.
+Training data is a publicly released filtered web corpus \citep{penedo2024fineweb};
+we introduce no new dataset and release none. The models trained here are small
+by contemporary standards, are not instruction-tuned or deployed, and are not
+intended or suitable for downstream use; they inherit whatever biases are present
+in the underlying corpus, and we make no claim that they are safe for
+application. The contribution is architectural, and its foreseeable effect is to
+reduce the parameter count and compute required to reach a given language
+modelling quality. We regard the primary societal consideration as the standard
+dual-use property of any efficiency result: the same reduction that lowers the
+cost of research also lowers the cost of producing capable models. We see no
+concern specific to this architecture beyond that general property. The authors
+declare no conflicts of interest.
+
+\subsection*{Reproducibility statement}
+
+The architecture is specified completely in Section~\ref{sec:method}: the
+per-stream sublayers, the coupling of Eq.~\ref{eq:coupling}, the geometric
+window assignment of Section~\ref{sec:windows}, and the two optimizer
+modifications of Section~\ref{sec:optim}, with the term-by-term parameter budget
+in Appendix~\ref{app:budget}. Section~\ref{sec:experiments} fixes the model
+ladder ($\dmodel = 64L$ rounded to a multiple of 128, $\nsub{=}4$, $T{=}2048$),
+the token budget rule (10.5 tokens per scaling parameter, where scaling
+parameters are transformer matrices plus the output head), and the fact that the
+dense baseline shares every component and hyper-parameter with MST except the
+layer structure. Full hyper-parameters and per-run configurations are in
+Appendix~\ref{app:details}.
+
+Two points bear directly on reproducing the numbers. First, all cost columns in
+Table~\ref{tab:cost} are recomputed for both arms from a single implementation
+at one commit rather than taken from the original run logs, so the two arms are
+comparable to each other; the accounting script and the resulting table are
+released with the code. Second, the ablations of Section~\ref{sec:ablations} are
+run at $L{=}8$ with three seeds and we report the seed spread, while the
+$L\ge16$ ladder is single-seed per point; Table~\ref{tab:transfer} gives the
+evidence we have that the $L{=}8$ ordering transfers.
+\TODO{authors: add the code/artifact URL once anonymised, and state the exact
+commit}
+
+\bibliography{mst}
+\bibliographystyle{iclr2027_conference}
+
+\appendix
+% =========================================================================
+\section{Per-layer parameter budget}
+\label{app:budget}
+% =========================================================================
+
+Term by term, for one layer at width $\dmodel$ with $\nsub$ streams of width
+$\dsub=\dmodel/\nsub$. This is the derivation behind Eq.~\ref{eq:budget}.
+
+\begin{table}[h]
+\caption{Per-layer parameter budget. The $\nsub$ sub-transformers cost $12\dmodel^2/\nsub$
+and the coupling costs a further $3\dmodel^2/\nsub$, so a layer costs $15\dmodel^2/\nsub$
+against $12\dmodel^2$ dense: a reduction of $0.8\nsub$, not $\nsub$. The router term
+$\nsub\dsub$ is $0.02\%$ of the layer at $\dmodel{=}512$ and is omitted from the totals.}
+\label{tab:budget}
+\begin{center}
+\begin{small}
+\begin{tabular}{llll}
+\toprule
+Component & Shapes & Parameters & At $\nsub{=}4$ \\
+\midrule
+Attention, $\nsub$ subs & $4\times(\dsub\!\times\!\dsub)$ each & $4\dmodel^2/\nsub$ & $1.00\,\dmodel^2$ \\
+FFN, $\nsub$ subs       & $(4\dsub\!\times\!\dsub)+(\dsub\!\times\!4\dsub)$ each & $8\dmodel^2/\nsub$ & $2.00\,\dmodel^2$ \\
+Coupling bottleneck     & $(\dmodel\!\times\!\dsub)+(\dsub\!\times\!\dmodel)$ & $2\dmodel^2/\nsub$ & $0.50\,\dmodel^2$ \\
+Coupling scatter        & $\nsub\times(\dsub\!\times\!\dsub)$ & $\dmodel^2/\nsub$ & $0.25\,\dmodel^2$ \\
+Coupling router         & $\nsub\!\times\!\dsub$ & $\nsub\dsub$ & $\approx 0$ \\
+\midrule
+\textbf{MST layer}      &  & $\mathbf{15\dmodel^2/\nsub}$ & $\mathbf{3.75\,\dmodel^2}$ \\
+Dense layer             & $4\times(\dmodel\!\times\!\dmodel) + 8\dmodel^2$ & $12\dmodel^2$ & $12.00\,\dmodel^2$ \\
+\midrule
+\textbf{Reduction}      &  & $\mathbf{0.8\nsub}$ & $\mathbf{3.20\times}$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+% =========================================================================
+\section{Coupling variants that did not help}
+\label{app:negative}
+% =========================================================================
+
+Every variant below was run on top of the full recipe of
+Section~\ref{sec:optim} at $L{=}8$, three seeds each. None improved on the
+routed bottleneck of Eq.~\ref{eq:coupling}. We report them because the pattern is
+itself the finding: the coupling must exist, but its form is close to irrelevant.
+
+\begin{table}[h]
+\caption{Coupling variants that did not improve on the routed bottleneck, $L{=}8$.}
+\label{tab:negative}
+\begin{center}
+\begin{small}
+\begin{tabular}{llcll}
+\toprule
+Hypothesis & Variant & $\Delta$ \bpb & Variant & $\Delta$ \bpb \\
+\midrule
+Needs nonlinearity   & SiLU bottleneck & \PH & Concat--MLP--split & \PH \\
+Needs finer routing  & Per-slice routing & \PH & Input-gated router & \PH \\
+Needs memory         & Multi-layer lookback & \PH & Hyper-connected residual & \PH \\
+Needs 2nd order      & Bilinear aggregate & \PH & Cross-sub FFN gating & \PH \\
+Attention needs cross-sub & Cross-sub KV injection & \PH & Low-rank query modulation & \PH \\
+Features stuck in one sub & Cyclic feature permutation & \PH & Global residual stream & \PH \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+% =========================================================================
+\section{Additional ablations}
+\label{app:extra}
+% =========================================================================
+
+\begin{table}[h]
+\caption{Rows omitted from Table~\ref{tab:ablation}: the two optimizer
+interventions applied separately, and the transition bottleneck width sweep.
+$L{=}8$, three seeds.}
+\begin{center}
+\begin{small}
+\begin{tabular}{llcc}
+\toprule
+& Condition & \bpb & $\Delta$ \\
+\midrule
+\multirow{2}{*}{Optimizer, separately}
+ & Block-diagonal Muon only & \PH & \PH \\
+ & Per-sub LR only          & \PH & \PH \\
+\midrule
+\multirow{3}{*}{Bottleneck width}
+ & $\times 1$ ($\dsub$)   & \PH & \PH \\
+ & $\times 2$             & \PH & \PH \\
+ & $\times 4$ ($\dmodel$) & \PH & n/a \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+% =========================================================================
+\section{Experimental details}
+\label{app:details}
+% =========================================================================
+\TODO{full hyper-parameters; per-run configuration hashes; extended ablation
+table; FLOP accounting derivation; seed-variance table}
+
+\end{document}

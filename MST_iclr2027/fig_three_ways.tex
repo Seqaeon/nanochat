@@ -1,0 +1,80 @@
+% Small comparison figure for the introduction. \input inside a figure environment.
+% Horizontal extent encodes WIDTH: all three streams are drawn the same total D,
+% so "project" and "partition" are visibly two ways of spending it.
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=1.6mm,width=1.4mm]},
+  stream/.style={draw=none, fill=denseblue!16},
+  blkD/.style={draw=denseblue!80, line width=0.45pt, fill=denseblue!26,
+               rounded corners=1.6pt},
+  tile/.style={draw=mstorange!90, line width=0.4pt, rounded corners=1.2pt},
+  tax/.style={draw=gray!55, line width=0.4pt, fill=gray!22},
+  cplB/.style={draw=none, fill=mstorange!17},
+  ar/.style={->, draw=ink2, line width=0.45pt},
+  nm/.style={font=\scriptsize\bfseries, text=ink1},
+  tag/.style={font=\scriptsize, text=ink2, inner sep=1pt},
+  tagO/.style={font=\scriptsize, text=mstorange!90, inner sep=1pt},
+  dimarr/.style={<->, draw=ink2, line width=0.35pt}
+]
+\def\W{4.0}
+\def\barh{0.34}
+
+% ===== (i) dense =====
+\begin{scope}[shift={(0,0)}]
+  \draw[dimarr] (0,2.62) -- (\W,2.62);
+  \node[tag, anchor=south] at ({\W/2},2.63) {width $\dmodel$};
+  \fill[stream] (0,2.19) rectangle (\W,{2.19+\barh});
+  \draw[blkD] (0,1.21) rectangle (\W,1.91);
+  \node[nm] at ({\W/2},1.56) {one block, width $\dmodel$};
+  \fill[stream] (0,0.57) rectangle (\W,{0.57+\barh});
+  \draw[ar] ({\W/2},2.17) -- ({\W/2},1.93);
+  \draw[ar] ({\W/2},1.19) -- ({\W/2},0.93);
+  \node[nm, anchor=north] at ({\W/2},0.37) {Dense};
+  \node[tag, anchor=north, text width=40mm, align=center] at ({\W/2},0.07)
+       {the layer is one indivisible object};
+\end{scope}
+
+% ===== (ii) project =====
+\begin{scope}[shift={(5.0,0)}]
+  \draw[dimarr] (0,2.62) -- (\W,2.62);
+  \node[tag, anchor=south] at ({\W/2},2.63) {width $\dmodel$};
+  \fill[stream] (0,2.19) rectangle (\W,{2.19+\barh});
+  \foreach \k in {0,1,2} {
+    \pgfmathsetmacro{\cx}{0.66+\k*1.34}
+    \fill[tax] ({\cx-0.63},2.19) -- ({\cx+0.63},2.19) -- ({\cx+0.28},1.91)
+               -- ({\cx-0.28},1.91) -- cycle;
+    \draw[tile, fill=mstorange!34] ({\cx-0.28},1.21) rectangle ({\cx+0.28},1.91);
+    \fill[tax] ({\cx-0.28},1.21) -- ({\cx+0.28},1.21) -- ({\cx+0.63},0.93)
+               -- ({\cx-0.63},0.93) -- cycle;
+  }
+  \fill[stream] (0,0.57) rectangle (\W,{0.57+\barh});
+  \node[tag, anchor=south, text=gray!85] at ({\W/2},2.83) {$K$ wrappers, one per block};
+  \node[nm, anchor=north] at ({\W/2},0.37) {Project};
+  \node[tag, anchor=north, text width=44mm, align=center] at ({\W/2},0.07)
+       {each block pays $W_{\mathrm{down}}$ and $W_{\mathrm{up}}$:\\
+        40--73\% of its parameters};
+\end{scope}
+
+% ===== (iii) partition =====
+\begin{scope}[shift={(10.0,0)}]
+  \draw[dimarr] (0,2.62) -- (\W,2.62);
+  \node[tag, anchor=south] at ({\W/2},2.63) {width $\dmodel=\nsub\dsub$};
+  \foreach \k in {0,1,2,3} {
+    \pgfmathsetmacro{\lx}{\k*1.02}
+    \pgfmathsetmacro{\sh}{int(16+\k*14)}
+    \fill[mstorange!\sh] (\lx,2.19) rectangle ({\lx+0.94},{2.19+\barh});
+    \draw[tile, fill=mstorange!\sh] (\lx,1.25) rectangle ({\lx+0.94},1.91);
+    \draw[ar] ({\lx+0.47},2.17) -- ({\lx+0.47},1.93);
+    \draw[ar] ({\lx+0.47},1.23) -- ({\lx+0.47},1.17);
+    \draw[ar] ({\lx+0.47},0.71) -- ({\lx+0.47},0.67);
+    \fill[mstorange!\sh] (\lx,0.57) rectangle ({\lx+0.94},{0.57+\barh});
+  }
+  \node[tag, anchor=south] at ({\W/2},2.83) {no wrapper: reading is slicing};
+  \fill[cplB] (0,1.15) -- (\W,1.15) -- ({\W/2+0.47},0.94) -- ({\W/2-0.47},0.94) -- cycle;
+  \fill[cplB] ({\W/2-0.47},0.94) -- ({\W/2+0.47},0.94) -- (\W,0.73) -- (0,0.73) -- cycle;
+  \node[tagO] at ({\W/2},0.94) {1 coupling};
+  \node[nm, anchor=north] at ({\W/2},0.37) {Partition~\itshape(ours)};
+  \node[tag, anchor=north, text width=44mm, align=center] at ({\W/2},0.07)
+       {blocks sit directly on their slice,\\ so the decomposition is free};
+\end{scope}
+\end{tikzpicture}

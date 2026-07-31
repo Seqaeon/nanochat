@@ -3,8 +3,11 @@
 # Automates the research comparison script across multiple depths
 export OMP_NUM_THREADS=8
 
-export NANOCHAT_BASE_DIR="out"
-mkdir -p $NANOCHAT_BASE_DIR
+# Respect an inherited NANOCHAT_BASE_DIR (e.g. from scripts/runpod_env.sh, which
+# points it at the persistent volume). Falls back to a path relative to the
+# working directory, which is the historical behaviour.
+export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-out}"
+mkdir -p "$NANOCHAT_BASE_DIR"
 set -euo pipefail
 
 # Default to 8-way launch (for full 8xGPU nodes), but allow override via env
