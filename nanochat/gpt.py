@@ -1471,7 +1471,6 @@ def _grouped_top1_chunk_apply(h_p, idx, T_stack, coef):
     Returns:
         (B, n_chunks * chunk, out_features)
     """
-    global _GROUPED_MM_FAILED
     B, T_pad, basis_sz = h_p.shape
     n_chunks = idx.shape[1]
     chunk = T_pad // n_chunks
@@ -1480,12 +1479,23 @@ def _grouped_top1_chunk_apply(h_p, idx, T_stack, coef):
 
     flat_idx = idx.reshape(-1)                                    # (BN,)
     order = torch.argsort(flat_idx)                               # chunk -> sorted slot
-    counts = torch.bincount(flat_idx, minlength=K)                # (K,)
+    # Histogram of template usage. NOT torch.bincount: its output length is
+    # max(minlength, values.max()+1), which Dynamo classifies as a dynamic shape
+    # operator ("output shape depends on input Tensor data") and refuses to put
+    # in a graph. That single call broke the graph once per projection per layer,
+    # which cost far more than this path saves: measured at d4 it turned a 320 ms
+    # step into 650 ms and raised peak memory per sample by 1.73x, enough to push
+    # device-batch 128 into OOM. scatter_add_ into a preallocated (K,) buffer is
+    # the same histogram with a shape the compiler knows statically.
+    counts = torch.zeros(K, dtype=torch.int64, device=idx.device)
+    counts.scatter_add_(0, flat_idx, torch.ones_like(flat_idx))
     h_sorted = h_p.reshape(BN, chunk, basis_sz).index_select(0, order)
 
     out_sorted = None
     if _can_grouped_mm(h_p):
-        # Single fused grouped GEMM over the K variable-sized token groups.
+        # One fused grouped GEMM over the K variable-sized token groups. Every
+        # shape here is static: only the *values* in offs depend on the routing,
+        # and the output is always (BN*chunk, out_features).
         offs = torch.cumsum(counts * chunk, dim=0).to(torch.int32)
         try:
             out_sorted = torch._grouped_mm(
@@ -1494,13 +1504,20 @@ def _grouped_top1_chunk_apply(h_p, idx, T_stack, coef):
                 offs=offs,
             )
         except (RuntimeError, NotImplementedError, AttributeError):
-            _GROUPED_MM_FAILED = True                             # fall back for good
+            # Latch off permanently rather than retrying every call. Under
+            # torch.compile this handler is not traced (Dynamo traces the try
+            # body only), so it costs nothing on the compiled path; it is here so
+            # an unsupported card degrades to the loop below instead of killing
+            # a training run mid-step.
+            global _GROUPED_MM_FAILED
+            _GROUPED_MM_FAILED = True
             out_sorted = None
 
     if out_sorted is None:
-        # Portable fallback: K dense GEMMs on contiguous slices.  Group sizes are
-        # data-dependent, so .tolist() forces a sync — acceptable, and still far
-        # cheaper than materializing B*n_chunks weight matrices.
+        # Eager-only fallback: K dense GEMMs on contiguous slices. .tolist()
+        # forces a sync and a graph break, so _grouped_route declines the whole
+        # path whenever _can_grouped_mm is False and this stays untraced. It
+        # exists for CPU and fp32, where the tests exercise it.
         h_flat = h_sorted.reshape(BN * chunk, basis_sz)
         segs, start = [], 0
         for k, n_k in enumerate(counts.tolist()):

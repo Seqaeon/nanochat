@@ -227,3 +227,31 @@ squad                                36.0
 winograd                             65.2 
 winogrande                           54.4 
 CORE metric                         0.233 
+
+
+
+task                        dense_isoflops_d22
+agi_eval_lsat_ar                     24.8 
+arc_challenge                        39.8 
+arc_easy                             69.0 
+bigbench_cs_algorithms               42.1 
+bigbench_dyck_languages               9.1 
+bigbench_language_identification             24.6 
+bigbench_operators                   18.1 
+bigbench_qa_wikidata                 44.3 
+bigbench_repeat_copy_logic              0.0 
+boolq                                59.7 
+commonsense_qa                       30.6 
+copa                                 65.0 
+coqa                                 30.4 
+hellaswag                            52.8 
+hellaswag_zeroshot                   52.4 
+jeopardy                              7.7 
+lambada_openai                       41.3 
+openbook_qa                          39.6 
+piqa                                 73.3 
+squad                                41.8 
+winograd                             67.4 
+winogrande                           56.4 
+CORE metric                         0.255 
+
