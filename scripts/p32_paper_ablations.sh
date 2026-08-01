@@ -24,12 +24,12 @@
 set -o pipefail
 
 FORCE=0
-GROUPS="control c1 c2 c3 c4"
+RUN_GROUPS="control c1 c2 c3 c4"
 SEEDS=3
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
-        --group)  GROUPS="$2"; shift 2 ;;
+        --group)  RUN_GROUPS="$2"; shift 2 ;;
         --seeds)  SEEDS="$2"; shift 2 ;;
         *) echo "unknown arg: $1"; exit 1 ;;
     esac
@@ -51,7 +51,7 @@ mkdir -p "$OUT_BASE"
 echo "════════════════════════════════════════════════════════════"
 echo "  P32 paper ablations"
 echo "  depth ${DEPTH}   D=${MODEL_DIM}   N=${N_SUBS}   d=${SUB_DIM}"
-echo "  seeds ${SEEDS}   groups: ${GROUPS}"
+echo "  seeds ${SEEDS}   groups: ${RUN_GROUPS}"
 echo "  out ${OUT_BASE}"
 echo "════════════════════════════════════════════════════════════"
 
@@ -110,7 +110,7 @@ run() {                       # run <tag> <depth> <flags...>
     done
 }
 
-has() { echo " $GROUPS " | grep -q " $1 "; }
+has() { echo " $RUN_GROUPS " | grep -q " $1 "; }
 
 # ---------------------------------------------------------------- control
 # Run this before anything else. See the header.
