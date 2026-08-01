@@ -256,6 +256,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--model-dim" "$2")
             shift 2
             ;;
+        --head-dim)
+            EXTRA_ARGS+=("--head-dim" "$2")
+            shift 2
+            ;;
         --aspect-ratio)
             EXTRA_ARGS+=("--aspect-ratio" "$2")
             shift 2

@@ -82,6 +82,13 @@ def run_training_sweep(args):
 
     
     aspect_ratio, head_dim, model_dim, target_dim = model_dims(depth, aspect_ratio=args.aspect_ratio)
+    # Explicit head-dim override. model_dims() hardcodes 128; the paper's dense
+    # head-dim control needs 32 to match MST's per-stream head dimension.
+    if getattr(args, 'head_dim', 0) > 0 and args.head_dim != head_dim:
+        print(f"  Overriding head_dim ({head_dim}) with --head-dim {args.head_dim}")
+        head_dim = args.head_dim
+        assert model_dim % head_dim == 0, (
+            f"model_dim {model_dim} not divisible by head_dim {head_dim}")
     if args.research_dim > 0:
         print(f"  Overriding default target_dim ({target_dim}) with --research-dim {args.research_dim}")
         target_dim = args.research_dim
@@ -701,6 +708,7 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--run-dir", type=str, required=True)
     parser.add_argument("--aspect-ratio", type=int, default=0, help="model_dim = depth * aspect_ratio (0 = use defaults)")
+    parser.add_argument("--head-dim", type=int, default=0, help="attention head dimension (0 = default 128)")
     parser.add_argument("--model-dim", type=int, default=0, help="Explicit model_dim override for base_train.py")
     parser.add_argument("--fp8", action="store_true", help="Enable FP8 training (Blackwell optimization)")
     parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory")
