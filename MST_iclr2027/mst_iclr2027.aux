@@ -69,39 +69,43 @@
 \newlabel{tab:ratio}{{2}{7}{Resource multiplier a dense model needs to match each MST model, obtained by inverting the dense power-law fit. The multiplier is stable across the range}{table.2}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Downstream transfer}{7}{subsection.5.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Throughput, memory and hardware utilization}{7}{subsection.5.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Ablations}{7}{section.6}\protected@file@percent }
-\newlabel{sec:ablations}{{6}{7}{Ablations}{section.6}{}}
-\@writefile{toc}{\contentsline {paragraph}{Ablation transfer.}{7}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{The utilization gap has two distinct causes.}{7}{section*.9}\protected@file@percent }
 \citation{dai2024deepseekmoe}
 \citation{ternovtsii2026equifinality}
-\citation{shoeybi2021megatron}
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Power-law fits $\textsc  {bpb}= a x^{b}$, MST $L\!\in \![16,32]$ and dense $L\!\in \![12,30]$.}}{8}{table.3}\protected@file@percent }
 \newlabel{tab:fits}{{3}{8}{Power-law fits $\bpb = a x^{b}$, MST $L\!\in \![16,32]$ and dense $L\!\in \![12,30]$}{table.3}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Zero-shot accuracy (\%). MST is compared against a dense model matched on total parameters and a dense model matched on FLOPs per token.}}{8}{table.4}\protected@file@percent }
 \newlabel{tab:downstream}{{4}{8}{Zero-shot accuracy (\%). MST is compared against a dense model matched on total parameters and a dense model matched on FLOPs per token}{table.4}{}}
-\@writefile{toc}{\contentsline {paragraph}{Granularity.}{8}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Enriching the coupling does not help.}{8}{section*.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Analysis}{8}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Device parallelism.}{8}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Memory.}{8}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Ablations}{8}{section.6}\protected@file@percent }
+\newlabel{sec:ablations}{{6}{8}{Ablations}{section.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Ablation transfer.}{8}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Granularity.}{8}{section*.12}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Measured throughput and memory. Weights are randomly initialized; these are architecture-level measurements and do not depend on training.}}{9}{table.5}\protected@file@percent }
 \newlabel{tab:speed}{{5}{9}{Measured throughput and memory. Weights are randomly initialized; these are architecture-level measurements and do not depend on training}{table.5}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The utilization gap is a head-dimension kernel effect, not an architectural one.}}{9}{figure.4}\protected@file@percent }
-\newlabel{fig:kernels}{{4}{9}{The utilization gap is a head-dimension kernel effect, not an architectural one}{figure.4}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {8}Limitations}{9}{section.8}\protected@file@percent }
-\newlabel{sec:limitations}{{8}{9}{Limitations}{section.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The utilization gap decomposes into a kernel effect and an implementation cost. Fused attention at $d_h{=}32$, which $N{=}4$ forces, reaches only $2.13\times $ less throughput than at $d_h{=}128$ with the total attention width held fixed and no MST code involved.}}{9}{figure.4}\protected@file@percent }
+\newlabel{fig:kernels}{{4}{9}{The utilization gap decomposes into a kernel effect and an implementation cost. Fused attention at $d_h{=}32$, which $\nsub {=}4$ forces, reaches only $2.13\times $ less throughput than at $d_h{=}128$ with the total attention width held fixed and no MST code involved}{figure.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Enriching the coupling does not help.}{9}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Analysis}{9}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Every stream is load-bearing.}{9}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Streams stay near-orthogonal, and the coupling summarizes rather than selects.}{9}{section*.15}\protected@file@percent }
+\citation{shoeybi2021megatron}
 \@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only.}}{10}{table.6}\protected@file@percent }
 \newlabel{tab:transfer}{{6}{10}{Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only}{table.6}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Ablations at $L{=}8$, $D{=}512$, $N{=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better.}}{10}{table.7}\protected@file@percent }
 \newlabel{tab:ablation}{{7}{10}{Ablations at $L{=}8$, $\dmodel {=}512$, $\nsub {=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better}{table.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{10}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Device parallelism.}{10}{section*.16}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Every stream carries load and the streams stay approximately orthogonal. Damage from deleting a stream varies by only $1.75\times $, against the $7.2\times $ gradient imbalance of an untreated partition.}}{11}{figure.5}\protected@file@percent }
+\newlabel{fig:subablate}{{5}{11}{Every stream carries load and the streams stay approximately orthogonal. Damage from deleting a stream varies by only $1.75\times $, against the $7.2\times $ gradient imbalance of an untreated partition}{figure.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Limitations}{11}{section.8}\protected@file@percent }
+\newlabel{sec:limitations}{{8}{11}{Limitations}{section.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{11}{section.9}\protected@file@percent }
 \citation{penedo2024fineweb}
 \bibdata{mst}
 \bibcite{amsel2025polar}{{1}{2025}{{Amsel et~al.}}{{Amsel, Persson, Musco, and Gower}}}
 \bibcite{dualstream2026}{{2}{2026{a}}{{Anonymous}}{{}}}
 \bibcite{shape2026}{{3}{2026{b}}{{Anonymous}}{{}}}
 \bibcite{bae2025mor}{{4}{2025}{{Bae et~al.}}{{}}}
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Every stream carries load, the streams stay close to maximally decorrelated, and the multi-scale prior is used.}}{11}{figure.5}\protected@file@percent }
-\newlabel{fig:subablate}{{5}{11}{Every stream carries load, the streams stay close to maximally decorrelated, and the multi-scale prior is used}{figure.5}{}}
 \bibcite{baykal2023altup}{{5}{2023}{{Baykal et~al.}}{{Baykal, Cutler, Dikkala, Ghosh, Panigrahy, and Wang}}}
 \bibcite{beltagy2020longformer}{{6}{2020}{{Beltagy et~al.}}{{Beltagy, Peters, and Cohan}}}
 \bibcite{bergsma2025powerlines}{{7}{2025}{{Bergsma et~al.}}{{}}}
@@ -132,17 +136,17 @@
 \bibcite{zhou2024resformer}{{32}{2024}{{Zhou et~al.}}{{}}}
 \bibcite{hyperconnections2025}{{33}{2025}{{Zhu et~al.}}{{Zhu, Huang, Huang, Zeng, Mao, Wu, Min, and Zhou}}}
 \bibstyle{iclr2027_conference}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Per-layer parameter budget}{13}{appendix.A}\protected@file@percent }
-\newlabel{app:budget}{{A}{13}{Per-layer parameter budget}{appendix.A}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-layer parameter budget. The $N$ sub-transformers cost $12D^2/N$ and the coupling costs a further $3D^2/N$, so a layer costs $15D^2/N$ against $12D^2$ dense: a reduction of $0.8N$, not $N$. The router term $Nd$ is $0.02\%$ of the layer at $D{=}512$ and is omitted from the totals.}}{13}{table.8}\protected@file@percent }
-\newlabel{tab:budget}{{8}{13}{Per-layer parameter budget. The $\nsub $ sub-transformers cost $12\dmodel ^2/\nsub $ and the coupling costs a further $3\dmodel ^2/\nsub $, so a layer costs $15\dmodel ^2/\nsub $ against $12\dmodel ^2$ dense: a reduction of $0.8\nsub $, not $\nsub $. The router term $\nsub \dsub $ is $0.02\%$ of the layer at $\dmodel {=}512$ and is omitted from the totals}{table.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {B}Coupling variants that did not help}{13}{appendix.B}\protected@file@percent }
-\newlabel{app:negative}{{B}{13}{Coupling variants that did not help}{appendix.B}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Coupling variants that did not improve on the routed bottleneck, $L{=}8$.}}{14}{table.9}\protected@file@percent }
-\newlabel{tab:negative}{{9}{14}{Coupling variants that did not improve on the routed bottleneck, $L{=}8$}{table.9}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Rows omitted from Table~\ref {tab:ablation}: the two optimizer interventions applied separately, and the transition bottleneck width sweep. $L{=}8$, three seeds.}}{14}{table.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {C}Additional ablations}{14}{appendix.C}\protected@file@percent }
-\newlabel{app:extra}{{C}{14}{Additional ablations}{appendix.C}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {D}Experimental details}{14}{appendix.D}\protected@file@percent }
-\newlabel{app:details}{{D}{14}{Experimental details}{appendix.D}{}}
-\gdef \@abspage@last{14}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Per-layer parameter budget}{14}{appendix.A}\protected@file@percent }
+\newlabel{app:budget}{{A}{14}{Per-layer parameter budget}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-layer parameter budget. The $N$ sub-transformers cost $12D^2/N$ and the coupling costs a further $3D^2/N$, so a layer costs $15D^2/N$ against $12D^2$ dense: a reduction of $0.8N$, not $N$. The router term $Nd$ is $0.02\%$ of the layer at $D{=}512$ and is omitted from the totals.}}{14}{table.8}\protected@file@percent }
+\newlabel{tab:budget}{{8}{14}{Per-layer parameter budget. The $\nsub $ sub-transformers cost $12\dmodel ^2/\nsub $ and the coupling costs a further $3\dmodel ^2/\nsub $, so a layer costs $15\dmodel ^2/\nsub $ against $12\dmodel ^2$ dense: a reduction of $0.8\nsub $, not $\nsub $. The router term $\nsub \dsub $ is $0.02\%$ of the layer at $\dmodel {=}512$ and is omitted from the totals}{table.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Coupling variants that did not help}{14}{appendix.B}\protected@file@percent }
+\newlabel{app:negative}{{B}{14}{Coupling variants that did not help}{appendix.B}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Coupling variants that did not improve on the routed bottleneck, $L{=}8$.}}{15}{table.9}\protected@file@percent }
+\newlabel{tab:negative}{{9}{15}{Coupling variants that did not improve on the routed bottleneck, $L{=}8$}{table.9}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Rows omitted from Table~\ref {tab:ablation}: the two optimizer interventions applied separately, and the transition bottleneck width sweep. $L{=}8$, three seeds.}}{15}{table.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {C}Additional ablations}{15}{appendix.C}\protected@file@percent }
+\newlabel{app:extra}{{C}{15}{Additional ablations}{appendix.C}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Experimental details}{15}{appendix.D}\protected@file@percent }
+\newlabel{app:details}{{D}{15}{Experimental details}{appendix.D}{}}
+\gdef \@abspage@last{15}

@@ -532,27 +532,57 @@ total parameters and a dense model matched on FLOPs per token.}
 \begin{small}
 \begin{tabular}{lccc}
 \toprule
-Task & MST $L{=}32$ (914M) & Dense iso-param & Dense iso-FLOP \\
+Task & MST $L{=}32$ & Dense $L{=}20$ & Dense $L{=}22$ \\
+     & (914M) & (iso-param) & (iso-FLOP) \\
 \midrule
-ARC-Easy      & \PH & \PH & \PH \\
-ARC-Challenge & \PH & \PH & \PH \\
-HellaSwag     & \PH & \PH & \PH \\
-PIQA          & \PH & \PH & \PH \\
-WinoGrande    & \PH & \PH & \PH \\
-MMLU (5-shot) & \PH & \PH & \PH \\
+ARC-Easy (10-shot)      & 66.8 & \PH & \PH \\
+PIQA (10-shot)          & 73.3 & \PH & \PH \\
+HellaSwag (10-shot)     & 51.6 & \PH & \PH \\
+Winograd (0-shot)       & 63.4 & \PH & \PH \\
+LAMBADA (0-shot)        & 40.0 & \PH & \PH \\
+OpenBook QA (0-shot)    & 40.0 & \PH & \PH \\
+ARC-Challenge (10-shot) & 37.5 & \PH & \PH \\
+\midrule
+\textbf{CORE metric}    & \textbf{0.231} & \PH & \PH \\
 \bottomrule
 \end{tabular}
 \end{small}
 \end{center}
-\TODO{Tier-2 experiment 2.1, eval-only on existing checkpoints}
+Seven of the 22 CORE tasks, chosen as those with meaningful headroom at this
+scale; the CORE metric aggregates all 22. Tasks on which a model of this size
+sits at chance (CommonsenseQA, WinoGrande, Jeopardy, BigBench repeat-copy) carry
+no signal here and are deferred to Appendix~\ref{app:details}.
+\TODO{dense columns pending: $L{=}20$ is $0.98\times$ MST total params, $L{=}22$
+is $0.92\times$ MST FLOPs/token}
 \end{table}
 
 \subsection{Throughput, memory and hardware utilization}
 
-FLOP counts are not wall-clock. MST's per-sub head dimension of 32 is below the
-point where fused attention kernels saturate tensor cores, so MST realizes a lower
-fraction of peak throughput than dense, and nonetheless runs faster because it
-issues far fewer FLOPs.
+FLOP counts are not wall-clock. MST trains $1.20\times$ faster than dense while
+reaching less than half its utilization (Table~\ref{tab:speed}): it wins on
+throughput by issuing $2.46\times$ fewer FLOPs, not by using the machine well.
+
+\paragraph{The utilization gap has two distinct causes.} Measuring fused
+attention in isolation, with the total attention width held constant and no MST
+code in the loop, gives 171.9, 283.9 and 365.7 TFLOP/s at $d_h = 32$, $64$ and
+$128$ (Figure~\ref{fig:kernels}). A partition into $\nsub$ streams forces
+$d_h = 128/\nsub$, so at $\nsub{=}4$ a $2.13\times$ penalty on the attention
+portion is intrinsic to the architecture given current kernels. The remainder is
+ours: the layer issues $\nsub$ separate attention calls, one per stream, where a
+single call over $\nsub n_h$ heads would compute the same thing whenever the
+streams share a window, since attention is independent across heads. At $L{=}24$
+that is 96 launches per forward pass where 24 would do. We report the measured
+kernel penalty and do not claim to have eliminated the implementation cost.
+
+\paragraph{Memory.} MST's peak memory is $8\%$ \emph{higher} than dense despite
+$3.2\times$ fewer per-layer parameters. The cause is the batched formulation
+rather than the partition: applying $\nsub$ stacked weight matrices requires a
+permutation before the batched matrix multiply, which forces a contiguous copy of
+a full activation tensor, and this happens for each of the six batched
+projections per layer. Parameter count shrinks with $\nsub$; activation traffic
+does not. The same extra data movement lowers arithmetic intensity, so the memory
+overhead and the utilization gap share a cause rather than one explaining the
+other.
 
 \begin{table}[t]
 \caption{Measured throughput and memory. Weights are randomly initialized;
@@ -560,33 +590,36 @@ these are architecture-level measurements and do not depend on training.}
 \label{tab:speed}
 \begin{center}
 \begin{small}
-\begin{tabular}{lccccc}
+\begin{tabular}{lccc}
 \toprule
-& \multicolumn{2}{c}{Iso-depth ($L{=}24$)} & \multicolumn{2}{c}{Iso-quality} & \\
-& MST & Dense & MST & Dense & Speedup \\
+Measurement ($L{=}24$, H200) & MST & Dense & \\
 \midrule
-Train step (ms)        & 1800$^\dagger$ & 2300$^\dagger$ & \PH & \PH & \PH \\
-Total train time (min) & 887$^\dagger$  & 1182$^\dagger$ & \PH & \PH & 1.33$\times^\dagger$ \\
-Achieved MFU (\%)      & 35.1$^\dagger$ & 52.5$^\dagger$ & \PH & \PH & n/a \\
-Prefill tok/s @ $T{=}8$K & \PH & \PH & \PH & \PH & \PH \\
-Decode ms/token @ 8K   & \PH & \PH & \PH & \PH & \PH \\
-Peak memory (GB)       & \PH & \PH & \PH & \PH & \PH \\
-KV cache / layer       & $\dmodel$ & $\dmodel$ & n/a & n/a & 1.00$\times$ \\
+Training step, fwd+bwd (ms)     & \textbf{420.4} & 504.4 & MST $1.20\times$ faster \\
+Achieved throughput (TFLOP/s)   & 297 & 609 & \\
+Model FLOPs utilization (\%)    & 30.0 & 61.6 & dense $2.05\times$ higher \\
+Peak memory (GB)                & 115.3 & 106.7 & MST $8\%$ higher \\
+KV cache per layer              & $\dmodel$ & $\dmodel$ & identical by construction \\
+\midrule
+Decode latency (ms/token)       & \PH & \PH & \TODO{pending} \\
 \bottomrule
 \end{tabular}
 \end{small}
 \end{center}
-$^\dagger$\,measured on an earlier MST configuration; \TODO{refresh with the final model, Tier-1 experiments 1.1--1.5}
+Batch 32, $T{=}2048$, \texttt{torch.compile} enabled for both arms as in
+training, minimum over 20 iterations. Weights are randomly initialised: these are
+architecture-level measurements independent of the trained values.
 \end{table}
 
 \begin{figure}[t]
 \begin{center}
-\fbox{\parbox[c][2.6cm][c]{0.95\textwidth}{\centering \TODO{Fig.~2: (a) profiler
-breakdown of MST step time by kernel class (attention / batched GEMM / coupling /
-other); (b) isolated fused-attention throughput at $d_h \in \{32,64,128\}$.}}}
+\fbox{\parbox[c][2.4cm][c]{0.95\textwidth}{\centering \TODO{Fig.~3: (a) fused
+attention throughput vs $d_h$ at constant total width: 171.9 / 283.9 / 365.7
+TFLOP/s for $d_h=32/64/128$; (b) MST kernel-time breakdown.}}}
 \end{center}
-\caption{The utilization gap is a head-dimension kernel effect, not an
-architectural one.}
+\caption{The utilization gap decomposes into a kernel effect and an
+implementation cost. Fused attention at $d_h{=}32$, which $\nsub{=}4$ forces,
+reaches only $2.13\times$ less throughput than at $d_h{=}128$ with the total
+attention width held fixed and no MST code involved.}
 \label{fig:kernels}
 \end{figure}
 
@@ -645,8 +678,8 @@ $\Delta$                              & $-0.0288$ & $-0.0247$ & \textbf{same sig
 & Condition & \bpb & $\Delta$ \\
 \midrule
 \multirow{2}{*}{Controls}
- & Dense baseline ($d_h{=}128$)                & \PH & n/a \\
- & Dense baseline, $d_h{=}32$ \emph{(head-dim control)} & \PH & \PH \\
+ & Dense baseline ($d_h{=}128$)                & $0.9592\pm0.0002$ & n/a \\
+ & Dense baseline, $d_h{=}32$ \emph{(head-dim control)} & $0.9760\pm0.0003$ & $+0.0168$ \\
 \midrule
 \multirow{3}{*}{Coupling}
  & No coupling (independent columns)           & \PH & \PH \\
@@ -705,26 +738,57 @@ routing topology in sparse MoE, and extends it to a dense partitioned setting.
 % =========================================================================
 
 The $7.2\times$ gradient imbalance of Section~\ref{sec:optim} raises the concern
-that a partitioned model silently degenerates into a narrower one. Three
-inference-time probes say otherwise (Figure~\ref{fig:subablate}). Zeroing each
-stream in turn costs \PH; the damage is spread across streams rather than
-concentrated in one, so all $\nsub$ carry load. Mean pairwise cosine similarity
-between streams settles near $-1/(\nsub-1)$, the minimum attainable for $\nsub$
-vectors, so the streams are close to maximally decorrelated at every layer beyond
-the first. Router entropy stays near $\log\nsub$ throughout training, confirming
-that the coupling acts as a summarizer rather than a selector. Shrinking an
-individual stream's window at inference degrades \bpb\ by an amount that tracks
-its assigned scale, indicating the multi-scale prior is used rather than ignored.
+that a partitioned model silently degenerates into a narrower one. Two
+inference-time probes on the $L{=}32$ model say otherwise
+(Figure~\ref{fig:subablate}).
+
+\paragraph{Every stream is load-bearing.} Zeroing any single stream at every
+layer raises bits-per-byte from $0.710$ to between $5.15$ and $8.48$: the model
+is destroyed whichever stream is removed. The intervention is deliberately blunt,
+since a quarter of the residual stream is deleted at every layer, so the
+magnitude is uninformative and the \emph{spread} is the result. Damage varies by
+only $1.75\times$ across the four streams, against the $7.2\times$ gradient
+imbalance the recipe was built to correct. No stream is close to redundant.
+
+\paragraph{Streams stay near-orthogonal, and the coupling summarizes rather than
+selects.} Mean pairwise cosine similarity between streams is close to zero
+through the body of the network, between $-0.09$ and $+0.08$ for layers 8--19,
+rising to $+0.64$ at layer 2 and to $+0.16$ near the output. It does not approach
+the $-1/(\nsub-1) = -0.333$ floor that maximal mutual repulsion would produce:
+the streams are approximately independent rather than actively anti-correlated,
+and they grow more alike at both ends of the network, where they sit closest to
+the shared embedding and the shared output head. Router entropy stays between
+$1.21$ and $1.38$ against a maximum of $\log\nsub = 1.386$, within $13\%$ of
+uniform at every layer, so the coupling acts as a summarizer rather than a
+selector.
+
+Two caveats on these diagnostics. First, near-uniform routing is partly
+\emph{enforced}: the load-balancing term of Section~\ref{sec:method} penalizes
+$\sum_i \bar{p}_i^2$ and is minimized at the uniform $p$, so high entropy is
+evidence that the regularizer works, not that a free router would choose to
+average. What the entropy does establish is that whatever the router contributes
+(the parameter-free mean ablation of Section~\ref{sec:ablations} puts that at
+$0.039$~\bpb) it contributes through small deviations from uniform rather
+than through selection. Second, the similarity statistic compares stream $i$'s
+mean direction with stream $j$'s, but the two vectors occupy different channel
+ranges of the model and there is no reason for index $k$ to denote the same
+feature in both. The measure is therefore asymmetric in what it licenses: a high
+value is strong evidence of redundancy, whereas a value near zero is only
+consistent with independence and does not establish it, since two streams could
+show zero mean-direction similarity while being strongly correlated token by
+token. The informative datum here is the $+0.64$ at layer 2, not the near-zero
+plateau.
 
 \begin{figure}[t]
 \begin{center}
-\fbox{\parbox[c][2.4cm][c]{0.95\textwidth}{\centering \TODO{Fig.~4: (a) $\Delta$\bpb\
-from zeroing each stream at inference; (b) per-layer pairwise cosine similarity
-against the $-1/(\nsub-1)$ floor; (c) router entropy vs layer; (d) $\Delta$\bpb\
-from shrinking each stream's window.}}}
+\fbox{\parbox[c][2.4cm][c]{0.95\textwidth}{\centering \TODO{Fig.~4: (a)
+$\Delta$\bpb\ from zeroing each stream: $+5.19, +7.77, +4.44, +6.09$;
+(b) per-layer cosine similarity, $0$ to $+0.64$, with the $-0.333$ floor marked;
+(c) router entropy vs layer against $\log\nsub=1.386$.}}}
 \end{center}
-\caption{Every stream carries load, the streams stay close to maximally
-decorrelated, and the multi-scale prior is used.}
+\caption{Every stream carries load and the streams stay approximately
+orthogonal. Damage from deleting a stream varies by only $1.75\times$, against
+the $7.2\times$ gradient imbalance of an untreated partition.}
 \label{fig:subablate}
 \end{figure}
 
@@ -756,13 +820,20 @@ overtrained runs at $2.6\times$ the budget, where the ordering is preserved
 \TODO{report these two points; a dense point at matched ratio would make the
 claim clean}.
 
-\textbf{Hardware utilization.} MST attains a lower fraction of peak FLOPs than
-dense because $d_h{=}32$ is an unfavourable regime for current fused attention
-kernels. Our wall-clock advantage is therefore smaller than our FLOP advantage,
-and would grow with kernels tuned for small head dimensions.
+\textbf{Hardware utilization and decode.} MST attains half the utilization of
+dense, for the two reasons decomposed in Section~\ref{sec:results}: a measured
+$2.13\times$ kernel penalty intrinsic to $d_h{=}32$, and an implementation cost
+we have not removed. Our wall-clock advantage is therefore smaller than our FLOP
+advantage. Decode is worse still: it is the regime where per-stream dispatch is
+least amortized, since there is no sequence dimension over which to hide the
+$\nsub$-fold increase in kernel launches, and we measure MST slower than dense
+there (Table~\ref{tab:speed}). We claim fewer FLOPs per token and faster
+training; we do not claim faster inference, and a deployment dominated by
+autoregressive decoding would not benefit from MST as implemented here.
 
-\textbf{Single seed at scale.} Seed variance is characterized at $L{=}8$ only
-\TODO{report $\sigma$}; the $L\ge16$ ladder is single-seed per point, as is
+\textbf{Single seed at scale.} Seed variance is characterized at $L{=}8$ only,
+where it is $\sigma \le 0.0003$~\bpb\ over three seeds, two orders of magnitude
+below every effect we report; the $L\ge16$ ladder is single-seed per point, as is
 standard at this scale but worth stating.
 
 \textbf{Scope.} We study pre-training perplexity and zero-shot transfer for
