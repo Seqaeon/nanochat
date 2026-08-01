@@ -26,6 +26,14 @@ import os
 import sys
 import time
 
+# Pin the Inductor cache before importing torch. Without a stable cache dir,
+# every invocation re-runs matmul autotuning and can land on a different kernel
+# config, which shows up as large run-to-run swings that look like noise but are
+# not. Set TORCHINDUCTOR_CACHE_DIR yourself to override.
+os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR",
+                      os.path.join(os.getcwd(), "scratch", ".inductor_cache"))
+os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
+
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,12 +65,14 @@ def make_config(depth, mst, seq_len=SEQ):
                      mst_routing_aux_weight=0.01, mst_diversity_weight=0.0,
                      mst_grad_equalize=1, mst_block_diagonal_muon=1,
                      mst_transition_width_mult=float(N_SUBS),
-                     mst_sub_lr_scale=2.0, mst_multi_scale_windows=1)
+                     mst_sub_lr_scale=2.0,
+                     mst_multi_scale_windows=int(MULTI_SCALE))
 
 
 COMPILE = True   # set by --no-compile
 ITERS = 0        # set by --iters; 0 means use each experiment's default
 ARMS = ("mst", "dense")   # set by --arms
+MULTI_SCALE = True        # set by --no-multi-scale
 
 
 def _arms():
@@ -205,29 +215,38 @@ def a3_train_step(depth, device, batch=4):
 
 # ---------------------------------------------------------------- A4
 def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1):
+    """Prefill throughput vs sequence length.
+
+    One model per arm for the whole sweep, built at the longest length. Building
+    per length meant five separate compilations per arm, and each one re-ran
+    Inductor's autotuner independently, which was the dominant source of
+    run-to-run variance. Window semantics are unaffected for T <= max: the long
+    window is min(sequence_len, T), so a model built at 32768 and prefilled at
+    2048 attends exactly as one built at 2048 would.
+    """
     res = {}
     for name, mst in _arms():
         res[name] = []
+        torch.cuda.empty_cache()
+        model, _ = build(depth, mst, device, seq_len=max(lengths))
         for T in lengths:
             try:
-                torch.cuda.empty_cache()
-                model, _ = build(depth, mst, device, seq_len=T)
                 x = torch.randint(0, VOCAB, (batch, T), device=device)
                 with torch.inference_mode():
-                    # generous warmup: torch.compile needs several calls to
-                    # finish autotuning before any timing is meaningful
                     ms, med = cuda_time(lambda: model(x), warmup=8, iters=20)
                 res[name].append(dict(T=T, ms=ms, ms_median=med,
                                       tok_per_s=batch * T / (ms * 1e-3)))
                 drift = 100 * (med - ms) / ms
+                flag = "  <-- unstable" if drift > 25 else ""
                 print(f"  {name:5s} T={T:6d}  {ms:9.2f} ms  "
                       f"{res[name][-1]['tok_per_s']:10.0f} tok/s"
-                      f"   (median {med:.2f}, +{drift:.0f}%)")
-                del model
+                      f"   (median {med:.2f}, +{drift:.0f}%){flag}")
             except torch.cuda.OutOfMemoryError:
                 print(f"  {name:5s} T={T:6d}  OOM")
                 res[name].append(dict(T=T, ms=None, oom=True))
             torch.cuda.empty_cache()
+        del model
+        torch.cuda.empty_cache()
     return res
 
 
@@ -279,6 +298,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--depths", type=int, nargs="+", default=[24])
     ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--multi-scale", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="per-stream attention windows. Set --no-multi-scale to "
+                         "match a checkpoint trained without them, e.g. the "
+                         "plain S7_COMBO_A runs.")
     ap.add_argument("--arms", type=str, default="mst,dense",
                     help="which arms to measure, e.g. --arms dense. Note that "
                          "timings from separate invocations share no thermal "
@@ -299,8 +323,9 @@ def main():
                          "valid configuration to report.")
     args = ap.parse_args()
 
-    global COMPILE, ITERS, ARMS
+    global COMPILE, ITERS, ARMS, MULTI_SCALE
     COMPILE = args.compile
+    MULTI_SCALE = args.multi_scale
     ITERS = args.iters
     ARMS = tuple(a.strip() for a in args.arms.split(","))
     bad = [a for a in ARMS if a not in ("mst", "dense")]
@@ -316,7 +341,7 @@ def main():
           + ("" if COMPILE else "   <-- NOT a reportable configuration"))
 
     out = {"gpu": torch.cuda.get_device_name(0), "compiled": COMPILE,
-           "arms": list(ARMS), "iters": ITERS,
+           "arms": list(ARMS), "iters": ITERS, "multi_scale": MULTI_SCALE,
            "peak_tflops": gpu_peak_tflops(), "runs": {}}
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     skip = {s.strip() for s in args.skip.split(",")} if args.skip else set()
