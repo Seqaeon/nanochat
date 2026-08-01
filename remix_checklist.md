@@ -4,13 +4,30 @@
 **Assumed window:** ~1 week, single-researcher heterogeneous compute, no institutional cluster.
 **Reality check up front:** five reviews at Quality 3/2/2/3/2, one explicit borderline-reject, and a metareview that says the case for acceptance is "materially weakened." A rebuttal almost never moves that to accept. Optimize for (a) moving one or two reviewers, and (b) doing the work that makes the *next* submission strong — several items below will change what the paper claims, and it is much better to learn that now.
 
-**Read the metareview as a spec.** The AC has effectively written the acceptance criteria: FLOPs-vs-wall-clock, single-seed, un-retrained dense baselines, d4-only MoE, LayerNorm confound, soft-MoE/SMEAR/CondConv positioning, differentiability, template-utilization analysis, orthogonal ablations, per-task CORE. Ten items. Six are cheap. Hitting those six *completely* is the realistic play.
+**Read the metareview as a spec.** The AC has effectively written the acceptance criteria: training and inference throughput in tok/s next to peak memory, single-seed, un-retrained dense baselines, d4-only MoE, LayerNorm confound, soft-MoE/SMEAR/CondConv positioning, differentiability, template-utilization analysis, orthogonal ablations, per-task CORE. Ten items. Six are cheap. Hitting those six *completely* is the realistic play. Quote the AC's throughput sentence when you plan that work, because the wording is narrower than the paraphrase: it asks you to *report* tok/s and memory against dense, not to produce a quality-versus-wall-clock frontier.
 
 ---
 
 ## TIER 0 — Audits. Hours. Do before writing anything.
 
+- [ ] 🔴 **The shipped router is not the router the paper describes.** ⏱ 1h to verify, then a decision. Verified in code and empirically (`nanochat/gpt.py`, `QuantileBalancedRouter.forward`).
+
+  **Scope first, because it is narrower than it looks.** `REMIX_COMMON` in `scripts/p29_sweep.sh` sets `--p23-quantile-route 1`, so this applies to every arm that does not override it. The currently live 29C arm *does* override it (`--p23-quantile-route 0`), and therefore uses the plain learned router: real soft mixing over all K, routed per chunk anchor, position dependent. Before acting on any of this, list which published runs resolved `p23_quantile_route` to 1. Any arm that inherits the default did the following:
+  1. **`template_topk=0` becomes top-1, not soft-over-K.** The router computes `topk = max(1, min(self.topk, K))`, so the value 0, which everywhere else in the codebase means "mix all K", silently becomes 1. The 29C configuration therefore routes hard to a single template with coefficient exactly 1.0. Not a mixture.
+  2. **Routing is per-sequence, not per-chunk or per-token.** The router mean-pools its input over the sequence axis (`x.float().mean(dim=1, keepdim=True)`) and then broadcasts one weight vector to every position. Every chunk in a sequence gets the same template.
+
+  Consequences, in order of how much they cost:
+  - "Chunk-amortized routing" is, as shipped, per-sequence routing. Table 4's chunk-vs-per-token row cannot show a difference because there is nothing positional to amortize. This is the actual explanation for chunk-64 ≈ per-token, and it is a better explanation than the one the paper offers.
+  - The per-token arm is not even the same routing function: that branch feeds the router's already-normalised output through another softmax (`gpt.py:2554`), turning a one-hot vector into a near-uniform one (entropy 1.99 of a maximum 2.08 at K=8). So Table 4 compared hard per-sequence top-1 against near-uniform soft mixing, under two labels that suggest only the granularity changed.
+  - It also explains the throughput result: top-1 routing that still runs the dense compose einsum with a one-hot weight vector costs exactly what soft mixing costs.
+
+  Item 1 is now fixed: `_resolve_topk` in `nanochat/gpt.py` maps `topk <= 0` to K, so `--p22-template-topk 0` means soft over all K in the quantile routers as it does everywhere else. `--p22-template-topk 1` reproduces the old behaviour exactly, which is how to re-run anything published before the fix. Pinned by `tests/test_quantile_router_topk.py`.
+
+  Item 2 is unfixed and is a design decision, not a bug: the pooling is deliberate ("per-batch quantile balancing"), it just is not what "chunk-amortized routing" describes. Either re-describe the affected runs as per-sequence template selection, or make the pooling scope a flag and re-run. Whichever you choose, do not ship the current description for a quantile-routed run.
+
 - [ ] 🔴 **Reconcile Table 3 vs Table 5 FLOPs.** ⏱ 1h. Table 3 reports d12 FLOPs as **7.6e8 for both** dense and Remix ("matched active FLOPs" — the paper's headline framing). Table 5 reports measured hardware FLOPs/token as **2.2e8 dense vs 3.6e8 Remix (1.64×)**. And §3.6 lines 125–126 state Remix uses "approximately 4d² active FLOPs per projection versus 2d² for dense, a **2× per-projection overhead**." These three cannot all be right. As written, **the paper's own complexity analysis contradicts its headline "matched active FLOPs" claim.** R4 got closest to this ("Hardware FLOPs are already 1.6× higher") but no reviewer stated it this sharply — a determined AC will. Work out exactly what each number counts (fwd only? fwd+bwd? projections only? attention included?) and state it in one place.
+
+  Half of this is now settled. `estimate_flops()` computes `active = total - 6 * inactive`, where `inactive = (bank + route) * (1 - 1/chunk)`, which reduces to `active = W_b + other + (1/chunk) * (bank + route)`. So the "active" column discounts every template-bank parameter by `1/chunk`: at chunk 256, 99.6% of the bank is free by construction. That is why an intervention can lower total FLOPs and raise active FLOPs at the same time. State the discount explicitly in the paper, because it is the whole basis of the matched-active-FLOPs framing and a reviewer who reconstructs it will otherwise think it was hidden.
 - [ ] 🔴 **"The improvement grows with scale" is false.** ⏱ 15min. Line 153 says: *"The improvement grows with scale: 7.5% at d4, 6.8% at d8, and 9.9% at d12."* That sequence decreases then increases. In absolute BPP the deltas are **0.088, 0.066, 0.089** — flat and non-monotonic. Nobody caught it. Delete the claim or restate it as "consistent across scales, with no evidence of growth."
 - [ ] 🔴 **Which dense baselines are yours?** ⏱ 1h. Limitations says d12–d30 come from the nanochat leaderboard. So are d4 (1.170) and d8 (0.969) *your* runs? If yes, say so loudly — "our own matched-setup baselines at d4/d8, leaderboard at d12+" is a far better position than what R3/R4 currently believe. Also verify the leaderboard runs use the same dataset (ClimbMix), tokenizer, and 10.5× token ratio. If they don't, the d12 headline comparison is invalid and you need to know now.
 - [ ] 🟠 **Sanity-check the exact tie.** ⏱ 15min. Remix d8 = 0.903 and Dense d12 = 0.903 to three decimals. Probably coincidence; confirm it isn't a copy error, because that pair carries the "2.25× fewer active params" claim.
@@ -19,17 +36,29 @@
 
 ---
 
-## TIER 1 — The wall-clock problem. This is the paper's fate. ~2 days.
+## TIER 1 — The throughput problem. This is the paper's fate. ~2 days.
 
 Three reviewers and the metareview converge here. R3 states it most sharply and is right: *"If an algorithm decomposes a dense GEMM into hardware-costly operations, the slowdown is part of the method itself, not merely an implementation detail."*
 
-- [ ] 🔴 **Measure throughput for the dense baselines at every depth — at random init.** ⏱ 3h. Throughput doesn't depend on trained weights, so you can measure dense d14/d20/d26/d30 tok/s on your H200 in an afternoon without any checkpoints. Combine with leaderboard BPP and CORE to plot **the quality-vs-wall-clock curve R4 explicitly asked for.** This is nearly free and it is the single most important number you don't have.
+**Note what the AC actually asked for, because it is narrower and cheaper than a Pareto study.** Verbatim: *"The paper would be strengthened by reporting actual wall-clock training and inference throughput (tokens/sec) to demonstrate how this memory overhead impacts practical hardware efficiency compared to the dense baseline."* That is a reporting requirement: tok/s for training, tok/s for inference, next to peak memory, against dense. It is not a demand that you plot quality against wall-clock. Deliver exactly that table. Separately, know the wall-clock answer before you submit, because a reader holding your BPP table and a throughput column can construct it themselves.
 
-  **Be prepared for the answer.** From your own tables: dense d12 runs at 886k tok/s; dense d20 has ~3.8× the FLOPs, so ≈230k tok/s — essentially identical to Remix d12's 242k. Dense d20 scores **0.791 BPP and 0.215 CORE**; Remix d12 scores **0.814 and 0.172**. If that holds under measurement, **at matched wall-clock RemixedLinear loses to a deeper dense model on both metrics.** Verify it before you write anything. It is far better to report this yourself, scoped, than to have R4's "almost certainly loses" confirmed by an AC.
+- [x] 🔴 **Throughput and memory for both arms at every depth, at random init.** ⏱ 3h. Script: `scripts/paper_throughput.py`. Covers training step tok/s, prefill tok/s, decode ms/token, peak memory, and MFU against both the total and the active FLOPs denominators. Six depth points (4/8/12/16/20/24) span 37M to ~1.3B active params. Random init is sufficient and standard: throughput does not depend on weight values.
+
+      python -m scripts.paper_throughput --depths 4 8 12 16 20 24 --plot out/throughput.png
+
+  Two things it will surface that you should expect. **Decode is the worst column and the reason is structural:** at T=1 the chunk-routing branch pads the sequence up to a full `chunk` before composing, so one decoded token pays for `chunk` tokens of weight composition. Since routing is per-sequence anyway (Tier 0), `W_eff` could be composed once and cached for the whole generation, which would remove almost all of it. That is a real and easy optimisation, and it is worth having in hand before a reviewer asks about inference. **Head dim differs between arms** at d12, d20 and d24 because `build_model_meta` picks `n_head` differently for research branches; the script prints it, and you should say so rather than let it be found.
+
+  **Be prepared for the wall-clock answer.** From your own tables: dense d12 runs at 886k tok/s; dense d20 has ~3.8× the FLOPs, so ≈230k tok/s, essentially identical to Remix d12's 242k. Dense d20 scores **0.791 BPP and 0.215 CORE**; Remix d12 scores **0.814 and 0.172**. If that holds under measurement, at matched wall-clock RemixedLinear loses to a deeper dense model on both metrics. It is far better to scope the claim yourself than to have R4's "almost certainly loses" confirmed by an AC.
 
 - [ ] 🔴 **Sweep chunk size N.** ⏱ 1 day at d4. **Nobody — not you, not any reviewer — has treated N as a variable.** N=64 appears to be arbitrary, and ablation 29A/29C shows chunk routing is not worse than per-token, so there is no evidence 64 is the ceiling. Sweep N ∈ {64, 128, 256, 512, 2048 (per-sequence)} reporting BPP *and* tok/s. The composition cost and the number of distinct W_eff matrices both fall linearly in N. If quality survives at N=512, your throughput story changes materially. This is the highest-upside cheap experiment available.
 
-- [ ] 🔴 **Re-examine the implementation before conceding the slowdown is intrinsic.** ⏱ 1 day. §4.5 describes "weight composition via einsum, and a second einsum for the output." At d12 with batch 64, seq 2048, N=64 you have 32 chunks/seq × 64 = **2048 distinct W_eff matrices of 768×768 per projection**, i.e. ~2.4 GB of materialized weights written and read per projection per forward, × 72 projections. That is a memory-bandwidth catastrophe and it fully explains utilization dropping from 195 to 86 TFLOPS. Since W_eff is *constant within a chunk*, the natural formulation is: compose once per chunk, then a single **`torch.bmm`** of `[n_chunks, N, B] @ [n_chunks, B, d_out]` — cuBLAS-backed batched GEMM, no custom kernel. Your Triton attempt failed because it competed with cuBLAS; batched GEMM *uses* cuBLAS. Tile chunks so the W_eff working set fits L2. If this recovers even 2× you have a much better paper, and if it doesn't, you can say "we tried the batched-GEMM formulation" instead of only "we tried Triton" — which is what R3 will otherwise assume you didn't do.
+- [x] 🔴 **Re-examine the implementation before conceding the slowdown is intrinsic.** ⏱ 1 day. **Done, and the answer is mostly negative.** Shipped in `nanochat/gpt.py` as the Phase 31 flags: `--p31-chunk-route-impl grouped` (chunk-batched `torch._grouped_mm`, bit-exact against the compose path, tested in `tests/test_chunk_route_grouped.py`), `--p31-top1-gate switch`, `--p31-route-side {output,basis,narrow}`, `--p31-basis-side-templates`, `--p31-drop-basis-proj`, `--p31-template-delta-rank`. Layer-level speedup 1.12–1.19× at d8; end-to-end at d4 it was **+1.0%** (875k → 884k tok/s). A useful by-product: the grouped path exposed a zero-router-gradient bug that affected every top-1 configuration, now fixed. Two things remain worth saying in the paper: you implemented the batched-GEMM formulation R3 would assume you skipped, and the grouped fast path is currently *unreachable* for 29C because it requires `_qrouter is None`. Given Tier 0 shows the quantile router is already hard top-1, wiring it through would make the whole 29C configuration eligible. That is the highest-value remaining throughput work.
+
+<details><summary>(superseded, kept for the record) the original bmm reformulation argument</summary>
+
+§4.5 describes "weight composition via einsum, and a second einsum for the output." At d12 with batch 64, seq 2048, N=64 you have 32 chunks/seq × 64 = **2048 distinct W_eff matrices of 768×768 per projection**, i.e. ~2.4 GB of materialized weights written and read per projection per forward, × 72 projections. That is a memory-bandwidth catastrophe and it fully explains utilization dropping from 195 to 86 TFLOPS. Since W_eff is *constant within a chunk*, the natural formulation is: compose once per chunk, then a single **`torch.bmm`** of `[n_chunks, N, B] @ [n_chunks, B, d_out]` — cuBLAS-backed batched GEMM, no custom kernel. Your Triton attempt failed because it competed with cuBLAS; batched GEMM *uses* cuBLAS. Tile chunks so the W_eff working set fits L2. If this recovers even 2× you have a much better paper, and if it doesn't, you can say "we tried the batched-GEMM formulation" instead of only "we tried Triton" — which is what R3 will otherwise assume you didn't do.
+
+</details>
 
 - [ ] 🟠 **Full module-level throughput breakdown.** ⏱ 4h. R3 asked specifically: template gating, routing, output gating, memory movement, unfused ops. You have "attention ~5× slower, FFN ~8× slower" — that's not a breakdown, it's a symptom. Give per-op time and per-op bytes moved.
 
@@ -51,7 +80,11 @@ Three reviewers and the metareview converge here. R3 states it most sharply and 
 
 ## TIER 3 — Analysis reviewers asked for. Cheap, mostly free. ~1 day.
 
-- [ ] 🔴 **Template specialization / utilization.** ⏱ 1 day. R1, R2, and R3 all asked; the AC lists it. From an existing d12 checkpoint: routing-weight entropy per projection, template usage histograms, whether Q/K/V/O/FFN projections specialize differently, how routing correlates with token type or position, and how much α actually varies across chunks. **If α turns out to be nearly uniform, you need to know that** — it would mean the gain comes from the extra parameters and the LayerNorm, not from routing, and it would explain why chunk-64 ≈ per-token.
+- [x] 🔴 **Template specialization / utilization.** ⏱ 1 day. R1, R2, and R3 all asked; the AC lists it. Script: `scripts/paper_template_analysis.py`, which takes a trained checkpoint and reports, per projection and per layer: routing entropy and effective template count, usage histograms and load-balance CV, a **variance decomposition of α into within-sequence (position) and across-sequence (input) components**, the relative Frobenius deviation of `W_eff(chunk)` from its own mean, and the pairwise cosine between templates.
+
+      python -m scripts.paper_template_analysis --ckpt <d12 checkpoint dir> --batches 20 --plot out/tmpl
+
+  Two of those are the ones that matter. `|dW|/|W|` is the honest "how dynamic is this weight really" number, and mean pairwise template cosine tells you whether the bank collapsed: routing between templates that converged to the same matrix is decorative no matter how varied α looks. The script also prints a router-identity block, which on any 29-series checkpoint will report zero within-sequence variance and an effective template count of 1.0, for the reasons in Tier 0. **If the gain survives that, the story is "conditioning on the sequence", not "conditioning on position", and the paper should say so.**
 - [ ] 🔴 **CORE per-task or category breakdown.** ⏱ 2h. R5's main ask; you already have the eval outputs. Look before you promise: at 300M params most CORE tasks sit near random, so check whether the aggregate gain is broad or concentrated in 2–3 tasks. Report "Remix > dense on k of 22 tasks" as a robustness statistic either way.
 - [ ] 🔴 **Fix the differentiability sentence.** ⏱ 30min. R3 is straightforwardly correct: thresholding scores against θ_k is discrete, and "the resulting mask... yielding differentiable routing weights" is wrong as written. The accurate statement is that the *selection* is non-differentiable and receives no gradient (as in top-k MoE), while the *weights over selected templates* are differentiable through the masked softmax, and θ_k is a non-learned EMA buffer. Concede plainly; it is a writing error, not a method flaw.
 - [ ] 🟠 **Define "matrix-shaped parameters."** ⏱ 10min. R3 asked. Say which tensors go to Muon vs AdamW, explicitly.
@@ -73,7 +106,18 @@ R2 gives Quality 2 and Significance 2 largely on this, and the AC lists it. **Th
 
 ## TIER 5 — Wanted but not feasible in the window. Say so plainly.
 
-- [ ] ❌ **d20 / ~1B active params** (R1, R4, R5, AC). ~9B tokens at Chinchilla. Weeks on your hardware. Not happening. State the compute honestly and commit to it as the next milestone.
+- [ ] 🟠 **d24 / ~1B active params** (R1, R4, R5, AC). **Revised: reachable, and the binding constraint is the token budget, not memory.** The AC's stated ceiling is "~290M active parameters", and d24 clears it: 5.32B total, **1.26B active** at chunk 256. Measured budget on a 141 GB H200 (all params, grads and Muon momentum are fp32; only embeddings are cast):
+
+  | term | GB | scales with batch |
+  |---|---|---|
+  | params / grads / Muon momentum | 21.3 each | no |
+  | bf16 bank copies saved for backward | 8.2 | no |
+  | materialized `W_eff` | 8.2 × B | **yes** |
+  | Muon `torch.stack` transient at step time | 18.1 | no |
+
+  So ~72 GB is fixed cost that `--device-batch-size` cannot touch, which is why batch 1 still OOMed at chunk 64 (backward peak ~105 GB plus the 10–20 GB first-step spike). At chunk 256 the peak is ~80 GB and it fits; chunk 512 or `--p31-route-side narrow` buys more. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+
+  The real blocker: `--target-active-params 0` sets the horizon from *total* scaling params, so d24 asks for **49B tokens**, roughly a week of continuous H200 time and possibly more shards than you have. d20 is 28.5B tokens for 0.82B active. Options: run d24 on the active-param budget (6.3B tokens) and label the protocol change in one sentence, or accept d20 and state that 1B+ remains open. Recommend the former.
 - [ ] 🟡 **d16 as a fourth point.** ⏱ ~1 week+. Probably infeasible, but if anything is running in the background, this is the one worth queuing.
 - [ ] 🟠 **MoE at d8.** ⏱ 2–3 days. R4 asks; d12 is out of reach but **d8 may be feasible** and would materially strengthen "fine-grained beats coarse," which is currently supported at d4 only — precisely the scale where everyone already knows MoE is weak. Highest-value item in this tier.
 - [ ] 🟠 **Second dataset at d4.** ⏱ 1 day. R4 asks whether the gain is nanochat/ClimbMix-specific. d4 is 37M params and 0.4B tokens — a FineWeb-Edu run is genuinely affordable and directly answers it. More feasible than reviewers assume; worth doing.
@@ -82,12 +126,12 @@ R2 gives Quality 2 and Significance 2 largely on this, and the AC lists it. **Th
 
 ## If you have 7 days
 
-Days 1: Tier 0 audits + dense-throughput measurements + the wall-clock curve.
-Days 2–3: chunk-size sweep, bmm reformulation + re-profile, dense+LN baseline.
+Day 1: Tier 0 audits, including the router audit. Run `scripts/paper_throughput.py` and `scripts/paper_template_analysis.py`; both are written and both are hours, not days.
+Days 2–3: chunk-size sweep, dense+LN baseline, and decide what the router section says.
 Days 4–5: quantile ablation at K=8, gate ablation at K=8, d4 seeds (run in parallel).
-Day 6: template specialization analysis, CORE breakdown, related-work rewrite.
-Day 7: write. Stretch items if anything finished early: d4 second dataset, d8 MoE.
+Day 6: CORE breakdown, related-work rewrite, throughput and memory table.
+Day 7: write. Stretch items if anything finished early: d4 second dataset, d8 MoE, d24 on the active-param budget.
 
 ## The one-line version
 
-The FLOPs framing is not survivable; the active-parameter framing is. Find out today whether dense d20 beats you at matched wall-clock, and rebuild the claim around what's left.
+The FLOPs framing is not survivable; the active-parameter framing is. Two things changed since this list was written: the throughput ask is narrower than it looked (report tok/s and memory, do not owe a Pareto plot), and the shipped router is per-sequence hard top-1 rather than chunk-amortized soft mixing. Fix the description before you defend the numbers, then find out whether dense d20 beats you at matched wall-clock and rebuild the claim around what is left.

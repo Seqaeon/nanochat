@@ -2059,6 +2059,61 @@ class RemixedLinear(nn.Module):
             return (one_hot * F.softmax(vals, dim=-1).unsqueeze(-1).to(dtype)).sum(dim=-2)
         return F.softmax(logits, dim=-1).to(dtype)
 
+    def _effective_topk(self):
+        """How many templates one routing decision actually selects.
+
+        The quantile routers resolve their own topk (0 means all K), so asking
+        `self.template_topk` is not enough to know whether routing is hard top-1.
+        """
+        K = self.n_templates
+        qr = getattr(self, '_qrouter', None)
+        if qr is not None:
+            return _resolve_topk(getattr(qr, 'topk', 0), K)
+        topk = getattr(self, 'template_topk', 0)
+        return K if (topk <= 0 or topk >= K) else topk
+
+    def _grouped_route(self, sig, dtype):
+        """(sel_idx, coef, weights_all) for the grouped top-1 path, or None.
+
+        None means the caller must fall back to compose, so this is the single
+        place that decides whether the fast path applies. It applies only when
+        routing selects exactly one template, in which case the compose einsum
+        would be contracting against a one-hot vector: same result, but it
+        materializes B*n_chunks weight matrices to get there.
+
+        The quantile routers return a normalised weight vector rather than
+        logits, so when their resolved topk is 1 that vector is already one-hot
+        and selecting from it is a topk(1), not a re-derivation. `coef` is the
+        gathered weight, numerically exactly 1.0. It is kept as a tensor rather
+        than skipped so the autograd edge to route_proj survives: DDP raises on a
+        parameter that requires grad and receives None. The gradient through it
+        is zero either way, exactly as in the compose path, so this is a
+        throughput change and nothing else.
+        """
+        if self.chunk_route_impl != 'grouped' or self._effective_topk() != 1:
+            return None
+        K = self.n_templates
+        qr = getattr(self, '_qrouter', None)
+        if qr is not None:
+            weights_all = qr(sig).to(dtype)
+            sel_vals, sel_idx = weights_all.topk(1, dim=-1)
+            return sel_idx.squeeze(-1), sel_vals.to(dtype), weights_all
+        if getattr(self, 'template_route', None) is None:
+            return None
+        logits_all = torch.einsum('bnc,ck->bnk', sig, self.template_route.float())
+        # topk rather than argmax so tie-breaking matches the compose path exactly
+        # and the two implementations stay bit-identical.
+        sel_vals, sel_idx = logits_all.topk(1, dim=-1)
+        sel_idx = sel_idx.squeeze(-1)
+        if self.top1_gate == 'switch':
+            # Coefficient from the full softmax, so the router gets a gradient.
+            probs_all = F.softmax(logits_all, dim=-1)
+            return (sel_idx, probs_all.gather(-1, sel_idx.unsqueeze(-1)).to(dtype),
+                    probs_all.to(dtype))
+        # Legacy coefficient: softmax over a single logit is exactly 1.0.
+        return (sel_idx, F.softmax(sel_vals.float(), dim=-1).to(dtype),
+                F.one_hot(sel_idx, K).to(dtype))
+
     def _routed_basis_proj(self, x, dtype):
         """Phase 31 route_side='basis': h_pre = x @ W_b_eff(chunk)^T.
 
@@ -2083,20 +2138,9 @@ class RemixedLinear(nn.Module):
             x_p = F.pad(x, (0, 0, 0, pad)) if pad > 0 else x
             sig = x_p.reshape(B, n_chunks, chunk, C)[:, :, 0, :].float()
             topk = getattr(self, 'template_topk', 0)
-            _grouped = (self.chunk_route_impl == 'grouped' and topk == 1
-                        and getattr(self, '_qrouter', None) is None
-                        and self.template_route is not None)
-            if _grouped:
-                logits_all = torch.einsum('bnc,ck->bnk', sig, self.template_route.float())
-                sel_vals, sel_idx = logits_all.topk(1, dim=-1)
-                sel_idx = sel_idx.squeeze(-1)
-                if self.top1_gate == 'switch':
-                    probs_all = F.softmax(logits_all, dim=-1)
-                    coef = probs_all.gather(-1, sel_idx.unsqueeze(-1)).to(dtype)
-                    weights_all = probs_all.to(dtype)
-                else:
-                    coef = F.softmax(sel_vals.float(), dim=-1).to(dtype)
-                    weights_all = F.one_hot(sel_idx, K).to(dtype)
+            _g = self._grouped_route(sig, dtype)
+            if _g is not None:
+                sel_idx, coef, weights_all = _g
                 h_p = _grouped_top1_chunk_apply(x_p, sel_idx, B_stack, coef)
                 h_pre = h_p[:, :T_len, :]
             else:
@@ -2459,39 +2503,19 @@ class RemixedLinear(nn.Module):
 
                 # Route all chunks: (B, n_chunks, K)
                 topk = getattr(self, 'template_topk', 0)
-                # Phase 31: top-1 + 'grouped' skips the W_eff materialization entirely.
-                # Only the plain (non-quantile) router can take this path, since
-                # _qrouter returns weights rather than logits.
-                _grouped = (
-                    self.chunk_route_impl == 'grouped'
-                    and topk == 1
-                    and getattr(self, '_qrouter', None) is None
-                    and self.template_route is not None
-                )
-                if getattr(self, '_qrouter', None) is not None:
+                # Phase 31: top-1 + 'grouped' skips the W_eff materialization
+                # entirely. _grouped_route decides whether that applies, for both
+                # the plain and the quantile routers, and returns None when it
+                # does not so the compose path below runs unchanged.
+                _g = self._grouped_route(x_anchors, dtype)
+                _grouped = _g is not None
+                if _grouped:
+                    sel_idx, coef, weights_all = _g
+                elif getattr(self, '_qrouter', None) is not None:
                     weights_all = self._qrouter(x_anchors).to(dtype)
                 elif hasattr(self, 'template_route') and self.template_route is not None:
                     logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
-                    if _grouped:
-                        # topk (not argmax) so tie-breaking matches the compose path
-                        # exactly and the two impls stay bit-identical.
-                        sel_vals, sel_idx = logits_all.topk(1, dim=-1)            # (B, n_chunks, 1)
-                        sel_idx = sel_idx.squeeze(-1)                            # (B, n_chunks)
-                        if self.top1_gate == 'switch':
-                            # Full softmax over all K, so the selected probability
-                            # carries a gradient to template_route (see __init__).
-                            probs_all = F.softmax(logits_all, dim=-1)            # (B, n_chunks, K)
-                            coef = probs_all.gather(-1, sel_idx.unsqueeze(-1)).to(dtype)
-                            weights_all = probs_all.to(dtype)                    # diagnostics only
-                        else:
-                            # Legacy coefficient: softmax over a single logit is
-                            # exactly 1.0, so this multiply is a numerical no-op.
-                            # It is kept (rather than skipped) to preserve the
-                            # autograd edge to template_route — DDP errors on a
-                            # parameter that requires grad but receives none.
-                            coef = F.softmax(sel_vals.float(), dim=-1).to(dtype)
-                            weights_all = F.one_hot(sel_idx, self.n_templates).to(dtype)
-                    elif topk > 0 and topk < self.n_templates:
+                    if topk > 0 and topk < self.n_templates:
                         topk_vals, topk_idx = logits_all.topk(topk, dim=-1)
                         if topk == 1:
                             one_hot = F.one_hot(topk_idx.squeeze(-1), num_classes=self.n_templates).to(dtype)
@@ -2502,7 +2526,6 @@ class RemixedLinear(nn.Module):
                     else:
                         weights_all = F.softmax(logits_all.float(), dim=-1).to(dtype)
                 else:
-                    _grouped = False
                     weights_all = torch.full((B, n_chunks, self.n_templates), 1.0 / self.n_templates, device=x.device, dtype=dtype)
 
                 basis_sz = h_p.shape[-1]
@@ -5047,20 +5070,57 @@ class ResidualAdaptiveLinear(nn.Module):
 
 
 
+def _resolve_topk(topk, K):
+    """How many experts a router selects, given a `template_topk` setting.
+
+    topk <= 0 means "all K", i.e. soft mixing over the whole bank. That is the
+    convention everywhere else in this file (see RemixedLinear._template_weights
+    and both compose branches, which fall through to a plain softmax when topk is
+    0 or >= K), and it is what --p22-template-topk 0 means in the sweep scripts.
+
+    The quantile routers previously clamped with max(1, min(topk, K)), which
+    turned 0 into 1 and silently made every --p22-template-topk 0 run hard top-1
+    with coefficient exactly 1.0. Passing --p22-template-topk 1 explicitly still
+    reproduces that behaviour bit for bit, which is the way to re-run anything
+    trained before this fix.
+    """
+    return K if topk <= 0 else min(int(topk), K)
+
+
 class QuantileBalancedRouter(nn.Module):
     """Per-Batch Quantile Load Balancing Router (No EMA).
 
     Computes raw affinity scores (B, T, K) and dynamically calculates
     per-batch quantile thresholds to balance expert utilization per step
     without stateful EMA buffers or aux loss penalties.
+
+    ROUTING SCOPE. `route_scope='token'` (the default) scores every position of
+    the input independently, so when the chunk-routing path hands this router one
+    anchor per chunk it produces one routing decision per chunk, and when the
+    per-token path hands it (B, T, D) it produces one per token.
+
+    `route_scope='sequence'` restores the earlier behaviour, which mean-pooled
+    the affinity signal over dim 1 and broadcast a single weight vector to every
+    position. That had two consequences worth remembering, because every run
+    trained before this default changed carries them:
+
+      * the chunk axis was the pooled axis, so all chunks of a sequence received
+        the same template and chunk-amortised routing was numerically identical
+        to per-sequence routing, whatever the chunk size;
+      * pooling spans the whole sequence, so a chunk's routing depended on tokens
+        that come after it. Routing was not causal.
+
+    Keep 'sequence' only to reproduce those runs.
     """
 
     def __init__(self, in_features: int, n_experts: int, topk: int,
-                 learned: bool = True, **kwargs):
+                 learned: bool = True, route_scope: str = 'token', **kwargs):
         super().__init__()
+        assert route_scope in ('token', 'sequence'), route_scope
         self.n_experts = n_experts
         self.topk      = topk
-        
+        self.route_scope = route_scope
+
         # Affinity projection: (K, D) — frozen or learned
         if learned:
             self.route_proj = nn.Parameter(torch.empty(n_experts, in_features))
@@ -5077,13 +5137,18 @@ class QuantileBalancedRouter(nn.Module):
         """x: (B, T, D) → weights: (B, T, K) normalized top-k weights."""
         B, T, D = x.shape
         K = self.n_experts
-        topk = max(1, min(self.topk, K))
+        topk = _resolve_topk(self.topk, K)
 
-        x_pool = x.float().mean(dim=1, keepdim=True) if x.ndim == 3 else x.float()
-        scores = F.linear(x_pool, self.route_proj.float())  # (B, 1, K) or (B, K)
+        if self.route_scope == 'sequence':
+            # Legacy: one decision per sequence, non-causal. See the class docstring.
+            sig = x.float().mean(dim=1, keepdim=True) if x.ndim == 3 else x.float()
+        else:
+            sig = x.float()
+        scores = F.linear(sig, self.route_proj.float())     # (B, T, K), (B, 1, K) or (B, K)
         if scores.ndim == 2:
             scores = scores.unsqueeze(1)
-        scores = scores.expand(B, T, K)
+        if scores.shape[1] != T:
+            scores = scores.expand(B, T, K)
 
         if self.training:
             # Per-batch quantile thresholding (no EMA)
@@ -5137,7 +5202,7 @@ class QuantileCrossAttentionRouter(nn.Module):
     def forward(self, x: torch.Tensor, kv_state: dict = None) -> torch.Tensor:
         B, T, D = x.shape
         K, D_h = self.n_experts, self.head_dim
-        topk = max(1, min(self.topk, K))
+        topk = _resolve_topk(self.topk, K)
         
         x_in = x.to(dtype=self.k_proj.weight.dtype)
         k = self.k_proj(x_in)       # (B, T, D_h)

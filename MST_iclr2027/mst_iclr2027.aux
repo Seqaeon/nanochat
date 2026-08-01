@@ -88,19 +88,21 @@
 \@writefile{toc}{\contentsline {paragraph}{Enriching the coupling does not help.}{9}{section*.13}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {7}Analysis}{9}{section.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Every stream is load-bearing.}{9}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Streams stay near-orthogonal, and the coupling summarizes rather than selects.}{9}{section*.15}\protected@file@percent }
-\citation{shoeybi2021megatron}
+\@writefile{toc}{\contentsline {paragraph}{Streams divide along token frequency.}{9}{section*.15}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only.}}{10}{table.6}\protected@file@percent }
 \newlabel{tab:transfer}{{6}{10}{Ablation transfer. The one intervention measured at two depths keeps its sign and approximate magnitude, which is the basis on which we run the remaining ablations at $L{=}8$ only}{table.6}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Ablations at $L{=}8$, $D{=}512$, $N{=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better.}}{10}{table.7}\protected@file@percent }
 \newlabel{tab:ablation}{{7}{10}{Ablations at $L{=}8$, $\dmodel {=}512$, $\nsub {=}4$, mean $\pm $ s.d. over 3 seeds. Negative $\Delta $ is better}{table.7}{}}
-\@writefile{toc}{\contentsline {paragraph}{Device parallelism.}{10}{section*.16}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Every stream carries load and the streams stay approximately orthogonal. Damage from deleting a stream varies by only $1.75\times $, against the $7.2\times $ gradient imbalance of an untreated partition.}}{11}{figure.5}\protected@file@percent }
-\newlabel{fig:subablate}{{5}{11}{Every stream carries load and the streams stay approximately orthogonal. Damage from deleting a stream varies by only $1.75\times $, against the $7.2\times $ gradient imbalance of an untreated partition}{figure.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{In weight space the streams are genuinely distinct.}{10}{section*.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Streams stay near-orthogonal, and the coupling summarizes rather than selects.}{10}{section*.17}\protected@file@percent }
+\citation{shoeybi2021megatron}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Stream-level analysis of the $L{=}32$ model. \textbf  {(a)} deleting any stream destroys the model, and the spread across streams is only $1.75\times $. \textbf  {(b)} normalising each stream by its own mean reveals a monotonic split along token frequency: streams 2 and 3 carry rare tokens, streams 0 and 1 carry common ones. \textbf  {(c)} decoded alone, no stream reproduces more than $3.5\%$ of the model's predictions. \textbf  {(d,e)} activation similarity and router entropy per layer, against the $-1/(N{-}1)$ floor and $\log N$. \textbf  {(f)} in weight space the per-stream attention and FFN matrices are uncorrelated at every depth, while the distribute matrices share a small component that decays with depth.}}{11}{figure.5}\protected@file@percent }
+\newlabel{fig:subablate}{{5}{11}{Stream-level analysis of the $L{=}32$ model. \textbf {(a)} deleting any stream destroys the model, and the spread across streams is only $1.75\times $. \textbf {(b)} normalising each stream by its own mean reveals a monotonic split along token frequency: streams 2 and 3 carry rare tokens, streams 0 and 1 carry common ones. \textbf {(c)} decoded alone, no stream reproduces more than $3.5\%$ of the model's predictions. \textbf {(d,e)} activation similarity and router entropy per layer, against the $-1/(\nsub {-}1)$ floor and $\log \nsub $. \textbf {(f)} in weight space the per-stream attention and FFN matrices are uncorrelated at every depth, while the distribute matrices share a small component that decays with depth}{figure.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{Device parallelism.}{11}{section*.18}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {8}Limitations}{11}{section.8}\protected@file@percent }
 \newlabel{sec:limitations}{{8}{11}{Limitations}{section.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{11}{section.9}\protected@file@percent }
 \citation{penedo2024fineweb}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{12}{section.9}\protected@file@percent }
 \bibdata{mst}
 \bibcite{amsel2025polar}{{1}{2025}{{Amsel et~al.}}{{Amsel, Persson, Musco, and Gower}}}
 \bibcite{dualstream2026}{{2}{2026{a}}{{Anonymous}}{{}}}
@@ -136,17 +138,17 @@
 \bibcite{zhou2024resformer}{{32}{2024}{{Zhou et~al.}}{{}}}
 \bibcite{hyperconnections2025}{{33}{2025}{{Zhu et~al.}}{{Zhu, Huang, Huang, Zeng, Mao, Wu, Min, and Zhou}}}
 \bibstyle{iclr2027_conference}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Per-layer parameter budget}{14}{appendix.A}\protected@file@percent }
-\newlabel{app:budget}{{A}{14}{Per-layer parameter budget}{appendix.A}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-layer parameter budget. The $N$ sub-transformers cost $12D^2/N$ and the coupling costs a further $3D^2/N$, so a layer costs $15D^2/N$ against $12D^2$ dense: a reduction of $0.8N$, not $N$. The router term $Nd$ is $0.02\%$ of the layer at $D{=}512$ and is omitted from the totals.}}{14}{table.8}\protected@file@percent }
-\newlabel{tab:budget}{{8}{14}{Per-layer parameter budget. The $\nsub $ sub-transformers cost $12\dmodel ^2/\nsub $ and the coupling costs a further $3\dmodel ^2/\nsub $, so a layer costs $15\dmodel ^2/\nsub $ against $12\dmodel ^2$ dense: a reduction of $0.8\nsub $, not $\nsub $. The router term $\nsub \dsub $ is $0.02\%$ of the layer at $\dmodel {=}512$ and is omitted from the totals}{table.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {B}Coupling variants that did not help}{14}{appendix.B}\protected@file@percent }
-\newlabel{app:negative}{{B}{14}{Coupling variants that did not help}{appendix.B}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Per-layer parameter budget}{15}{appendix.A}\protected@file@percent }
+\newlabel{app:budget}{{A}{15}{Per-layer parameter budget}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-layer parameter budget. The $N$ sub-transformers cost $12D^2/N$ and the coupling costs a further $3D^2/N$, so a layer costs $15D^2/N$ against $12D^2$ dense: a reduction of $0.8N$, not $N$. The router term $Nd$ is $0.02\%$ of the layer at $D{=}512$ and is omitted from the totals.}}{15}{table.8}\protected@file@percent }
+\newlabel{tab:budget}{{8}{15}{Per-layer parameter budget. The $\nsub $ sub-transformers cost $12\dmodel ^2/\nsub $ and the coupling costs a further $3\dmodel ^2/\nsub $, so a layer costs $15\dmodel ^2/\nsub $ against $12\dmodel ^2$ dense: a reduction of $0.8\nsub $, not $\nsub $. The router term $\nsub \dsub $ is $0.02\%$ of the layer at $\dmodel {=}512$ and is omitted from the totals}{table.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Coupling variants that did not help}{15}{appendix.B}\protected@file@percent }
+\newlabel{app:negative}{{B}{15}{Coupling variants that did not help}{appendix.B}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Coupling variants that did not improve on the routed bottleneck, $L{=}8$.}}{15}{table.9}\protected@file@percent }
 \newlabel{tab:negative}{{9}{15}{Coupling variants that did not improve on the routed bottleneck, $L{=}8$}{table.9}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Rows omitted from Table~\ref {tab:ablation}: the two optimizer interventions applied separately, and the transition bottleneck width sweep. $L{=}8$, three seeds.}}{15}{table.10}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {C}Additional ablations}{15}{appendix.C}\protected@file@percent }
 \newlabel{app:extra}{{C}{15}{Additional ablations}{appendix.C}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Rows omitted from Table~\ref {tab:ablation}: the two optimizer interventions applied separately, and the transition bottleneck width sweep. $L{=}8$, three seeds.}}{15}{table.10}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {D}Experimental details}{15}{appendix.D}\protected@file@percent }
 \newlabel{app:details}{{D}{15}{Experimental details}{appendix.D}{}}
-\gdef \@abspage@last{15}
+\gdef \@abspage@last{16}

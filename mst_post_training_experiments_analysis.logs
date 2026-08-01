@@ -102,7 +102,33 @@
     layer 31: sub_sim +0.0486   route_entropy 1.3555
 
 
+[B6] per-token loss attribution
+  no freq_table.pt ([Errno 2] No such file or directory: 'tokenizer/freq_table.pt'); position buckets only
+  baseline mean token loss 2.4451 over 163,840 tokens
+  stream 0: mean +17.228 |  | pos 0-256 +16.981  pos 256-1024 +17.531  pos 1024-2048 +17.063
+  stream 1: mean +25.713 |  | pos 0-256 +25.623  pos 256-1024 +25.658  pos 1024-2048 +25.777
+  stream 2: mean +14.671 |  | pos 0-256 +16.292  pos 256-1024 +15.071  pos 1024-2048 +13.963
+  stream 3: mean +20.240 |  | pos 0-256 +18.731  pos 256-1024 +20.412  pos 1024-2048 +20.490
 
+[B7] stream logit-lens
+  stream 0: top-1 agreement with full model  0.24%   entropy 0.853
+    favours: ' lasts' ' survived' ' lasted' ' transcends' ' differs' ' rarest' ' safest' ' last'
+  stream 1: top-1 agreement with full model  3.52%   entropy 0.555
+    favours: ';\n\n' ' —' 'ecause' '.The' ',\n\n' "'\n" ':\n\n' ' […]\n\n'
+  stream 2: top-1 agreement with full model  0.03%   entropy 0.942
+    favours: ' cubs' ' browsers' 'biotics' ' campers' 'sonian' ' shoppers' ' franch' ' archaeologis
+  stream 3: top-1 agreement with full model  0.16%   entropy 0.443
+    favours: 'erate' ' promote' ' Sh' ' Train' ' Brit' ' Crystal' ' promoting' ' Pull'
+
+[B8] weight-space similarity between streams
+  distribute_w   mean pairwise cosine: first +0.0787  mid +0.0524  last +0.0146  (overall +0.0396)
+  c_q_w          mean pairwise cosine: first -0.0004  mid -0.0002  last -0.0012  (overall -0.0001)
+  c_k_w          mean pairwise cosine: first +0.0001  mid +0.0006  last -0.0003  (overall +0.0001)
+  c_v_w          mean pairwise cosine: first -0.0012  mid -0.0009  last +0.0006  (overall +0.0003)
+  fc_w           mean pairwise cosine: first -0.0014  mid +0.0011  last +0.0005  (overall +0.0009)
+  note: 0 means the 4 streams hold unrelated matrices; +1 would mean the symmetry breaking failed
+
+wrote scratch/probe_spec.json
 
 ════════════════════════════════════════════════════════════
   done. state: out/p32_paper_ablations/p32_state_d8.json
@@ -175,3 +201,29 @@ winogrande                           54.7
 CORE metric                         0.231 
 
 wrote scratch/paper_downstream.json
+
+
+task                        dense_isoparam_d20
+agi_eval_lsat_ar                     23.9 
+arc_challenge                        36.9 
+arc_easy                             65.5 
+bigbench_cs_algorithms               43.0 
+bigbench_dyck_languages              11.9 
+bigbench_language_identification             24.6 
+bigbench_operators                   16.7 
+bigbench_qa_wikidata                 39.9 
+bigbench_repeat_copy_logic              3.1 
+boolq                                60.5 
+commonsense_qa                       20.9 
+copa                                 67.0 
+coqa                                 25.6 
+hellaswag                            49.4 
+hellaswag_zeroshot                   49.3 
+jeopardy                              6.0 
+lambada_openai                       40.5 
+openbook_qa                          38.6 
+piqa                                 72.9 
+squad                                36.0 
+winograd                             65.2 
+winogrande                           54.4 
+CORE metric                         0.233 

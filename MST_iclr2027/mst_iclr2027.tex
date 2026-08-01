@@ -750,6 +750,39 @@ magnitude is uninformative and the \emph{spread} is the result. Damage varies by
 only $1.75\times$ across the four streams, against the $7.2\times$ gradient
 imbalance the recipe was built to correct. No stream is close to redundant.
 
+\paragraph{Streams divide along token frequency.} Attributing the damage of the
+previous probe token by token, and normalizing each stream by its own mean so
+that overall importance is factored out, gives a monotonic split across frequency
+quartiles (Figure~\ref{fig:subablate}b). Relative to its own average, stream 2
+matters $1.78\times$ more than usual on the rarest quartile and $0.30\times$ on
+the commonest, a $5.9\times$ swing; stream 1 runs the other way, $0.58\times$ to
+$1.40\times$. All four profiles are monotonic. An independent probe agrees:
+decoding each stream alone through the output head, stream 1 attains $3.52\%$
+top-1 agreement with the full model against $0.03$--$0.24\%$ for the others
+(Figure~\ref{fig:subablate}c), and the tokens it promotes are dominated by
+punctuation and line breaks, which is the highest-frequency class. Two probes
+with no mechanism in common therefore place the same stream at the same end of
+the same axis.
+
+We report this as evidence that the partition does something structured rather
+than as an interpretability claim, and one caveat limits how far it can be
+pushed: deleting a stream raises token loss by roughly 20 nats, well above the
+$\log V = 10.4$ nats of a uniform predictor, so the perturbed model is
+confidently wrong rather than merely uninformed. The comparison is between
+catastrophic failures, and the monotonicity is what carries the signal. A graded
+perturbation would support a stronger claim.
+
+\paragraph{In weight space the streams are genuinely distinct.} The activation
+statistic above compares vectors living in different channel ranges, which limits
+what it licenses. The $\nsub$ distribute matrices do not have that problem: they
+all map from the \emph{same} aggregate vector, so cosine between them is well
+posed. Mean pairwise cosine among the $W^{D}_i$ is $+0.040$ overall and decays
+from $+0.079$ at the first layer to $+0.015$ at the last, while the per-stream
+$W^{Q}, W^{K}, W^{V}$ and $W^{F1}$ sit at $|\cos| < 0.0015$, indistinguishable
+from the $\approx 0.002$ expected of unrelated matrices of this size
+(Figure~\ref{fig:subablate}f). The symmetry breaking of
+Section~\ref{sec:method} works, and the streams diverge further with depth.
+
 \paragraph{Streams stay near-orthogonal, and the coupling summarizes rather than
 selects.} Mean pairwise cosine similarity between streams is close to zero
 through the body of the network, between $-0.09$ and $+0.08$ for layers 8--19,
@@ -781,14 +814,18 @@ plateau.
 
 \begin{figure}[t]
 \begin{center}
-\fbox{\parbox[c][2.4cm][c]{0.95\textwidth}{\centering \TODO{Fig.~4: (a)
-$\Delta$\bpb\ from zeroing each stream: $+5.19, +7.77, +4.44, +6.09$;
-(b) per-layer cosine similarity, $0$ to $+0.64$, with the $-0.333$ floor marked;
-(c) router entropy vs layer against $\log\nsub=1.386$.}}}
+\includegraphics[width=\textwidth]{fig_analysis.pdf}
 \end{center}
-\caption{Every stream carries load and the streams stay approximately
-orthogonal. Damage from deleting a stream varies by only $1.75\times$, against
-the $7.2\times$ gradient imbalance of an untreated partition.}
+\caption{Stream-level analysis of the $L{=}32$ model. \textbf{(a)} deleting any
+stream destroys the model, and the spread across streams is only $1.75\times$.
+\textbf{(b)} normalising each stream by its own mean reveals a monotonic split
+along token frequency: streams 2 and 3 carry rare tokens, streams 0 and 1 carry
+common ones. \textbf{(c)} decoded alone, no stream reproduces more than $3.5\%$
+of the model's predictions. \textbf{(d,e)} activation similarity and router
+entropy per layer, against the $-1/(\nsub{-}1)$ floor and $\log\nsub$.
+\textbf{(f)} in weight space the per-stream attention and FFN matrices are
+uncorrelated at every depth, while the distribute matrices share a small
+component that decays with depth.}
 \label{fig:subablate}
 \end{figure}
 

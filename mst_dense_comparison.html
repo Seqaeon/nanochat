@@ -109,8 +109,8 @@ const MST_VARIANTS = [
 
 
 
-  {id:'aggdist_d8_after', label:'AggDist d8 after',   total:58726416, active:58726416, flops:1.856348e8, bpp:1.050999, total_training_flops: 4.905236e16 ,color:'#FFFF00' }, 
-  {id:'aggdist_d9_after', label:'AggDist d9 after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
+  //{id:'aggdist_d8_after', label:'AggDist d8 after',   total:58726416, active:58726416, flops:1.856348e8, bpp:1.050999, total_training_flops: 4.905236e16 ,color:'#FFFF00' }, 
+  //{id:'aggdist_d9_after', label:'AggDist d9 after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
   {id:'aggdist_d16_after', label:'AggDist d16 after',   total:199254048, active:199254048, flops:7.299564e8, bpp:0.8809506833787342, total_training_flops: 7.554643e17 ,color:'#FFFF00' }, 
   {id:'aggdist_d18_after', label:'AggDist d18 after',   total:252696996, active:252696996, flops:9.676454e8, bpp:0.8543873681360961, total_training_flops: 1.320820e18 ,color:'#FFFF00' }, 
   {id:'aggdist_d20_after', label:'AggDist d20 after',   total:314938920, active:314938920, flops:1.225098e9, bpp:0.8349361881196933, total_training_flops: 2.162639e18 ,color:'#FFFF00' }, 
@@ -127,14 +127,18 @@ const MST_VARIANTS = [
   { id:'aggdist_d24', label:'AggDist d24',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.826342, total_training_flops: 4.357200e18 , color:'#3CAEA3' }, 
   { id:'aggdist_d32', label:'AggDist d32',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.768228, total_training_flops: 1.937323e19 , color:'#3CAEA3' }, 
   // Keep your rich purple for AggDist
+
+  //{ id:'dense_new_16', label:'Dense New 16',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.8364,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
+  { id:'dense_new_20', label:'Dense New 20',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.752098,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
+  { id:'dense_new_22', label:'Dense New 22',   total:1123159884, active:1123159884, flops:3.693894e9, bpp:0.734426,  total_training_flops: 2.208863e19 , color:'#7E53D4' }, 
   /* { id:'aggdist_d2_overtrained', label:'AggDist d2 Overtrained',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
   { id:'aggdist_d4_overtrained', label:'AggDist d4 Overtrained',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
   { id:'aggdist_d6_overtrained', label:'AggDist d6 Overtrained',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
  // { id:'aggdist_d8_overtrained', label:'AggDist d8 Overtrained',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.041720, total_training_flops: 7.845282e16 ,color:'#7E53D4' }, 
   //{ id:'aggdist_d10_overtrained', label:'AggDist d10 Overtrained',   total:82298260, active:82298260, flops:2.628595e8, bpp:0.982563, total_training_flops: 1.934910e17 , color:'#7E53D4' }, 
  // { id:'aggdist_d12_overtrained', label:'AggDist d12 Overtrained',   total:112277016, active:112277016, flops:3.713219e8, bpp:0.934262, total_training_flops: 4.292685e17 , color:'#7E53D4' },
-  { id:'aggdist_d16_overtrained', label:'AggDist d16 Overtrained',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, total_training_flops: 1.664245e18 , color:'#7E53D4' }, 
-  { id:'aggdist_d24_overtrained', label:'AggDist d24 Overtrained',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.785666, total_training_flops: 1.329815e19 , color:'#7E53D4' }, 
+  //{ id:'aggdist_d16_overtrained', label:'AggDist d16 Overtrained',   total:190865440, active:190865440, flops:6.748078e8, bpp:0.8730348203279754, total_training_flops: 1.664245e18 , color:'#7E53D4' }, 
+  //{ id:'aggdist_d24_overtrained', label:'AggDist d24 Overtrained',   total:440457264, active:440457264, flops:1.735373e9, bpp:0.785666, total_training_flops: 1.329815e19 , color:'#7E53D4' }, 
   //{ id:'aggdist_d32_overtrained', label:'AggDist d32 Overtrained',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.785666, total_training_flops: 6.350950e+19 , color:'#7E53D4' }, 
   
   // Keep your vibrant pink-magenta for FFA

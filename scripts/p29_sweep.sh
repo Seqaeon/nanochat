@@ -270,6 +270,74 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 
 #      --remix-basis-size $MODEL_DIM_C4 \
 # ══════════════════════════════════════════════════════
+# 29C-G: Chunk routing N=256, HARD TOP-1, grouped fast path
+#   - Top-1 template per chunk anchor, amortized over 256 tokens
+#   - Basis size = MODEL_DIM (full rank)
+#
+# This is a DIFFERENT EXPERIMENT from the soft 29C above it, not a faster
+# version of it: --p22-template-topk 1 selects one template per chunk instead of
+# mixing all 8. New TAG accordingly, so it gets its own state entry and out dir
+# and cannot be confused with the soft baseline's results.
+#
+# Why these three flags:
+#   --p22-template-topk 1        exactly one template per chunk, so at most K
+#                                distinct W_eff exist per forward
+#   --p31-chunk-route-impl grouped
+#                                permute chunks by template, then K dense GEMMs
+#                                straight against the bank. Never materializes a
+#                                weight matrix per chunk. Measured at K=8,
+#                                chunk 64, B=4 T=2048 C=768: 1.55x fwd,
+#                                2.39x fwd+bwd, 1.9x less peak memory.
+#                                Silently declines (falls back to compose) for
+#                                anything that is not top-1, so it is safe to
+#                                leave on.
+#   --p31-top1-gate switch       coefficient = full-softmax probability of the
+#                                selected template. WITHOUT THIS THE ROUTER DOES
+#                                NOT TRAIN: softmax over a single unmasked logit
+#                                is the constant 1.0, so the gradient to the
+#                                routing projection is exactly zero and the
+#                                router stays its random init for the whole run.
+#
+# NOTE ON --p23-quantile-route. It stays 0 here deliberately. The quantile
+# router has no differentiable coefficient at top-1 (measured |grad| = 0.000e+00
+# on route_proj, versus 2.26e+03 for the plain router with the switch gate), so
+# quantile + top-1 trains a frozen random router. It is also bit-identical to
+# plain top-k + softmax in every configuration, and its route_proj falls through
+# setup_optimizer's orphan catch-all into the struct group at full Muon LR
+# instead of the 0.3x gate LR the plain router gets. To run the quantile variant
+# anyway, set --p23-quantile-route 1 and drop --p31-top1-gate (it has no effect
+# on that path); expect the router not to learn.
+# ══════════════════════════════════════════════════════
+TAG="29CG_CHUNK256_GROUPED_TOP1_8T_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29C-G" "$TAG" "Chunk routing N=256, hard top-1, grouped fast path"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
+      --p28-chunk-routing-size 256 --p22-template-topk 1 \
+      --p31-chunk-route-impl grouped --p31-top1-gate switch \
+      --p31-drop-basis-proj 1 \
+      --p31-route-side narrow --p31-basis-side-templates -1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+
+
+# ══════════════════════════════════════════════════════
 # 29C: Chunk Routing N=64 (Full Rank Baseline)
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
@@ -297,10 +365,7 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 #    else
 #        echo "❌  $TAG FAILED — will retry next run"
 #    fi
-#fi
-
-
-
+fi
 
 
 # ══════════════════════════════════════════════════════
@@ -524,23 +589,23 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-TAG="29BASE_DENSE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29BASE_DENSE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 #
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
