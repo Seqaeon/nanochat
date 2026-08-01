@@ -146,7 +146,10 @@ const DENSE_CORE = [
 
 const RLS_CORE = [
   { id: '29C8', label: '29C chunk64-base_d8', active: 127174464, flops: 4.075794e8, core: 0.123, color: '#D4537E' },
-  { id: '29C12', label: '29C chunk64-base_d12', active: 289582944, flops: 1.140596e9, core: 0.172, color: '#D4537E' }
+  { id: '29C12', label: '29C chunk64-base_d12', active: 289582944, flops: 1.140596e9, core: 0.172, color: '#D4537E' },
+
+  { id:'dense_new_20', label:'Dense New 20',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.752098,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
+  { id:'dense_new_22', label:'Dense New 22',   total:1123159884, active:1123159884, flops:3.693894e9, bpp:0.734426,  total_training_flops: 2.208863e19 , color:'#7E53D4' }, 
 ];
 
 const M = (v, scale = 1e6) => v / scale;

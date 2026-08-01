@@ -273,19 +273,69 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 # 29C: Chunk Routing N=64 (Full Rank Baseline)
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
-#
-# DO NOT add --p31-chunk-route-impl grouped here without re-benchmarking under
-# torch.compile. The grouped top-1 path is 1.55x fwd / 2.39x fwd+bwd in eager at
-# chunk 64, but base_train.py compiles by default and the path is compile
-# hostile: torch.bincount and the counts.tolist() fallback are data dependent, so
-# Dynamo breaks the graph once per projection per layer. Turning it on at d4 made
-# a step go 320ms -> 650ms and pushed device-batch 128 into OOM.
 # ══════════════════════════════════════════════════════
-TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
+#TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
+
+# ══════════════════════════════════════════════════════
+# 29C-G: chunk routing, HARD TOP-1, grouped fast path
+#
+# A DIFFERENT EXPERIMENT from 29C above, not a faster version of it:
+# --p22-template-topk 1 selects one template per chunk instead of mixing all 8,
+# so BPB is not comparable to the soft baseline. Separate TAG accordingly.
+#
+#   --p22-template-topk 1        one template per chunk => at most K distinct
+#                                W_eff exist, so they never need materializing
+#   --p31-chunk-route-impl grouped
+#                                permute chunks by template, K dense GEMMs
+#                                against the bank. Declines and falls back to
+#                                compose for anything that is not top-1.
+#   --p31-top1-gate switch       coefficient from the full softmax. WITHOUT IT
+#                                THE ROUTER DOES NOT TRAIN: softmax over one
+#                                unmasked logit is the constant 1.0, so the
+#                                gradient to template_route is exactly zero.
+#
+# WHEN THIS PAYS. Compose materializes out*basis per chunk, i.e. out*(basis/chunk)
+# per token; grouped's overhead is two gathers and is independent of chunk. So the
+# ratio basis/chunk decides it. Compiled single-projection measurements:
+#     basis/chunk = 1  (d4,  chunk 256)   0.67x   grouped LOSES
+#     basis/chunk = 3  (d12, chunk 256)   1.01x   break-even
+#     basis/chunk = 12 (d12, chunk 64)    2.25x   attn
+#     basis/chunk = 12 (d12 c_fc, chunk 64) 3.65x
+# At d4 with chunk 256, basis == chunk == MODEL_DIM, which is the worst case and
+# is expected to be slower. The informative run is d12+, or chunk 64 where
+# grouped costs the same as chunk 256 does (measured 15.06ms/67.1M vs
+# 15.29ms/66.9M at d12) while giving 4x finer routing.
+#
+# Set P29G_CHUNK to override the chunk size for this arm alone.
+# ══════════════════════════════════════════════════════
+TAG="29CG_GROUPED_TOP1_8T_N${P29G_CHUNK:-256}_D${DEPTH}"
 if check_completed "$TAG"; then
     echo "⏭  Skipping $TAG (already completed)"
 else
-    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+    print_header "29C-G" "$TAG" "Hard top-1, grouped fast path (N=${P29G_CHUNK:-256})"
     _SAVED=$(get_out_dir "$TAG")
     _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
     if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
@@ -296,7 +346,9 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+      --p28-chunk-routing-size ${P29G_CHUNK:-256} --p22-template-topk 1 \
+      --p31-chunk-route-impl grouped --p31-top1-gate switch \
+      --p31-drop-basis-proj 1 \
       --p31-route-side narrow --p31-basis-side-templates -1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
@@ -305,7 +357,6 @@ else
         echo "❌  $TAG FAILED — will retry next run"
     fi
 fi
-
 
 
 # ══════════════════════════════════════════════════════
