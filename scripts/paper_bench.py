@@ -60,18 +60,34 @@ def make_config(depth, mst, seq_len=SEQ):
                      mst_sub_lr_scale=2.0, mst_multi_scale_windows=1)
 
 
+COMPILE = True   # set by --no-compile
+
+
 def build(depth, mst, device, seq_len=SEQ):
+    """Build and, by default, torch.compile the model.
+
+    Compilation is not optional for a fair comparison. base_train.py compiles by
+    default, so every wall-clock number in the paper comes from a compiled
+    model, and BatchedMSTLayer exists specifically so Inductor can fuse the
+    per-stream ops. Benchmarking MST uncompiled measures a model nobody trains:
+    it leaves the batched einsums and the N-way RMSNorm as separate elementwise
+    kernels and understates MST by roughly 4x.
+    """
     cfg = make_config(depth, mst, seq_len)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         model = (MST if mst else GPT)(cfg)
     model.to_empty(device=device)
     model.init_weights()
+    if COMPILE:
+        model = torch.compile(model)
     return model, cfg
 
 
-def cuda_time(fn, warmup=3, iters=10):
+def cuda_time(fn, warmup=None, iters=10):
     """Median wall time in ms of fn(), with CUDA events."""
+    # A compiled model spends its first call(s) compiling; absorb them.
+    warmup = (5 if COMPILE else 3) if warmup is None else warmup
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
@@ -206,7 +222,8 @@ def a5_decode(depth, device, contexts=(256, 1024, 4096, 8192, 16384)):
                 kw = dict(kv_kwargs) if kv_kwargs else dict(
                     num_heads=cfg.n_head, head_dim=cfg.n_embd // cfg.n_head,
                     v_head_dim=cfg.n_embd // cfg.n_head, num_layers=cfg.n_layer)
-                cache = KVCache(batch_size=1, seq_len=ctx + 8, **kw)
+                cache = KVCache(batch_size=1, seq_len=ctx + 8,
+                                device=device, dtype=torch.bfloat16, **kw)
                 with torch.inference_mode():
                     prime = torch.randint(0, VOCAB, (1, ctx), device=device)
                     model(prime, kv_cache=cache)
@@ -235,15 +252,23 @@ def main():
     ap.add_argument("--skip", type=str, default=None,
                     help="comma-separated subset to skip, e.g. --skip a1")
     ap.add_argument("--out", type=str, default="scratch/paper_bench.json")
+    ap.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True,
+                    help="torch.compile both arms (default on, matches base_train.py). "
+                         "--no-compile is for quick iteration only; it is not a "
+                         "valid configuration to report.")
     args = ap.parse_args()
+    global COMPILE
+    COMPILE = args.compile
 
     if not torch.cuda.is_available():
         print("paper_bench needs a GPU."); sys.exit(1)
     dev = torch.device("cuda")
     print(f"device: {torch.cuda.get_device_name(0)}  "
           f"peak bf16: {gpu_peak_tflops()} TFLOP/s")
+    print(f"torch.compile: {'ON' if COMPILE else 'OFF'}"
+          + ("" if COMPILE else "   <-- NOT a reportable configuration"))
 
-    out = {"gpu": torch.cuda.get_device_name(0),
+    out = {"gpu": torch.cuda.get_device_name(0), "compiled": COMPILE,
            "peak_tflops": gpu_peak_tflops(), "runs": {}}
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     skip = {s.strip() for s in args.skip.split(",")} if args.skip else set()
