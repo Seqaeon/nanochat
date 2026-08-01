@@ -61,9 +61,10 @@ def make_config(depth, mst, seq_len=SEQ):
 
 
 COMPILE = True   # set by --no-compile
+ITERS = 0        # set by --iters; 0 means use each experiment's default
 
 
-def build(depth, mst, device, seq_len=SEQ):
+def build(depth, mst, device, seq_len=SEQ, compile_model=None):
     """Build and, by default, torch.compile the model.
 
     Compilation is not optional for a fair comparison. base_train.py compiles by
@@ -79,7 +80,8 @@ def build(depth, mst, device, seq_len=SEQ):
         model = (MST if mst else GPT)(cfg)
     model.to_empty(device=device)
     model.init_weights()
-    if COMPILE:
+    do_compile = COMPILE if compile_model is None else compile_model
+    if do_compile:
         model = torch.compile(model)
     return model, cfg
 
@@ -88,6 +90,8 @@ def cuda_time(fn, warmup=None, iters=10):
     """Median wall time in ms of fn(), with CUDA events."""
     # A compiled model spends its first call(s) compiling; absorb them.
     warmup = (5 if COMPILE else 3) if warmup is None else warmup
+    if ITERS > 0:
+        iters = ITERS
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
@@ -209,12 +213,21 @@ def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1)
 
 # ---------------------------------------------------------------- A5
 def a5_decode(depth, device, contexts=(256, 1024, 4096, 8192, 16384)):
-    """Per-token decode latency with a KV cache, batch 1."""
+    """Per-token decode latency with a KV cache, batch 1.
+
+    Deliberately NOT compiled. FA3's flash_attn_with_kvcache is not traceable by
+    Dynamo (it raises "tracing with num_splits <= 0 not supported"), and
+    KVCache.get_pos() calls .item(), which breaks the graph anyway. Both arms hit
+    this identically, so it is a kernel limitation rather than an MST one, and
+    nanochat's own inference path does not compile for generation either.
+    Uncompiled decode is therefore the deployment configuration, not a fallback.
+    """
     from nanochat.engine import KVCache
     res = {}
     for name, mst in (("mst", True), ("dense", False)):
         res[name] = []
-        model, cfg = build(depth, mst, device, seq_len=max(contexts) + 8)
+        model, cfg = build(depth, mst, device, seq_len=max(contexts) + 8,
+                           compile_model=False)
         kv_kwargs = getattr(model, "kv_cache_config", None)
         for ctx in contexts:
             try:
@@ -246,6 +259,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--depths", type=int, nargs="+", default=[24])
     ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--iters", type=int, default=0,
+                    help="timing iterations per measurement (0 = per-experiment "
+                         "default). Raise it if a timing looks non-monotonic.")
     ap.add_argument("--only", type=str, default=None,
                     help="comma-separated subset of a1,a2,a3,a4,a5 "
                          "(default: all of them)")
@@ -270,6 +286,8 @@ def main():
 
     out = {"gpu": torch.cuda.get_device_name(0), "compiled": COMPILE,
            "peak_tflops": gpu_peak_tflops(), "runs": {}}
+    global ITERS
+    ITERS = args.iters
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     skip = {s.strip() for s in args.skip.split(",")} if args.skip else set()
     want = lambda k: (only is None or k in only) and k not in skip

@@ -61,6 +61,20 @@ def load_any_model(ckpt_dir, device, step=None, tokenizer_dir=None, strict=True)
     print(f"[paper_lib] loaded {cls.__name__} from {ckpt_dir} step {step}: "
           f"L={config.n_layer} D={config.n_embd}"
           + (f" N={config.mst_n_subs} d={config.mst_sub_dim}" if cls is MST else ""))
+    if cls is MST:
+        # The checkpoint stores asdict(config), so these are the flags the model
+        # was actually trained with. Print them: a mismatch here means every
+        # probe below is measuring a different model than the one you trained,
+        # and strict loading will not catch it because these flags add no
+        # parameters.
+        flags = ("mst_multi_scale_windows", "mst_transition_mode",
+                 "mst_transition_width_mult", "mst_grad_equalize",
+                 "mst_block_diagonal_muon", "mst_sub_lr_scale",
+                 "mst_input_mode", "mst_final_mode")
+        print("[paper_lib] checkpoint MST flags: "
+              + ", ".join(f"{f.replace('mst_', '')}={getattr(config, f, '?')}"
+                          for f in flags))
+        print(f"[paper_lib] per-stream windows: {getattr(model, 'sub_window_sizes', None)}")
     return model, tokenizer, config, meta
 
 

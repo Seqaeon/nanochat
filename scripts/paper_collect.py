@@ -90,16 +90,18 @@ def main():
     if not os.path.isdir(args.dir):
         print(f"no such directory: {args.dir}"); sys.exit(1)
 
-    rows = summarize(collect(args.dir))
-    if args.only:
-        rows = {k: v for k, v in rows.items() if k.startswith(args.only)}
+    all_rows = summarize(collect(args.dir))
+    rows = ({k: v for k, v in all_rows.items() if k.startswith(args.only)}
+            if args.only else all_rows)
     if not rows:
-        print(f"no completed runs found under {args.dir}")
-        state = os.path.join(args.dir, "p32_state_d8.json")
-        if os.path.exists(state):
-            done = json.load(open(state)).get("completed", {})
-            print(f"state file lists {len(done)} completed tags; "
-                  f"if that is 0 the sweep did not run any conditions")
+        if not all_rows:
+            print(f"no run directories with results under {args.dir}")
+        else:
+            print(f"filter --only {args.only!r} matched none of the "
+                  f"{len(all_rows)} conditions present:")
+            for k in sorted(all_rows):
+                print(f"    {k}")
+            print("those conditions have not been run yet, or the prefix is wrong")
         sys.exit(0)
 
     ref_mean = rows.get(args.ref, {}).get("mean") if args.ref else None

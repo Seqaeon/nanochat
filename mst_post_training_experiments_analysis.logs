@@ -1,0 +1,196 @@
+[A1] fused-attention throughput vs head_dim
+  head_dim= 32 n_head=64    0.400 ms   171.9 TFLOP/s
+  head_dim= 64 n_head=32    0.242 ms   283.9 TFLOP/s
+  head_dim=128 n_head=16    0.188 ms   365.7 TFLOP/s
+
+=== depth 24  D=1536 d=384 ===
+[A2] MST kernel breakdown
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  total device time 1255.0 ms over 347 kernels
+      275.30 ms   21.9%  ## Call CompiledFxGraph fyulekknttu5nc6lbedttemjvd5kbiulk4exyqxpkn66x3
+      146.87 ms   11.7%  ## Call CompiledFxGraph ftuuccuqisuxr6w3kysnzyurtzyrapjkiz3kokws6lkmod
+      104.36 ms    8.3%  aten::bmm
+       74.35 ms    5.9%  flash_attn_3::bwd
+       54.34 ms    4.3%  aten::mm
+       47.72 ms    3.8%  nvjet_tst_192x192_64x3_2x1_v_bz_coopB_NNN
+       39.72 ms    3.2%  nvjet_tst_192x192_64x4_2x1_v_bz_coopB_TNN
+       34.71 ms    2.8%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+       31.11 ms    2.5%  flash_attn_3::fwd
+       28.59 ms    2.3%  triton_per_fused__fused_rms_norm_backward__to_copy_add_mul_neg_slice_s
+       28.59 ms    2.3%  triton_per_fused__fused_rms_norm_backward__to_copy_add_mul_neg_slice_s
+       25.87 ms    2.1%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+[A3/A6] train step, memory, MFU
+  mst     420.82 ms/step   296.7 TFLOP/s  MFU 30.0%  peak 115.25 GB
+  dense   512.03 ms/step   600.3 TFLOP/s  MFU 60.7%  peak 106.65 GB
+  speedup (dense/mst): 1.22x
+[A4] prefill
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  2048      19.79 ms      103505 tok/s
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  4096      19.68 ms      208109 tok/s
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  8192      26.95 ms      304003 tok/s
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T= 16384      57.01 ms      287372 tok/s
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T= 32768     148.10 ms      221261 tok/s
+  dense T=  2048      28.58 ms       71651 tok/s
+  dense T=  4096      49.72 ms       82378 tok/s
+  dense T=  8192      46.17 ms      177448 tok/s
+  dense T= 16384      52.53 ms      311894 tok/s
+  dense T= 32768     119.15 ms      275016 tok/s
+
+
+[B2] zero each stream at inference
+  baseline bpb 0.7096
+  zero stream 0: bpb 5.8972   delta +5.1876
+  zero stream 1: bpb 8.4800   delta +7.7703
+  zero stream 2: bpb 5.1522   delta +4.4425
+  zero stream 3: bpb 6.8033   delta +6.0936
+  spread: min +4.4425  max +7.7703  ratio 1.75x
+
+[B3/B4] per-layer cosine similarity and router entropy
+  cosine floor for N=4 is -0.3333; log N = 1.3863
+    layer  0: sub_sim -0.1674   route_entropy 1.3672
+    layer  1: sub_sim +0.2606   route_entropy 1.3340
+    layer  2: sub_sim +0.6408   route_entropy 1.2695
+    layer  3: sub_sim +0.2827   route_entropy 1.3203
+    layer  4: sub_sim +0.0828   route_entropy 1.3594
+    layer  5: sub_sim +0.1215   route_entropy 1.3418
+    layer  6: sub_sim +0.0526   route_entropy 1.3145
+    layer  7: sub_sim +0.0189   route_entropy 1.2891
+    layer  8: sub_sim -0.0387   route_entropy 1.3672
+    layer  9: sub_sim -0.0225   route_entropy 1.3359
+    layer 10: sub_sim -0.0581   route_entropy 1.3574
+    layer 11: sub_sim -0.0837   route_entropy 1.3418
+    layer 12: sub_sim -0.0824   route_entropy 1.3516
+    layer 13: sub_sim -0.0617   route_entropy 1.3457
+    layer 14: sub_sim -0.0861   route_entropy 1.3750
+    layer 15: sub_sim -0.0583   route_entropy 1.3457
+    layer 16: sub_sim -0.0217   route_entropy 1.2969
+    layer 17: sub_sim -0.0063   route_entropy 1.2578
+    layer 18: sub_sim +0.0226   route_entropy 1.2949
+    layer 19: sub_sim +0.0365   route_entropy 1.2988
+    layer 20: sub_sim +0.0642   route_entropy 1.2070
+    layer 21: sub_sim +0.0635   route_entropy 1.2344
+    layer 22: sub_sim +0.0721   route_entropy 1.3281
+    layer 23: sub_sim +0.0818   route_entropy 1.2910
+    layer 24: sub_sim +0.1090   route_entropy 1.2441
+    layer 25: sub_sim +0.1168   route_entropy 1.2383
+    layer 26: sub_sim +0.1194   route_entropy 1.2539
+    layer 27: sub_sim +0.1314   route_entropy 1.3301
+    layer 28: sub_sim +0.1577   route_entropy 1.2695
+    layer 29: sub_sim +0.1582   route_entropy 1.2871
+    layer 30: sub_sim +0.1379   route_entropy 1.3145
+    layer 31: sub_sim +0.0486   route_entropy 1.3555
+
+
+
+
+════════════════════════════════════════════════════════════
+  done. state: out/p32_paper_ablations/p32_state_d8.json
+  collect results with:  python -m scripts.paper_collect --dir out/p32_paper_ablations
+════════════════════════════════════════════════════════════
+condition           seeds        bpb     s.d.     delta
+------------------------------------------------------
+CTRL_dense_hd128  3/    3     0.9592   0.0002       ref
+CTRL_dense_hd32   3/    3     0.9760   0.0003   +0.0168
+
+
+
+
+
+
+
+=== mst_d32: /root/nanochat/out/p07_mst_scaling/S7_COMBO_A_D32/depth_32/ckpt_base/base ===
+[MST] Using compile-optimized BatchedMSTLayer (N=4, d=512)
+[MST] 1A: Per-sub gradient equalization hooks registered
+[paper_lib] loaded MST from /root/nanochat/out/p07_mst_scaling/S7_COMBO_A_D32/depth_32/ckpt_base/base step 23187: L=32 D=2048 N=4 d=512
+Downloading https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip...
+Downloaded to /root/.cache/nanochat/eval_bundle.zip
+Placed eval_bundle directory at /root/.cache/nanochat/eval_bundle
+Evaluating: hellaswag_zeroshot (0-shot, type: multiple_choice)... accuracy: 0.5148 | centered: 0.3531 | time: 1012.42s
+Evaluating: jeopardy (10-shot, type: language_modeling)... accuracy: 0.0468 | centered: 0.0468 | time: 222.64s
+Evaluating: bigbench_qa_wikidata (10-shot, type: language_modeling)... accuracy: 0.4044 | centered: 0.4044 | time: 2093.19s
+Evaluating: arc_easy (10-shot, type: multiple_choice)... accuracy: 0.6679 | centered: 0.5572 | time: 249.07s
+Evaluating: arc_challenge (10-shot, type: multiple_choice)... accuracy: 0.3746 | centered: 0.1661 | time: 123.38s
+Evaluating: copa (0-shot, type: multiple_choice)... accuracy: 0.6100 | centered: 0.2200 | time: 10.19s
+Evaluating: commonsense_qa (10-shot, type: multiple_choice)... accuracy: 0.2269 | centered: 0.0336 | time: 129.73s
+Evaluating: piqa (10-shot, type: multiple_choice)... accuracy: 0.7329 | centered: 0.4657 | time: 195.10s
+Evaluating: openbook_qa (0-shot, type: multiple_choice)... accuracy: 0.4000 | centered: 0.2000 | time: 52.02s
+Evaluating: lambada_openai (0-shot, type: language_modeling)... accuracy: 0.4002 | centered: 0.4002 | time: 527.38s
+Evaluating: hellaswag (10-shot, type: multiple_choice)... accuracy: 0.5160 | centered: 0.3547 | time: 1104.31s
+Evaluating: winograd (0-shot, type: schema)... accuracy: 0.6337 | centered: 0.2674 | time: 27.99s
+Evaluating: winogrande (0-shot, type: schema)... accuracy: 0.5470 | centered: 0.0939 | time: 130.42s
+Evaluating: bigbench_dyck_languages (10-shot, type: language_modeling)... accuracy: 0.1400 | centered: 0.1400 | time: 108.21s
+Evaluating: agi_eval_lsat_ar (3-shot, type: multiple_choice)... accuracy: 0.3000 | centered: 0.1250 | time: 24.83s
+Evaluating: bigbench_cs_algorithms (10-shot, type: language_modeling)... accuracy: 0.3902 | centered: 0.3902 | time: 136.10s
+Evaluating: bigbench_operators (10-shot, type: language_modeling)... accuracy: 0.1524 | centered: 0.1524 | time: 21.72s
+Evaluating: bigbench_repeat_copy_logic (10-shot, type: language_modeling)... accuracy: 0.0312 | centered: 0.0312 | time: 3.30s
+Evaluating: squad (10-shot, type: language_modeling)... accuracy: 0.3961 | centered: 0.3961 | time: 1135.63s
+Evaluating: coqa (0-shot, type: language_modeling)... accuracy: 0.2562 | centered: 0.2562 | time: 813.90s
+Evaluating: boolq (10-shot, type: multiple_choice)... accuracy: 0.5606 | centered: -0.1564 | time: 347.49s
+Evaluating: bigbench_language_identification (10-shot, type: multiple_choice)... accuracy: 0.2546 | centered: 0.1800 | time: 1123.24s
+
+task                               mst_d32
+agi_eval_lsat_ar                     30.0 
+arc_challenge                        37.5 
+arc_easy                             66.8 
+bigbench_cs_algorithms               39.0 
+bigbench_dyck_languages              14.0 
+bigbench_language_identification             25.5 
+bigbench_operators                   15.2 
+bigbench_qa_wikidata                 40.4 
+bigbench_repeat_copy_logic              3.1 
+boolq                                56.1 
+commonsense_qa                       22.7 
+copa                                 61.0 
+coqa                                 25.6 
+hellaswag                            51.6 
+hellaswag_zeroshot                   51.5 
+jeopardy                              4.7 
+lambada_openai                       40.0 
+openbook_qa                          40.0 
+piqa                                 73.3 
+squad                                39.6 
+winograd                             63.4 
+winogrande                           54.7 
+CORE metric                         0.231 
+
+wrote scratch/paper_downstream.json

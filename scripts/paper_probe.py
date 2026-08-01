@@ -115,8 +115,15 @@ def b3b4_diagnostics(model, tokenizer, device, batch, seq, data_dir, max_shards,
 def b5_window_ablation(model, cfg, ev, shrink_to=32):
     """Shrink one stream's window at a time and see whether the damage tracks
     the scale that stream was assigned."""
-    if not getattr(model, "sub_window_sizes", None):
-        print("  model has no per-stream windows (multi-scale off); skipping")
+    windows = getattr(model, "sub_window_sizes", None)
+    if not windows:
+        print(f"  this checkpoint has mst_multi_scale_windows="
+              f"{getattr(cfg, 'mst_multi_scale_windows', '?')}, so the model was "
+              f"built with sub_window_sizes={windows}.")
+        print("  if you believe multi-scale WAS enabled for this run, the "
+              "checkpoint's saved config disagrees, and every other probe here "
+              "is measuring a model without it. Check the run's config before "
+              "trusting B2. Re-run with --force-multi-scale to override.")
         return None
     orig = list(model.sub_window_sizes)
     base = ev(model)
@@ -143,6 +150,9 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--eval-steps", type=int, default=40)
     ap.add_argument("--only", default=None, help="b2,b3,b5")
+    ap.add_argument("--force-multi-scale", action="store_true",
+                    help="rebuild per-stream windows even if the checkpoint "
+                         "config says multi-scale was off (diagnostic only)")
     ap.add_argument("--out", default="scratch/paper_probe.json")
     args = ap.parse_args()
 
@@ -152,6 +162,14 @@ def main():
     if not getattr(cfg, "use_mst", False):
         print("this checkpoint is a dense model; these probes are MST-only")
         sys.exit(1)
+    if args.force_multi_scale and not getattr(model, "sub_window_sizes", None):
+        import math
+        N, T = cfg.mst_n_subs, cfg.sequence_len
+        model.sub_window_sizes = [
+            (-1, 0) if j == N - 1
+            else (min(int(32 * (T / 32) ** (j / max(1, N - 1))), T), 0)
+            for j in range(N)]
+        print(f"  --force-multi-scale: {model.sub_window_sizes}")
     token_bytes = get_token_bytes(device=device, tokenizer_dir=args.tokenizer_dir)
     seq = cfg.sequence_len
 
