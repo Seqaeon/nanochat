@@ -308,6 +308,12 @@ def main():
                          "timings from separate invocations share no thermal "
                          "state; min-based timing makes this largely safe, but "
                          "prefer one invocation when both arms go in one table.")
+    ap.add_argument("--prefill-batch", type=int, default=1,
+                    help="batch size for A4. At batch 1 a fixed per-call "
+                         "dispatch cost dominates below T=16384 and the "
+                         "measurement is not reproducible; raising this "
+                         "amortises it and is arguably more representative of "
+                         "serving.")
     ap.add_argument("--iters", type=int, default=0,
                     help="timing iterations per measurement (0 = per-experiment "
                          "default). Raise it if a timing looks non-monotonic.")
@@ -363,7 +369,8 @@ def main():
         if want("a3"):
             print("[A3/A6] train step, memory, MFU"); r["a3"] = a3_train_step(depth, dev, args.batch)
         if want("a4"):
-            print("[A4] prefill"); r["a4"] = a4_prefill(depth, dev)
+            print(f"[A4] prefill (batch {args.prefill_batch})")
+            r["a4"] = a4_prefill(depth, dev, batch=args.prefill_batch)
         if want("a5"):
             print("[A5] decode"); r["a5"] = a5_decode(depth, dev)
 
