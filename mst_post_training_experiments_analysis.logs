@@ -5,13 +5,6 @@
 
 === depth 24  D=1536 d=384 ===
 [A2] MST kernel breakdown
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   total device time 1255.0 ms over 347 kernels
       275.30 ms   21.9%  ## Call CompiledFxGraph fyulekknttu5nc6lbedttemjvd5kbiulk4exyqxpkn66x3
       146.87 ms   11.7%  ## Call CompiledFxGraph ftuuccuqisuxr6w3kysnzyurtzyrapjkiz3kokws6lkmod
@@ -30,51 +23,39 @@ softmax.
   dense   512.03 ms/step   600.3 TFLOP/s  MFU 60.7%  peak 106.65 GB
   speedup (dense/mst): 1.22x
 [A4] prefill
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   mst   T=  2048      19.79 ms      103505 tok/s
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   mst   T=  4096      19.68 ms      208109 tok/s
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   mst   T=  8192      26.95 ms      304003 tok/s
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   mst   T= 16384      57.01 ms      287372 tok/s
-/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
-Online softmax is disabled on the fly since Inductor decides to
-split the reduction. Cut an issue to PyTorch if this is an
-important use case and you want to speed it up with online
-softmax.
-
-  warnings.warn(
   mst   T= 32768     148.10 ms      221261 tok/s
   dense T=  2048      28.58 ms       71651 tok/s
   dense T=  4096      49.72 ms       82378 tok/s
   dense T=  8192      46.17 ms      177448 tok/s
   dense T= 16384      52.53 ms      311894 tok/s
   dense T= 32768     119.15 ms      275016 tok/s
+
+
+[A5] decode
+  mst   ctx=   256   58.738 ms/token
+  mst   ctx=  1024   59.303 ms/token
+  mst   ctx=  4096   59.038 ms/token
+  mst   ctx=  8192   58.135 ms/token
+  mst   ctx= 16384   59.360 ms/token
+  dense ctx=   256   22.963 ms/token
+  dense ctx=  1024   22.724 ms/token
+  dense ctx=  4096   22.681 ms/token
+  dense ctx=  8192   22.750 ms/token
+  dense ctx= 16384   23.012 ms/token
+
+
+| Metric | MST | dense | Comparison |
+| --- | --- | --- | --- |
+| **train step** | 420.4 ms | 504.4 ms | **MST 1.20× faster** |
+| **MFU** | 30.0% | 61.6% | dense 2× better utilization |
+| **peak memory** | 115.3 GB | 106.7 GB | dense 8% lower |
+| **prefill** | pending re-run | pending |  |
+| **decode** | 59 ms/tok | 23 ms/tok | **dense 2.6× faster** |
+
 
 
 [B2] zero each stream at inference

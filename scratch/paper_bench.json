@@ -1,0 +1,42 @@
+{
+  "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "compiled": true,
+  "arms": [
+    "dense"
+  ],
+  "iters": 0,
+  "peak_tflops": null,
+  "runs": {
+    "24": {
+      "a4": {
+        "dense": [
+          {
+            "T": 2048,
+            "ms": null,
+            "oom": true
+          },
+          {
+            "T": 4096,
+            "ms": null,
+            "oom": true
+          },
+          {
+            "T": 8192,
+            "ms": null,
+            "oom": true
+          },
+          {
+            "T": 16384,
+            "ms": null,
+            "oom": true
+          },
+          {
+            "T": 32768,
+            "ms": null,
+            "oom": true
+          }
+        ]
+      }
+    }
+  }
+}

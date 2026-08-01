@@ -62,6 +62,12 @@ def make_config(depth, mst, seq_len=SEQ):
 
 COMPILE = True   # set by --no-compile
 ITERS = 0        # set by --iters; 0 means use each experiment's default
+ARMS = ("mst", "dense")   # set by --arms
+
+
+def _arms():
+    """The (label, is_mst) pairs selected by --arms, in a stable order."""
+    return [(n, m) for n, m in (("mst", True), ("dense", False)) if n in ARMS]
 
 
 def build(depth, mst, device, seq_len=SEQ, compile_model=None):
@@ -86,8 +92,16 @@ def build(depth, mst, device, seq_len=SEQ, compile_model=None):
     return model, cfg
 
 
-def cuda_time(fn, warmup=None, iters=10):
-    """Median wall time in ms of fn(), with CUDA events."""
+def cuda_time(fn, warmup=None, iters=10, stat="min"):
+    """Wall time in ms of fn(), measured with CUDA events.
+
+    Reports the MINIMUM by default. On a GPU driven near its power limit the
+    clocks drop under sustained load, so the median drifts upward with the
+    iteration count and the arm working the card hardest is penalised most.
+    The minimum is the standard estimator for achievable kernel time and is
+    stable against both throttling and scheduler noise. The median is returned
+    alongside it so the gap is visible.
+    """
     # A compiled model spends its first call(s) compiling; absorb them.
     warmup = (5 if COMPILE else 3) if warmup is None else warmup
     if ITERS > 0:
@@ -102,7 +116,8 @@ def cuda_time(fn, warmup=None, iters=10):
         torch.cuda.synchronize()
         ts.append(s.elapsed_time(e))
     ts.sort()
-    return ts[len(ts) // 2]
+    lo, med = ts[0], ts[len(ts) // 2]
+    return lo if stat == "min" else med, med
 
 
 # ---------------------------------------------------------------- A1
@@ -122,7 +137,7 @@ def a1_head_dim_sweep(device, seq=2048, batch=4, heads_total=16):
                                dtype=torch.bfloat16) for _ in range(3))
         fn = lambda: flash_attn.flash_attn_func(q, k, v, causal=True,
                                                 window_size=(-1, 0))
-        ms = cuda_time(fn, iters=20)
+        ms, _ = cuda_time(fn, iters=20)
         # causal attention: ~2 * 2 * B * H * T^2 * hd FLOPs (QK^T and AV)
         flops = 4 * batch * nh * seq * seq * hd * 0.5
         out.append(dict(head_dim=hd, n_head=nh, ms=ms, tflops=flops / (ms * 1e-3) / 1e12))
@@ -161,7 +176,7 @@ def a2_kernel_breakdown(depth, device, batch=4, top=12):
 def a3_train_step(depth, device, batch=4):
     res = {}
     peak_tf = gpu_peak_tflops()
-    for name, mst in (("mst", True), ("dense", False)):
+    for name, mst in _arms():
         torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
         model, cfg = build(depth, mst, device)
         fpt, _, _ = model.estimate_flops()
@@ -170,7 +185,7 @@ def a3_train_step(depth, device, batch=4):
         def step():
             model.zero_grad(set_to_none=True)
             model(x, y).backward()
-        ms = cuda_time(step, iters=8)
+        ms, _ = cuda_time(step, iters=8)
         toks = batch * SEQ
         achieved = fpt * toks / (ms * 1e-3) / 1e12
         peak_gb = torch.cuda.max_memory_allocated() / 2**30
@@ -191,7 +206,7 @@ def a3_train_step(depth, device, batch=4):
 # ---------------------------------------------------------------- A4
 def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1):
     res = {}
-    for name, mst in (("mst", True), ("dense", False)):
+    for name, mst in _arms():
         res[name] = []
         for T in lengths:
             try:
@@ -199,10 +214,15 @@ def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1)
                 model, _ = build(depth, mst, device, seq_len=T)
                 x = torch.randint(0, VOCAB, (batch, T), device=device)
                 with torch.inference_mode():
-                    ms = cuda_time(lambda: model(x), warmup=2, iters=5)
-                res[name].append(dict(T=T, ms=ms, tok_per_s=batch * T / (ms * 1e-3)))
+                    # generous warmup: torch.compile needs several calls to
+                    # finish autotuning before any timing is meaningful
+                    ms, med = cuda_time(lambda: model(x), warmup=8, iters=20)
+                res[name].append(dict(T=T, ms=ms, ms_median=med,
+                                      tok_per_s=batch * T / (ms * 1e-3)))
+                drift = 100 * (med - ms) / ms
                 print(f"  {name:5s} T={T:6d}  {ms:9.2f} ms  "
-                      f"{res[name][-1]['tok_per_s']:10.0f} tok/s")
+                      f"{res[name][-1]['tok_per_s']:10.0f} tok/s"
+                      f"   (median {med:.2f}, +{drift:.0f}%)")
                 del model
             except torch.cuda.OutOfMemoryError:
                 print(f"  {name:5s} T={T:6d}  OOM")
@@ -224,7 +244,7 @@ def a5_decode(depth, device, contexts=(256, 1024, 4096, 8192, 16384)):
     """
     from nanochat.engine import KVCache
     res = {}
-    for name, mst in (("mst", True), ("dense", False)):
+    for name, mst in _arms():
         res[name] = []
         model, cfg = build(depth, mst, device, seq_len=max(contexts) + 8,
                            compile_model=False)
@@ -241,8 +261,8 @@ def a5_decode(depth, device, contexts=(256, 1024, 4096, 8192, 16384)):
                     prime = torch.randint(0, VOCAB, (1, ctx), device=device)
                     model(prime, kv_cache=cache)
                     nxt = torch.randint(0, VOCAB, (1, 1), device=device)
-                    ms = cuda_time(lambda: model(nxt, kv_cache=cache),
-                                   warmup=3, iters=20)
+                    ms, _ = cuda_time(lambda: model(nxt, kv_cache=cache),
+                                      warmup=3, iters=20)
                 res[name].append(dict(ctx=ctx, ms_per_token=ms))
                 print(f"  {name:5s} ctx={ctx:6d}  {ms:7.3f} ms/token")
                 del cache
@@ -259,6 +279,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--depths", type=int, nargs="+", default=[24])
     ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--arms", type=str, default="mst,dense",
+                    help="which arms to measure, e.g. --arms dense. Note that "
+                         "timings from separate invocations share no thermal "
+                         "state; min-based timing makes this largely safe, but "
+                         "prefer one invocation when both arms go in one table.")
     ap.add_argument("--iters", type=int, default=0,
                     help="timing iterations per measurement (0 = per-experiment "
                          "default). Raise it if a timing looks non-monotonic.")
@@ -273,8 +298,14 @@ def main():
                          "--no-compile is for quick iteration only; it is not a "
                          "valid configuration to report.")
     args = ap.parse_args()
-    global COMPILE
+
+    global COMPILE, ITERS, ARMS
     COMPILE = args.compile
+    ITERS = args.iters
+    ARMS = tuple(a.strip() for a in args.arms.split(","))
+    bad = [a for a in ARMS if a not in ("mst", "dense")]
+    if bad:
+        print(f"unknown arm(s): {bad}; valid are mst, dense"); sys.exit(1)
 
     if not torch.cuda.is_available():
         print("paper_bench needs a GPU."); sys.exit(1)
@@ -285,14 +316,14 @@ def main():
           + ("" if COMPILE else "   <-- NOT a reportable configuration"))
 
     out = {"gpu": torch.cuda.get_device_name(0), "compiled": COMPILE,
+           "arms": list(ARMS), "iters": ITERS,
            "peak_tflops": gpu_peak_tflops(), "runs": {}}
-    global ITERS
-    ITERS = args.iters
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     skip = {s.strip() for s in args.skip.split(",")} if args.skip else set()
     want = lambda k: (only is None or k in only) and k not in skip
     planned = [k for k in ("a1", "a2", "a3", "a4", "a5") if want(k)]
-    print(f"running: {', '.join(planned) if planned else '(nothing)'}")
+    print(f"running: {', '.join(planned) if planned else '(nothing)'}"
+          f"   arms: {', '.join(ARMS)}")
 
     if want("a1"):
         print("\n[A1] fused-attention throughput vs head_dim")
