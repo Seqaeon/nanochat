@@ -386,8 +386,23 @@ parser.add_argument("--p24-sequence-gated-act", type=str, default="tanh_centered
 # CCL block modulation (only active when --use-remix-linear is set)
 
 parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
+                    choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl", "cond"],
                     help="CCL block strategy")
+# Phase 35: ConditionedLinear (--cclblock-modulation cond)
+parser.add_argument("--cond-rank", type=int, default=256,
+                    help="35: R, rank of the additive conditioned branch y = W0 x + U(c(x) * V^T x). 0 disables it")
+parser.add_argument("--cond-mult-steps", type=int, default=0,
+                    help="35: m, sequential rank-1 composition steps z_i = z_{i-1} + c_i(x) u_i (v_i^T z_{i-1}). 0 disables it")
+parser.add_argument("--cond-gate-source", type=str, default="router", choices=["router", "tied", "ctx"],
+                    help="35: coefficient source. 'router' (own projection of x), 'tied' (reuse V^T x, zero extra params, the control for 'is this just a GLU'), 'ctx' (block context stream; ignores --cond-chunk-size on the attention path where ctx is None)")
+parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid"],
+                    help="35: coefficient activation, all equal to 1 at zero logits: 'centered' 1+tanh, 'linear' 1+z (unbounded, can flip sign), 'sigmoid' 2*sigmoid")
+parser.add_argument("--cond-router-rank", type=int, default=0,
+                    help="35: factor the router as d_sig -> rr -> R (0 = full-rank router). The router is ~1/3 of the added params at R=256")
+parser.add_argument("--cond-chunk-size", type=int, default=0,
+                    help="35: route once per chunk from its first token (0 = per token). Ignored when --cond-gate-source tied")
+parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"],
+                    help="35: multiplicative implementation. 'wy' compact (one pass over activations), 'loop' sequential reference")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
@@ -762,6 +777,14 @@ def build_model_meta(depth):
         cclblock_boundary_token_id=getattr(args, 'cclblock_boundary_token_id', 198),
         use_ral=bool(getattr(args, 'use_ral', 0)),
         ral_rank=getattr(args, 'ral_rank', 32),
+        # Phase 35: ConditionedLinear
+        cond_rank=getattr(args, 'cond_rank', 256),
+        cond_mult_steps=getattr(args, 'cond_mult_steps', 0),
+        cond_gate_source=getattr(args, 'cond_gate_source', 'router'),
+        cond_coeff_act=getattr(args, 'cond_coeff_act', 'centered'),
+        cond_router_rank=getattr(args, 'cond_router_rank', 0),
+        cond_chunk_size=getattr(args, 'cond_chunk_size', 0),
+        cond_mult_impl=getattr(args, 'cond_mult_impl', 'wy'),
         cclblock_film_gate=bool(getattr(args, 'cclblock_film_gate', 0)),
         cclblock_attn_shadow_dim=getattr(args, 'cclblock_attn_shadow_dim', 0),
         cclblock_dynamic_ratio=getattr(args, 'cclblock_dynamic_ratio', 0.25),
@@ -1067,18 +1090,22 @@ def collect_gate_stats(model, step):
     Returns a dict with:
       basis_mean / basis_std / basis_dead / basis_sat   — sigmoid(gate_logits) stats
       out_mean   / out_std                              — 1+tanh(output_gate) stats
+      cond_c_mean / cond_c_std                            ConditionedLinear coefficient stats
+      cond_tok_std                                        how much c varies across tokens (0 = router collapsed)
+      cond_dof_pr                                         participation ratio of the per-coefficient
+                                                          variance spectrum: DOF/token actually in use
       gate_grad_norm   — L2 norm of all gate param gradients (0 if not yet computed)
       struct_grad_norm — L2 norm of all structural param gradients
     Each value is the mean across all tracked layers that have that stat.
     """
-    from nanochat.gpt import RemixedLinear, DualGateLinear
+    from nanochat.gpt import RemixedLinear, DualGateLinear, ConditionedLinear
     accum = {}
     counts = {}
     layers_seen = 0
 
     raw = model.module if hasattr(model, 'module') else model
     for mod in raw.modules():
-        if not isinstance(mod, (RemixedLinear, DualGateLinear)):
+        if not isinstance(mod, (RemixedLinear, DualGateLinear, ConditionedLinear)):
             continue
         gs = getattr(mod, '_gate_stats', {})
         if not gs:
@@ -1097,7 +1124,7 @@ def collect_gate_stats(model, step):
     # Gradient norms (only meaningful after loss.backward())
     gate_sq, gate_n, struct_sq, struct_n = 0.0, 0, 0.0, 0
     for mod in raw.modules():
-        if not isinstance(mod, (RemixedLinear, DualGateLinear)):
+        if not isinstance(mod, (RemixedLinear, DualGateLinear, ConditionedLinear)):
             continue
         for p in mod.gate_parameters():
             if p.grad is not None:

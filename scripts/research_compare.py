@@ -172,6 +172,14 @@ def run_training_sweep(args):
         "--cclblock-boundary-token-id", str(getattr(args, 'cclblock_boundary_token_id', 198)),
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
+        # Phase 35: ConditionedLinear
+        "--cond-rank", str(getattr(args, 'cond_rank', 256)),
+        "--cond-mult-steps", str(getattr(args, 'cond_mult_steps', 0)),
+        "--cond-gate-source", str(getattr(args, 'cond_gate_source', 'router')),
+        "--cond-coeff-act", str(getattr(args, 'cond_coeff_act', 'centered')),
+        "--cond-router-rank", str(getattr(args, 'cond_router_rank', 0)),
+        "--cond-chunk-size", str(getattr(args, 'cond_chunk_size', 0)),
+        "--cond-mult-impl", str(getattr(args, 'cond_mult_impl', 'wy')),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
         "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
         "--cclblock-dynamic-ratio", str(getattr(args, 'cclblock_dynamic_ratio', 0.25)),
@@ -770,7 +778,7 @@ if __name__ == "__main__":
     parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",
-                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl"],
+                        choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl", "cond"],
                         help="CCL block strategy: 'weight' (RemixedLinear+SelectiveContextStream) "
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -802,6 +810,14 @@ if __name__ == "__main__":
     # Phase 9
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
+    # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+    parser.add_argument("--cond-rank", type=int, default=256)
+    parser.add_argument("--cond-mult-steps", type=int, default=0)
+    parser.add_argument("--cond-gate-source", type=str, default="router", choices=["router", "tied", "ctx"])
+    parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid"])
+    parser.add_argument("--cond-router-rank", type=int, default=0)
+    parser.add_argument("--cond-chunk-size", type=int, default=0)
+    parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"])
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     parser.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25)

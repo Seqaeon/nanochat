@@ -172,6 +172,12 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-orth-lambda" "$2")
             shift 2
             ;;
+        # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+        --cond-rank|--cond-mult-steps|--cond-gate-source|--cond-coeff-act|\
+        --cond-router-rank|--cond-chunk-size|--cond-mult-impl)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         --cclblock-context-stream)
             EXTRA_ARGS+=("--cclblock-context-stream" "$2")
             shift 2

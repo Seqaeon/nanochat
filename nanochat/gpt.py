@@ -89,6 +89,19 @@ class GPTConfig:
     p34_ffn_mult: float = 4.0     # FFN hidden width as a multiple of n_embd (4.0 = standard)
     p34_ffn_single: int = 0       # 1 = one RemixedLinear D->D, no hidden layer and no activation
     p34_dense_attn: int = 0       # 1 = plain dense attention, so only the FFN is RemixedLinear
+    # Phase 35: ConditionedLinear moves conditioning from weight space to
+    # activation space.  Selected with --cclblock-modulation cond.  A degree of
+    # freedom costs O(d) here instead of O(d^2), and no operator is ever
+    # materialized per token, so every parameter is read once per batch like a
+    # dense weight.  See the ConditionedLinear docstring for the DOF/byte
+    # accounting these defaults come from.
+    cond_rank: int = 256          # R: additive branch rank (0 = no additive branch)
+    cond_mult_steps: int = 0      # m: multiplicative composition steps (0 = off)
+    cond_gate_source: str = 'router'  # 'router' (own proj of x) | 'tied' (reuse V^T x) | 'ctx' (context stream)
+    cond_coeff_act: str = 'centered'  # 'centered' (1+tanh) | 'linear' (1+z) | 'sigmoid' (2σ)
+    cond_router_rank: int = 0     # >0 factorizes the router as d_sig -> rr -> R (0 = full)
+    cond_chunk_size: int = 0      # >0 routes once per chunk from its first token (0 = per token)
+    cond_mult_impl: str = 'wy'    # 'wy' (compact, 2 GEMMs) | 'loop' (sequential reference)
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -542,6 +555,9 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln",
+    # Phase 35: ConditionedLinear
+    "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
+    "cond_router_rank", "cond_chunk_size", "cond_mult_impl",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",
@@ -5093,6 +5109,337 @@ class ResidualAdaptiveLinear(nn.Module):
         return y
 
 
+class ConditionedLinear(nn.Module):
+    """Phase 35: condition the activations, not the weights.
+
+    RemixedLinear conditions a token by picking a point in the simplex over K
+    stored templates. That costs K·out·basis parameters, and K·out·basis bytes of
+    HBM traffic for every routed chunk, to buy exactly K-1 degrees of freedom per
+    token, because the router emits K numbers and each is broadcast across a whole
+    (out, basis) matrix. The low-rank delta variant (template_delta_rank) does not
+    escape this: `weights_all` is (B, n_chunks, K) and is broadcast across the
+    rank dimension, so widening r widens the subspace the correction lives in
+    without adding a single independent knob. Three measurements agree that this
+    is the defect rather than a tuning problem: ~25 FLOP/byte against an H200
+    ridge of 206, a K× parameter count that inflates the token budget under a
+    fixed data:param ratio, and K-1 DOF/token no matter how large K·d² gets.
+
+    So the metric to design against is degrees of freedom per token per byte
+    moved. Conditioning in weight space costs O(d²) per knob and has to cross
+    HBM; conditioning in activation space costs O(d) per knob and never
+    materializes an operator, so every parameter is read exactly once per batch
+    like a dense weight. Two forms, both available here:
+
+        additive        y = W₀x + U (c(x) ⊙ Vᵀx)                    c(x) ∈ R^R
+        multiplicative  z₀ = x,  z_i = z_{i-1} + c_i(x)·u_i(v_iᵀz_{i-1})
+                        y = W₀ z_m                                  c(x) ∈ R^m
+
+    The additive form is a gated low-rank branch, i.e. a GLU relative. That is
+    not a mark against it, since it is why GLU-family layers work and the bank
+    does not, but it does mean it is the safe floor rather than the novel part.
+    At d=768, R=256 it is 1.67× dense parameters (2.0× with a full-rank router)
+    for 256 DOF/token, against 8.0× for 7 DOF/token at K=8.
+
+    The multiplicative form composes the rank-1 generators sequentially instead
+    of summing them, so it reaches the group they generate rather than their
+    span. Written naively it is a loop of m memory-bound passes over the
+    activations, which at m=16 costs several times the base GEMM and would repeat
+    the original mistake of counting FLOPs and paying bandwidth. It does not have
+    to be: with p = Vᵀx and S = VᵀU (strictly lower, since v_iᵀu_j only enters for
+    j<i), the recursion closes in the coefficients alone,
+
+        q_i = c_i·(p_i + Σ_{j<i} S_ij q_j),      z_m = x + U q,
+        y   = W₀x + (W₀U) q
+
+    which is the compact WY form of the product Π(I + c_i u_i v_iᵀ). Two width-m
+    GEMMs plus an O(m²)-per-token triangular solve, one pass over the
+    activations, and W₀U is a single (out,in)×(in,m) GEMM amortized over the
+    batch. `cond_mult_impl='loop'` keeps the sequential version as an executable
+    reference; tests/test_conditioned_linear.py pins the two together.
+
+    Read side by side, the two forms differ by exactly one thing: additive
+    applies diag(c) between V and U, multiplicative applies a token-dependent
+    lower-triangular m×m matrix generated by c. Same bandwidth, curved operator
+    manifold.
+
+    Init is identity-preserving in the strong sense: every U is zero and every
+    router weight is zero, so c ≡ 1 and the correction is identically zero, and
+    W₀ takes exactly the init the dense baseline's weight would have (uniform for
+    in-projections, zeros for out-projections). Crucially this leaves a live
+    gradient, dL/dU ∝ (c ⊙ Vᵀx) ≠ 0 at step 0, unlike zero-initializing both
+    factors of a product, which is a fixed point the optimizer never leaves.
+    """
+
+    def __init__(self, in_features, out_features, rank=256, mult_steps=0,
+                 signal_dim=None, gate_source='router', coeff_act='centered',
+                 router_rank=0, chunk_size=0, mult_impl='wy',
+                 zero_init_base=False, **_ignored):
+        super().__init__()
+        self.in_features  = in_features
+        self.out_features = out_features
+        self.rank         = max(0, int(rank))
+        self.mult_steps   = max(0, int(mult_steps))
+        self.gate_source  = gate_source
+        self.coeff_act    = coeff_act
+        self.chunk_size   = max(0, int(chunk_size))
+        self.mult_impl    = mult_impl
+        self.zero_init_base = bool(zero_init_base)
+        if self.rank == 0 and self.mult_steps == 0:
+            raise ValueError("ConditionedLinear needs cond_rank > 0 or cond_mult_steps > 0; "
+                             "both zero is a plain dense Linear, use --cclblock-modulation weight")
+        if gate_source not in ('router', 'tied', 'ctx'):
+            raise ValueError(f"Unknown cond_gate_source {gate_source!r}")
+        if coeff_act not in ('centered', 'linear', 'sigmoid'):
+            raise ValueError(f"Unknown cond_coeff_act {coeff_act!r}")
+        if mult_impl not in ('wy', 'loop'):
+            raise ValueError(f"Unknown cond_mult_impl {mult_impl!r}")
+
+        # Every parameter is a bare nn.Parameter rather than a Linear submodule on
+        # purpose: GPT.init_weights walks modules() and xavier-initializes any
+        # Linear it does not recognize, which would silently destroy the zero-init
+        # this layer's identity-preserving start depends on.
+        self.base_w = nn.Parameter(torch.empty(out_features, in_features))
+
+        sig_dim = in_features if signal_dim is None else int(signal_dim)
+        self.signal_dim = sig_dim
+        self.router_rank = max(0, int(router_rank))
+        n_coeff = self.rank + self.mult_steps  # one router emits both branches' coefficients
+
+        # Router: signal → coefficients. 'tied' reuses Vᵀx and costs nothing, which
+        # is the control that separates "conditioning" from "just more
+        # nonlinearity": under 'tied' this layer is a plain gated low-rank branch
+        # with no independent conditioning signal at all.
+        self.route_w = None
+        self.route_down = None
+        if gate_source in ('router', 'ctx'):
+            if self.router_rank > 0:
+                self.route_down = nn.Parameter(torch.empty(sig_dim, self.router_rank))
+                self.route_w    = nn.Parameter(torch.empty(self.router_rank, n_coeff))
+            else:
+                self.route_w    = nn.Parameter(torch.empty(sig_dim, n_coeff))
+
+        # Additive branch
+        self.add_v = nn.Parameter(torch.empty(in_features, self.rank)) if self.rank else None
+        self.add_u = nn.Parameter(torch.empty(self.rank, out_features)) if self.rank else None
+        # Multiplicative branch: generators live in input space, so both factors
+        # are (in, m), because the composition acts on x before W₀ sees it.
+        self.mul_v = nn.Parameter(torch.empty(in_features, self.mult_steps)) if self.mult_steps else None
+        self.mul_u = nn.Parameter(torch.empty(in_features, self.mult_steps)) if self.mult_steps else None
+
+        self._gate_stats = {}  # populated during forward() when self.training
+
+    # ── parameter groups ────────────────────────────────────────────────────
+    def gate_parameters(self):
+        """Conditioning params, routed to the lower-LR gate group."""
+        if self.route_down is not None:
+            yield self.route_down
+        if self.route_w is not None:
+            yield self.route_w
+
+    def non_gate_parameters(self):
+        """Structural params: base operator and the generators perturbing it."""
+        yield self.base_w
+        for p in (self.add_v, self.add_u, self.mul_v, self.mul_u):
+            if p is not None:
+                yield p
+
+    @torch.no_grad()
+    def reset_parameters(self, base_bound):
+        """Called from GPT.init_weights, where storage is garbage after to_empty().
+
+        base_bound is the dense baseline's uniform init bound (sqrt(3)/sqrt(n_embd)),
+        so W₀ starts exactly where the dense weight it replaces would have.
+        """
+        if self.zero_init_base:
+            nn.init.zeros_(self.base_w)
+        else:
+            nn.init.uniform_(self.base_w, -base_bound, base_bound)
+        # Zero router → c ≡ 1; zero U → correction ≡ 0; random V → live dL/dU.
+        if self.route_down is not None:
+            nn.init.normal_(self.route_down, std=self.signal_dim ** -0.5)
+        if self.route_w is not None:
+            nn.init.zeros_(self.route_w)
+        if self.add_v is not None:
+            nn.init.normal_(self.add_v, std=self.in_features ** -0.5)
+            nn.init.zeros_(self.add_u)
+        if self.mul_v is not None:
+            nn.init.normal_(self.mul_v, std=self.in_features ** -0.5)
+            nn.init.zeros_(self.mul_u)
+
+    # ── conditioning coefficients ───────────────────────────────────────────
+    def _activate(self, z):
+        """Map router logits to coefficients that are exactly 1 at zero logits."""
+        if self.coeff_act == 'centered':
+            return 1.0 + torch.tanh(z)
+        if self.coeff_act == 'sigmoid':
+            return 2.0 * torch.sigmoid(z)
+        return 1.0 + z  # 'linear': unbounded, can flip sign
+
+    def _coefficients(self, signal, p_add, p_mul, n_coeff, dtype):
+        """(B, T, n_coeff) conditioning coefficients for this token (or chunk).
+
+        p_add / p_mul are the already-computed Vᵀx projections, so the 'tied'
+        source costs no extra matmul on top of the branch it gates.
+        """
+        if self.gate_source == 'tied':
+            # No router at all: the branch's own projection is the gate signal.
+            # This is the control that separates conditioning from nonlinearity:
+            # under 'tied' the layer is a plain gated low-rank branch whose gate
+            # carries no information the value path does not already have.
+            parts = [p for p in (p_add, p_mul) if p is not None]
+            return self._activate(torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0])
+
+        sig = signal
+        B, T = sig.shape[0], sig.shape[1]
+        if self.chunk_size > 0:
+            # Route once per chunk off its first token: strictly causal, and the
+            # knob that measures whether per-token conditioning buys anything
+            # over chunk-level when both are equally affordable.
+            chunk = self.chunk_size
+            n_chunks = (T + chunk - 1) // chunk
+            pad = n_chunks * chunk - T
+            sig_p = F.pad(sig, (0, 0, 0, pad)) if pad > 0 else sig
+            sig = sig_p.reshape(B, n_chunks, chunk, sig.shape[-1])[:, :, 0, :]
+
+        h = norm(sig).to(dtype=dtype)  # rmsnorm: c_proj sees ReLU² activations
+        if self.route_down is not None:
+            h = h @ self.route_down.to(dtype=dtype)
+        c = self._activate(h @ self.route_w.to(dtype=dtype))
+
+        if self.chunk_size > 0:
+            c = (c.unsqueeze(2)
+                  .expand(B, c.shape[1], self.chunk_size, n_coeff)
+                  .reshape(B, c.shape[1] * self.chunk_size, n_coeff)[:, :T, :])
+        return c
+
+    def _compose(self, x, p_mul, c_mul, dtype):
+        """Sequential rank-1 composition, returning q such that z_m = x + U q.
+
+        'wy' solves the coefficient recursion directly and touches the activation
+        tensor once; 'loop' is the literal definition, kept as the reference the
+        fast path is tested against. m is meant to be small (8 to 32): the compact
+        path unrolls O(m²) scalar ops on (B, T) tensors.
+        """
+        u = self.mul_u.to(dtype=dtype)   # (in, m)
+        v = self.mul_v.to(dtype=dtype)   # (in, m)
+        m = self.mult_steps
+        if self.mult_impl == 'loop':
+            z = x
+            qs = []
+            for i in range(m):
+                q_i = c_mul[..., i] * (z @ v[:, i])          # (B, T)
+                z = z + q_i.unsqueeze(-1) * u[:, i]
+                qs.append(q_i)
+            return torch.stack(qs, dim=-1)                    # (B, T, m)
+        # Compact form: q_i = c_i (p_i + Σ_{j<i} S_ij q_j), S = VᵀU strictly lower.
+        S = v.transpose(0, 1) @ u                             # (m, m), params only
+        qs = []
+        for i in range(m):
+            acc = p_mul[..., i]
+            for j in range(i):
+                acc = acc + S[i, j] * qs[j]
+            qs.append(c_mul[..., i] * acc)
+        return torch.stack(qs, dim=-1)                        # (B, T, m)
+
+    def forward(self, x, context_state=None, route_weights=None, **_ignored):
+        dtype = x.dtype
+        n_coeff = self.rank + self.mult_steps
+
+        p_add = x @ self.add_v.to(dtype=dtype) if self.rank else None        # (B, T, R)
+        p_mul = x @ self.mul_v.to(dtype=dtype) if self.mult_steps else None  # (B, T, m)
+
+        signal = x
+        if self.gate_source == 'ctx':
+            if context_state is None:
+                raise ValueError(
+                    "ConditionedLinear(gate_source='ctx') received context_state=None. "
+                    "The router is sized for the context dim, so there is no silent "
+                    "fallback to x. Attention layers are built with gate_source='router' "
+                    "for exactly this reason (see RemixedMultiAttention)."
+                )
+            signal = context_state
+        c = self._coefficients(signal, p_add, p_mul, n_coeff, dtype)
+        c_add = c[..., :self.rank] if self.rank else None
+        c_mul = c[..., self.rank:] if self.mult_steps else None
+
+        w0 = self.base_w.to(dtype=dtype)
+        y = F.linear(x, w0)
+        if self.mult_steps:
+            q = self._compose(x, p_mul, c_mul, dtype)                # (B, T, m)
+            # y = W₀(x + U q), with W₀U formed once per forward so the activation
+            # tensor is read once regardless of m.
+            w0u = w0 @ self.mul_u.to(dtype=dtype)                    # (out, m)
+            y = y + q @ w0u.transpose(0, 1)
+        if self.rank:
+            y = y + (p_add * c_add) @ self.add_u.to(dtype=dtype)
+
+        if self.training and not torch.compiler.is_compiling():
+            with torch.no_grad():
+                self._record_conditioning(c, n_coeff)
+        return y
+
+    @torch.no_grad()
+    def _record_conditioning(self, c, n_coeff):
+        """Measure the conditioning this layer is actually using.
+
+        cond_dof_pr is the participation ratio of the eigenvalue spectrum of the
+        coefficient covariance, (tr Σ)² / tr(Σ²), computed without an eigen-
+        decomposition. It is the number this whole design is about: how many
+        independent directions the per-token coefficient vector explores, out of
+        R+m available. RemixedLinear's ceiling on the same measure is 1 per
+        routed factor, because its one coefficient per template is broadcast
+        across the entire rank dimension, and a marginal per-coefficient
+        variance would score that same broadcast tensor a full R, which is
+        exactly the accounting that makes a K× parameter bank look expressive.
+
+        Read it knowing the estimator is biased low. From N token samples of an
+        R-dimensional coefficient the sample covariance is Wishart, and even a
+        perfectly isotropic field reports R/(1+R/N) rather than R. N is sized at
+        16R below so the shortfall stays under ~6%; a reading well under that is
+        real collapse, a reading a few percent under it is the estimator. No
+        correction is applied because the obvious one (multiplying by 1+R/N)
+        would inflate a genuinely rank-1 field from 1.0 to 1.5 and hide the
+        failure this metric exists to catch.
+
+        Cost is N·(R+m)², and the whole block is skipped under torch.compile.
+        """
+        max_rows = max(2048, 16 * n_coeff)
+        cf = c.float()
+        self._gate_stats['cond_c_mean'] = cf.mean()
+        self._gate_stats['cond_c_std']  = cf.std()
+        flat = cf.reshape(-1, n_coeff)
+        # Deterministic stride rather than a permutation: no RNG, no sync.
+        if flat.shape[0] > max_rows:
+            flat = flat[:: (flat.shape[0] + max_rows - 1) // max_rows]
+        var = flat.var(dim=0)
+        # Mean per-coefficient std: 0 means the router has collapsed to a
+        # constant and the layer is a static low-rank branch.
+        self._gate_stats['cond_tok_std'] = var.mean().sqrt()
+        centered = flat - flat.mean(dim=0, keepdim=True)
+        cov = (centered.transpose(0, 1) @ centered) / max(flat.shape[0] - 1, 1)
+        tr = cov.diagonal().sum()
+        self._gate_stats['cond_dof_pr'] = (tr * tr) / cov.square().sum().clamp(min=1e-12)
+
+
+def _conditioned_linear_kwargs(config):
+    """Shared ConditionedLinear settings, so attention and FFN cannot drift apart."""
+    gate_source = getattr(config, 'cond_gate_source', 'router')
+    return dict(
+        rank=getattr(config, 'cond_rank', 256),
+        mult_steps=getattr(config, 'cond_mult_steps', 0),
+        gate_source=gate_source,
+        coeff_act=getattr(config, 'cond_coeff_act', 'centered'),
+        router_rank=getattr(config, 'cond_router_rank', 0),
+        chunk_size=getattr(config, 'cond_chunk_size', 0),
+        mult_impl=getattr(config, 'cond_mult_impl', 'wy'),
+        # 'ctx' reads what RemixedBlock's bypass path hands the FFN, which is
+        # attn_out.detach() at full n_embd, not a projected remix_context_dim
+        # vector, and not differentiable back into attention. So the FFN is
+        # conditioned on what attention just retrieved, with the conditioning
+        # path gradient-isolated from the retrieval that produced it.
+        signal_dim=config.n_embd if gate_source == 'ctx' else None,
+    )
+
 
 def _column_quantile(flat, q):
     """Per-column quantile of `flat` (N, K), safe under torch.compile.
@@ -5743,6 +6090,14 @@ class RemixedFeedForward(nn.Module):
             d_rank = getattr(config, 'cclblock_aesp_delta_rank', 4)
             self.c_fc   = AttentionEntropyStratifiedLinear(config.n_embd, 4 * config.n_embd, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(4 * config.n_embd, config.n_embd, n_strata=n_str, delta_rank=d_rank)
+        elif mode == 'cond':
+            # Phase 35: hidden width follows p34_ffn_mult so the FFN shape stays a
+            # free knob, and zero_init_base mirrors the dense baseline's init
+            # (in-projection uniform, out-projection zeros).
+            ck = _conditioned_linear_kwargs(config)
+            _h = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            self.c_fc   = ConditionedLinear(config.n_embd, _h, zero_init_base=False, **ck)
+            self.c_proj = ConditionedLinear(_h, config.n_embd, zero_init_base=True, **ck)
         elif mode == 'ckr' or mode == 'ckr_ffn':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
@@ -5939,6 +6294,19 @@ class RemixedMultiAttention(nn.Module):
             self.c_k    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.head_dim, n_strata=n_str, delta_rank=d_rank)
             self.c_v    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(self.n_embd, self.n_embd, n_strata=n_str, delta_rank=d_rank)
+        elif mode == 'cond':
+            ck = _conditioned_linear_kwargs(config)
+            if ck['gate_source'] == 'ctx':
+                # Attention runs before the block has a context: the bypass path
+                # derives ctx from attn_out, so context_state is None here by
+                # construction. 'ctx' therefore means "condition the FFN on what
+                # attention just retrieved", and attention conditions on its own
+                # input, since nothing else is available at that point.
+                ck = dict(ck, gate_source='router', signal_dim=None)
+            self.c_q    = ConditionedLinear(self.n_embd, self.n_head * self.head_dim,     zero_init_base=False, **ck)
+            self.c_k    = ConditionedLinear(self.n_embd, self.n_kv_head * self.head_dim,  zero_init_base=False, **ck)
+            self.c_v    = ConditionedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, zero_init_base=False, **ck)
+            self.c_proj = ConditionedLinear(self.n_embd, self.n_embd,                     zero_init_base=True,  **ck)
         elif mode == 'ckr':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
@@ -6588,8 +6956,12 @@ class RemixedBlock(nn.Module):
             else:  # multiscale
                 return MultiScaleContext(config.n_embd, ctx_dim)
 
-        # FSI/AESP/CKR/ARG/KFL: no context stream needed (bypass in forward)
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream', 'lokr', 'arg', 'kfl'):
+        # FSI/AESP/CKR/ARG/KFL/cond: no context stream needed (bypass in forward).
+        # 'cond' conditions on the layer's own input, and under gate_source='ctx'
+        # on the attention output the bypass path already hands the FFN. Either
+        # way a context stream would only add parameters, and parameters set the
+        # token budget under a fixed data:param ratio.
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'giad', 'psg', 'splitstream', 'lokr', 'arg', 'kfl', 'cond'):
             self.ctx_stream = None
         elif per_head:
             # Design 7: two independent streams; attn uses pre-attn repr, ffn uses post-attn repr
@@ -6639,7 +7011,7 @@ class RemixedBlock(nn.Module):
 
         # FSI/AESP/CKR/PGR/CIL/PRB/ARG/KFL bypass: these modes don't use context streams at all.
         # They derive their modulation signal directly from the attention output.
-        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb', 'arg', 'kfl'):
+        if self._modulation_mode in ('fsi', 'aesp', 'ckr', 'ckr_ffn', 'com', 'giad', 'psg', 'splitstream', 'lokr', 'pgr', 'cil', 'prb', 'arg', 'kfl', 'cond'):
             norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
             norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
             _nx = norm_fn_attn(x); self._inject_shared_basis(_nx)
@@ -8729,6 +9101,13 @@ class GPT(nn.Module):
                         if m.bias is not None: torch.nn.init.zeros_(m.bias)
                     if sub.use_vocab_prior:
                         torch.nn.init.normal_(sub.vocab_routing_bias.weight, mean=0.0, std=0.02)
+                    continue
+
+                # Phase 35: ConditionedLinear owns its init. W₀ gets exactly the
+                # dense baseline's init and every U/router stays at zero, so the
+                # model starts bit-identical to dense with a live gradient.
+                if isinstance(sub, ConditionedLinear):
+                    sub.reset_parameters(s)
                     continue
 
                 # Fallback for remaining research linear layers/embeddings
