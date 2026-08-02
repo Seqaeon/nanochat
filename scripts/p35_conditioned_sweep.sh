@@ -226,12 +226,12 @@ fi
 # was already inert in 40% of the bank's modules.
 # D3 removes the bound on c, letting a coefficient flip sign.
 # D4 conditions on the attention output rather than the layer's own input.
-if [[ "$RUN_GROUPS" == *d* ]]; then
-    run "D1_cond_tied_d${DEPTH}"    "$COND_COMMON" --cond-rank 256 --cond-gate-source tied
+#if [[ "$RUN_GROUPS" == *d* ]]; then
+#    run "D1_cond_tied_d${DEPTH}"    "$COND_COMMON" --cond-rank 256 --cond-gate-source tied
 #    run "D2_cond_chunk256_d${DEPTH}" "$COND_COMMON" --cond-rank 256 --cond-chunk-size 256
 #    run "D3_cond_linear_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 --cond-coeff-act linear
 #    run "D4_cond_ctx_d${DEPTH}"     "$COND_COMMON" --cond-rank 256 --cond-gate-source ctx
-fi
+#fi
 
 # ── E. what the p35 winner actually is ──────────────────────────────────────
 # D1 (cond tied) won at 1.53x dense FLOP efficiency. But c = 1 + tanh(t) applied
