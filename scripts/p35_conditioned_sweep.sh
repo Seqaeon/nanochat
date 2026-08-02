@@ -177,7 +177,7 @@ echo "════════════════════════�
 if [[ "$RUN_GROUPS" == *a* ]]; then
     # run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
     run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
-    run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
+    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
     run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
 fi
 
