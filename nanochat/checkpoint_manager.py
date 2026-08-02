@@ -39,6 +39,44 @@ def _patch_missing_keys(model_data, model_config):
         model_data["x0_lambdas"] = torch.zeros(n_layer)
         log0(f"Patching missing x0_lambdas in model data to 0.0")
 
+def _stack_legacy_templates(state, model):
+    """Rebuild `X.template_bank` from a checkpoint that stored templates separately."""
+    notes = []
+    want = {k for k in model.state_dict() if k.endswith(".template_bank")}
+    missing = sorted(want - set(state))
+    if not missing:
+        return state, notes
+    state = dict(state)
+    for key in missing:
+        prefix = key[: -len("template_bank")]
+        target = model.state_dict()[key]
+        K, per_template = target.shape[0], target.shape[1:]
+        cands = sorted(
+            (k for k in state
+             if k.startswith(prefix)
+             and re.fullmatch(r"(?:template_bank|templates?)[._]\d+(?:\.weight)?",
+                              k[len(prefix):])),
+            key=lambda k: int(re.findall(r"\d+", k[len(prefix):])[0]),
+        )
+        if len(cands) == K:
+            stacked = torch.stack([state[k] for k in cands], dim=0)
+            if stacked.shape != target.shape:
+                notes.append(
+                    f"SHAPE MISMATCH {key}: checkpoint stacks to {tuple(stacked.shape)}, "
+                    f"model wants {tuple(target.shape)}. The rebuilt config disagrees "
+                    f"with the checkpoint about basis_size or n_templates.")
+                continue
+            for k in cands:
+                state.pop(k)
+            state[key] = stacked
+            notes.append(f"stacked {K} legacy tensors -> {key}")
+        elif len(cands) == 1 and state[cands[0]].shape == model.state_dict()[key].shape[1:]:
+            notes.append(f"FOUND ONLY ONE template matrix for {key}: {cands[0]}")
+        else:
+            notes.append(f"CANNOT REPAIR {key}: candidates under this module = "
+                         + (", ".join(k[len(prefix):] for k in cands) or "(none)"))
+    return state, notes
+
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -125,6 +163,25 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
     model_data = {k.removeprefix("_orig_mod.").removeprefix("module."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     _patch_missing_config_keys(model_config_kwargs)
+
+    # Trust saved tensors over stored config for which router ran
+    ck_has_qrouter = any("_qrouter.route_proj" in k for k in model_data)
+    ck_has_plain = any(k.endswith(".template_route") for k in model_data)
+    declared = int(model_config_kwargs.get("p23_quantile_route", 0) or 0)
+    rlk = dict(model_config_kwargs.get("remixed_linear_kwargs") or {})
+    declared_kw = int(rlk.get("use_quantile_route", 0) or 0)
+
+    if ck_has_plain and not ck_has_qrouter and (declared or declared_kw):
+        log0(f"Stored config says p23_quantile_route={declared}, but checkpoint has template_route and no _qrouter. Forcing flags to 0.")
+        model_config_kwargs["p23_quantile_route"] = 0
+        rlk["use_quantile_route"] = 0
+        model_config_kwargs["remixed_linear_kwargs"] = rlk
+    elif ck_has_qrouter and not (declared or declared_kw):
+        log0("Checkpoint contains _qrouter weights but flags say 0. Forcing flags to 1.")
+        model_config_kwargs["p23_quantile_route"] = 1
+        rlk["use_quantile_route"] = 1
+        model_config_kwargs["remixed_linear_kwargs"] = rlk
+
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
     _patch_missing_keys(model_data, model_config)
@@ -133,6 +190,11 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
     # Load the model state
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
+
+    model_data, notes = _stack_legacy_templates(model_data, model)
+    for n in notes:
+        log0(f"[checkpoint_manager] {n}")
+
     model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":
