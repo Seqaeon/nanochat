@@ -172,6 +172,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-orth-lambda" "$2")
             shift 2
             ;;
+        --p22-route-affine)
+            EXTRA_ARGS+=("--p22-route-affine" "$2")
+            shift 2
+            ;;
         # Phase 35: ConditionedLinear (--cclblock-modulation cond)
         --cond-rank|--cond-mult-steps|--cond-gate-source|--cond-coeff-act|\
         --cond-router-rank|--cond-chunk-size|--cond-mult-impl)

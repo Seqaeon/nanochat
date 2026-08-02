@@ -94,6 +94,12 @@ class GPTConfig:
     # basis became xavier; its basis_modulator bias of 2.0 read back as 0.0).
     # Only for re-running checkpoints trained before that was corrected.
     legacy_init_fallback: int = 0
+    # Phase 36: affine-hull routing for the template bank. 0 = softmax (simplex),
+    # 1 = alpha = 1/K + s*(beta - mean(beta)), unconstrained and possibly negative.
+    # Targets the two mechanisms behind the measured collapse: the alpha_k
+    # prefactor on the softmax gradient, and the fact that on a simplex the only
+    # way to grow operator norm is to concentrate. See RemixedLinear._affine_weights.
+    p22_route_affine: int = 0
     # Phase 35: ConditionedLinear moves conditioning from weight space to
     # activation space.  Selected with --cclblock-modulation cond.  A degree of
     # freedom costs O(d) here instead of O(d^2), and no operator is ever
@@ -560,6 +566,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln", "legacy_init_fallback",
+    "p22_route_affine",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
     "cond_router_rank", "cond_chunk_size", "cond_mult_impl",
@@ -1663,6 +1670,8 @@ class RemixedLinear(nn.Module):
         # gate_parameters() can always use `is not None` checks on every code path.
         self.template_bank = None
         self.template_mixing = None
+        self.route_affine = False      # affine-hull routing; set where template_route is built
+        self.route_affine_scale = None
         self.template_base = None      # Phase 31 delta mode: shared base (out, basis)
         self.template_delta_v = None   # Phase 31 delta mode: (basis, K*r)
         self.template_delta_u = None   # Phase 31 delta mode: (K*r, out)
@@ -1789,6 +1798,13 @@ class RemixedLinear(nn.Module):
                         in_features, K, topk, learned=self.template_routing_learned)
                     self.template_route = None  # handled by _qrouter
                 else:
+                    # Affine-hull routing (see _affine_weights): drops the
+                    # simplex constraint that makes the softmax router collapse.
+                    self.route_affine = bool(remixed_linear_kwargs.get('route_affine', 0))
+                    # Only allocated when the mode is on: an unused parameter in
+                    # every model would sit in the optimizer with no gradient.
+                    if self.route_affine:
+                        self.route_affine_scale = nn.Parameter(torch.ones(1) / max(1, self.n_templates))
                     route_init = torch.randn(in_features, K) / (in_features ** 0.5)
                     if self.template_routing_learned:
                         self.template_route = nn.Parameter(route_init)
@@ -1837,6 +1853,13 @@ class RemixedLinear(nn.Module):
                     self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, self.template_topk, learned=self.template_routing_learned)
                     self.template_route = None
                 else:
+                    # Affine-hull routing (see _affine_weights): drops the
+                    # simplex constraint that makes the softmax router collapse.
+                    self.route_affine = bool(remixed_linear_kwargs.get('route_affine', 0))
+                    # Only allocated when the mode is on: an unused parameter in
+                    # every model would sit in the optimizer with no gradient.
+                    if self.route_affine:
+                        self.route_affine_scale = nn.Parameter(torch.ones(1) / max(1, self.n_templates))
                     route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
                     if self.template_routing_learned:
                         self.template_route = nn.Parameter(route_init)
@@ -1861,6 +1884,13 @@ class RemixedLinear(nn.Module):
                     self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0), learned=self.template_routing_learned)
                     self.template_route = None
                 else:
+                    # Affine-hull routing (see _affine_weights): drops the
+                    # simplex constraint that makes the softmax router collapse.
+                    self.route_affine = bool(remixed_linear_kwargs.get('route_affine', 0))
+                    # Only allocated when the mode is on: an unused parameter in
+                    # every model would sit in the optimizer with no gradient.
+                    if self.route_affine:
+                        self.route_affine_scale = nn.Parameter(torch.ones(1) / max(1, self.n_templates))
                     route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
                     if self.template_routing_learned:
                         self.template_route = nn.Parameter(route_init)
@@ -1883,6 +1913,13 @@ class RemixedLinear(nn.Module):
                     self._qrouter = QuantileBalancedRouter(in_features, self.n_templates, getattr(self, 'template_topk', 0), learned=self.template_routing_learned)
                     self.template_route = None
                 else:
+                    # Affine-hull routing (see _affine_weights): drops the
+                    # simplex constraint that makes the softmax router collapse.
+                    self.route_affine = bool(remixed_linear_kwargs.get('route_affine', 0))
+                    # Only allocated when the mode is on: an unused parameter in
+                    # every model would sit in the optimizer with no gradient.
+                    if self.route_affine:
+                        self.route_affine_scale = nn.Parameter(torch.ones(1) / max(1, self.n_templates))
                     route_init = torch.randn(in_features, self.n_templates) / (in_features ** 0.5)
                     if self.template_routing_learned:
                         self.template_route = nn.Parameter(route_init)
@@ -2078,6 +2115,55 @@ class RemixedLinear(nn.Module):
                 yield from self.basis_gate_coeffs.parameters()
                 yield self.basis_gate_vectors
                 yield self.basis_gate_lr_scale
+        if self.route_affine_scale is not None:
+            yield self.route_affine_scale
+
+    def _affine_weights(self, sig, dtype):
+        """Affine-hull routing: alpha = 1/K + s*(beta - mean(beta)), beta unconstrained.
+
+        The softmax puts the routing weights on the SIMPLEX, i.e. the reachable
+        operators are the convex hull of the K templates. Two things follow, and
+        both are visible in scripts/paper_template_analysis.py on a trained d12
+        checkpoint (59/72 modules at K_eff < 1.05, usage CV = sqrt(K-1) exactly,
+        which is the analytic maximum):
+
+          Gradient starvation.  dL/dz_k = alpha_k * (g_k - sum_j alpha_j g_j).
+          The alpha_k prefactor means a template's gradient is proportional to
+          how much it is already being used, so a losing template cannot recover.
+          Rich-get-richer, with one-hot as the fixed point.
+
+          Norm coupling.  For templates with mean pairwise cosine c, a uniform
+          mixture has Frobenius norm sqrt(1/K + (K-1)c/K) relative to a single
+          template, which at the measured cosines (0.02 to 0.23) is 0.40 to 0.55.
+          On the simplex the ONLY way to increase operator norm is to concentrate,
+          so there is a large task-independent gradient toward a vertex. That
+          predicts more orthogonal banks collapse harder, and they do:
+          Spearman(bank cos, K_eff) = 0.943 across the six projections.
+
+        Dropping nonnegativity moves the reachable set from the convex hull to the
+        AFFINE hull: still sum(alpha) = 1, so the mixture is still a proper
+        combination and nothing about operator scale changes, but the weights may
+        now be negative (subtracting a template becomes available) and, crucially,
+        beta can grow in any direction. That decouples "make the operator bigger"
+        from "concentrate on one template", and it removes the alpha_k prefactor
+        entirely: dL/dbeta_k is the full projection of the weight gradient onto
+        template k, independent per k, at every step, forever.
+
+        To be precise about what this does and does not fix: it does not make the
+        mean template T-bar any larger (T-bar is still the shrunken average, norm
+        ~1/sqrt(K) of one template). What it removes is the coupling, since norm
+        can now be recovered by scaling beta instead of by collapsing.
+
+        route_affine_scale is learned and starts at 1/K, which keeps the initial
+        spread of alpha comparable to a softmax's and avoids a dead start where
+        all K templates would receive identical gradient.
+        """
+        sig = norm(sig)   # the anchor is a raw residual stream whose scale grows
+                          # with depth; softmax tolerates that, an affine map does not
+        beta = torch.einsum('bnc,ck->bnk', sig.float(), self.template_route.float())
+        beta = beta - beta.mean(dim=-1, keepdim=True)
+        s = self.route_affine_scale.float()
+        return (1.0 / self.n_templates + s * beta).to(dtype)
 
     def _template_weights(self, sig, dtype):
         """Routing weights from a float32 signal (B, N, in_features) → (B, N, K).
@@ -2091,6 +2177,8 @@ class RemixedLinear(nn.Module):
         if self.template_route is None:
             return torch.full(sig.shape[:-1] + (K,), 1.0 / K,
                               device=sig.device, dtype=dtype)
+        if getattr(self, 'route_affine', False):
+            return self._affine_weights(sig, dtype)
         logits = torch.einsum('bnc,ck->bnk', sig, self.template_route.float())
         topk = getattr(self, 'template_topk', 0)
         if 0 < topk < K:
@@ -2558,6 +2646,8 @@ class RemixedLinear(nn.Module):
                     sel_idx, coef, weights_all = _g
                 elif getattr(self, '_qrouter', None) is not None:
                     weights_all = self._qrouter(x_anchors).to(dtype)
+                elif getattr(self, 'route_affine', False) and getattr(self, 'template_route', None) is not None:
+                    weights_all = self._affine_weights(x_anchors, dtype)
                 elif hasattr(self, 'template_route') and self.template_route is not None:
                     logits_all = torch.einsum('bnc,ck->bnk', x_anchors, self.template_route.float())
                     if topk > 0 and topk < self.n_templates:
@@ -6403,6 +6493,7 @@ class RemixedFeedForward(nn.Module):
                 kwargs = dict(kwargs)  # shallow copy to avoid mutating shared dict
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
                 kwargs['template_topk'] = int(getattr(config, 'p22_template_topk', kwargs.get('template_topk', 0)))
+                kwargs['route_affine'] = int(getattr(config, 'p22_route_affine', 0))
                 kwargs['n_templates'] = int(getattr(config, 'p22_n_templates', kwargs.get('n_templates', 1)))
             # Phase 28: tag with layer_role and p28 routing settings
             kwargs['layer_role'] = 'ffn'
@@ -6420,6 +6511,9 @@ class RemixedFeedForward(nn.Module):
             # Auto-select RemixedLinearFused for 29C chunk routing only if explicitly enabled via remix_use_fused
             _is_29c_fused = (
                 getattr(config, 'remix_use_fused', False)
+                # RemixedLinearFused has its own inline routing and does not
+                # implement the affine path, so the flag would silently no-op.
+                and not int(getattr(config, 'p22_route_affine', 0))
                 and kwargs.get('n_templates', 1) > 1
                 and int(kwargs.get('chunk_routing_size', 0)) > 0
                 and not lokr_expert and not tiny_expert
@@ -6641,6 +6735,7 @@ class RemixedMultiAttention(nn.Module):
                 kwargs = dict(kwargs)  # shallow copy
                 kwargs['use_quantile_route'] = int(getattr(config, 'p23_quantile_route', 0))
                 kwargs['template_topk'] = int(getattr(config, 'p22_template_topk', kwargs.get('template_topk', 0)))
+                kwargs['route_affine'] = int(getattr(config, 'p22_route_affine', 0))
             # Phase 28: tag with layer_role so global bank knows not to replace attn (mode='ffn')
             kwargs['layer_role'] = 'attn'
             kwargs['global_bank_mode'] = getattr(config, 'p28_global_template_bank', 'none')
@@ -6668,6 +6763,9 @@ class RemixedMultiAttention(nn.Module):
             # Auto-select RemixedLinearFused for 29C chunk routing only if explicitly enabled via remix_use_fused
             _is_29c_fused = (
                 getattr(config, 'remix_use_fused', False)
+                # RemixedLinearFused has its own inline routing and does not
+                # implement the affine path, so the flag would silently no-op.
+                and not int(getattr(config, 'p22_route_affine', 0))
                 and kwargs.get('n_templates', 1) > 1
                 and int(kwargs.get('chunk_routing_size', 0)) > 0
                 and not lokr_expert and not tiny_expert
@@ -9352,6 +9450,11 @@ class GPT(nn.Module):
                     if getattr(sub, 'template_route', None) is not None:
                         torch.nn.init.normal_(sub.template_route,
                                               std=sub.template_route.shape[0] ** -0.5)
+                    if getattr(sub, 'route_affine_scale', None) is not None:
+                        # 1/K keeps the initial spread of alpha comparable to a
+                        # softmax's. Zero would be a dead start: every template
+                        # would get identical gradient until the scale moved.
+                        torch.nn.init.constant_(sub.route_affine_scale, 1.0 / sub.n_templates)
                     # Quantile routers hold their projection as a bare Parameter
                     # or buffer, with the same consequence.
                     _qr = getattr(sub, '_qrouter', None)

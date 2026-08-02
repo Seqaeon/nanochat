@@ -389,6 +389,8 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl", "cond"],
                     help="CCL block strategy")
 # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+parser.add_argument("--p22-route-affine", type=int, default=0, choices=[0, 1],
+                    help="22: affine-hull routing instead of softmax. alpha = 1/K + s*(beta - mean beta): still sums to 1, may go negative, no simplex. Removes the alpha_k prefactor that starves losing templates and the norm/concentration coupling that drives collapse")
 parser.add_argument("--cond-rank", type=int, default=256,
                     help="35: R, rank of the additive conditioned branch y = W0 x + U(c(x) * V^T x). 0 disables it")
 parser.add_argument("--cond-mult-steps", type=int, default=0,
@@ -778,6 +780,7 @@ def build_model_meta(depth):
         use_ral=bool(getattr(args, 'use_ral', 0)),
         ral_rank=getattr(args, 'ral_rank', 32),
         # Phase 35: ConditionedLinear
+        p22_route_affine=getattr(args, 'p22_route_affine', 0),
         cond_rank=getattr(args, 'cond_rank', 256),
         cond_mult_steps=getattr(args, 'cond_mult_steps', 0),
         cond_gate_source=getattr(args, 'cond_gate_source', 'router'),

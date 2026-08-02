@@ -173,6 +173,7 @@ def run_training_sweep(args):
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         # Phase 35: ConditionedLinear
+        "--p22-route-affine", str(getattr(args, 'p22_route_affine', 0)),
         "--cond-rank", str(getattr(args, 'cond_rank', 256)),
         "--cond-mult-steps", str(getattr(args, 'cond_mult_steps', 0)),
         "--cond-gate-source", str(getattr(args, 'cond_gate_source', 'router')),
@@ -811,6 +812,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+    parser.add_argument("--p22-route-affine", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cond-rank", type=int, default=256)
     parser.add_argument("--cond-mult-steps", type=int, default=0)
     parser.add_argument("--cond-gate-source", type=str, default="router", choices=["router", "tied", "ctx"])
