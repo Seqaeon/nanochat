@@ -1,9 +1,15 @@
-\begin{thebibliography}{17}
+\begin{thebibliography}{25}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
   \providecommand{\doi}[1]{doi: #1}\else
   \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Dai et~al.(2024)Dai, Deng, Zhao, Xu, Gao, et~al.]{dai2024deepseekmoe}
+Damai Dai, Chengqi Deng, Chenggang Zhao, R.~X. Xu, Huazuo Gao, et~al.
+\newblock {DeepSeekMoE}: Towards ultimate expert specialization in
+  mixture-of-experts language models.
+\newblock \emph{arXiv preprint arXiv:2401.06066}, 2024.
 
 \bibitem[Dao et~al.(2022)Dao, Fu, Ermon, Rudra, and
   R{\'e}]{dao2022flashattention}
@@ -31,6 +37,11 @@ David Ha, Andrew Dai, and Quoc~V Le.
 \newblock Hypernetworks.
 \newblock In \emph{International Conference on Learning Representations}, 2017.
 
+\bibitem[He(2024)]{he2024peer}
+Xu~Owen He.
+\newblock Mixture of a million experts.
+\newblock In \emph{arXiv preprint arXiv:2407.04153}, 2024.
+
 \bibitem[Hoffmann et~al.(2022)Hoffmann, Borgeaud, Mensch, Buchatskaya, Cai,
   Rutherford, Casas, Hendricks, Welbl, Clark, et~al.]{hoffmann2022training}
 Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor
@@ -45,6 +56,12 @@ Edward~J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
   Wang, Lu~Wang, and Weizhu Chen.
 \newblock Lo{RA}: Low-rank adaptation of large language models.
 \newblock In \emph{International Conference on Learning Representations}, 2022.
+
+\bibitem[Jacobs et~al.(1991)Jacobs, Jordan, Nowlan, and
+  Hinton]{jacobs1991adaptive}
+Robert~A. Jacobs, Michael~I. Jordan, Steven~J. Nowlan, and Geoffrey~E. Hinton.
+\newblock Adaptive mixtures of local experts.
+\newblock \emph{Neural Computation}, 3\penalty0 (1):\penalty0 79--87, 1991.
 
 \bibitem[Jordan et~al.(2025)Jordan, Chen, Goldblum, Saunshi, and
   Nakkiran]{jordan2024muon}
@@ -75,11 +92,32 @@ Jeffrey Li, Alex Fang, Georgios Smyrnis, Arjun Mahdavi, Christoph Schuhmann,
   language models.
 \newblock \emph{Advances in Neural Information Processing Systems}, 37, 2024.
 
+\bibitem[Muqeeth et~al.(2024)Muqeeth, Liu, and Raffel]{muqeeth2024smear}
+Mohammed Muqeeth, Haokun Liu, and Colin Raffel.
+\newblock Soft merging of experts with adaptive routing.
+\newblock \emph{Transactions on Machine Learning Research (TMLR)}, 2024.
+
 \bibitem[{NVIDIA}(2024)]{nvidia2024climbmix}
 {NVIDIA}.
 \newblock Climbmix: A curated pretraining dataset.
 \newblock 2024.
 \newblock Used via nanochat framework.
+
+\bibitem[Oldfield et~al.(2024)Oldfield, Georgopoulos, Chrysos, Tzelepis,
+  Panagakis, Nicolaou, Deng, and Patras]{oldfield2024mumoe}
+James Oldfield, Markos Georgopoulos, Grigorios~G. Chrysos, Christos Tzelepis,
+  Yannis Panagakis, Mihalis~A. Nicolaou, Jiankang Deng, and Ioannis Patras.
+\newblock Multilinear mixture of experts: Scalable expert specialization
+  through factorization.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2024.
+
+\bibitem[Puigcerver et~al.(2024)Puigcerver, Riquelme, Mustafa, and
+  Houlsby]{puigcerver2024softmoe}
+Joan Puigcerver, Carlos Riquelme, Basil Mustafa, and Neil Houlsby.
+\newblock From sparse to soft mixtures of experts.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2024.
 
 \bibitem[Schlag et~al.(2021)Schlag, Irie, and Schmidhuber]{schlag2021linear}
 Imanol Schlag, Kazuki Irie, and J{\"u}rgen Schmidhuber.
@@ -107,6 +145,19 @@ Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
 \newblock Attention is all you need.
 \newblock In \emph{Advances in Neural Information Processing Systems},
   volume~30, 2017.
+
+\bibitem[Yang et~al.(2019)Yang, Bender, Le, and Ngiam]{yang2019condconv}
+Brandon Yang, Gabriel Bender, Quoc~V. Le, and Jiquan Ngiam.
+\newblock {CondConv}: Conditionally parameterized convolutions for efficient
+  inference.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2019.
+
+\bibitem[Zhong et~al.(2024)Zhong, Xia, Chen, and Lewis]{zhong2024lory}
+Zexuan Zhong, Mengzhou Xia, Danqi Chen, and Mike Lewis.
+\newblock {Lory}: Fully differentiable mixture-of-experts for autoregressive
+  language model pre-training.
+\newblock In \emph{Conference on Language Modeling (COLM)}, 2024.
 
 \bibitem[Zhou et~al.(2022)Zhou, Lei, Liu, Du, Huang, Zhao, Dai, Chen, Le, and
   Laudon]{zhou2022expertchoice}

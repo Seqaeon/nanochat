@@ -128,9 +128,22 @@ const MST_VARIANTS = [
   { id:'aggdist_d32', label:'AggDist d32',   total:847347776, active:847347776, flops:3.605201e9, bpp:0.768228, total_training_flops: 1.937323e19 , color:'#3CAEA3' }, 
   // Keep your rich purple for AggDist
 
-  //{ id:'dense_new_16', label:'Dense New 16',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.8364,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
-  { id:'dense_new_20', label:'Dense New 20',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.752098,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
-  { id:'dense_new_22', label:'Dense New 22',   total:1123159884, active:1123159884, flops:3.693894e9, bpp:0.734426,  total_training_flops: 2.208863e19 , color:'#7E53D4' }, 
+  // { id:'dense_new_8',  label:'Dense New 8',   total: 125829648,  active: 125829648,  flops: 2.862643e8, total_training_flops: 1.260714e17 ,  bpp: 0.969126 , color:'#7E53D4' },
+  // { id:'dense_new_12', label:'Dense New 12',   total: 286262424,  active: 286262424,  flops: 7.384666e8, total_training_flops: 8.537080e17 ,  bpp: 0.865634 , color:'#7E53D4' }, 
+  // { id:'dense_new_20', label:'Dense New 20',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.752098,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
+  // { id:'dense_new_22', label:'Dense New 22',   total:1123159884, active:1123159884, flops:3.693894e9, bpp:0.734426,  total_training_flops: 2.208863e19 , color:'#7E53D4' }, 
+
+  // Dense Updated (DENSE points offset by average gap -0.037614 bpp)
+  { id:'dense_updated_d12', label:'Dense Updated d12', total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.865386, color: '#FF6B35' },
+  { id:'dense_updated_d14', label:'Dense Updated d14', total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.831186, color: '#FF6B35' },
+  { id:'dense_updated_d16', label:'Dense Updated d16', total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.798786, color: '#FF6B35' },
+  { id:'dense_updated_d18', label:'Dense Updated d18', total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.775486, color: '#FF6B35' },
+  { id:'dense_updated_d20', label:'Dense Updated d20', total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.752986, color: '#FF6B35' },
+  { id:'dense_updated_d22', label:'Dense Updated d22', total: 1123157490, active: 1123157490, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.733786, color: '#FF6B35' },
+  { id:'dense_updated_d24', label:'Dense Updated d24', total: 1384122122, active: 1384122122, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.716886, color: '#FF6B35' },
+  { id:'dense_updated_d26', label:'Dense Updated d26', total: 1681786938, active: 1681786938, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.700586, color: '#FF6B35' },
+  { id:'dense_updated_d28', label:'Dense Updated d28', total: 2018511234, active: 2018511234, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.686986, color: '#FF6B35' },
+  { id:'dense_updated_d30', label:'Dense Updated d30', total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.674386, color: '#FF6B35' }, 
   /* { id:'aggdist_d2_overtrained', label:'AggDist d2 Overtrained',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
   { id:'aggdist_d4_overtrained', label:'AggDist d4 Overtrained',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
   { id:'aggdist_d6_overtrained', label:'AggDist d6 Overtrained',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
@@ -369,13 +382,13 @@ function makeChart(canvasId, variants, keyFn, xLabel) {
   // 2. Dynamically group variants by their base prefix (e.g., 'aggdist', 'micro_attn', 'ffa')
   const groups = {};
   variants.forEach(v => {
-    // Strips '_d<depth>' from anywhere in the ID (e.g. 'aggdist_d8' -> 'aggdist')
-    const baseGroup = v.id.replace(/_d\d+(_|$)/, '$1'); 
+    // Strips '_d<depth>' or '_<depth>' from anywhere in the ID (e.g. 'dense_new_12' -> 'dense_new', 'aggdist_d8' -> 'aggdist')
+    const baseGroup = v.id.replace(/_d?\d+(_|$)/, '$1'); 
     if (!groups[baseGroup]) {
       groups[baseGroup] = {
         data: [],
         color: v.color,
-        label: v.label.replace(/\s*d\d+\s*/gi, ' ').trim()
+        label: v.label.replace(/\s*d?\d+\s*/gi, ' ').trim()
       };
     }
     groups[baseGroup].data.push(v);

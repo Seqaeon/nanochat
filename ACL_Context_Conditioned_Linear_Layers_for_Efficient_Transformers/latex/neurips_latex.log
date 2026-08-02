@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  5 MAY 2026 00:02
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  2 AUG 2026 04:06
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -640,67 +640,56 @@ Package microtype Info: Loading generic protrusion settings for font family
 
 
 {/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texlive/texmf-di
-st/fonts/enc/dvips/base/8r.enc}]
-<remixedlinear_architecture.png, id=131, 1678.27pt x 944.52875pt>
+st/fonts/enc/dvips/base/8r.enc}] [2]
+<remixedlinear_architecture.png, id=179, 1678.27pt x 944.52875pt>
 File: remixedlinear_architecture.png Graphic file (type png)
 <use remixedlinear_architecture.png>
-Package pdftex.def Info: remixedlinear_architecture.png  used on input line 67.
+Package pdftex.def Info: remixedlinear_architecture.png  used on input line 70.
 
 (pdftex.def)             Requested size: 377.60951pt x 212.5098pt.
- [2] [3 <./remixedlinear_architecture.png (PNG copy)>] [4]
-<scaling_curves_acl.png, id=201, 1004.553pt x 309.5565pt>
+ [3 <./remixedlinear_architecture.png (PNG copy)>] [4]
+[5]
+<scaling_curves_acl.png, id=244, 1004.553pt x 309.5565pt>
 File: scaling_curves_acl.png Graphic file (type png)
 <use scaling_curves_acl.png>
-Package pdftex.def Info: scaling_curves_acl.png  used on input line 227.
+Package pdftex.def Info: scaling_curves_acl.png  used on input line 235.
 (pdftex.def)             Requested size: 377.60951pt x 116.36208pt.
 
-! Missing $ inserted.
-<inserted text> 
-                $
-l.234 ...cale ($\sim$900M params, $\sim$2.9 \times
-                                                   10^9$ FLOPs).
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
+Underfull \vbox (badness 5345) has occurred while \output is active []
 
-[5] [6 <./scaling_curves_acl.png>]
-Underfull \vbox (badness 1831) has occurred while \output is active []
-
- [7]
-<scaling_curves_core.png, id=247, 1004.553pt x 309.5565pt>
+ [6]
+[7 <./scaling_curves_acl.png>] [8]
+<scaling_curves_core.png, id=282, 1004.553pt x 309.5565pt>
 File: scaling_curves_core.png Graphic file (type png)
 <use scaling_curves_core.png>
-Package pdftex.def Info: scaling_curves_core.png  used on input line 336.
+Package pdftex.def Info: scaling_curves_core.png  used on input line 345.
 (pdftex.def)             Requested size: 377.60951pt x 116.36208pt.
-
-[8 <./scaling_curves_core.png>] (./neurips_latex.bbl [9]) [10]
-LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 3
-99.
+ [9 <./scaling_curves_core.png>] [10]
+(./neurips_latex.bbl [11]) [12]
+LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 4
+50.
 
 (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd
 File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
-) [11
+) [13
 
-] [12]
-(./checklist.tex [13] [14] [15] [16] [17] [18]) [19] (./neurips_latex.aux)
+] [14]
+(./checklist.tex [15] [16] [17] [18] [19] [20]) [21] (./neurips_latex.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
  ***********
-
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
 Package rerunfilecheck Info: File `neurips_latex.out' has not changed.
 (rerunfilecheck)             Checksum: C86A702047BE5C38F603182831C94C4F;2741.
  ) 
 Here is how much of TeX's memory you used:
- 14668 strings out of 476106
- 224938 string characters out of 5793933
+ 14727 strings out of 476106
+ 225945 string characters out of 5793933
  1944975 words of memory out of 5000000
- 36002 multiletter control sequences out of 15000+600000
- 620619 words of font info for 295 fonts, out of 8000000 for 9000
+ 36029 multiletter control sequences out of 15000+600000
+ 621871 words of font info for 307 fonts, out of 8000000 for 9000
  59 hyphenation exceptions out of 8191
- 72i,12n,79p,1541b,813s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 72i,12n,79p,1673b,815s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </home/seqaeon/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1000.6
 00pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb><
 /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx9.pfb></usr/sh
@@ -722,10 +711,10 @@ ist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-di
 st/fonts/type1/urw/helvetic/uhvr8a.pfb></usr/share/texlive/texmf-dist/fonts/typ
 e1/urw/times/utmb8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/ut
 mr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on neurips_latex.pdf (19 pages, 1704261 bytes).
+Output written on neurips_latex.pdf (21 pages, 1716727 bytes).
 PDF statistics:
- 515 PDF objects out of 1000 (max. 8388607)
- 408 compressed objects within 5 object streams
- 120 named destinations out of 1000 (max. 500000)
+ 564 PDF objects out of 1000 (max. 8388607)
+ 453 compressed objects within 5 object streams
+ 134 named destinations out of 1000 (max. 500000)
  65192 words of extra memory for PDF output out of 74296 (max. 10000000)
 

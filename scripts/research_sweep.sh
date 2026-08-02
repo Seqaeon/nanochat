@@ -284,7 +284,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p31-chunk-route-impl|--p31-top1-gate|--p31-template-delta-rank|--p31-route-side|--p31-drop-basis-proj|--p31-basis-side-templates)
+        --p31-chunk-route-impl|--p31-top1-gate|--p31-template-delta-rank|--p31-route-side|--p31-drop-basis-proj|--p31-basis-side-templates|--seed)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

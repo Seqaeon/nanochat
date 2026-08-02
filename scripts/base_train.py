@@ -567,6 +567,7 @@ parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit to
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--seed", type=int, default=-1, help="RNG seed for weight init and data-order-independent randomness (-1 = unseeded, the historical default). Needed for seed-variance runs; note the dataloader order is not seeded by this.")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
 args = parser.parse_args()
@@ -1027,7 +1028,18 @@ model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
+# Seed immediately before init_weights so --seed controls weight initialisation.
+# Offset by rank: every rank must draw *different* dropout/noise streams but the
+# same weights, and init_weights runs identically everywhere, so seeding with the
+# same base value here and letting rank offset apply afterwards keeps replicas
+# consistent while giving each rank its own downstream stream.
+if args.seed >= 0:
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    print0(f"Seeded weight init with --seed {args.seed}")
 model.init_weights() # 3) All tensors get initialized
+if args.seed >= 0:
+    torch.manual_seed(args.seed + 1000 * ddp_rank)
 
 # Phase 17: Auto-enable modulation diagnostics for any research model
 # (always on for research, no need for --modulation-diagnostics flag)

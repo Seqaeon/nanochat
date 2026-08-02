@@ -4,45 +4,45 @@ The top-level auxiliary file: neurips_latex.aux
 The style file: plainnat.bst
 Database file #1: references.bib
 Warning--empty journal in nvidia2024climbmix
-You've used 17 entries,
+You've used 25 entries,
             2773 wiz_defined-function locations,
-            670 strings with 8271 characters,
-and the built_in function-call counts, 9853 in all, are:
-= -- 759
-> -- 925
-< -- 6
-+ -- 311
-- -- 294
-* -- 876
-:= -- 1602
-add.period$ -- 53
-call.type$ -- 17
-change.case$ -- 147
-chr.to.int$ -- 17
-cite$ -- 35
-duplicate$ -- 369
-empty$ -- 610
-format.name$ -- 311
-if$ -- 1981
+            704 strings with 9805 characters,
+and the built_in function-call counts, 13857 in all, are:
+= -- 1068
+> -- 1252
+< -- 7
++ -- 421
+- -- 396
+* -- 1216
+:= -- 2236
+add.period$ -- 77
+call.type$ -- 25
+change.case$ -- 204
+chr.to.int$ -- 25
+cite$ -- 51
+duplicate$ -- 549
+empty$ -- 915
+format.name$ -- 421
+if$ -- 2803
 int.to.chr$ -- 1
 int.to.str$ -- 1
-missing$ -- 16
-newline$ -- 94
-num.names$ -- 68
-pop$ -- 316
+missing$ -- 24
+newline$ -- 134
+num.names$ -- 100
+pop$ -- 449
 preamble$ -- 1
-purify$ -- 130
+purify$ -- 179
 quote$ -- 0
-skip$ -- 322
+skip$ -- 452
 stack$ -- 0
-substring$ -- 90
-swap$ -- 35
+substring$ -- 125
+swap$ -- 48
 text.length$ -- 3
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 187
+type$ -- 275
 warning$ -- 1
-while$ -- 56
+while$ -- 82
 width$ -- 0
-write$ -- 219
+write$ -- 316
 (There was 1 warning)
