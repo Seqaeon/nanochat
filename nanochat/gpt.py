@@ -82,6 +82,13 @@ class GPTConfig:
     # Phase 29: RemixedLinear optimizer optimizations
     p29_template_block_diag: int = 0        # Block-diagonal Muon for template_bank (0=off, 1=on — uses K blocks)
     p29_template_lr_scale: float = 1.0      # LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR)
+    # Phase 34: FFN-shape study. The dense FFN spends its capacity on a 4x width
+    # expansion (D -> 4D -> D). If per-token weight mixing supplies that capacity
+    # instead, the expansion is redundant and the FFN gets much cheaper. These
+    # knobs let you test that directly, and to isolate it from attention.
+    p34_ffn_mult: float = 4.0     # FFN hidden width as a multiple of n_embd (4.0 = standard)
+    p34_ffn_single: int = 0       # 1 = one RemixedLinear D->D, no hidden layer and no activation
+    p34_dense_attn: int = 0       # 1 = plain dense attention, so only the FFN is RemixedLinear
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
@@ -5621,6 +5628,43 @@ class SequenceGatedLinear(nn.Module):
                         self.bias.to(x.dtype) if self.bias is not None else None)
 
 
+class _FFNPassThrough(nn.Module):
+    """Stands in for `c_proj` when the FFN is a single layer.
+
+    A None would be cleaner but every consumer of the block iterates
+    [c_q, c_k, c_v, c_proj, c_fc, c_proj] and would need a guard: GPT.init_weights,
+    setup_optimizer, RemixedBlock's shared-basis list and the diagnostics. A
+    parameter-free module falls through all of them: it has no `.weight`, no
+    `gate_parameters`, and `parameters()` yields nothing.
+    """
+    def forward(self, x, *args, **kwargs):
+        return x
+
+
+class _DenseAttnAdapter(nn.Module):
+    """Plain CausalSelfAttention with RemixedMultiAttention's call signature.
+
+    Used by p34_dense_attn to hold attention fixed while the FFN varies, so an FFN
+    result is not confounded by attention also being remixed. The two forwards
+    differ only in the trailing arguments (context_state / route_weights vs
+    token_active), so the adapter drops what dense attention has no use for.
+    Exposes c_q/c_k/c_v/c_proj and ve_gate so the init and optimizer paths, which
+    reach into block.attn by name, keep working.
+    """
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.inner = CausalSelfAttention(config, layer_idx)
+
+    def __getattr__(self, name):
+        if name in ("c_q", "c_k", "c_v", "c_proj", "ve_gate", "head_dim", "n_head"):
+            return getattr(self._modules["inner"], name)
+        return super().__getattr__(name)
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, context_state=None,
+                route_weights=None, **kwargs):
+        return self.inner(x, ve, cos_sin, window_size, kv_cache)
+
+
 class RemixedFeedForward(nn.Module):
     """Feedforward path using RemixedLinear (or RAL) in the base MLP framework."""
     def __init__(self, config):
@@ -5807,8 +5851,20 @@ class RemixedFeedForward(nn.Module):
                 else RemixedLinearFused if _is_29c_fused
                 else RemixedLinear
             )
-            self.c_fc   = _linear_cls(config.n_embd, 4 * config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
-            self.c_proj = _linear_cls(4 * config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+            # Phase 34: the hidden width is a knob, not a constant. The dense FFN
+            # needs 4x because a static matrix has to cover every context with one
+            # set of weights; a per-token effective operator may not. p34_ffn_single
+            # goes further and drops the hidden layer entirely, leaving one
+            # RemixedLinear D->D whose LayerNorm and output gate supply the
+            # nonlinearity that relu^2 supplied before.
+            _hidden = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            self._single = bool(getattr(config, 'p34_ffn_single', 0))
+            if self._single:
+                self.c_fc = _linear_cls(config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+                self.c_proj = _FFNPassThrough()
+            else:
+                self.c_fc   = _linear_cls(config.n_embd, _hidden, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
+                self.c_proj = _linear_cls(_hidden, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
 
         # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
@@ -5825,6 +5881,11 @@ class RemixedFeedForward(nn.Module):
         route_in = p24_shared.get('route_input') if p24_shared is not None else None
         gate_in = p24_shared.get('gate_input') if p24_shared is not None else None
         x = self.c_fc(x, context_state, route_weights=rw_fc, context_gates=cg_fc, p24_route_input=route_in, p24_gate_input=gate_in)
+        if getattr(self, '_single', False):
+            # One RemixedLinear is the whole FFN: no hidden activation to apply and
+            # no second projection. Returning here rather than passing through a
+            # no-op keeps the graph identical to a single linear layer.
+            return self.channel_scale(x) if self.channel_scale is not None else x
         if self.dynamic_act is not None:
             x = self.dynamic_act(x)
         else:
@@ -6382,7 +6443,9 @@ class RemixedBlock(nn.Module):
     """
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.attn = RemixedMultiAttention(config, layer_idx)
+        self.attn = (_DenseAttnAdapter(config, layer_idx)
+                     if getattr(config, 'p34_dense_attn', 0)
+                     else RemixedMultiAttention(config, layer_idx))
         self.ffwd = RemixedFeedForward(config)
         self._p24_sliced_scope = getattr(config, 'p24_sliced_weight_scope', 'per_token')
         self._p24_folded_scope = getattr(config, 'p24_folded_mod_scope', 'per_layer')

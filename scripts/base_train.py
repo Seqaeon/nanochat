@@ -567,6 +567,9 @@ parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit to
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--p34-ffn-mult", type=float, default=4.0, help="34: FFN hidden width as a multiple of n_embd (4.0 = standard dense FFN shape, 1.0 = D->D->D)")
+parser.add_argument("--p34-ffn-single", type=int, default=0, choices=[0, 1], help="34: replace the FFN with a single RemixedLinear D->D (no hidden layer, no relu^2)")
+parser.add_argument("--p34-dense-attn", type=int, default=0, choices=[0, 1], help="34: keep attention dense so only the FFN is RemixedLinear")
 parser.add_argument("--seed", type=int, default=-1, help="RNG seed for weight init and data-order-independent randomness (-1 = unseeded, the historical default). Needed for seed-variance runs; note the dataloader order is not seeded by this.")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
@@ -857,6 +860,9 @@ def build_model_meta(depth):
         p23_linear_moe_experts=getattr(args, 'p23_linear_moe_experts', 0),
         p23_linear_moe_topk=getattr(args, 'p23_linear_moe_topk', 0),
         p23_quantile_route=getattr(args, 'p23_quantile_route', 0),
+        p34_ffn_mult=getattr(args, 'p34_ffn_mult', 4.0),
+        p34_ffn_single=getattr(args, 'p34_ffn_single', 0),
+        p34_dense_attn=getattr(args, 'p34_dense_attn', 0),
         remix_shared_context_gates=getattr(args, 'remix_shared_context_gates', 0),
         remix_use_dual_gate=bool(getattr(args, 'remix_use_dual_gate', 0)),
         remix_use_fused=bool(getattr(args, 'remix_use_fused', 0)),

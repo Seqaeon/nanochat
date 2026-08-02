@@ -280,6 +280,9 @@ def run_training_sweep(args):
         "--p23-linear-moe-topk", str(getattr(args, 'p23_linear_moe_topk', 0)),
         "--p23-quantile-route", str(getattr(args, 'p23_quantile_route', 0)),
         "--seed", str(getattr(args, 'seed', -1)),
+        "--p34-ffn-mult", str(getattr(args, 'p34_ffn_mult', 4.0)),
+        "--p34-ffn-single", str(getattr(args, 'p34_ffn_single', 0)),
+        "--p34-dense-attn", str(getattr(args, 'p34_dense_attn', 0)),
         "--p24-use-sliced-weight", str(getattr(args, 'p24_use_sliced_weight', 0)),
         "--p24-sliced-weight-reduction-scale", str(getattr(args, 'p24_sliced_weight_reduction_scale', 8)),
         "--p24-sliced-weight-min-select", str(getattr(args, 'p24_sliced_weight_min_select', 128)),
@@ -907,6 +910,9 @@ if __name__ == "__main__":
     parser.add_argument("--p23-linear-moe-experts", type=int, default=0, help="23: enable weight-space LinearMoE with K experts (0=off)")
     parser.add_argument("--p23-linear-moe-topk", type=int, default=0, help="23: top-k selected experts in LinearMoE (0=soft all-expert blend)")
     parser.add_argument("--p23-quantile-route", type=int, default=0, choices=[0, 1, 2], help="23: 1=EMA quantile routing, 2=Causal Expert Cross-Attention")
+    parser.add_argument("--p34-ffn-mult", type=float, default=4.0, help="34: FFN hidden width multiple of n_embd")
+    parser.add_argument("--p34-ffn-single", type=int, default=0, choices=[0, 1], help="34: single RemixedLinear D->D as the whole FFN")
+    parser.add_argument("--p34-dense-attn", type=int, default=0, choices=[0, 1], help="34: dense attention, remix the FFN only")
     parser.add_argument("--seed", type=int, default=-1, help="RNG seed for weight init (-1 = unseeded). Used by the seed-variance ablation.")
     def _add_unique(*opt, **kwargs):
         # Guard against accidental duplicate definitions across merged branches.

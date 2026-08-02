@@ -49,7 +49,8 @@ Total parameters: 125,829,648
     x0_lambdas:     8
   Matmul params (total - excluded): 41,943,552
   Attention FLOPs: 34,603,008
-  Manual total_flops = 6*41,943,552 + 34,603,008 = 286,264,320
+  Derived W_eff matmul FLOPs: 0
+  Manual total_flops = 6*41,943,552 + 34,603,008 + 0 = 286,264,320
   vs estimate_flops total: ✅ MATCH
 
   Inactive expert params (manual): 0
@@ -91,8 +92,9 @@ Total parameters: 272,267,664
     x0_lambdas:     8
   Matmul params (total - excluded): 188,381,568
   Attention FLOPs: 34,603,008
-  Manual total_flops = 6*188,381,568 + 34,603,008 = 1,164,892,416
-  vs estimate_flops total: ❌ MISMATCH (diff=-113,246,208)
+  Derived W_eff matmul FLOPs: 113,246,208
+  Manual total_flops = 6*188,381,568 + 34,603,008 + 113,246,208 = 1,278,138,624
+  vs estimate_flops total: ✅ MATCH
 
 --- RemixedLinear Template Bank Details ---
   transformer.h.0.attn.c_q: K=8, chunk=64, topk=0
@@ -110,8 +112,8 @@ Total parameters: 272,267,664
   ... and 44 more RemixedLinear layers
 
   Inactive expert params (manual): 148,635,648
-  Manual active_flops = 273,078,528
-  vs estimate_flops active: ❌ MISMATCH (diff=-113,246,208)
+  Manual active_flops = 386,324,736
+  vs estimate_flops active: ✅ MATCH
   Manual active_params = 123,632,016
   vs estimate_flops active_params: ✅ MATCH
 
@@ -167,3 +169,163 @@ router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_c
     INCLUDED (matmul): 188,381,568
       lm_head:          16,777,216
       transformer.h:   171,604,352
+
+
+
+=== depth 4  D=256  n_head dense=2 remix=2 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8       6.37 ms     2573679 tok/s  peak   1.89 GB   200.4 TF(total) /  200.4 TF(active)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/compile_fx.py:312: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+  warnings.warn(
+  remix  b=8      17.85 ms      917824 tok/s  peak   3.04 GB   186.3 TF(total) /   82.3 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048       1.31 ms     1568474 tok/s
+  dense  T=  4096       1.47 ms     2794394 tok/s
+  dense  T=  8192       1.77 ms     4637345 tok/s
+  dense  T= 16384       2.55 ms     6433939 tok/s
+  remix  T=  2048       4.63 ms      442371 tok/s
+  remix  T=  4096       4.88 ms      839174 tok/s
+  remix  T=  8192       5.26 ms     1558619 tok/s
+  remix  T= 16384       5.90 ms     2776121 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256     2.196 ms/token     455.3 tok/s
+  dense  ctx=  1024     2.037 ms/token     490.9 tok/s
+  dense  ctx=  4096     2.192 ms/token     456.3 tok/s
+  remix  ctx=   256    11.993 ms/token      83.4 tok/s
+  remix  ctx=  1024    11.937 ms/token      83.8 tok/s
+  remix  ctx=  4096    12.867 ms/token      77.7 tok/s
+
+=== depth 8  D=512  n_head dense=4 remix=4 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8      13.98 ms     1172035 tok/s  peak   4.20 GB   335.5 TF(total) /  335.5 TF(active)
+  remix  b=8      55.22 ms      296682 tok/s  peak  10.26 GB   379.2 TF(total) /  110.9 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048       2.19 ms      933571 tok/s
+  dense  T=  4096       2.38 ms     1724091 tok/s
+  dense  T=  8192       2.99 ms     2739726 tok/s
+  dense  T= 16384       5.28 ms     3105647 tok/s
+W0802 04:11:25.443000 406 site-packages/torch/_dynamo/convert_frame.py:1358] [0/8] torch._dynamo hit config.recompile_limit (8)
+W0802 04:11:25.443000 406 site-packages/torch/_dynamo/convert_frame.py:1358] [0/8]    function: 'forward' (/__modal/volumes/vo-bQhldLiDvEWGzP8qdXUlGO/nanochat/gpt.py:9605)
+W0802 04:11:25.443000 406 site-packages/torch/_dynamo/convert_frame.py:1358] [0/8]    last reason: 0/7: ___check_type_id(self._modules['transformer']._modules['h']._modules['0'], 94726521938544)  # x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)  # _modal/volumes/vo-bQhldLiDvEWGzP8qdXUlGO/nanochat/gpt.py:9683 in forward
+W0802 04:11:25.443000 406 site-packages/torch/_dynamo/convert_frame.py:1358] [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+W0802 04:11:25.443000 406 site-packages/torch/_dynamo/convert_frame.py:1358] [0/8] To diagnose recompilation issues, see https://pytorch.org/docs/main/torch.compiler_troubleshooting.html
+  remix  T=  2048      26.03 ms       78677 tok/s
+  remix  T=  4096      26.55 ms      154263 tok/s
+  remix  T=  8192      28.36 ms      288834 tok/s
+  remix  T= 16384      33.07 ms      495471 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256     3.865 ms/token     258.7 tok/s
+  dense  ctx=  1024     3.835 ms/token     260.7 tok/s
+  dense  ctx=  4096     3.954 ms/token     252.9 tok/s
+  remix  ctx=   256    24.792 ms/token      40.3 tok/s
+  remix  ctx=  1024    24.926 ms/token      40.1 tok/s
+  remix  ctx=  4096    25.246 ms/token      39.6 tok/s
+
+=== depth 12  D=768  n_head dense=6 remix=8   <-- head_dim differs: dense 128, remix 96 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8      58.36 ms      280750 tok/s  peak  14.61 GB   207.3 TF(total) /  207.3 TF(active)
+  remix  b=8     188.71 ms       86820 tok/s  peak  42.00 GB   354.1 TF(total) /   89.4 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048       6.92 ms      296043 tok/s
+  dense  T=  4096       8.16 ms      502045 tok/s
+  dense  T=  8192      11.25 ms      728459 tok/s
+  dense  T= 16384      21.37 ms      766760 tok/s
+  remix  T=  2048      39.00 ms       52510 tok/s
+  remix  T=  4096      39.36 ms      104060 tok/s
+  remix  T=  8192      40.29 ms      203305 tok/s
+  remix  T= 16384      66.12 ms      247775 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256     5.660 ms/token     176.7 tok/s
+  dense  ctx=  1024     5.674 ms/token     176.2 tok/s
+  dense  ctx=  4096     5.647 ms/token     177.1 tok/s
+  remix  ctx=   256    37.519 ms/token      26.7 tok/s
+  remix  ctx=  1024    37.128 ms/token      26.9 tok/s
+  remix  ctx=  4096    37.302 ms/token      26.8 tok/s
+
+=== depth 16  D=1024  n_head dense=8 remix=8 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8      93.00 ms      176167 tok/s  peak  19.83 GB   272.7 TF(total) /  272.7 TF(active)
+  remix  b=8     336.66 ms       48667 tok/s  peak  74.78 GB   460.3 TF(total) /  108.6 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048       8.86 ms      231128 tok/s
+  dense  T=  4096      10.17 ms      402599 tok/s
+  dense  T=  8192      17.89 ms      458034 tok/s
+  dense  T= 16384      34.87 ms      469832 tok/s
+  remix  T=  2048      52.91 ms       38709 tok/s
+  remix  T=  4096      53.78 ms       76156 tok/s
+  remix  T=  8192      63.45 ms      129106 tok/s
+  remix  T= 16384     113.16 ms      144781 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256     7.555 ms/token     132.4 tok/s
+  dense  ctx=  1024     7.476 ms/token     133.8 tok/s
+  dense  ctx=  4096     7.491 ms/token     133.5 tok/s
+  remix  ctx=   256    49.949 ms/token      20.0 tok/s
+  remix  ctx=  1024    50.415 ms/token      19.8 tok/s
+  remix  ctx=  4096    50.372 ms/token      19.9 tok/s
+
+=== depth 20  D=1280  n_head dense=10 remix=8   <-- head_dim differs: dense 128, remix 160 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8     145.36 ms      112711 tok/s  peak  26.81 GB   315.6 TF(total) /  315.6 TF(active)
+  remix  b=8     568.73 ms       28808 tok/s  peak 122.44 GB   525.4 TF(total) /  118.9 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048      10.90 ms      187873 tok/s
+  dense  T=  4096      15.15 ms      270307 tok/s
+  dense  T=  8192      27.37 ms      299290 tok/s
+  dense  T= 16384      52.73 ms      310744 tok/s
+  remix  T=  2048      66.82 ms       30648 tok/s
+  remix  T=  4096      67.06 ms       61080 tok/s
+  remix  T=  8192     102.27 ms       80104 tok/s
+  remix  T= 16384     181.91 ms       90065 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256     9.194 ms/token     108.8 tok/s
+  dense  ctx=  1024     9.240 ms/token     108.2 tok/s
+  dense  ctx=  4096     9.235 ms/token     108.3 tok/s
+  remix  ctx=   256    64.085 ms/token      15.6 tok/s
+  remix  ctx=  1024    63.228 ms/token      15.8 tok/s
+  remix  ctx=  4096    63.994 ms/token      15.6 tok/s
+
+=== depth 24  D=1536  n_head dense=12 remix=16   <-- head_dim differs: dense 128, remix 96 ===
+[T1/T4] train step (fwd+bwd), memory, MFU
+  dense  b=8     207.26 ms       79051 tok/s  peak  35.52 GB   368.2 TF(total) /  368.2 TF(active)
+  remix  b=8   OOM, backing off
+  remix  b=4     473.46 ms       17302 tok/s  peak 107.23 GB   542.0 TF(total) /  120.2 TF(active)
+  re-timing at matched batch 4
+  dense  b=4     111.81 ms       73270 tok/s  peak  20.45 GB   341.2 TF(total) /  341.2 TF(active)
+  remix  b=4     472.99 ms       17319 tok/s  peak 107.23 GB   542.6 TF(total) /  120.3 TF(active)
+[T2] prefill (batch 1)
+  dense  T=  2048      13.07 ms      156665 tok/s
+  dense  T=  4096      21.56 ms      189980 tok/s
+  dense  T=  8192      39.40 ms      207897 tok/s
+  dense  T= 16384      76.88 ms      213107 tok/s
+  remix  T=  2048      79.64 ms       25715 tok/s
+  remix  T=  4096      89.99 ms       45517 tok/s
+  remix  T=  8192     146.86 ms       55780 tok/s
+  remix  T= 16384     261.17 ms       62733 tok/s
+[T3] decode (batch 1, uncompiled)
+  dense  ctx=   256    11.195 ms/token      89.3 tok/s
+  dense  ctx=  1024    11.092 ms/token      90.2 tok/s
+  dense  ctx=  4096    11.059 ms/token      90.4 tok/s
+  remix  ctx=   256    75.288 ms/token      13.3 tok/s
+  remix  ctx=  1024    74.910 ms/token      13.3 tok/s
+  remix  ctx=  4096    74.587 ms/token      13.4 tok/s
+
+wrote out/paper_throughput.json
+
+| depth | arm | params | active params | tok/s | rel. | peak GB | MFU(total) | MFU(active) |
+|---|---|---|---|---|---|---|---|---|
+| d4 | dense | 37M | 37M | 2,573,679 | 1.00x | 1.9 | 20.3% | 20.3% |
+| d4 | remix | 55M | 36M | 917,824 | 0.36x | 3.0 | 18.8% | 8.3% |
+| d8 | dense | 126M | 126M | 1,172,035 | 1.00x | 4.2 | 33.9% | 33.9% |
+| d8 | remix | 272M | 122M | 296,682 | 0.25x | 10.3 | 38.3% | 11.2% |
+| d12 | dense | 286M | 286M | 280,750 | 1.00x | 14.6 | 21.0% | 21.0% |
+| d12 | remix | 779M | 271M | 86,820 | 0.31x | 42.0 | 35.8% | 9.0% |
+| d16 | dense | 537M | 537M | 176,167 | 1.00x | 19.8 | 27.6% | 27.6% |
+| d16 | remix | 1704M | 500M | 48,667 | 0.28x | 74.8 | 46.5% | 11.0% |
+| d20 | dense | 897M | 897M | 112,711 | 1.00x | 26.8 | 31.9% | 31.9% |
+| d20 | remix | 3175M | 823M | 28,808 | 0.26x | 122.4 | 53.1% | 12.0% |
+| d24 | dense | 1384M | 1384M | 73,270 | 1.00x | 20.4 | 34.5% | 34.5% |
+| d24 | remix | 5319M | 1256M | 17,319 | 0.24x | 107.2 | 54.9% | 12.2% |
+2026-08-02 04:16:38,107 - matplotlib.font_manager - INFO - generated new fontManager
+wrote out/throughput.png
+
+
