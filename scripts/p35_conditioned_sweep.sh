@@ -209,12 +209,12 @@ echo "════════════════════════�
 # factor has spectral norm <= 1 + 1/m and the product is bounded by e for any m.
 # Identity at init moved from u=0 to c=0, which also keeps the router's gradient
 # live at step 0. Re-run these with --force.
-if [[ "$RUN_GROUPS" == *c* ]]; then
-    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
-    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
-    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
-    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
-fi
+#if [[ "$RUN_GROUPS" == *c* ]]; then
+#    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
+#    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
+#    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
+#    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
+#fi
 
 # ── D. what the gain is actually made of ────────────────────────────────────
 # D1 is the one that matters most. 'tied' reuses V^T x as its own gate, so there
