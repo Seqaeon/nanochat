@@ -823,7 +823,7 @@ if __name__ == "__main__":
     parser.add_argument("--cond-rank", type=int, default=256)
     parser.add_argument("--cond-mult-steps", type=int, default=0)
     parser.add_argument("--cond-gate-source", type=str, default="router", choices=["router", "tied", "ctx"])
-    parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid"])
+    parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid", "one"])
     parser.add_argument("--cond-router-rank", type=int, default=0)
     parser.add_argument("--cond-chunk-size", type=int, default=0)
     parser.add_argument("--cond-mult-scale", type=float, default=-1.0)

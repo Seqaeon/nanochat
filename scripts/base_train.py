@@ -403,8 +403,8 @@ parser.add_argument("--cond-mult-steps", type=int, default=0,
                     help="35: m, sequential rank-1 composition steps z_i = z_{i-1} + c_i(x) u_i (v_i^T z_{i-1}). 0 disables it")
 parser.add_argument("--cond-gate-source", type=str, default="router", choices=["router", "tied", "ctx"],
                     help="35: coefficient source. 'router' (own projection of x), 'tied' (reuse V^T x, zero extra params, the control for 'is this just a GLU'), 'ctx' (block context stream; ignores --cond-chunk-size on the attention path where ctx is None)")
-parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid"],
-                    help="35: coefficient activation, all equal to 1 at zero logits: 'centered' 1+tanh, 'linear' 1+z (unbounded, can flip sign), 'sigmoid' 2*sigmoid")
+parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid", "one"],
+                    help="35: coefficient activation, all equal to 1 at zero logits: 'centered' 1+tanh, 'linear' 1+z (unbounded, can flip sign), 'sigmoid' 2*sigmoid, 'one' c=1")
 parser.add_argument("--cond-router-rank", type=int, default=0,
                     help="35: factor the router as d_sig -> rr -> R (0 = full-rank router). The router is ~1/3 of the added params at R=256")
 parser.add_argument("--cond-chunk-size", type=int, default=0,
