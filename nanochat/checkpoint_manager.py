@@ -119,8 +119,8 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
             k: v.float() if v.dtype == torch.bfloat16 else v
             for k, v in model_data.items()
         }
-    # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
-    model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
+    # Hack: fix torch compile / DDP issues, which prepend keys with _orig_mod. or module.
+    model_data = {k.removeprefix("_orig_mod.").removeprefix("module."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     _patch_missing_config_keys(model_config_kwargs)
     log0(f"Building model with config: {model_config_kwargs}")
@@ -176,11 +176,28 @@ def find_last_step(checkpoint_dir):
 # convenience functions that take into account nanochat's directory structure
 
 def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None, tokenizer_dir=None):
-    if model_tag is None:
-        # guess the model tag by defaulting to the largest model
-        model_tag = find_largest_model(checkpoints_dir)
-        log0(f"No model tag provided, guessing model tag: {model_tag}")
-    checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+    if glob.glob(os.path.join(checkpoints_dir, "model_*.pt")):
+        checkpoint_dir = checkpoints_dir
+    else:
+        if model_tag is None:
+            try:
+                model_tag = find_largest_model(checkpoints_dir)
+                log0(f"No model tag provided, guessing model tag: {model_tag}")
+                checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+            except FileNotFoundError:
+                checkpoint_dir = checkpoints_dir
+        else:
+            checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+            
+        if not glob.glob(os.path.join(checkpoint_dir, "model_*.pt")):
+            # Fallback: search recursively inside checkpoints_dir for model_*.pt
+            pts = glob.glob(os.path.join(checkpoints_dir, "**", "model_*.pt"), recursive=True)
+            if pts:
+                candidate_dirs = sorted(set(os.path.dirname(p) for p in pts),
+                                        key=lambda d: os.path.getmtime(d), reverse=True)
+                checkpoint_dir = candidate_dirs[0]
+                log0(f"Found checkpoint directory: {checkpoint_dir}")
+
     if step is None:
         # guess the step by defaulting to the last step
         step = find_last_step(checkpoint_dir)
