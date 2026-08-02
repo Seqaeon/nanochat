@@ -59,6 +59,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data,
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
+    device = torch.device(device) if isinstance(device, str) else device
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
@@ -112,6 +113,7 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
     - meta data saved during base model training
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
+    device = torch.device(device) if isinstance(device, str) else device
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
     if device.type in {"cpu", "mps"}:
         # Convert bfloat16 tensors to float for CPU inference
