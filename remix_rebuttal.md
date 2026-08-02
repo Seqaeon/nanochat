@@ -202,7 +202,89 @@ We have restructured Table 4 into the aligned form you proposed — same routing
 
 ---
 
-## Part 3 — Tone and tactics
+## Part 3 — What we now know about the chunked variant, measured
+
+Everything below is measured on the **shipped 29C configuration** (K=8, chunk routing, all six projections). It is deliberately kept separate from the architecture redesign we are pursuing: a redesign changes the model, so it cannot answer a question about the model under review. Use this section to fill the brackets in Part 2. Several of these numbers are worse than what the reviewers assumed, and reporting them ourselves is the whole strategy.
+
+### 3.1 The throughput curve (H200, batch 8, seq 2048, compiled, random init)
+
+| depth | slowdown vs dense | peak mem | dense TFLOP/s | remix TFLOP/s | utilization gap | dense MFU | remix MFU |
+|---|---|---|---|---|---|---|---|
+| 4 | 2.80× | 1.61× | 200.4 | 82.3 | 2.43× | 20.3% | 8.3% |
+| 8 | 3.95× | 2.44× | 335.5 | 110.9 | 3.03× | 33.9% | 11.2% |
+| 12 | 3.23× | 2.87× | 207.3 | 89.4 | 2.32× | 21.0% | 9.0% |
+| 16 | 3.62× | 3.77× | 272.7 | 108.6 | 2.51× | 27.6% | 11.0% |
+| 20 | 3.91× | 4.57× | 315.6 | 118.9 | 2.65× | 31.9% | 12.0% |
+| 24 | 4.23× | 5.24× | 341.2 | 120.3 | 2.84× | 34.5% | 12.2% |
+
+Inference is worse than training: prefill is 5.6–10× slower at every depth, and decode is 5.9–6.8× slower per token and flat in context length, which locates the cost in the layer rather than in attention. Peak memory at d20 is 122 GB at batch 8.
+
+**Two facts here are more damaging than the headline 3.7× and we should state both.** First, achieved TFLOP/s for dense *rises* with depth (200 → 341) because larger matrices amortize weight reads, while RemixedLinear is **flat at 82–120 across d4 to d24**. Second, and consequently, **the gap widens with scale** (2.80× at d4 to 4.23× at d24). "It will amortize at larger scale" is not available to us as a defence, and a reviewer will check.
+
+The slowdown decomposes cleanly as (extra arithmetic) × (worse utilization):
+
+```
+d4 : 1.175 × 2.43 = 2.86   measured 2.80
+d8 : 1.349 × 3.03 = 4.08   measured 3.95
+d12: 1.448 × 2.32 = 3.36   measured 3.23
+```
+
+The second factor is the larger one. We are not mainly slow because we do more arithmetic; we are slow because the arithmetic runs at a third of the efficiency.
+
+### 3.2 The cause: the layer is bandwidth-bound, not FLOP-bound
+
+| | FLOP/token | bytes/token | arithmetic intensity |
+|---|---|---|---|
+| dense d=768, realistic batch | 1,179,648 | 3,216 | **367** |
+| chunk routing, N=64 | 1,327,104 | 187,392 | **7.1** |
+| chunk routing, N=256 | 1,216,512 | 49,152 | **24.8** |
+
+The H200 ridge point is 206 FLOP/byte. Dense sits above it and runs near peak; chunk routing sits an order of magnitude below it. The structural reason: a dense weight is read once and reused across all B·T tokens, so its intensity grows with batch, whereas W_eff must be rebuilt every chunk, so **chunk-routing intensity is capped at approximately N regardless of batch size**. That is exactly why the measured utilization is flat in depth. This is the mechanism behind the AC's first concern and we should present it as a diagnosis rather than let it stand as an unexplained regression.
+
+### 3.3 Our FLOPs accounting is arithmetically correct; the inference from it is not
+
+We re-derived and verified it. Per chunk-routed projection, per token: `K·out·basis/N` for the compose plus `out·basis` for the apply, times 6 for forward+backward, and the apply term must be added explicitly because W_eff is an intermediate tensor rather than an `nn.Parameter`. Every check in our verification script now matches for both arms.
+
+So the number is right and we should not retract it. What we must retract is the inference: **a faithful multiply-accumulate count is a poor predictor of time for a bandwidth-bound kernel.** We should also state a limitation we had not made explicit: `active_params` amortizes the bank by 1/N, which makes it a *compute* quantity. Every template is still read from HBM once per chunk, so the "2.25× fewer active parameters" claim is about compute, not memory footprint.
+
+### 3.4 We tried the obvious fix and it did not work
+
+R3 anticipated that the slowdown might be an implementation artifact. We implemented the batched-GEMM reformulation: with top-1 routing there are at most K distinct effective weights, so chunks can be permuted into template-contiguous order and dispatched as K dense GEMMs against the bank, never materializing a per-chunk matrix. It is bit-exact against the composed path and compiles without graph breaks.
+
+It does not improve end-to-end throughput: d4 went 320 ms → 395 ms per step, d12 1450 ms → 1600 ms. The permutation gather in the forward and its scatter in the backward cost about as much as the eliminated weight traffic; the crossover is around `basis/chunk ≈ 4` and our shipped configuration sits at 1–3. Separately, top-1 routing does not help by itself, because the compose einsum contracts over all K whether the weight vector is one-hot or not.
+
+We should report this. It converts "we are slow" into "we are slow, we tried the specific thing you would suggest, and here is why it did not help," which is the difference between an unexamined regression and a characterized one.
+
+### 3.5 Defects we found in our own routing implementation
+
+Found while preparing this response. All are in the code that produced the reported results, and honesty about them is cheaper than discovery.
+
+1. **`template_topk=0` did not mean what the paper says** in the quantile routers. The clamp `max(1, min(topk, K))` mapped 0 to 1, so a setting that means "mix all K" everywhere else in our code silently became hard top-1.
+2. **Quantile routing was per-sequence and non-causal.** The router mean-pooled its affinity signal over the sequence axis, which is the chunk axis in the chunked path, and broadcast one weight vector to every position. Perturbing the last token of a sequence changes the routing of the first chunk. For quantile-routed runs, "chunk-amortized causal routing" describes something the code did not do.
+3. **The quantile criterion is inert.** The thresholded set is unioned with the hard top-k set, and since the top-k entries hold the largest scores the subsequent re-selection returns exactly those entries regardless of the threshold. It is bit-identical to plain top-k plus softmax in every configuration we tested.
+4. **§3 describes an EMA threshold (λ=0.99) that the implementation does not have** — the code computes a per-batch quantile with no EMA state.
+5. **The d12 checkpoint contains a plain `template_route` and no quantile router at all.** Whatever the flags said, the reported d12 run used the plain learned router, so quantile balancing was not active in that result.
+
+The defensible position: we withdraw quantile balancing as a claimed contribution, state that we train without an auxiliary load-balancing loss and did not need one, and note that attributing that to the quantile criterion was unsupported. Items 1 and 2 are fixed in the code; item 3 is a design flaw we describe rather than patch.
+
+### 3.6 The expressivity ceiling
+
+Whatever K is, the routing weights give **K−1 degrees of freedom per token**: the effective operator moves on a (K−1)-dimensional set. At K=8 that is seven numbers per projection, bought with 8× the parameters and 8× the bandwidth. The low-rank delta variant has the same ceiling, because its coefficients are per-template and broadcast across the rank dimension. This is the most useful thing we learned and it is the honest answer to "why doesn't more capacity help": we were adding parameters, not conditioning.
+
+### 3.7 CORE numbers, corrected
+
+Our own dense d12 checkpoint scores **0.146** aggregate CORE, not the 0.114 in Table 3. Against it, the Remix d12 gain is **+0.026 absolute**, not +0.058; against the leaderboard dense d14 at matched active FLOPs it is +0.024. The "34–36% above the dense power-law prediction" figure is computed against a fit that under-predicts the measured dense points in this range, and we withdraw that framing. Per task, Remix d12 exceeds our dense d12 on 17 of 22, trails on 4, ties on 1; the largest single regression is BoolQ (−0.432 versus −0.147 centered).
+
+### 3.8 What this changes in Part 2
+
+- §1: the wall-clock table is now fillable from 3.1. The three-line hierarchy survives, but line three should say the gap *widens* with depth.
+- §2: 3.3 gives the single FLOPs convention. Say the accounting is correct and the framing was wrong, rather than implying the numbers were.
+- §6/§7: 3.5 means the quantile-balancing contribution comes out of the list in the abstract, §2 and §3, not just softened.
+- The R2 reply currently claims "an EMA-quantile rule" as contribution (ii). That claim has to go.
+
+---
+
+## Part 4 — Tone and tactics
 
 - **Lead with the concession, not the defence.** Four reviewers and the AC hit the same thing. A response that opens by conceding the framing and immediately produces the measured wall-clock curve reads as rigor; twenty individual rebuttals of the same objection read as resistance.
 - **Report the unflattering number yourself.** If dense d20 beats you at matched throughput, saying so — with the active-parameter claim intact beside it — is the strongest available move. R4 already predicted the result; confirming it voluntarily costs you far less than being confirmed by an AC.

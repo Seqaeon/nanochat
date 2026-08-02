@@ -76,16 +76,31 @@ def _stack_legacy_templates(state, model):
         # matters: template_route also lives here, is 2-D, and has "template" in
         # its name, so a name match alone picks up K+1 candidates and repairs
         # nothing.
+        # Match on NAME only. An earlier version also required the shape to equal
+        # the target's per-template shape, which silently reduced the candidate
+        # list to nothing whenever the rebuilt model disagreed with the checkpoint
+        # about basis_size, and then reported "candidates = (none)" -- hiding the
+        # real problem behind a message that suggested the keys were absent.
+        # Shape is validated after stacking instead, where a mismatch can be
+        # reported with both shapes.
         cands = sorted(
             (k for k in state
              if k.startswith(prefix)
              and re.fullmatch(r"(?:template_bank|templates?)[._]\d+(?:\.weight)?",
-                              k[len(prefix):])
-             and tuple(state[k].shape) == tuple(per_template)),
+                              k[len(prefix):])),
             key=lambda k: int(re.findall(r"\d+", k[len(prefix):])[0]),
         )
         if len(cands) == K:
-            state[key] = torch.stack([state.pop(k) for k in cands], dim=0)
+            stacked = torch.stack([state[k] for k in cands], dim=0)
+            if stacked.shape != target.shape:
+                notes.append(
+                    f"SHAPE MISMATCH {key}: checkpoint stacks to {tuple(stacked.shape)}, "
+                    f"model wants {tuple(target.shape)}. The rebuilt config disagrees "
+                    f"with the checkpoint about basis_size or n_templates.")
+                continue
+            for k in cands:
+                state.pop(k)
+            state[key] = stacked
             notes.append(f"stacked {K} legacy tensors -> {key}")
         elif len(cands) == 1 and state[cands[0]].shape == model.state_dict()[key].shape[1:]:
             # Single shared matrix (a K=1 checkpoint being read as K>1).
@@ -123,20 +138,29 @@ def load_remix_model(ckpt_dir, device, step=None, tokenizer_dir=None):
     ck_has_qrouter = any("_qrouter.route_proj" in k for k in state)
     ck_has_plain = any(k.endswith(".template_route") for k in state)
     declared = int(cfg_kwargs.get("p23_quantile_route", 0) or 0)
-    if ck_has_plain and not ck_has_qrouter and declared != 0:
-        print(f"[analysis] !! stored config says p23_quantile_route={declared}, but the "
-              f"checkpoint contains `template_route` and no `_qrouter`.")
-        print("[analysis]    This run used the PLAIN learned router. Rebuilding with "
-              "p23_quantile_route=0 to match the weights.")
+    rlk = dict(cfg_kwargs.get("remixed_linear_kwargs") or {})
+    declared_kw = int(rlk.get("use_quantile_route", 0) or 0)
+    # Decide from the tensors, not from either flag, and set BOTH. The two
+    # disagree in practice: GPTConfig.p23_quantile_route can be 0 while the saved
+    # remixed_linear_kwargs still carries use_quantile_route=1, and some
+    # construction paths read the kwarg directly, so the rebuilt model grows a
+    # _qrouter the checkpoint has no weights for. Gating this on `declared != 0`
+    # was why the override never fired.
+    if ck_has_plain and not ck_has_qrouter and (declared or declared_kw):
+        print(f"[analysis] !! stored config says p23_quantile_route={declared}, "
+              f"remixed_linear_kwargs['use_quantile_route']={declared_kw}, but the "
+              f"checkpoint contains `template_route` and no `_qrouter` weights.")
+        print("[analysis]    This run used the PLAIN learned router. Forcing both flags "
+              "to 0 so the rebuilt model matches the weights.")
         cfg_kwargs["p23_quantile_route"] = 0
-        rlk = dict(cfg_kwargs.get("remixed_linear_kwargs") or {})
-        if rlk.get("use_quantile_route", 0):
-            rlk["use_quantile_route"] = 0
-            cfg_kwargs["remixed_linear_kwargs"] = rlk
-    elif ck_has_qrouter and declared == 0:
-        print("[analysis] !! checkpoint contains `_qrouter` but the stored config says "
-              "p23_quantile_route=0; rebuilding with 1 to match the weights.")
+        rlk["use_quantile_route"] = 0
+        cfg_kwargs["remixed_linear_kwargs"] = rlk
+    elif ck_has_qrouter and not (declared or declared_kw):
+        print("[analysis] !! checkpoint contains `_qrouter` weights but both flags say 0; "
+              "forcing them to 1 to match the weights.")
         cfg_kwargs["p23_quantile_route"] = 1
+        rlk["use_quantile_route"] = 1
+        cfg_kwargs["remixed_linear_kwargs"] = rlk
 
     config = GPTConfig(**cfg_kwargs)
     with torch.device("meta"):
