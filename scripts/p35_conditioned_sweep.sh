@@ -31,10 +31,29 @@
 #   additive        y = W0 x + U (c(x) * V^T x)                  c(x) in R^R
 #   multiplicative  z_i = z_{i-1} + c_i(x) u_i (v_i^T z_{i-1}),  y = W0 z_m
 #
-# EVERY ARM HERE TRAINS ON THE SAME NUMBER OF TOKENS. Group A0 runs first at the
-# standard ratio to establish the dense budget, and every later arm is pinned to
-# it with --target-tokens. That is the single methodological fix without which
-# none of these numbers mean anything.
+# HORIZON POLICY: every arm gets its own Chinchilla-optimal budget, sized by
+# ACTIVE parameters (--target-active-params 1), not by stored ones. That is the
+# Pareto-correct rule and it is not the same as the stored-parameter rule the
+# earlier sweeps used:
+#
+# Measured at d4 (D=256, vocab 65536, ratio 10.5):
+#
+#   arm                   stored    active    budget
+#   dense                 70.2M     70.2M     209M tokens
+#   remix K=8 chunk256    88.7M     69.8M     204M      bank amortizes over the
+#   remix K=2 chunk256    74.5M     69.8M     204M      chunk, so ~255/256 of it
+#   cond R=256            77.3M     77.3M     284M      counts inactive
+#   cond m=16             70.7M     70.7M     214M
+#
+# The bank's 8x storage buys it no extra data at all under this rule, because
+# active_per_token = template_params/chunk. The cond arms do get more, because
+# they genuinely read every parameter for every token. That is the Pareto-correct
+# answer, and it means BPB is comparable WITHIN an arm's own optimum but not
+# across arms at face value. To compare across arms, use the 'Total active
+# training FLOPs estimate' line base_train prints.
+#
+# The cond ratio grows with depth: at d4 the 16.8M lm_head dilutes it, and by d12
+# the transformer matrices dominate and cond R=256 approaches ~1.7x dense.
 #
 # Read cond_dof_pr in <out-dir>/gate_stats.jsonl alongside BPB. It is the
 # participation ratio of the coefficient covariance, the same measurement as
@@ -96,7 +115,7 @@ SHARED="--fp8 --max-shards ${MAX_SHARDS:-170} \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 \
-  --final-lr-frac 0.05 --research-dim -1 --target-active-params 0 --save-every 200"
+  --final-lr-frac 0.05 --research-dim -1 --target-active-params 1 --save-every 200"
 
 BASE_COMMON="$SHARED --models base --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-32}}"
 
@@ -116,63 +135,26 @@ COND_COMMON="$SHARED --models remixed-linear \
   --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} \
   --remix-basis-size $MODEL_DIM --cclblock-modulation cond"
 
-# ── token budget ────────────────────────────────────────────────────────────
-# A0 runs at the standard ratio; every later arm is pinned to the tokens A0
-# actually trained on. Without this, an arm with more parameters silently gets
-# more data and the comparison measures the budget, not the architecture.
-BUDGET_FILE="${OUT_BASE}/token_budget_d${DEPTH}.txt"
-
-read_budget() {
-    [[ -f "$BUDGET_FILE" ]] && cat "$BUDGET_FILE"
-}
-
-capture_budget() {
-    # base_train prints 'Total number of training tokens: N' once per run.
-    local tokens
-    tokens=$(grep -a "Total number of training tokens:" "$LOGFILE" | tail -1 |
-             sed 's/.*: *//' | tr -d ', ')
-    if [[ -n "$tokens" && "$tokens" =~ ^[0-9]+$ ]]; then
-        mkdir -p "$OUT_BASE"
-        echo "$tokens" > "$BUDGET_FILE"
-        echo "📌  token budget pinned to $tokens (from the dense baseline)"
-    else
-        echo "⚠️   could not read the dense token budget from $LOGFILE. Later arms"
-        echo "     would fall back to --target-param-data-ratio and get MORE data the"
-        echo "     more parameters they have, which is the confound this sweep exists"
-        echo "     to remove. Fix the log or set TOKEN_BUDGET=<n> and re-run."
-        return 1
-    fi
-}
+# Horizon: each arm sizes its own budget from its active parameter count. No
+# arm is pinned to another's token count, so no arm is starved or overfed
+# relative to its own compute-optimal point. TOKEN_BUDGET=<n> overrides for
+# every arm if you do want a hard pin for a specific comparison.
+HORIZON="--target-param-data-ratio ${RATIO:-10.5}"
+[[ -n "$TOKEN_BUDGET" ]] && HORIZON="$HORIZON --target-tokens $TOKEN_BUDGET"
 
 run() {   # run <tag> <common> <extra flags...>
     local tag="$1"; shift
     local common="$1"; shift
     if done_already "$tag"; then echo "⏭  $tag (done)"; return 0; fi
-    local horizon
-    if [[ "$tag" == A0_* ]]; then
-        horizon="--target-param-data-ratio ${RATIO:-10.5} --target-tokens -1"
-    else
-        local budget="${TOKEN_BUDGET:-$(read_budget)}"
-        if [[ -z "$budget" ]]; then
-            echo "❌  $tag skipped: no pinned token budget yet, run group A first"
-            return 1
-        fi
-        # The ratio must stay positive even though the explicit budget overrides
-        # it: base_train asserts one of num_iterations / ratio / flops is > 0,
-        # and derives num_iterations inside the ratio branch. --target-tokens
-        # wins over it when both are set (base_train.py:1295).
-        horizon="--target-tokens $budget --target-param-data-ratio ${RATIO:-10.5}"
-    fi
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║  $tag"
     echo "╚══════════════════════════════════════════════════════════════╝"
     local dir="${OUT_BASE}/${tag}"
     [[ "$FORCE" == 1 && -d "$dir" ]] && rm -rf "$dir"
-    if bash scripts/research_sweep.sh $common $horizon --out-dir "$dir" "$@" \
+    if bash scripts/research_sweep.sh $common $HORIZON --out-dir "$dir" "$@" \
          $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $tag"; mark_done "$tag"
-        [[ "$tag" == A0_* ]] && capture_budget
     else
         echo "❌  $tag FAILED, will retry next run"
     fi
@@ -180,17 +162,20 @@ run() {   # run <tag> <common> <extra flags...>
 
 echo "════════════════════════════════════════════════════════════"
 echo "  P35 ConditionedLinear   depth ${DEPTH}  D=${MODEL_DIM}"
-PINNED="${TOKEN_BUDGET:-$(read_budget)}"
-echo "  groups: ${RUN_GROUPS}   token budget: ${PINNED:-pending (set by A0)}"
+echo "  groups: ${RUN_GROUPS}   horizon: ${TOKEN_BUDGET:-per-arm, sized by active params}"
 echo "════════════════════════════════════════════════════════════"
 
 # ── A. the comparison the paper needs and does not have ─────────────────────
-# All four arms, same tokens. A1 is the shipped design. A2 is the control the
-# template analysis demands: if K=2 matches K=8, the bank's width contributes
-# nothing and the 8x parameter cost bought one extra template's worth of use.
-# A3 is the new layer at the R the DOF table points to.
+# A0 is commented out: the dense baseline at this depth is already measured, and
+# under the per-arm horizon rule nothing downstream depends on re-running it.
+# Re-enable it only if the depth, aspect ratio, ratio or data shards change,
+# since all four of those move the dense number.
+# A1 is the shipped design. A2 is the control the template analysis demands: at
+# a measured K_eff of 1.52 the bank is behaving as K~2 already, so if A2 matches
+# A1 the extra six templates are pure storage. A3 is the new layer at the R the
+# DOF table points to.
 if [[ "$RUN_GROUPS" == *a* ]]; then
-    run "A0_dense_d${DEPTH}"        "$BASE_COMMON"
+    # run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
     run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
     run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
     run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
