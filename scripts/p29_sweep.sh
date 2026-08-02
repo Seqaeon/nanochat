@@ -394,9 +394,9 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 # ══════════════════════════════════════════════════════
 P34_ARMS=(
   "A_FFNONLY_4X|--p34-dense-attn 1"
-  "B_FFNONLY_1X|--p34-dense-attn 1 --p34-ffn-mult 1.0"
-  "C_FFNONLY_SINGLE|--p34-dense-attn 1 --p34-ffn-single 1"
-  "D_ALL_1X|--p34-ffn-mult 1.0"
+#  "B_FFNONLY_1X|--p34-dense-attn 1 --p34-ffn-mult 1.0"
+#  "C_FFNONLY_SINGLE|--p34-dense-attn 1 --p34-ffn-single 1"
+#  "D_ALL_1X|--p34-ffn-mult 1.0"
 )
 for _arm in "${P34_ARMS[@]}"; do
     _name="${_arm%%|*}"
@@ -682,23 +682,23 @@ done
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-TAG="29BASE_DENSE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29BASE_DENSE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 #
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"

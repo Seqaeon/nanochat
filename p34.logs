@@ -1,0 +1,164 @@
+✅  34D_ALL_1X_8T_N256_D4
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 14,946,840
+research                : 0
+scalars                 : 8
+total                   : 48,501,280
+Estimated FLOPs per token (total):  1.581006e+08
+Estimated FLOPs per token (active): 8.260430e+07
+Estimated active params:            35,918,560
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.322588 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+[P29] Template bank: block-diagonal Muon (K=8 blocks)
+Calculated number of iterations from target data:param ratio: 934
+Total number of training tokens: 244,842,496
+Tokens : Scaling params ratio: 10.49
+Total training FLOPs estimate: 3.870975e+16
+Total active training FLOPs estimate: 2.022504e+16
+step 00934/00934 (final) | loss: 3.692360 | early_stop: 0
+Peak memory usage: 88353.22MiB
+Total training time: 4.42m
+Minimum validation bpb: 1.123735
+Minimum validation loss (nats/byte): 3.686053
+Final Validation BPB for remixed-linear: 1.1237
+
+
+
+34C_FFNONLY_SINGLE_8T_N256_D4
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 3,978,436
+research                : 0
+scalars                 : 8
+total                   : 37,532,876
+Estimated FLOPs per token (total):  8.442588e+07
+Estimated FLOPs per token (active): 7.184316e+07
+Estimated active params:            35,435,756
+
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.232411 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+[P29] Template bank: block-diagonal Muon (K=8 blocks)
+Calculated number of iterations from target data:param ratio: 495
+Total number of training tokens: 129,761,280
+Tokens : Scaling params ratio: 10.49
+Total training FLOPs estimate: 1.095521e+16
+Total active training FLOPs estimate: 9.322460e+1
+step 00495/00495 (final) | loss: 3.940899 | early_stop: 0
+Peak memory usage: 77154.37MiB
+Total training time: 1.25m
+Minimum validation bpb: 1.199584
+Minimum validation loss (nats/byte): 3.934852
+Final Validation BPB for remixed-linear: 1.1996
+
+
+34B_FFNONLY_1X_8T_N256_D4
+
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,21
+lm_head                 : 8,388,608
+transformer_matrices    : 6,381,832
+research                : 0
+scalars                 : 8
+total                   : 39,936,272
+
+Estimated FLOPs per token (total):  1.004191e+08
+Estimated FLOPs per token (active): 7.525368e+07
+Estimated active params:            35,742,032
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.263629 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+[P29] Template bank: block-diagonal Muon (K=8 blocks)
+Calculated number of iterations from target data:param ratio: 591
+Total number of training tokens: 154,927,104
+Tokens : Scaling params ratio: 10.49
+Total training FLOPs estimate: 1.555764e+16
+Total active training FLOPs estimate: 1.165883e+16
+
+step 00591/00591 (final) | loss: 3.845923 | early_stop: 0
+Peak memory usage: 79811.02MiB
+Total training time: 1.56m
+Minimum validation bpb: 1.166613
+Minimum validation loss (nats/byte): 3.826703
+Final Validation BPB for remixed-linear: 1.1666
+
+
+
+34A_FFNONLY_4X_8T_N256_D4
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 13,536,520
+research                : 0
+scalars                 : 8
+total                   : 47,090,960
+Estimated FLOPs per token (total):  1.480658e+08
+Estimated FLOPs per token (active): 8.515224e+07
+Estimated active params:            36,605,360
+remix_context_dim auto-scaled to 256 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.316048 for depth 4
+μP LR scaling OVERRIDDEN to 1.732051
+[P29] Template bank: block-diagonal Muon (K=8 blocks)
+Calculated number of iterations from target data:param ratio: 878
+Total number of training tokens: 230,162,432
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 3.407919e+16
+Total active training FLOPs estimate: 1.959885e+16
+
+
+step 00878/00878 (final) | loss: 3.663977 | early_stop: 0
+Peak memory usage: 84611.79MiB
+Total training time: 2.45m
+Minimum validation bpb: 1.113981
+Minimum validation loss (nats/byte): 3.654060
+Final Validation BPB for remixed-linear: 1.1140
+
+
+✅  29BASE_DENSE_D4
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 8,388,608
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 36,700,296
+Estimated FLOPs per token (total):  7.785754e+07
+Estimated FLOPs per token (active): 7.785754e+07
+Estimated active params:            36,700,296
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.218563 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 9.429367e+15
+Total active training FLOPs estimate: 9.429367e+15
+
+
+step 00462/00462 (final) | loss: 3.829433 | early_stop: 0
+Peak memory usage: 74522.22MiB
+Total training time: 1.13m
+Minimum validation bpb: 1.165936
+Minimum validation loss (nats/byte): 3.824479
+Final Validation BPB for base: 1.1659
