@@ -283,7 +283,7 @@ class Capture:
 # ---------------------------------------------------------------------------
 def bank_gram(mod):
     """G[k,j] = <T_k, T_j> over the flattened templates, float64 for stability."""
-    T = mod.template_bank.detach().float().reshape(mod.n_templates, -1).double()
+    T = mod.template_bank.detach().cpu().float().reshape(mod.n_templates, -1).double()
     return T @ T.T
 
 
@@ -317,8 +317,8 @@ def analyse_module(name, mod, alphas, gram):
     # --- bank geometry -----------------------------------------------------
     d = gram.diagonal().clamp_min(1e-30).sqrt()
     cos = gram / torch.outer(d, d)
-    off = cos[~torch.eye(K, dtype=torch.bool)]
-    Tb = mod.template_bank.detach().float().reshape(K, -1).double()
+    off = cos[~torch.eye(K, dtype=torch.bool, device=cos.device)]
+    Tb = mod.template_bank.detach().cpu().float().reshape(K, -1).double()
     Tbar = Tb.mean(0)
     spread = float((Tb - Tbar).norm(dim=1).mean() / Tbar.norm().clamp_min(1e-30))
 
