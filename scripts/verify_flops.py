@@ -143,15 +143,36 @@ def analyze_model(model, config, label):
         attn_flops += 12 * h * q * eff_seq
     print(f"  Attention FLOPs: {attn_flops:,}")
 
-    manual_total_flops = 6 * matmul_params + attn_flops
-    print(f"  Manual total_flops = 6*{matmul_params:,} + {attn_flops:,} = {manual_total_flops:,}")
+    # Derived-matmul term. The 6N parameter proxy cannot see W_eff: chunk routing
+    # does TWO matmuls with the bank, the assembly (sum_k alpha_k T_k, which the
+    # amortized parameter count does cover) and the mixing (h @ W_eff^T, which it
+    # does not, because W_eff is an intermediate tensor rather than an nn.Parameter).
+    # estimate_flops adds 6*out*basis per chunk-routed projection to compensate.
+    # Omitting it here is what produced the long-standing "MISMATCH" in this audit:
+    # the discrepancy was in this script, not in estimate_flops.
+    derived_matmul_flops = 0
+    for submod in model.modules():
+        if (isinstance(submod, RemixedLinear)
+                and getattr(submod, 'template_bank', None) is not None
+                and getattr(submod, 'chunk_routing_size', 0) > 0
+                and not getattr(submod, 'tiny_expert', False)
+                and not getattr(submod, 'lokr_expert', False)
+                and getattr(submod, 'n_templates', 1) > 1):
+            derived_matmul_flops += 6 * submod.template_bank.shape[1] * submod.template_bank.shape[2]
+
+    manual_total_flops = 6 * matmul_params + attn_flops + derived_matmul_flops
+    print(f"  Derived W_eff matmul FLOPs: {derived_matmul_flops:,}")
+    print(f"  Manual total_flops = 6*{matmul_params:,} + {attn_flops:,} + {derived_matmul_flops:,} = {manual_total_flops:,}")
     match = "✅ MATCH" if manual_total_flops == total_flops else f"❌ MISMATCH (diff={manual_total_flops - total_flops:,})"
     print(f"  vs estimate_flops total: {match}")
 
     # Count inactive expert params
     inactive_expert_params = 0
     remix_details = []
-    from nanochat.gpt import RemixedLinear, StandardMoE_MLP
+    # RemixedLinear is already imported at module scope; re-importing it here made
+    # it a function-local name, so the earlier reference at the derived-FLOPs loop
+    # raised UnboundLocalError.
+    from nanochat.gpt import StandardMoE_MLP
     for name, submod in model.named_modules():
         if isinstance(submod, RemixedLinear):
             chunk = getattr(submod, 'chunk_routing_size', 0)

@@ -5087,6 +5087,33 @@ class ResidualAdaptiveLinear(nn.Module):
 
 
 
+def _column_quantile(flat, q):
+    """Per-column quantile of `flat` (N, K), safe under torch.compile.
+
+    torch.quantile calls numel() on its input, which raises
+    "Cannot call numel() on tensor with symbolic sizes/strides" the moment Dynamo
+    gives the batch a symbolic shape. That happens as soon as anything varies the
+    token count (a prefill sweep, a different device batch, chunk padding), so a
+    compiled training run with --p23-quantile-route 1 dies with a TorchRuntimeError
+    rather than a clean error. Sorting and indexing gives the same value with no
+    numel() call, and keeps the row count symbolic instead of forcing a guard.
+
+    This takes the nearest rank where torch.quantile interpolates linearly, so the
+    two can differ by up to one order statistic. That cannot change routing: the
+    thresholded set is unioned with the hard top-k set and the final selection is
+    the top-k of the scores regardless of what the threshold admitted, so the
+    criterion is inert either way (see the ablation in the paper, and
+    tests/test_quantile_router_topk.py which pins it).
+    """
+    srt, _ = torch.sort(flat, dim=0)
+    n = srt.shape[0]
+    pos = torch.clamp(
+        (torch.as_tensor(float(q), device=flat.device, dtype=torch.float32) * (n - 1)).round().long(),
+        min=0,
+    )
+    return srt.index_select(0, pos.reshape(1)).squeeze(0)
+
+
 def _resolve_topk(topk, K):
     """How many experts a router selects, given a `template_topk` setting.
 
@@ -5171,7 +5198,7 @@ class QuantileBalancedRouter(nn.Module):
             # Per-batch quantile thresholding (no EMA)
             flat = scores.detach().float().reshape(-1, K)
             target_q = 1.0 - topk / K
-            thresh = torch.quantile(flat, float(target_q), dim=0)       # (K,)
+            thresh = _column_quantile(flat, target_q)                    # (K,)
             q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
 
             # Guarantee topk via hard top-k union
@@ -5253,7 +5280,7 @@ class QuantileCrossAttentionRouter(nn.Module):
             # Per-batch quantile thresholding (no EMA)
             flat = scores.detach().float().reshape(-1, K)
             target_q = 1.0 - topk / K
-            thresh = torch.quantile(flat, float(target_q), dim=0)       # (K,)
+            thresh = _column_quantile(flat, target_q)                    # (K,)
             q_mask = scores > thresh.unsqueeze(0).unsqueeze(0)           # (B, T, K) bool
 
             # Guarantee topk via hard top-k union

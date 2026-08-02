@@ -1,0 +1,169 @@
+======================================================================
+  FLOP/Param Verification: Dense Baseline vs RemixedLinear (chunk64)
+======================================================================
+
+
+######################################################################
+# Q1: Dense baseline n_head/n_kv_head across depths
+######################################################################
+  depth= 4: model_dim=  256, head_dim=128, n_head=2, n_kv_head=2
+  depth= 6: model_dim=  384, head_dim=128, n_head=3, n_kv_head=3
+  depth= 8: model_dim=  512, head_dim=128, n_head=4, n_kv_head=4
+  depth=12: model_dim=  768, head_dim=128, n_head=6, n_kv_head=6
+  depth=16: model_dim= 1024, head_dim=128, n_head=8, n_kv_head=8
+  depth=24: model_dim= 1536, head_dim=128, n_head=12, n_kv_head=12
+
+
+######################################################################
+# Q2: Detailed FLOP/Param verification at depth=8 (aspect_ratio=64)
+######################################################################
+
+======================================================================
+  Dense Baseline (depth=8)
+  depth=8, n_embd=512, n_head=4, n_kv_head=4
+======================================================================
+
+Total parameters: 125,829,648
+
+--- Parameter Breakdown ---
+  wte (token embed):        16,777,216
+  wpe (pos embed):                   0
+  value_embeds:             67,108,864  (4 layers)
+  lm_head:                  16,777,216
+  resid_lambdas:                     8
+  x0_lambdas:                        8
+  transformer.h (blocks):   25,166,336
+  TOTAL:                   125,829,648
+
+--- estimate_flops() ---
+  total_flops:      286,264,320  (2.862643e+08)
+  active_flops:     286,264,320  (2.862643e+08)
+  active_params:    125,829,648
+
+--- Manual Verification ---
+  Excluded from matmul count: 83,886,096
+    wte:            16,777,216
+    wpe:            0
+    value_embeds:   67,108,864
+    resid_lambdas:  8
+    x0_lambdas:     8
+  Matmul params (total - excluded): 41,943,552
+  Attention FLOPs: 34,603,008
+  Manual total_flops = 6*41,943,552 + 34,603,008 = 286,264,320
+  vs estimate_flops total: ✅ MATCH
+
+  Inactive expert params (manual): 0
+  Manual active_flops = 286,264,320
+  vs estimate_flops active: ✅ MATCH
+  Manual active_params = 125,829,648
+  vs estimate_flops active_params: ✅ MATCH
+remix_context_dim auto-scaled to 85 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+
+======================================================================
+  RemixedLinear chunk64 K=8 (depth=8)
+  depth=8, n_embd=512, n_head=4, n_kv_head=4
+======================================================================
+
+Total parameters: 272,267,664
+
+--- Parameter Breakdown ---
+  wte (token embed):        16,777,216
+  wpe (pos embed):                   0
+  value_embeds:             67,108,864  (4 layers)
+  lm_head:                  16,777,216
+  resid_lambdas:                     8
+  x0_lambdas:                        8
+  transformer.h (blocks):  171,604,352
+  TOTAL:                   272,267,664
+
+--- estimate_flops() ---
+  total_flops:    1,278,138,624  (1.278139e+09)
+  active_flops:     386,324,736  (3.863247e+08)
+  active_params:    123,632,016
+
+--- Manual Verification ---
+  Excluded from matmul count: 83,886,096
+    wte:            16,777,216
+    wpe:            0
+    value_embeds:   67,108,864
+    resid_lambdas:  8
+    x0_lambdas:     8
+  Matmul params (total - excluded): 188,381,568
+  Attention FLOPs: 34,603,008
+  Manual total_flops = 6*188,381,568 + 34,603,008 = 1,164,892,416
+  vs estimate_flops total: ❌ MISMATCH (diff=-113,246,208)
+
+--- RemixedLinear Template Bank Details ---
+  transformer.h.0.attn.c_q: K=8, chunk=64, topk=0
+    template_params=2,097,152, route_params=0
+    active_per_token=32,768.0, inactive=2,064,384
+  transformer.h.0.attn.c_k: K=8, chunk=64, topk=0
+    template_params=2,097,152, route_params=0
+    active_per_token=32,768.0, inactive=2,064,384
+  transformer.h.0.attn.c_v: K=8, chunk=64, topk=0
+    template_params=2,097,152, route_params=0
+    active_per_token=32,768.0, inactive=2,064,384
+  transformer.h.0.attn.c_proj: K=8, chunk=64, topk=0
+    template_params=2,097,152, route_params=0
+    active_per_token=32,768.0, inactive=2,064,384
+  ... and 44 more RemixedLinear layers
+
+  Inactive expert params (manual): 148,635,648
+  Manual active_flops = 273,078,528
+  vs estimate_flops active: ❌ MISMATCH (diff=-113,246,208)
+  Manual active_params = 123,632,016
+  vs estimate_flops active_params: ✅ MATCH
+
+
+######################################################################
+# Q3: Value embed exclusion consistency
+######################################################################
+  Dense  VE params excluded: 67,108,864
+  Remix  VE params excluded: 67,108,864
+  ✅ Both models exclude the same number of VE params from FLOPs
+
+
+######################################################################
+# Q4: Cross-depth FLOP comparison
+######################################################################
+depth |     Dense total |    Dense active |     Remix total |    Remix active |  Ratio (active)
+----------------------------------------------------------------------------------------------------
+remix_context_dim auto-scaled to 64 (n_embd=256 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+    4 |      77,857,536 |      77,857,536 |     202,936,464 |      91,459,728 |          1.1747
+remix_context_dim auto-scaled to 85 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+    8 |     286,264,320 |     286,264,320 |   1,278,138,624 |     386,324,736 |          1.3495
+remix_context_dim auto-scaled to 128 (n_embd=768 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+   12 |     738,466,560 |     738,466,560 |   4,079,089,584 |   1,069,217,712 |          1.4479
+
+
+######################################################################
+# Q5: What's included/excluded in FLOPs for BOTH models (depth=8)
+######################################################################
+
+  Dense model:
+    Total params:      125,829,648
+    EXCLUDED:           83,886,096
+      wte:              16,777,216
+      wpe:                       0
+      value_embeds:     67,108,864
+      resid_lambdas:             8
+      x0_lambdas:                8
+    INCLUDED (matmul):  41,943,552
+      lm_head:          16,777,216
+      transformer.h:    25,166,336
+
+  Remix model:
+    Total params:      272,267,664
+    EXCLUDED:           83,886,096
+      wte:              16,777,216
+      wpe:                       0
+      value_embeds:     67,108,864
+      resid_lambdas:             8
+      x0_lambdas:                8
+    INCLUDED (matmul): 188,381,568
+      lm_head:          16,777,216
+      transformer.h:   171,604,352

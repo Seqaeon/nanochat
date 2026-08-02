@@ -125,7 +125,11 @@ def make_config(depth, arm, seq_len=SEQ, chunk=256, vocab=VOCAB, n_templates=8,
         remix_basis_size=D, scale_basis_size=True,
         cclblock_modulation="weight", cclblock_context_stream="selective",
         cclblock_gate_temperature=2.0,
-        p23_quantile_route=1, p28_chunk_routing_size=chunk,
+        # p23_quantile_route=0 matches the live 29C arm in p29_sweep.sh, which
+        # overrides REMIX_COMMON's default of 1. It is also the configuration you
+        # want to benchmark: the quantile router is bit-identical to plain top-k
+        # routing, so it changes nothing except adding a sort to the hot path.
+        p23_quantile_route=0, p28_chunk_routing_size=chunk,
         remixed_linear_kwargs=kw,
     )
 
@@ -320,16 +324,24 @@ def t3_decode(depth, device, contexts, vocab, **cfg_kw):
         res[arm] = []
         model = None
         try:
-            model, cfg = build(depth, arm, device, seq_len=max(contexts) + 8,
+            model, cfg = build(depth, arm, device,
+                               seq_len=max(contexts) + 3 + (ITERS if ITERS > 0 else 15) + 8,
                                compile_model=False, vocab=vocab, **cfg_kw)
             hd = cfg.n_embd // cfg.n_head
             for ctx in contexts:
                 try:
                     torch.cuda.empty_cache()
+                    # Slack must cover warmup + timed iterations, not a token or
+                    # two: cuda_time calls the step repeatedly and each call appends
+                    # to the cache. Undersizing it lets cache_seqlens run past
+                    # max_seq_len, and the resulting garbage position propagates into
+                    # the rotary cache ("Growing rotary embeddings cache to
+                    # 2147450881") and then into a multi-hundred-GB allocation.
+                    decode_slack = 3 + (ITERS if ITERS > 0 else 15) + 8
                     cache = KVCache(batch_size=1, num_heads=cfg.n_kv_head,
-                                    seq_len=ctx + 8, head_dim=hd, v_head_dim=hd,
-                                    num_layers=cfg.n_layer, device=device,
-                                    dtype=torch.bfloat16)
+                                    seq_len=ctx + decode_slack, head_dim=hd,
+                                    v_head_dim=hd, num_layers=cfg.n_layer,
+                                    device=device, dtype=torch.bfloat16)
                     with torch.inference_mode():
                         model(torch.randint(0, vocab, (1, ctx), device=device), kv_cache=cache)
                         nxt = torch.randint(0, vocab, (1, 1), device=device)

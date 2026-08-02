@@ -41,8 +41,110 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nanochat.gpt import RemixedLinear
-from scripts.paper_lib import load_any_model, build_val_batches
+from nanochat.gpt import GPT, GPTConfig, RemixedLinear
+from nanochat.checkpoint_manager import load_checkpoint, _patch_missing_config_keys
+from nanochat.tokenizer import get_tokenizer
+from scripts.paper_lib import find_last_step, build_val_batches
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint loading
+# ---------------------------------------------------------------------------
+def _stack_legacy_templates(state, model):
+    """Rebuild `X.template_bank` from a checkpoint that stored templates separately.
+
+    The template bank used to be K separate 2-D parameters per projection; P29
+    stacked them into one (K, out, basis) tensor so Muon could run block-diagonal
+    Newton-Schulz over it. Checkpoints written before that stacking load into a
+    current model with every `template_bank` key missing and nothing else wrong,
+    which is exactly the failure this repairs.
+
+    Returns (patched_state, notes). Anything it cannot repair is left alone so the
+    caller can report it.
+    """
+    notes = []
+    want = {k for k in model.state_dict() if k.endswith(".template_bank")}
+    missing = sorted(want - set(state))
+    if not missing:
+        return state, notes
+    state = dict(state)
+    for key in missing:
+        prefix = key[: -len("template_bank")]
+        target = model.state_dict()[key]
+        K, per_template = target.shape[0], target.shape[1:]
+        # Per-template keys under this module, in index order. The shape filter
+        # matters: template_route also lives here, is 2-D, and has "template" in
+        # its name, so a name match alone picks up K+1 candidates and repairs
+        # nothing.
+        cands = sorted(
+            (k for k in state
+             if k.startswith(prefix)
+             and re.fullmatch(r"template[_.]?\d+(\.weight)?", k[len(prefix):])
+             and tuple(state[k].shape) == tuple(per_template)),
+            key=lambda k: int(re.findall(r"\d+", k[len(prefix):])[0]),
+        )
+        if len(cands) == K:
+            state[key] = torch.stack([state.pop(k) for k in cands], dim=0)
+            notes.append(f"stacked {K} legacy tensors -> {key}")
+        elif len(cands) == 1 and state[cands[0]].shape == model.state_dict()[key].shape[1:]:
+            # Single shared matrix (a K=1 checkpoint being read as K>1).
+            notes.append(f"FOUND ONLY ONE template matrix for {key}: {cands[0]}")
+        else:
+            notes.append(f"CANNOT REPAIR {key}: candidates under this module = "
+                         + (", ".join(k[len(prefix):] for k in cands) or "(none)"))
+    return state, notes
+
+
+def load_remix_model(ckpt_dir, device, step=None, tokenizer_dir=None):
+    """Load a RemixedLinear checkpoint, repairing known key-layout changes.
+
+    Deliberately not paper_lib.load_any_model: that loads strictly and reports only
+    the first missing key, which turns a mechanical layout change into an opaque
+    failure. Here a mismatch prints what the checkpoint actually contains.
+    """
+    step = find_last_step(ckpt_dir) if step is None else step
+    device = torch.device(device) if isinstance(device, str) else device
+    state, _, meta = load_checkpoint(ckpt_dir, step, device, load_optimizer=False)
+    state = {k.removeprefix("_orig_mod.").removeprefix("module."): v for k, v in state.items()}
+    if device.type in {"cpu", "mps"}:
+        state = {k: (v.float() if v.dtype == torch.bfloat16 else v) for k, v in state.items()}
+
+    cfg_kwargs = dict(meta["model_config"])
+    _patch_missing_config_keys(cfg_kwargs)
+    config = GPTConfig(**cfg_kwargs)
+    with torch.device("meta"):
+        model = GPT(config)
+    model.to_empty(device=device)
+    model.init_weights()
+
+    state, notes = _stack_legacy_templates(state, model)
+    for n in notes:
+        print(f"[analysis] {n}")
+    try:
+        model.load_state_dict(state, strict=True, assign=True)
+    except RuntimeError as e:
+        want, have = set(model.state_dict()), set(state)
+        miss, extra = sorted(want - have), sorted(have - want)
+        print(f"\n[analysis] state_dict mismatch: {len(miss)} missing, {len(extra)} unexpected")
+        print(f"[analysis] missing (first 8): {miss[:8]}")
+        print(f"[analysis] unexpected (first 8): {extra[:8]}")
+        if miss:
+            pre = miss[0].rsplit(".", 1)[0] + "."
+            print(f"[analysis] everything the checkpoint has under {pre}:")
+            for k in sorted(k for k in state if k.startswith(pre)):
+                print(f"             {k[len(pre):]:32s} {tuple(state[k].shape)}")
+        raise SystemExit(
+            "Refusing to analyse a partially-loaded model. The listing above shows "
+            "what the checkpoint stores where the current code expects template_bank; "
+            "if those are the templates under another name, the remap in "
+            "_stack_legacy_templates needs one more case."
+        ) from e
+    model.eval()
+    print(f"[analysis] loaded {ckpt_dir} step {step}: L={config.n_layer} D={config.n_embd} "
+          f"K={config.remixed_linear_kwargs.get('n_templates', 1)} "
+          f"chunk={getattr(config, 'p28_chunk_routing_size', 0)} "
+          f"quantile_route={getattr(config, 'p23_quantile_route', 0)}")
+    return model, get_tokenizer(tokenizer_dir=tokenizer_dir), config, meta
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +434,7 @@ def main():
     ap.add_argument("--plot", default=None, help="path prefix for the figures")
     args = ap.parse_args()
 
-    model, tokenizer, config, meta = load_any_model(
+    model, tokenizer, config, meta = load_remix_model(
         args.ckpt, args.device, step=args.step, tokenizer_dir=args.tokenizer_dir)
     model.train(args.train_mode)
     cap = Capture(model)
