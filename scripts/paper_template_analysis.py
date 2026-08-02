@@ -505,6 +505,18 @@ def main():
                 b = next(batches)
             except StopIteration:
                 print(f"[analysis] data exhausted after {i} batches"); break
+            except AssertionError as e:
+                if "No dataset parquet files found" in str(e):
+                    print(f"\n[analysis] ERROR: No dataset parquet files found in dataset directory.")
+                    print("[analysis] Solutions:")
+                    print("  1. Run with synthetic data (no dataset required):")
+                    print("     python -m scripts.paper_template_analysis --ckpt <CKPT> --synthetic")
+                    print("  2. Download the validation dataset shard:")
+                    print("     python -m nanochat.dataset -n 0")
+                    print("  3. Point to existing dataset directory:")
+                    print("     python -m scripts.paper_template_analysis --ckpt <CKPT> --data-dir <DIR>")
+                    sys.exit(1)
+                raise
             x = b[0] if isinstance(b, (tuple, list)) else b
             model(x)
             print(f"  batch {i + 1}/{args.batches}", end="\r", flush=True)
