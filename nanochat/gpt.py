@@ -89,6 +89,11 @@ class GPTConfig:
     p34_ffn_mult: float = 4.0     # FFN hidden width as a multiple of n_embd (4.0 = standard)
     p34_ffn_single: int = 0       # 1 = one RemixedLinear D->D, no hidden layer and no activation
     p34_dense_attn: int = 0       # 1 = plain dense attention, so only the FFN is RemixedLinear
+    # Reproduce the pre-fix initialization, where the generic Linear fallback ran
+    # after each specialized branch and overwrote it (RemixedLinear's orthogonal
+    # basis became xavier; its basis_modulator bias of 2.0 read back as 0.0).
+    # Only for re-running checkpoints trained before that was corrected.
+    legacy_init_fallback: int = 0
     # Phase 35: ConditionedLinear moves conditioning from weight space to
     # activation space.  Selected with --cclblock-modulation cond.  A degree of
     # freedom costs O(d) here instead of O(d^2), and no operator is ever
@@ -554,7 +559,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_folded_mod_gate_act", "p24_use_sequence_gated_linear", "p24_sequence_gated_scope",
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
-    "remix_disable_ln_basis", "dense_intermediate_ln",
+    "remix_disable_ln_basis", "dense_intermediate_ln", "legacy_init_fallback",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
     "cond_router_rank", "cond_chunk_size", "cond_mult_impl",
@@ -3231,6 +3236,26 @@ class DecoupledAdaptiveLinear(nn.Module):
         nn.init.zeros_(self.gate_coeffs.weight)
         nn.init.zeros_(self.gate_coeffs.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        Same two defects as ResidualAdaptiveLinear: dyn_mix/gate_basis/gate_scale
+        were never initialized, and zeroing both gate_coeffs and gate_basis is a
+        fixed point (dL/dgate_basis is proportional to coeffs, dL/dgate_coeffs to
+        gate_basis, so both stay zero forever). A unit coefficient bias keeps
+        gate == 1 at init, since gate_basis is still zero, and makes it live.
+        """
+        for lin in (self.static_proj, self.dyn_basis):
+            nn.init.xavier_uniform_(lin.weight)
+            if lin.bias is not None:
+                nn.init.zeros_(lin.bias)
+        nn.init.normal_(self.dyn_mix, std=self.dyn_mix.shape[-1] ** -0.5)
+        nn.init.zeros_(self.gate_basis)          # gate == 1 at init
+        nn.init.zeros_(self.gate_coeffs.weight)
+        nn.init.ones_(self.gate_coeffs.bias)     # coeffs == 1, so dL/dgate_basis != 0
+        self.gate_scale.fill_(0.1)
+
     def gate_parameters(self):
         yield from self.gate_coeffs.parameters()
         yield self.gate_basis
@@ -3241,7 +3266,7 @@ class DecoupledAdaptiveLinear(nn.Module):
         yield self.dyn_basis.weight
         yield self.dyn_mix
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         x_stat = x[..., :self.stat_features]
         x_dyn = x[..., self.stat_features:]
         out_stat = self.static_proj(x_stat)
@@ -3270,6 +3295,21 @@ class TuckerAdaptiveLinear(nn.Module):
         nn.init.zeros_(self.ctx_router.weight)
         nn.init.zeros_(self.ctx_router.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        A/B/core/bias are bare nn.Parameters and held uninitialized storage
+        before this existed. The router stays zero, so the core is mixed
+        uniformly at init and every mode receives gradient.
+        """
+        nn.init.normal_(self.A, std=self.A.shape[0] ** -0.5)
+        nn.init.normal_(self.B, std=self.B.shape[0] ** -0.5)
+        nn.init.normal_(self.core, std=self.core.shape[0] ** -0.5)
+        nn.init.zeros_(self.bias)
+        nn.init.zeros_(self.ctx_router.weight)
+        nn.init.zeros_(self.ctx_router.bias)
+
     def gate_parameters(self):
         yield from self.ctx_router.parameters()
 
@@ -3279,7 +3319,7 @@ class TuckerAdaptiveLinear(nn.Module):
         yield self.core
         yield self.bias
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         h = torch.matmul(x, self.A.to(dtype=x.dtype))  # (B,T,r)
         if context_state is None:
             weights = torch.full((*h.shape[:2], self.core.shape[-1]), 1.0 / self.core.shape[-1], device=x.device, dtype=x.dtype)
@@ -3308,6 +3348,22 @@ class SingularValueSteeringLinear(nn.Module):
         nn.init.zeros_(self.ctx.weight)
         nn.init.zeros_(self.ctx.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        V/U/sigma/bias are bare nn.Parameters and held uninitialized storage
+        before this existed. ctx stays zero so steer == 1 at init, which is the
+        identity start this layer is designed around; sigma carries the scale so
+        the branch is live from step 0.
+        """
+        nn.init.normal_(self.V, std=self.V.shape[0] ** -0.5)
+        nn.init.normal_(self.U, std=self.U.shape[0] ** -0.5)
+        nn.init.ones_(self.sigma)
+        nn.init.zeros_(self.bias)
+        nn.init.zeros_(self.ctx.weight)
+        nn.init.zeros_(self.ctx.bias)
+
     def gate_parameters(self):
         yield from self.ctx.parameters()
 
@@ -3317,7 +3373,7 @@ class SingularValueSteeringLinear(nn.Module):
         yield self.sigma
         yield self.bias
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         h = torch.matmul(x, self.V.to(dtype=x.dtype))
         if context_state is None:
             steer = torch.ones_like(h)
@@ -3343,6 +3399,21 @@ class VQAdaptiveLinear(nn.Module):
         self.delta = nn.Parameter(torch.zeros(self.K, out_features, in_features))
         self.ln_basis = nn.Identity()
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        codebook and delta are bare nn.Parameters and held uninitialized storage
+        before this existed. delta=0 gives an exact dense start and still leaves
+        dL/ddelta alive, since it is multiplied by the code assignment and x
+        rather than by another zero.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        nn.init.normal_(self.codebook, std=self.codebook.shape[-1] ** -0.5)
+        nn.init.zeros_(self.delta)
+
     def gate_parameters(self):
         yield self.codebook
 
@@ -3350,7 +3421,7 @@ class VQAdaptiveLinear(nn.Module):
         yield from self.base.parameters()
         yield self.delta
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         y = self.base(x)
         if context_state is None:
             return y
@@ -3411,6 +3482,27 @@ class FrozenSubspaceIndexedLinear(nn.Module):
         self.register_buffer('selector',
             torch.randn(selector_dim, n_rotations) / (selector_dim ** 0.5))
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        Everything this layer routes with lives in buffers, and to_empty()
+        empties buffers exactly like parameters. Before this existed the
+        'frozen orthogonal rotations' were uninitialized memory: the reflectors
+        were not unit vectors, so I - 2vv^T was not a reflection, and the frozen
+        routing projections were arbitrary. Nothing about the layer's premise
+        held in an actual run.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        vecs = torch.randn_like(self.reflectors)
+        self.reflectors.copy_(F.normalize(vecs, dim=-1))   # unit => genuine reflections
+        self.selector_proj.copy_(
+            torch.randn_like(self.selector_proj) / (self.selector_proj.shape[0] ** 0.5))
+        self.selector.copy_(
+            torch.randn_like(self.selector) / (self.selector.shape[0] ** 0.5))
+
     def gate_parameters(self):
         """No gate parameters — routing is entirely frozen."""
         return iter([])
@@ -3421,7 +3513,7 @@ class FrozenSubspaceIndexedLinear(nn.Module):
         if self.base.bias is not None:
             yield self.base.bias
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         """
         x: (B, T, D_in)
         context_state: (B, T, signal_dim) — detached attention output for routing.
@@ -3497,6 +3589,24 @@ class AttentionEntropyStratifiedLinear(nn.Module):
         alphas[0] = 0.0  # stratum 0 is always pure dense baseline
         self.register_buffer('alphas', alphas)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        The U/V ParameterLists and the alphas buffer held uninitialized storage
+        before this existed; to_empty() replaces buffer storage too, so the
+        stratum mixing coefficients were garbage rather than the intended ramp.
+        Only V is zeroed, so the deltas start at zero with dL/dV alive.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        for u in self.U:
+            nn.init.kaiming_uniform_(u, a=0.01)
+        for v in self.V:
+            nn.init.zeros_(v)
+        self.alphas.copy_(torch.linspace(0, 0.2, self.n_strata, device=self.alphas.device))
+
     def gate_parameters(self):
         """No gate parameters — routing/scaling is frozen."""
         return iter([])
@@ -3511,7 +3621,7 @@ class AttentionEntropyStratifiedLinear(nn.Module):
         for v in self.V:
             yield v
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         """
         x: (B, T, D)
         context_state: (B, T) — attention entropy per position (scalar).
@@ -3704,7 +3814,7 @@ class GradientIsolatedDeltaLinear(nn.Module):
         if self.base.bias is not None:
             yield self.base.bias
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         """
         x: (B, T, D_in). context_state is ignored.
         """
@@ -3749,6 +3859,22 @@ class PositionalScalarGatedLinear(nn.Module):
         # Controls the maximum deviation from identity
         self.scale_magnitude = nn.Parameter(torch.tensor(0.01))
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        pos_signal and scale_magnitude are bare nn.Parameters and held
+        uninitialized storage before this existed.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        nn.init.normal_(self.pos_signal, std=0.01)
+        nn.init.zeros_(self.scale_conv.weight)
+        if self.scale_conv.bias is not None:
+            nn.init.zeros_(self.scale_conv.bias)
+        self.scale_magnitude.fill_(0.01)
+
     def gate_parameters(self):
         """Position signal + conv = routing side."""
         yield self.pos_signal
@@ -3761,7 +3887,7 @@ class PositionalScalarGatedLinear(nn.Module):
         if self.base.bias is not None:
             yield self.base.bias
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         """
         x: (B, T, D_in). context_state is ignored (position-only scaling).
         """
@@ -3823,6 +3949,25 @@ class SplitStreamLinear(nn.Module):
         nn.init.zeros_(self.branch_conv.weight)
         nn.init.zeros_(self.branch_conv.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        pos_signal and the branch conv held uninitialized storage before this
+        existed, so the position-routed branch weights were arbitrary.
+        """
+        nn.init.xavier_uniform_(self.static_proj.weight)
+        if self.static_proj.bias is not None:
+            nn.init.zeros_(self.static_proj.bias)
+        for br in self.dynamic_branches:
+            nn.init.xavier_uniform_(br.weight)
+            if br.bias is not None:
+                nn.init.zeros_(br.bias)
+        nn.init.normal_(self.pos_signal, std=0.01)
+        nn.init.zeros_(self.branch_conv.weight)
+        if self.branch_conv.bias is not None:
+            nn.init.zeros_(self.branch_conv.bias)
+
     def gate_parameters(self):
         """Position signal + conv + dynamic branch weights = routing side."""
         yield self.pos_signal
@@ -3836,7 +3981,7 @@ class SplitStreamLinear(nn.Module):
         if self.static_proj.bias is not None:
             yield self.static_proj.bias
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         """
         x: (B, T, D_in). context_state is ignored (position-only dynamic path).
         """
@@ -3917,6 +4062,30 @@ class LoKRLinear(nn.Module):
         nn.init.zeros_(self.branch_conv.weight)
         nn.init.zeros_(self.branch_conv.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        The lora_down/lora_up ParameterLists held uninitialized storage before
+        this existed, and the constructor zeroed BOTH factors, which its own
+        comment says was not the intent ("U_k gets xavier init for gradient flow
+        once V_k starts learning"). Two zeroed factors is a fixed point: the
+        perturbation and every gradient into it stay zero for the whole run.
+        Zeroing only lora_down keeps the exact dense start and leaves dL/d(down)
+        alive through lora_up.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        for down in self.lora_down:
+            nn.init.zeros_(down)               # perturbation == 0 at init
+        for up in self.lora_up:
+            nn.init.xavier_uniform_(up)        # nonzero, so dL/d(down) != 0
+        nn.init.normal_(self.pos_signal, std=0.01)
+        nn.init.zeros_(self.branch_conv.weight)
+        if self.branch_conv.bias is not None:
+            nn.init.zeros_(self.branch_conv.bias)
+
     def gate_parameters(self):
         """Position signal + conv = routing side."""
         yield self.pos_signal
@@ -3932,7 +4101,7 @@ class LoKRLinear(nn.Module):
         for u in self.lora_up:
             yield u
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         """
         x: (B, T, D_in). context_state ignored (position-only routing).
         """
@@ -4002,6 +4171,24 @@ class CausalOutputMixer(nn.Module):
         nn.init.zeros_(self.gate_conv.weight)
         nn.init.constant_(self.gate_conv.bias, -3.0)  # sigmoid(-3) ≈ 0.05 → nearly off at init
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        pos_signal and both convs held uninitialized storage before this
+        existed. The -3.0 gate bias is the intended near-off start.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        nn.init.zeros_(self.causal_conv.weight)
+        if self.causal_conv.bias is not None:
+            nn.init.zeros_(self.causal_conv.bias)
+        nn.init.normal_(self.pos_signal, std=0.01)
+        nn.init.zeros_(self.gate_conv.weight)
+        if self.gate_conv.bias is not None:
+            nn.init.constant_(self.gate_conv.bias, -3.0)
+
     def gate_parameters(self):
         """Routing side: position signal + gate conv + causal conv."""
         yield self.pos_signal
@@ -4012,7 +4199,7 @@ class CausalOutputMixer(nn.Module):
         """Feature side: base projection weights."""
         yield from self.base.parameters()
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         """
         x: (B, T, D_in). context_state ignored.
         """
@@ -4082,7 +4269,7 @@ class PositionGatedResidual(nn.Module):
         yield from self.base.parameters()
         yield from self.delta.parameters()
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         B, T, _ = x.shape
         dtype = x.dtype
         base_out = self.base(x)  # (B, T, out)
@@ -4129,6 +4316,22 @@ class CausalInterpolationLinear(nn.Module):
         nn.init.zeros_(self.alpha_conv.weight)
         nn.init.constant_(self.alpha_conv.bias, -5.0)  # sigmoid(-5) ≈ 0.007 → nearly pure W₀
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        weight_0/weight_1/bias/pos_signal are bare nn.Parameters and held
+        uninitialized storage before this existed. The -5.0 alpha bias is the
+        intended near-pure-W0 start.
+        """
+        nn.init.kaiming_uniform_(self.weight_0, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.weight_1, a=math.sqrt(5))
+        nn.init.zeros_(self.bias)
+        nn.init.normal_(self.pos_signal, std=0.01)
+        nn.init.zeros_(self.alpha_conv.weight)
+        if self.alpha_conv.bias is not None:
+            nn.init.constant_(self.alpha_conv.bias, -5.0)
+
     def gate_parameters(self):
         yield self.pos_signal
         yield from self.alpha_conv.parameters()
@@ -4138,7 +4341,7 @@ class CausalInterpolationLinear(nn.Module):
         yield self.weight_1
         yield self.bias
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         B, T, _ = x.shape
         dtype = x.dtype
         # Position-dependent alpha
@@ -4189,7 +4392,7 @@ class PositionalResidualBias(nn.Module):
     def non_gate_parameters(self):
         yield from self.base.parameters()
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         B, T, _ = x.shape
         dtype = x.dtype
         y = self.base(x)  # (B, T, out)
@@ -4230,7 +4433,7 @@ class AdaptiveGatedLinear(nn.Module):
     def non_gate_parameters(self):
         yield from self.base.parameters()
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         dtype = x.dtype
         y = self.base(x)  # (B, T, out)
         gate_logits = F.linear(x, self.gate_w.to(dtype), self.gate_b.to(dtype))  # (B, T, out)
@@ -4285,7 +4488,7 @@ class KroneckerLinear(nn.Module):
         yield self.B
         yield self.bias
 
-    def forward(self, x, context_state=None):
+    def forward(self, x, context_state=None, **_ignored):
         B, T, _ = x.shape
         dtype = x.dtype
         # Reshape: (B, T, d2_in, d1_in)
@@ -5086,6 +5289,28 @@ class ResidualAdaptiveLinear(nn.Module):
         nn.init.zeros_(self.ctx_coeffs.weight)
         nn.init.zeros_(self.ctx_coeffs.bias)
 
+    @torch.no_grad()
+    def reset_parameters(self, bound=None):
+        """Owns this module's entire subtree; GPT.init_weights claims it.
+
+        Two defects are repaired here. The parameters were never initialized at
+        all (bare nn.Parameters that init_weights' Linear-only fallback never
+        reached, so they held whatever to_empty() left behind), and the intended
+        init was a fixed point: V=0 and ctx_coeffs=0 together make dL/dU, dL/dV,
+        dL/dscale and dL/dctx_coeffs all exactly zero, so the delta branch could
+        never leave zero for the entire run. Setting the coefficient bias to 1
+        keeps delta identically zero at init (V is still 0, which is what makes
+        this an exact dense baseline at step 0) while leaving dL/dV alive.
+        """
+        nn.init.xavier_uniform_(self.base.weight)
+        if self.base.bias is not None:
+            nn.init.zeros_(self.base.bias)
+        nn.init.kaiming_uniform_(self.U, a=0.01)
+        nn.init.zeros_(self.V)                 # delta == 0 at init
+        nn.init.zeros_(self.ctx_coeffs.weight)
+        nn.init.ones_(self.ctx_coeffs.bias)    # coeffs == 1, so dL/dV != 0
+        self.scale.fill_(0.1)
+
     def gate_parameters(self):
         """Context gate params routed to lower-LR optimizer group."""
         yield from self.ctx_coeffs.parameters()
@@ -5098,7 +5323,7 @@ class ResidualAdaptiveLinear(nn.Module):
         yield self.U
         yield self.V
 
-    def forward(self, x, context_state):
+    def forward(self, x, context_state, **_ignored):
         y = self.base(x)
         if context_state is not None:
             ctx = context_state.to(x.dtype)
@@ -8729,6 +8954,28 @@ class Block(nn.Module):
         return x + block_out
 
 
+
+# Research modules that own their entire subtree's initialization. GPT.init_weights
+# calls reset_parameters(bound) on each and does not apply the generic fallback to
+# them. Everything here holds bare nn.Parameters or buffers, which to_empty() fills
+# with uninitialized memory and which the Linear/Embedding/Norm fallback cannot
+# reach, so before this registry existed each of these ran on garbage.
+_SELF_INIT_MODULES = (
+    ConditionedLinear,
+    ResidualAdaptiveLinear,
+    SingularValueSteeringLinear,
+    TuckerAdaptiveLinear,
+    VQAdaptiveLinear,
+    DecoupledAdaptiveLinear,
+    AttentionEntropyStratifiedLinear,
+    FrozenSubspaceIndexedLinear,
+    PositionalScalarGatedLinear,
+    SplitStreamLinear,
+    LoKRLinear,
+    CausalOutputMixer,
+    CausalInterpolationLinear,
+)
+
 class GPT(nn.Module):
     def __init__(self, config, pad_vocab_size_to=64):
         """
@@ -8938,7 +9185,37 @@ class GPT(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
-    def init_weights(self):
+    def _report_uninitialized(self):
+        """Name every tensor init_weights left as uninitialized memory.
+
+        GPT is built on meta and then to_empty()'d, which replaces the storage of
+        parameters AND buffers with whatever the allocator hands back. Anything
+        init_weights does not explicitly write is therefore uninitialized memory
+        for the whole run: all-zero on a fresh process (so the branch is dead and
+        every gradient into it is exactly zero), arbitrary recycled values once
+        the allocator has history.
+
+        This is not hypothetical. Before the reset_parameters dispatch existed,
+        twelve modulation modes ran this way, including every bare nn.Parameter
+        in svs/dcu/tucker/vq/decoupled/aesp/psg/splitstream/lokr/com, the U/V/
+        scale of --use-ral, and the frozen reflectors and routing projections of
+        fsi, which live in buffers. So this stays as a permanent tripwire: any
+        future research module that forgets its init gets named here rather than
+        silently training on garbage.
+
+        Returns a list of (name, kind) for anything still poisoned.
+        """
+        bad = []
+        for n, p in self.named_parameters():
+            if p.is_floating_point() and torch.isnan(p).any():
+                bad.append((n, 'param'))
+        for n, b in self.named_buffers():
+            if b.is_floating_point() and torch.isnan(b).any():
+                bad.append((n, 'buffer'))
+        return bad
+
+    @torch.no_grad()
+    def init_weights(self, verify=True):
         """
         Initialize the full model in this one function for maximum clarity.
 
@@ -8952,10 +9229,58 @@ class GPT(nn.Module):
             mlp.c_fc:        uniform, std=1/sqrt(n_embd)
             mlp.c_proj:      zeros
         """
+        # Poison first, so anything init_weights fails to write is detectable
+        # afterwards instead of silently becoming uninitialized memory. Two
+        # extra passes over the parameters, once per training run.
+        if verify:
+            for p in self.parameters():
+                if p.is_floating_point():
+                    p.fill_(float('nan'))
+            for b in self.buffers():
+                if b.is_floating_point():
+                    b.fill_(float('nan'))
+
+        def _generic_init(sub: nn.Module):
+            """Default init for plain layers a specialized branch does not own."""
+            if isinstance(sub, (Linear, nn.Linear)):
+                torch.nn.init.xavier_uniform_(sub.weight)
+                if sub.bias is not None:
+                    torch.nn.init.zeros_(sub.bias)
+            elif isinstance(sub, nn.Embedding):
+                torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
+            elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
+                if getattr(sub, 'weight', None) is not None:
+                    torch.nn.init.ones_(sub.weight)
+                if getattr(sub, 'bias', None) is not None:
+                    torch.nn.init.zeros_(sub.bias)
+
         # Research branches are also on to_empty() storage and need explicit init.
         def _init_research_module(mod: nn.Module):
+            # The generic fallback runs as a PRE-pass, not inline. modules()
+            # yields parents before children, so when the fallback sat at the
+            # bottom of this same loop it executed after a parent's specialized
+            # branch and silently overwrote it one iteration later:
+            # RemixedLinear's orthogonal basis came out xavier, and its
+            # basis_modulator's intended bias of 2.0 (sigmoid -> 0.88) read back
+            # as 0.0 (sigmoid -> 0.50). Running it first means a specialized
+            # branch always wins, and nothing is left uninitialized either,
+            # which claiming subtrees would have risked (ln_basis, for one).
+            # Set legacy_init_fallback=1 on the config to reproduce runs made
+            # before this was fixed.
+            legacy = bool(getattr(self.config, 'legacy_init_fallback', 0))
+            if not legacy:
+                for sub in mod.modules():
+                    _generic_init(sub)
+
             # We use a non-recursive approach to avoid overwriting specialized inits
             for sub in mod.modules():
+                # Modules that own their entire subtree's init. Everything here
+                # holds bare nn.Parameters or buffers that the Linear-only
+                # fallback cannot reach, so before this dispatch existed they
+                # ran on whatever to_empty() left in the storage.
+                if isinstance(sub, _SELF_INIT_MODULES):
+                    sub.reset_parameters(s)
+                    continue
                 if isinstance(sub, CCLBlock):
                     # AdaRMSNorm: zero proj weights, scale bias=1.0, shift bias=0.0.
                     # Guarantees identity RMSNorm at init regardless of ctx quality.
@@ -9007,6 +9332,37 @@ class GPT(nn.Module):
                         torch.nn.init.kaiming_uniform_(sub.expert_up_w.view(K * H, B_sz), a=math.sqrt(5))
                     if sub.expert_down_w is not None:
                         torch.nn.init.zeros_(sub.expert_down_w)
+                    # Diagnostic buffer, overwritten every forward, but it must
+                    # still be written once or the tripwire below reports it and
+                    # a noisy tripwire is one people learn to ignore.
+                    if hasattr(sub, '_template_entropy_buf'):
+                        sub._template_entropy_buf.zero_()
+                    # The routing projection. Created in __init__ as
+                    # randn(in_features, K)/sqrt(in_features), which on meta
+                    # storage produces nothing, and no branch here ever wrote
+                    # it: in the shipped K=8 arm template_route came out
+                    # EXACTLY ZERO, so every token routed uniformly (1/K) at
+                    # init in every layer. That is the maximum-averaging point,
+                    # where mixing near-orthogonal templates costs a factor
+                    # sqrt(1/K + (K-1)c/K) in operator norm, so the run starts
+                    # with the strongest possible gradient to collapse onto one
+                    # template. With --p22-template-routing-learned 0 it is a
+                    # frozen buffer instead, so 'frozen random routing' was
+                    # frozen UNIFORM routing: a static average of the bank.
+                    if getattr(sub, 'template_route', None) is not None:
+                        torch.nn.init.normal_(sub.template_route,
+                                              std=sub.template_route.shape[0] ** -0.5)
+                    # Quantile routers hold their projection as a bare Parameter
+                    # or buffer, with the same consequence.
+                    _qr = getattr(sub, '_qrouter', None)
+                    if _qr is not None:
+                        if getattr(_qr, 'route_proj', None) is not None:
+                            torch.nn.init.normal_(_qr.route_proj, std=_qr.route_proj.shape[-1] ** -0.5)
+                        if getattr(_qr, 'q_exp', None) is not None:
+                            torch.nn.init.normal_(_qr.q_exp, std=_qr.q_exp.shape[-1] ** -0.5)
+                        for _b in ('ema_thresholds', '_ema_init'):
+                            if hasattr(_qr, _b):
+                                getattr(_qr, _b).zero_()
                     # LoKR: kaiming for down projections, zeros for up (identity start)
                     if sub.lokr_down_w is not None:
                         torch.nn.init.kaiming_uniform_(sub.lokr_down_w, a=math.sqrt(5))
@@ -9103,27 +9459,12 @@ class GPT(nn.Module):
                         torch.nn.init.normal_(sub.vocab_routing_bias.weight, mean=0.0, std=0.02)
                     continue
 
-                # Phase 35: ConditionedLinear owns its init. W₀ gets exactly the
-                # dense baseline's init and every U/router stays at zero, so the
-                # model starts bit-identical to dense with a live gradient.
-                if isinstance(sub, ConditionedLinear):
-                    sub.reset_parameters(s)
-                    continue
-
-                # Fallback for remaining research linear layers/embeddings
-                if isinstance(sub, (Linear, nn.Linear)):
-                    # Check if already initialized by a parent (RemixedLinear/Router)
-                    # In this simplified logic, we just check if it's a direct child of research
-                    torch.nn.init.xavier_uniform_(sub.weight)
-                    if sub.bias is not None:
-                        torch.nn.init.zeros_(sub.bias)
-                elif isinstance(sub, nn.Embedding):
-                    torch.nn.init.normal_(sub.weight, mean=0.0, std=0.02)
-                elif isinstance(sub, (nn.LayerNorm, nn.RMSNorm)):
-                    if getattr(sub, 'weight', None) is not None:
-                        torch.nn.init.ones_(sub.weight)
-                    if getattr(sub, 'bias', None) is not None:
-                        torch.nn.init.zeros_(sub.bias)
+                # Fallback for remaining research linear layers/embeddings.
+                # Under the fixed path this already ran in the pre-pass above;
+                # repeating it here would restore exactly the clobbering the
+                # pre-pass exists to remove, so it is legacy-only.
+                if legacy:
+                    _generic_init(sub)
 
                 # Phase 17: Re-initialize buffers and position signals for
                 # position-routed modules. to_empty() replaces tensor storage
@@ -9332,6 +9673,30 @@ class GPT(nn.Module):
             self.transformer.wte.to(dtype=COMPUTE_DTYPE)
             for ve in self.value_embeds.values():
                 ve.to(dtype=COMPUTE_DTYPE)
+
+        if verify:
+            missed = self._report_uninitialized()
+            if missed:
+                # Repair conservatively so the run does not produce NaN, but say
+                # so loudly: a generic init is a guess, and the module that owns
+                # these tensors is the only thing that knows what they should be.
+                by_class = {}
+                for name, kind in missed:
+                    owner = self.get_submodule(name.rsplit('.', 1)[0])
+                    by_class.setdefault(type(owner).__name__, []).append(f"{name} ({kind})")
+                print0("=" * 72)
+                print0("init_weights: UNINITIALIZED TENSORS, results from this run are suspect")
+                for cls_name, names in sorted(by_class.items()):
+                    print0(f"  {cls_name}: {len(names)} tensors, e.g. {', '.join(names[:3])}")
+                print0("  Give the owning class a reset_parameters(bound) and add it to")
+                print0("  _SELF_INIT_MODULES. Falling back to a generic init for now.")
+                print0("=" * 72)
+                for name, _kind in missed:
+                    t = self.get_parameter(name) if _kind == 'param' else self.get_buffer(name)
+                    if t.ndim >= 2:
+                        torch.nn.init.normal_(t, std=t.shape[-1] ** -0.5)
+                    else:
+                        torch.nn.init.zeros_(t)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
         # TODO: bump base theta more? e.g. 100K is more common more recently

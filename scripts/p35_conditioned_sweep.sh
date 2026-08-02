@@ -202,12 +202,12 @@ fi
 # are the cheapest arms in the sweep by a wide margin. C4 is the honest test of
 # whether composition adds anything the same parameter count spent additively
 # does not: m=16 costs about what R=12 costs, so C4 vs B1 is the comparison.
-if [[ "$RUN_GROUPS" == *c* ]]; then
-    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
-    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
-    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
-    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
-fi
+#if [[ "$RUN_GROUPS" == *c* ]]; then
+#    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
+#    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
+#    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
+#    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
+#fi
 
 # ── D. what the gain is actually made of ────────────────────────────────────
 # D1 is the one that matters most. 'tied' reuses V^T x as its own gate, so there
