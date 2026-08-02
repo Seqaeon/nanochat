@@ -84,14 +84,21 @@ for tag, kw in [("additive", dict(rank=32)), ("multiplicative", dict(rank=0, mul
     layer = make(**kw)
     x = torch.randn(4, 16, 64, device=DEV)
     layer(x).square().mean().backward()
-    u = layer.add_u if kw.get('rank') else layer.mul_u
-    v = layer.add_v if kw.get('rank') else layer.mul_v
-    check(f"{tag}: dL/dU != 0 at init", u.grad is not None and u.grad.abs().max().item() > 0,
-          f"|dL/dU|max = {u.grad.abs().max().item():.3e}")
-    # dL/dV and dL/drouter are zero at init by construction (both are multiplied
-    # by U=0) and become nonzero after the first step. That is LoRA-standard and
-    # not a fixed point, because U itself is moving.
-    check(f"{tag}: dL/dV == 0 at init (expected, U=0)", v.grad.abs().max().item() == 0.0)
+    # The two branches put identity at init in different places, on purpose.
+    #   additive:        U = 0, c = 1   -> dL/dU is live, the router is not
+    #   multiplicative:  U random, c = 0 -> the router is live, dL/dU is not
+    # Zeroing U for the composition instead would bound nothing and would leave
+    # the router with no gradient, which is the worse end to zero.
+    if kw.get('rank'):
+        check(f"{tag}: dL/dU != 0 at init", layer.add_u.grad.abs().max().item() > 0,
+              f"|dL/dU|max = {layer.add_u.grad.abs().max().item():.3e}")
+        check(f"{tag}: dL/dV == 0 at init (expected, U=0)",
+              layer.add_v.grad.abs().max().item() == 0.0)
+    else:
+        check(f"{tag}: dL/d(router) != 0 at init", layer.route_w.grad.abs().max().item() > 0,
+              f"|dL/droute|max = {layer.route_w.grad.abs().max().item():.3e}")
+        check(f"{tag}: dL/dU == 0 at init (expected, c=0)",
+              layer.mul_u.grad.abs().max().item() == 0.0)
 
 # One optimizer step must wake the whole branch up.
 layer = make(rank=32)
@@ -137,10 +144,13 @@ with torch.no_grad():
     lay.base_w.copy_(torch.eye(96, 64, device=DEV, dtype=torch.float64))  # W0 = selection
 x = torch.randn(1, 5, 64, device=DEV, dtype=torch.float64)
 with torch.no_grad():
-    c = lay._coefficients(x, None, x @ lay.mul_v, lay.rank + lay.mult_steps, x.dtype)
+    vhat = F.normalize(lay.mul_v, dim=0)
+    uhat = F.normalize(lay.mul_u, dim=0)
+    zc = lay._coefficients(x, None, x @ vhat, lay.rank + lay.mult_steps, x.dtype)
+    c = lay._mult_coefficients(zc, x.dtype)
     z = x.clone()
     for i in range(lay.mult_steps):
-        z = z + (c[..., i] * (z @ lay.mul_v[:, i])).unsqueeze(-1) * lay.mul_u[:, i]
+        z = z + (c[..., i] * (z @ vhat[:, i])).unsqueeze(-1) * uhat[:, i]
     err = (lay(x) - F.linear(z, lay.base_w)).abs().max().item()
 check("y == W0 z_m for the explicit rank-1 product", err < 1e-10, f"max abs diff = {err:.3e}")
 
@@ -301,9 +311,11 @@ try:
     layers = [m for m in model.modules() if isinstance(m, ConditionedLinear)]
     check("cond replaces every attention and FFN projection", len(layers) == 2 * 6,
           f"{len(layers)} ConditionedLinear layers over 2 blocks")
-    check("init_weights left every U at exactly zero",
-          all(l.add_u.abs().max().item() == 0 and l.mul_u.abs().max().item() == 0 for l in layers),
+    check("init_weights left the additive U at exactly zero",
+          all(l.add_u.abs().max().item() == 0 for l in layers),
           "the xavier fallback in init_weights did not reach them")
+    check("the composition generators are NOT zero (identity comes from c=0 there)",
+          all(l.mul_u.abs().max().item() > 0 for l in layers))
     check("init_weights left every router at exactly zero",
           all(l.route_w.abs().max().item() == 0 for l in layers))
     check("init_weights left no uninitialized storage",
@@ -356,6 +368,24 @@ except Exception as e:
     traceback.print_exc()
     check("model integration", False, f"{type(e).__name__}: {e}")
 
+
+# ── 10. the composition is bounded for any m ────────────────────────────────
+print("\n── composition stability ───────────────────────────────────────")
+worst = 0.0
+for m in (4, 16, 64):
+    for scale in (1.0, 64.0, 4096.0):
+        lay = make(in_f=128, out_f=128, rank=0, mult_steps=m)
+        with torch.no_grad():
+            lay.mul_u.normal_(std=scale / 128 ** 0.5)
+            lay.route_w.normal_(std=5.0)          # saturate the router
+        y = lay(torch.randn(4, 32, 128, device=DEV))
+        worst = max(worst, y.abs().max().item())
+check("output stays bounded across m and generator magnitude", worst < 50,
+      f"worst max|y| = {worst:.2f} over m in 4/16/64 and ||u|| spanning 4096x")
+lay = make(in_f=128, out_f=128, rank=0, mult_steps=16)
+check("|c| is bounded by 1/m by construction",
+      abs(lay.mult_scale.item() - 1.0 / 16) < 1e-9,
+      f"mult_scale = {lay.mult_scale.item():.6f} = 1/16")
 
 print("\n" + "=" * 64)
 if FAILURES:

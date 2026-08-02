@@ -173,6 +173,9 @@ def run_training_sweep(args):
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         # Phase 35: ConditionedLinear
+        "--p36-swiglu-ffn", str(getattr(args, 'p36_swiglu_ffn', 0)),
+        "--p36-swiglu-mult", str(getattr(args, 'p36_swiglu_mult', 8.0/3.0)),
+        "--cond-sites", str(getattr(args, 'cond_sites', 'both')),
         "--p22-route-affine", str(getattr(args, 'p22_route_affine', 0)),
         "--cond-rank", str(getattr(args, 'cond_rank', 256)),
         "--cond-mult-steps", str(getattr(args, 'cond_mult_steps', 0)),
@@ -180,6 +183,7 @@ def run_training_sweep(args):
         "--cond-coeff-act", str(getattr(args, 'cond_coeff_act', 'centered')),
         "--cond-router-rank", str(getattr(args, 'cond_router_rank', 0)),
         "--cond-chunk-size", str(getattr(args, 'cond_chunk_size', 0)),
+        "--cond-mult-scale", str(getattr(args, 'cond_mult_scale', -1.0)),
         "--cond-mult-impl", str(getattr(args, 'cond_mult_impl', 'wy')),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
         "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
@@ -812,6 +816,9 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+    parser.add_argument("--p36-swiglu-ffn", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--p36-swiglu-mult", type=float, default=8.0/3.0)
+    parser.add_argument("--cond-sites", type=str, default="both", choices=["both", "attn", "ffn"])
     parser.add_argument("--p22-route-affine", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cond-rank", type=int, default=256)
     parser.add_argument("--cond-mult-steps", type=int, default=0)
@@ -819,6 +826,7 @@ if __name__ == "__main__":
     parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid"])
     parser.add_argument("--cond-router-rank", type=int, default=0)
     parser.add_argument("--cond-chunk-size", type=int, default=0)
+    parser.add_argument("--cond-mult-scale", type=float, default=-1.0)
     parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"])
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)

@@ -389,6 +389,12 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
                     choices=["weight", "normalization", "householder", "spectral", "ocd", "lie", "polynomial", "grassmann", "decoupled", "tucker", "svs", "vq", "dcu", "fsi", "aesp", "ckr", "ckr_ffn", "com", "giad", "psg", "splitstream", "lokr", "pgr", "cil", "prb", "arg", "kfl", "cond"],
                     help="CCL block strategy")
 # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+parser.add_argument("--p36-swiglu-ffn", type=int, default=0, choices=[0, 1],
+                    help="36: dense baseline with a SwiGLU FFN instead of ReLU^2, at parameter parity. The control for the p35 cond-tied result, which reduces exactly to y = W0 x + U*SiLU(2 V^T x)")
+parser.add_argument("--p36-swiglu-mult", type=float, default=8.0/3.0,
+                    help="36: SwiGLU hidden width as a multiple of n_embd (8/3 = parameter parity with a 4x ReLU^2 FFN)")
+parser.add_argument("--cond-sites", type=str, default="both", choices=["both", "attn", "ffn"],
+                    help="35: where ConditionedLinear goes. 'ffn' and 'attn' localize which half of the model the gain comes from")
 parser.add_argument("--p22-route-affine", type=int, default=0, choices=[0, 1],
                     help="22: affine-hull routing instead of softmax. alpha = 1/K + s*(beta - mean beta): still sums to 1, may go negative, no simplex. Removes the alpha_k prefactor that starves losing templates and the norm/concentration coupling that drives collapse")
 parser.add_argument("--cond-rank", type=int, default=256,
@@ -403,6 +409,8 @@ parser.add_argument("--cond-router-rank", type=int, default=0,
                     help="35: factor the router as d_sig -> rr -> R (0 = full-rank router). The router is ~1/3 of the added params at R=256")
 parser.add_argument("--cond-chunk-size", type=int, default=0,
                     help="35: route once per chunk from its first token (0 = per token). Ignored when --cond-gate-source tied")
+parser.add_argument("--cond-mult-scale", type=float, default=-1.0,
+                    help="35: bound on |c| for the composition branch. -1 uses 1/m, which makes every factor I + c u v^T have spectral norm <= 1+1/m and the whole product <= e for any m. Raising it trades the stability guarantee for range")
 parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"],
                     help="35: multiplicative implementation. 'wy' compact (one pass over activations), 'loop' sequential reference")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
@@ -780,6 +788,9 @@ def build_model_meta(depth):
         use_ral=bool(getattr(args, 'use_ral', 0)),
         ral_rank=getattr(args, 'ral_rank', 32),
         # Phase 35: ConditionedLinear
+        p36_swiglu_ffn=getattr(args, 'p36_swiglu_ffn', 0),
+        p36_swiglu_mult=getattr(args, 'p36_swiglu_mult', 8.0/3.0),
+        cond_sites=getattr(args, 'cond_sites', 'both'),
         p22_route_affine=getattr(args, 'p22_route_affine', 0),
         cond_rank=getattr(args, 'cond_rank', 256),
         cond_mult_steps=getattr(args, 'cond_mult_steps', 0),
@@ -787,6 +798,7 @@ def build_model_meta(depth):
         cond_coeff_act=getattr(args, 'cond_coeff_act', 'centered'),
         cond_router_rank=getattr(args, 'cond_router_rank', 0),
         cond_chunk_size=getattr(args, 'cond_chunk_size', 0),
+        cond_mult_scale=getattr(args, 'cond_mult_scale', -1.0),
         cond_mult_impl=getattr(args, 'cond_mult_impl', 'wy'),
         cclblock_film_gate=bool(getattr(args, 'cclblock_film_gate', 0)),
         cclblock_attn_shadow_dim=getattr(args, 'cclblock_attn_shadow_dim', 0),

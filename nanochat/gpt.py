@@ -100,6 +100,10 @@ class GPTConfig:
     # prefactor on the softmax gradient, and the fact that on a simplex the only
     # way to grow operator norm is to concentrate. See RemixedLinear._affine_weights.
     p22_route_affine: int = 0
+    # Phase 36: the controls for the p35 result.
+    p36_swiglu_ffn: int = 0        # dense baseline with a SwiGLU FFN instead of ReLU^2
+    p36_swiglu_mult: float = 8.0 / 3.0  # hidden width multiple, 8/3 = parameter parity
+    cond_sites: str = 'both'       # 'both' | 'attn' | 'ffn': where cond layers go
     # Phase 35: ConditionedLinear moves conditioning from weight space to
     # activation space.  Selected with --cclblock-modulation cond.  A degree of
     # freedom costs O(d) here instead of O(d^2), and no operator is ever
@@ -112,6 +116,7 @@ class GPTConfig:
     cond_coeff_act: str = 'centered'  # 'centered' (1+tanh) | 'linear' (1+z) | 'sigmoid' (2σ)
     cond_router_rank: int = 0     # >0 factorizes the router as d_sig -> rr -> R (0 = full)
     cond_chunk_size: int = 0      # >0 routes once per chunk from its first token (0 = per token)
+    cond_mult_scale: float = -1.0 # bound on |c| for the composition branch (-1 = 1/m, the stable default)
     cond_mult_impl: str = 'wy'    # 'wy' (compact, 2 GEMMs) | 'loop' (sequential reference)
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
@@ -566,10 +571,10 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln", "legacy_init_fallback",
-    "p22_route_affine",
+    "p22_route_affine", "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
-    "cond_router_rank", "cond_chunk_size", "cond_mult_impl",
+    "cond_router_rank", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",
@@ -5487,7 +5492,7 @@ class ConditionedLinear(nn.Module):
 
     def __init__(self, in_features, out_features, rank=256, mult_steps=0,
                  signal_dim=None, gate_source='router', coeff_act='centered',
-                 router_rank=0, chunk_size=0, mult_impl='wy',
+                 router_rank=0, chunk_size=0, mult_impl='wy', mult_scale=-1.0,
                  zero_init_base=False, **_ignored):
         super().__init__()
         self.in_features  = in_features
@@ -5504,7 +5509,7 @@ class ConditionedLinear(nn.Module):
                              "both zero is a plain dense Linear, use --cclblock-modulation weight")
         if gate_source not in ('router', 'tied', 'ctx'):
             raise ValueError(f"Unknown cond_gate_source {gate_source!r}")
-        if coeff_act not in ('centered', 'linear', 'sigmoid'):
+        if coeff_act not in ('centered', 'linear', 'sigmoid', 'one'):
             raise ValueError(f"Unknown cond_coeff_act {coeff_act!r}")
         if mult_impl not in ('wy', 'loop'):
             raise ValueError(f"Unknown cond_mult_impl {mult_impl!r}")
@@ -5540,6 +5545,12 @@ class ConditionedLinear(nn.Module):
         # are (in, m), because the composition acts on x before W₀ sees it.
         self.mul_v = nn.Parameter(torch.empty(in_features, self.mult_steps)) if self.mult_steps else None
         self.mul_u = nn.Parameter(torch.empty(in_features, self.mult_steps)) if self.mult_steps else None
+        if self.mult_steps:
+            # Fixed, not learned: a learnable bound is not a bound. Raise it with
+            # cond_mult_scale only if you want to trade the guarantee for range.
+            sc = float(mult_scale) if mult_scale and mult_scale > 0 else 1.0 / self.mult_steps
+            self._mult_scale_value = sc   # python float survives to_empty()
+            self.register_buffer('mult_scale', torch.tensor(sc), persistent=False)
 
         self._gate_stats = {}  # populated during forward() when self.training
 
@@ -5577,9 +5588,13 @@ class ConditionedLinear(nn.Module):
         if self.add_v is not None:
             nn.init.normal_(self.add_v, std=self.in_features ** -0.5)
             nn.init.zeros_(self.add_u)
+        if getattr(self, 'mult_scale', None) is not None:
+            self.mult_scale.fill_(self._mult_scale_value)
         if self.mul_v is not None:
+            # Both random now. Identity at init comes from c = 0, not from u = 0,
+            # so u must be nonzero or the router has no gradient at step 0.
             nn.init.normal_(self.mul_v, std=self.in_features ** -0.5)
-            nn.init.zeros_(self.mul_u)
+            nn.init.normal_(self.mul_u, std=self.in_features ** -0.5)
 
     # ── conditioning coefficients ───────────────────────────────────────────
     def _activate(self, z):
@@ -5588,7 +5603,35 @@ class ConditionedLinear(nn.Module):
             return 1.0 + torch.tanh(z)
         if self.coeff_act == 'sigmoid':
             return 2.0 * torch.sigmoid(z)
+        if self.coeff_act == 'one':
+            # c == 1 identically, so the branch is U V^T x with no nonlinearity
+            # and W_eff = W0 + U V^T is a plain dense matrix. Any gain here is a
+            # reparameterization/optimization effect, not expressivity. This is
+            # the control that decides which of the two the p35 result is.
+            return torch.ones_like(z)
         return 1.0 + z  # 'linear': unbounded, can flip sign
+
+    def _mult_coefficients(self, z, dtype):
+        """Coefficients for the composition branch: c = tanh(z) * scale.
+
+        The general form is unstable and this is why the p35 C arms produced NaN.
+        The recursion q_i = c_i (p_i + sum_{j<i} S_ij q_j) with S = V^T U is
+        bounded at init only because U = 0 makes S = 0. Nothing constrains ||u||
+        during training, Muon supplies a fixed-magnitude update regardless of
+        gradient scale, and the amplification is geometric in m, so divergence is
+        a question of when rather than whether.
+
+        Making it a proper exponential map fixes it by construction. With u and v
+        unit-normalized and |c| <= 1/m, every factor I + c u v^T has spectral norm
+        at most 1 + 1/m, so the whole product is bounded by (1 + 1/m)^m < e for
+        ANY m. That is also the honest version of the Lie-algebra-to-group story
+        the design started from: prod(I + g_i/m) -> exp(sum g_i).
+
+        Identity at init now comes from c = 0 rather than u = 0, which is the
+        better end to zero: dL/d(router) is nonzero at step 0 because u is not,
+        where zeroing u would have left the router with no gradient.
+        """
+        return (torch.tanh(z.float()) * self.mult_scale).to(dtype)
 
     def _coefficients(self, signal, p_add, p_mul, n_coeff, dtype):
         """(B, T, n_coeff) conditioning coefficients for this token (or chunk).
@@ -5602,7 +5645,7 @@ class ConditionedLinear(nn.Module):
             # under 'tied' the layer is a plain gated low-rank branch whose gate
             # carries no information the value path does not already have.
             parts = [p for p in (p_add, p_mul) if p is not None]
-            return self._activate(torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0])
+            return torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0]
 
         sig = signal
         B, T = sig.shape[0], sig.shape[1]
@@ -5619,7 +5662,7 @@ class ConditionedLinear(nn.Module):
         h = norm(sig).to(dtype=dtype)  # rmsnorm: c_proj sees ReLU² activations
         if self.route_down is not None:
             h = h @ self.route_down.to(dtype=dtype)
-        c = self._activate(h @ self.route_w.to(dtype=dtype))
+        c = h @ self.route_w.to(dtype=dtype)
 
         if self.chunk_size > 0:
             c = (c.unsqueeze(2)
@@ -5635,8 +5678,10 @@ class ConditionedLinear(nn.Module):
         fast path is tested against. m is meant to be small (8 to 32): the compact
         path unrolls O(m²) scalar ops on (B, T) tensors.
         """
-        u = self.mul_u.to(dtype=dtype)   # (in, m)
-        v = self.mul_v.to(dtype=dtype)   # (in, m)
+        # Unit columns make |c| the exact spectral norm of each rank-1 update,
+        # which is what turns the 1/m bound on c into a bound on the product.
+        u = F.normalize(self.mul_u.to(dtype=dtype), dim=0)   # (in, m)
+        v = F.normalize(self.mul_v.to(dtype=dtype), dim=0)   # (in, m)
         m = self.mult_steps
         if self.mult_impl == 'loop':
             z = x
@@ -5661,7 +5706,10 @@ class ConditionedLinear(nn.Module):
         n_coeff = self.rank + self.mult_steps
 
         p_add = x @ self.add_v.to(dtype=dtype) if self.rank else None        # (B, T, R)
-        p_mul = x @ self.mul_v.to(dtype=dtype) if self.mult_steps else None  # (B, T, m)
+        # Normalized here too: _compose uses unit columns, and p_mul feeds its
+        # recursion directly, so the two must use the same v or the compact path
+        # silently computes a different model from the sequential one.
+        p_mul = (x @ F.normalize(self.mul_v.to(dtype=dtype), dim=0)) if self.mult_steps else None
 
         signal = x
         if self.gate_source == 'ctx':
@@ -5673,9 +5721,14 @@ class ConditionedLinear(nn.Module):
                     "for exactly this reason (see RemixedMultiAttention)."
                 )
             signal = context_state
-        c = self._coefficients(signal, p_add, p_mul, n_coeff, dtype)
-        c_add = c[..., :self.rank] if self.rank else None
-        c_mul = c[..., self.rank:] if self.mult_steps else None
+        z = self._coefficients(signal, p_add, p_mul, n_coeff, dtype)
+        # Each branch maps the router logits its own way: the additive branch to
+        # coefficients that are 1 at zero logits (so its zero-init U is what
+        # gives identity), the composition branch to coefficients that are 0 at
+        # zero logits and bounded by 1/m (so identity and stability come from c).
+        c_add = self._activate(z[..., :self.rank]) if self.rank else None
+        c_mul = self._mult_coefficients(z[..., self.rank:], dtype) if self.mult_steps else None
+        c = torch.cat([t for t in (c_add, c_mul) if t is not None], dim=-1)
 
         w0 = self.base_w.to(dtype=dtype)
         y = F.linear(x, w0)
@@ -5683,7 +5736,7 @@ class ConditionedLinear(nn.Module):
             q = self._compose(x, p_mul, c_mul, dtype)                # (B, T, m)
             # y = W₀(x + U q), with W₀U formed once per forward so the activation
             # tensor is read once regardless of m.
-            w0u = w0 @ self.mul_u.to(dtype=dtype)                    # (out, m)
+            w0u = w0 @ F.normalize(self.mul_u.to(dtype=dtype), dim=0)  # (out, m)
             y = y + q @ w0u.transpose(0, 1)
         if self.rank:
             y = y + (p_add * c_add) @ self.add_u.to(dtype=dtype)
@@ -5736,6 +5789,17 @@ class ConditionedLinear(nn.Module):
         self._gate_stats['cond_dof_pr'] = (tr * tr) / cov.square().sum().clamp(min=1e-12)
 
 
+def _cond_site_enabled(config, site):
+    """Is ConditionedLinear active at this site ('attn' or 'ffn')?
+
+    The p35 gain has to come from somewhere. The FFN already has a nonlinearity
+    and attention's Q/K/V/O do not, so localizing tells you whether the result is
+    'the FFN wanted a better activation' or 'the projections wanted one at all'.
+    """
+    sites = getattr(config, 'cond_sites', 'both')
+    return sites == 'both' or sites == site
+
+
 def _conditioned_linear_kwargs(config):
     """Shared ConditionedLinear settings, so attention and FFN cannot drift apart."""
     gate_source = getattr(config, 'cond_gate_source', 'router')
@@ -5747,6 +5811,7 @@ def _conditioned_linear_kwargs(config):
         router_rank=getattr(config, 'cond_router_rank', 0),
         chunk_size=getattr(config, 'cond_chunk_size', 0),
         mult_impl=getattr(config, 'cond_mult_impl', 'wy'),
+        mult_scale=getattr(config, 'cond_mult_scale', -1.0),
         # 'ctx' reads what RemixedBlock's bypass path hands the FFN, which is
         # attn_out.detach() at full n_embd, not a projected remix_context_dim
         # vector, and not differentiable back into attention. So the FFN is
@@ -6405,7 +6470,11 @@ class RemixedFeedForward(nn.Module):
             d_rank = getattr(config, 'cclblock_aesp_delta_rank', 4)
             self.c_fc   = AttentionEntropyStratifiedLinear(config.n_embd, 4 * config.n_embd, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(4 * config.n_embd, config.n_embd, n_strata=n_str, delta_rank=d_rank)
-        elif mode == 'cond':
+        elif mode == 'cond' and not _cond_site_enabled(config, 'ffn'):
+            _h = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            self.c_fc   = _DenseProj(config.n_embd, _h)
+            self.c_proj = _DenseProj(_h, config.n_embd)
+        elif mode == 'cond' and _cond_site_enabled(config, 'ffn'):
             # Phase 35: hidden width follows p34_ffn_mult so the FFN shape stays a
             # free knob, and zero_init_base mirrors the dense baseline's init
             # (in-projection uniform, out-projection zeros).
@@ -6613,7 +6682,12 @@ class RemixedMultiAttention(nn.Module):
             self.c_k    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.head_dim, n_strata=n_str, delta_rank=d_rank)
             self.c_v    = AttentionEntropyStratifiedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(self.n_embd, self.n_embd, n_strata=n_str, delta_rank=d_rank)
-        elif mode == 'cond':
+        elif mode == 'cond' and not _cond_site_enabled(config, 'attn'):
+            self.c_q    = _DenseProj(self.n_embd, self.n_head * self.head_dim)
+            self.c_k    = _DenseProj(self.n_embd, self.n_kv_head * self.head_dim)
+            self.c_v    = _DenseProj(self.n_embd, self.n_kv_head * self.v_head_dim)
+            self.c_proj = _DenseProj(self.n_embd, self.n_embd)
+        elif mode == 'cond' and _cond_site_enabled(config, 'attn'):
             ck = _conditioned_linear_kwargs(config)
             if ck['gate_source'] == 'ctx':
                 # Attention runs before the block has a context: the bypass path
@@ -8935,6 +9009,49 @@ class MLP(nn.Module):
         return x
 
 
+class _DenseProj(nn.Module):
+    """Plain dense projection that tolerates the research call signature.
+
+    Used when cond_sites restricts ConditionedLinear to one half of the block:
+    the other half must be the DENSE layer it is being compared against, not a
+    RemixedLinear, or the ablation measures two things at once.
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.proj = Linear(in_features, out_features, bias=False)
+
+    def forward(self, x, context_state=None, **_ignored):
+        return self.proj(x)
+
+
+class SwiGLUMLP(nn.Module):
+    """SwiGLU feedforward: y = W_down( SiLU(W_gate x) * (W_up x) ).
+
+    The control for Phase 35. ConditionedLinear with gate_source='tied' reduces
+    exactly to y = W0 x + U * SiLU(2 V^T x), because c = 1 + tanh(t) and
+    t*(1 + tanh(t)) = (2t)*sigmoid(2t) = SiLU(2t). So the arm that won the p35
+    sweep is a parallel low-rank SiLU branch on every projection, not a
+    conditioned operator. Before that can be called an architecture result it has
+    to beat the ordinary way of adding a gated nonlinearity to a transformer,
+    which is this.
+
+    Width is set for PARAMETER PARITY with the ReLU^2 FFN it replaces: that one
+    holds 2*4*D^2 = 8D^2, this one holds 3*D*H, so H = 8D/3.
+    """
+    def __init__(self, config):
+        super().__init__()
+        d = config.n_embd
+        mult = float(getattr(config, 'p36_swiglu_mult', 8.0 / 3.0))
+        h = max(1, int(round(d * mult)))
+        self.hidden = h
+        self.c_gate = Linear(d, h, bias=False)
+        self.c_up   = Linear(d, h, bias=False)
+        self.c_proj = Linear(h, d, bias=False)
+
+    def forward(self, x):
+        return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
+
+
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -8947,7 +9064,9 @@ class Block(nn.Module):
         _mone_k = getattr(config, 'p20_mone_experts', 0)
         _ncea_k = getattr(config, 'p20_ncea_branches', 0)
         _adwi = getattr(config, 'p20_adwi', 0)
-        if _hrcs > 0:
+        if getattr(config, 'p36_swiglu_ffn', 0):
+            self.mlp = SwiGLUMLP(config)
+        elif _hrcs > 0:
             self.mlp = HashRoutedMLP(config, scale_factor=_hrcs)
         elif _lswr > 0:
             self.mlp = LSHRoutedMLP(config, scale_factor=_lswr,
@@ -9702,13 +9821,23 @@ class GPT(nn.Module):
                         torch.nn.init.normal_(delta, std=0.01)
                     for delta in block.mlp.delta_proj:
                         torch.nn.init.normal_(delta, std=0.01)
+                elif isinstance(block.mlp, SwiGLUMLP):
+                    # Same recipe as the ReLU^2 FFN: in-projections uniform, the
+                    # out-projection zero so the block starts as the identity.
+                    torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
+                    torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
+                    torch.nn.init.zeros_(block.mlp.c_proj.weight)
                 elif hasattr(block.mlp, 'c_fc'):
                     # Standard MLP (or HashRoutedMLP / LSHRoutedMLP which have c_fc/c_proj)
                     torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
                     torch.nn.init.zeros_(block.mlp.c_proj.weight)
-                # 19I: VE gate bias zero-init for dense Block too
-                if block.attn.ve_gate is not None and block.attn.ve_gate.bias is not None:
-                    torch.nn.init.zeros_(block.attn.ve_gate.bias)
+                # 19I: VE gate zero-init for dense Block too. The weight was
+                # never initialized here (only the bias), so it held whatever
+                # to_empty() left; the RemixedBlock/CCLBlock paths zero both.
+                if block.attn.ve_gate is not None:
+                    torch.nn.init.zeros_(block.attn.ve_gate.weight)
+                    if block.attn.ve_gate.bias is not None:
+                        torch.nn.init.zeros_(block.attn.ve_gate.bias)
 
             # Phase 19 inits (shared across Block/RemixedBlock/CCLBlock)
             # 19G: Spectral Reparameterization — decompose c_proj AFTER it is initialized

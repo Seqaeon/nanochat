@@ -71,7 +71,7 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
 export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 
 FORCE=0
-RUN_GROUPS="a b c d"
+RUN_GROUPS="a b c d e"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
@@ -174,12 +174,12 @@ echo "════════════════════════�
 # a measured K_eff of 1.52 the bank is behaving as K~2 already, so if A2 matches
 # A1 the extra six templates are pure storage. A3 is the new layer at the R the
 # DOF table points to.
-if [[ "$RUN_GROUPS" == *a* ]]; then
-    # run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
-    run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
-    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
-    run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
-fi
+#if [[ "$RUN_GROUPS" == *a* ]]; then
+#    # run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
+#    run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
+#    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
+#    run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
+#fi
 
 # ── B. how much conditioning is actually useful ─────────────────────────────
 # R is a free capacity knob now: it is decoupled from storage layout and costs
@@ -187,14 +187,14 @@ fi
 # R=512 the bank was capacity-starved all along; if it saturates at R=64 the
 # answer is that conditioning was never worth many bits and the whole family
 # should be cheap.
-if [[ "$RUN_GROUPS" == *b* ]]; then
-    run "B1_cond_R64_d${DEPTH}"     "$COND_COMMON" --cond-rank 64
-    run "B2_cond_R128_d${DEPTH}"    "$COND_COMMON" --cond-rank 128
-    run "B3_cond_R512_d${DEPTH}"    "$COND_COMMON" --cond-rank 512
-    # Router is ~1/3 of the added parameters at R=256. If the factored router
-    # matches, spend the difference on R instead.
-    run "B4_cond_R256_rr64_d${DEPTH}" "$COND_COMMON" --cond-rank 256 --cond-router-rank 64
-fi
+#if [[ "$RUN_GROUPS" == *b* ]]; then
+#    run "B1_cond_R64_d${DEPTH}"     "$COND_COMMON" --cond-rank 64
+#    run "B2_cond_R128_d${DEPTH}"    "$COND_COMMON" --cond-rank 128
+#    run "B3_cond_R512_d${DEPTH}"    "$COND_COMMON" --cond-rank 512
+#    # Router is ~1/3 of the added parameters at R=256. If the factored router
+#    # matches, spend the difference on R instead.
+#    run "B4_cond_R256_rr64_d${DEPTH}" "$COND_COMMON" --cond-rank 256 --cond-router-rank 64
+#fi
 
 # ── C. multiplicative composition: m against R at matched parameters ────────
 # Additive gives the span of R rank-1 terms; sequential composition gives the
@@ -202,12 +202,19 @@ fi
 # are the cheapest arms in the sweep by a wide margin. C4 is the honest test of
 # whether composition adds anything the same parameter count spent additively
 # does not: m=16 costs about what R=12 costs, so C4 vs B1 is the comparison.
-#if [[ "$RUN_GROUPS" == *c* ]]; then
-#    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
-#    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
-#    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
-#    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
-#fi
+
+# The C arms produced NaN in the first p35 run. The composition was unbounded:
+# nothing constrained ||u||, and the recursion amplifies geometrically in m. It
+# is now a proper exponential map (u and v unit-normalized, |c| <= 1/m), so every
+# factor has spectral norm <= 1 + 1/m and the product is bounded by e for any m.
+# Identity at init moved from u=0 to c=0, which also keeps the router's gradient
+# live at step 0. Re-run these with --force.
+if [[ "$RUN_GROUPS" == *c* ]]; then
+    run "C1_cond_m8_d${DEPTH}"      "$COND_COMMON" --cond-rank 0 --cond-mult-steps 8
+    run "C2_cond_m16_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 16
+    run "C3_cond_m32_d${DEPTH}"     "$COND_COMMON" --cond-rank 0 --cond-mult-steps 32
+    run "C4_cond_R64_m16_d${DEPTH}" "$COND_COMMON" --cond-rank 64 --cond-mult-steps 16
+fi
 
 # ── D. what the gain is actually made of ────────────────────────────────────
 # D1 is the one that matters most. 'tied' reuses V^T x as its own gate, so there
@@ -221,9 +228,42 @@ fi
 # D4 conditions on the attention output rather than the layer's own input.
 if [[ "$RUN_GROUPS" == *d* ]]; then
     run "D1_cond_tied_d${DEPTH}"    "$COND_COMMON" --cond-rank 256 --cond-gate-source tied
-    run "D2_cond_chunk256_d${DEPTH}" "$COND_COMMON" --cond-rank 256 --cond-chunk-size 256
-    run "D3_cond_linear_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 --cond-coeff-act linear
-    run "D4_cond_ctx_d${DEPTH}"     "$COND_COMMON" --cond-rank 256 --cond-gate-source ctx
+#    run "D2_cond_chunk256_d${DEPTH}" "$COND_COMMON" --cond-rank 256 --cond-chunk-size 256
+#    run "D3_cond_linear_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 --cond-coeff-act linear
+#    run "D4_cond_ctx_d${DEPTH}"     "$COND_COMMON" --cond-rank 256 --cond-gate-source ctx
+fi
+
+# ── E. what the p35 winner actually is ──────────────────────────────────────
+# D1 (cond tied) won at 1.53x dense FLOP efficiency. But c = 1 + tanh(t) applied
+# to t = V^T x means the branch is exactly t*(1 + tanh(t)) = SiLU(2t), so D1 is
+#
+#     y = W0 x + U * SiLU(2 V^T x)
+#
+# a parallel low-rank SiLU MLP branch on every projection. Not a conditioned
+# operator, and not even a GLU (a GLU needs two projections, which is the
+# full-router arm that scored WORSE at 1.42x). This group decides what to call it.
+#
+#   E1  the ordinary way to add a gated nonlinearity to a transformer. If this
+#       matches D1 then the FFN activation was the whole story and there is no
+#       architecture result.
+#   E2  strips the nonlinearity: c = 1 exactly, so W_eff = W0 + U V^T merges into
+#       a single dense matrix and the model is dense in every mathematical sense.
+#       If E2 matches D1 the effect is optimization, not expressivity, and the
+#       finding is about over-parameterized reparameterization.
+#   E3/E4  localize it. The FFN already has a nonlinearity and attention's
+#       Q/K/V/O do not, so this separates "the FFN wanted a better activation"
+#       from "the projections wanted one at all".
+#   E5  D1 with ReLU^2 instead of SiLU: is the specific activation load-bearing?
+if [[ "$RUN_GROUPS" == *e* ]]; then
+    run "E1_dense_swiglu_d${DEPTH}"    "$BASE_COMMON" --p36-swiglu-ffn 1
+    run "E2_cond_linear_branch_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-coeff-act one
+    run "E3_cond_tied_ffn_d${DEPTH}"   "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites ffn
+    run "E4_cond_tied_attn_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites attn
+    run "E5_cond_tied_sigmoid_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-coeff-act sigmoid
 fi
 
 echo ""
