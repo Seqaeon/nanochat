@@ -79,7 +79,8 @@ def _stack_legacy_templates(state, model):
         cands = sorted(
             (k for k in state
              if k.startswith(prefix)
-             and re.fullmatch(r"template[_.]?\d+(\.weight)?", k[len(prefix):])
+             and re.fullmatch(r"(?:template_bank|templates?)[._]\d+(?:\.weight)?",
+                              k[len(prefix):])
              and tuple(state[k].shape) == tuple(per_template)),
             key=lambda k: int(re.findall(r"\d+", k[len(prefix):])[0]),
         )
@@ -111,6 +112,32 @@ def load_remix_model(ckpt_dir, device, step=None, tokenizer_dir=None):
 
     cfg_kwargs = dict(meta["model_config"])
     _patch_missing_config_keys(cfg_kwargs)
+
+    # Trust the tensors over the stored config for which router ran. A saved
+    # config records the *flag*, not what the code of the day built from it, and
+    # the two diverge for checkpoints written before the quantile router was
+    # wired into RemixedLinear's legacy-bank branch: the config says
+    # p23_quantile_route=1 while the weights contain a plain `template_route` and
+    # no `_qrouter` at all. Rebuilding from the flag then fails to load, and
+    # forcing it to load would analyse a router the run never used.
+    ck_has_qrouter = any("_qrouter.route_proj" in k for k in state)
+    ck_has_plain = any(k.endswith(".template_route") for k in state)
+    declared = int(cfg_kwargs.get("p23_quantile_route", 0) or 0)
+    if ck_has_plain and not ck_has_qrouter and declared != 0:
+        print(f"[analysis] !! stored config says p23_quantile_route={declared}, but the "
+              f"checkpoint contains `template_route` and no `_qrouter`.")
+        print("[analysis]    This run used the PLAIN learned router. Rebuilding with "
+              "p23_quantile_route=0 to match the weights.")
+        cfg_kwargs["p23_quantile_route"] = 0
+        rlk = dict(cfg_kwargs.get("remixed_linear_kwargs") or {})
+        if rlk.get("use_quantile_route", 0):
+            rlk["use_quantile_route"] = 0
+            cfg_kwargs["remixed_linear_kwargs"] = rlk
+    elif ck_has_qrouter and declared == 0:
+        print("[analysis] !! checkpoint contains `_qrouter` but the stored config says "
+              "p23_quantile_route=0; rebuilding with 1 to match the weights.")
+        cfg_kwargs["p23_quantile_route"] = 1
+
     config = GPTConfig(**cfg_kwargs)
     with torch.device("meta"):
         model = GPT(config)

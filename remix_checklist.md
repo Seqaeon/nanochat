@@ -4,7 +4,22 @@
 **Assumed window:** ~1 week, single-researcher heterogeneous compute, no institutional cluster.
 **Reality check up front:** five reviews at Quality 3/2/2/3/2, one explicit borderline-reject, and a metareview that says the case for acceptance is "materially weakened." A rebuttal almost never moves that to accept. Optimize for (a) moving one or two reviewers, and (b) doing the work that makes the *next* submission strong — several items below will change what the paper claims, and it is much better to learn that now.
 
-**Read the metareview as a spec.** The AC has effectively written the acceptance criteria: training and inference throughput in tok/s next to peak memory, single-seed, un-retrained dense baselines, d4-only MoE, LayerNorm confound, soft-MoE/SMEAR/CondConv positioning, differentiability, template-utilization analysis, orthogonal ablations, per-task CORE. Ten items. Six are cheap. Hitting those six *completely* is the realistic play. Quote the AC's throughput sentence when you plan that work, because the wording is narrower than the paraphrase: it asks you to *report* tok/s and memory against dense, not to produce a quality-versus-wall-clock frontier.
+**Read the metareview as a spec.** The AC has effectively written the acceptance criteria, in their order:
+
+| # | AC concern | status |
+|---|---|---|
+| 1 | compute efficiency claimed from **FLOP accounting rather than wall-clock** | open, and it is the headline |
+| 2 | three small, **single-seed** models | `p33` group C written, unrun |
+| 3 | **dense baselines not all retrained** under identical conditions | open; see the CORE 0.114-vs-0.146 discrepancy, which is this |
+| 4 | **MoE comparison limited to d4** | open |
+| 5 | **intermediate LayerNorm** confound | `p33` group D written, unrun |
+| 6 | positioning vs **soft-MoE / SMEAR / CondConv** | done |
+| 7 | **differentiability** in quantile routing | done |
+| 8 | **template-utilization / specialization** | `paper_template_analysis.py` written, unrun |
+| 9 | more **orthogonal ablations** | `p33` groups A/B written, unrun |
+| 10 | **per-task CORE** | done |
+
+Four done, four have scripts and need GPU time, two untouched. Items 1 and 3 are the ones that decide the paper: the AC's closing sentence names "the throughput regression, limited statistical evidence, narrow experimental scope, and incomplete related-work positioning" as what "materially weaken the case for acceptance".
 
 ---
 
@@ -40,7 +55,11 @@
 
 Three reviewers and the metareview converge here. R3 states it most sharply and is right: *"If an algorithm decomposes a dense GEMM into hardware-costly operations, the slowdown is part of the method itself, not merely an implementation detail."*
 
-**Note what the AC actually asked for, because it is narrower and cheaper than a Pareto study.** Verbatim: *"The paper would be strengthened by reporting actual wall-clock training and inference throughput (tokens/sec) to demonstrate how this memory overhead impacts practical hardware efficiency compared to the dense baseline."* That is a reporting requirement: tok/s for training, tok/s for inference, next to peak memory, against dense. It is not a demand that you plot quality against wall-clock. Deliver exactly that table. Separately, know the wall-clock answer before you submit, because a reader holding your BPP table and a throughput column can construct it themselves.
+**This is the AC's first-listed concern, stated as a defect in the claim itself.** Verbatim from the metareview: *"The most important concerns are that the claimed compute efficiency is based on FLOP accounting rather than wall-clock performance"*, and in the assessment: *"its headline efficiency and scaling claims are not yet established strongly enough: the throughput regression..."*. That is not a request to add a table. It says the headline claim rests on a metric that does not cash out in wall-clock, and that the paper is weakened until that is resolved.
+
+Two things follow, and only the second is optional. **First, the framing has to change.** "Compute-efficient" in the title and "at matched active FLOPs" in the abstract are the claim under attack; a throughput table appended to an unchanged claim will read as evasion. **Second, produce the numbers** (`scripts/paper_throughput.py`), because you need to know where you actually stand before choosing the replacement framing.
+
+Note what the active-FLOPs metric does, since the AC is right about it. `estimate_flops` amortizes the template bank by `1/N`: the compose costs `K*out*basis/N` per token and the apply costs `out*basis`, so active FLOPs is a genuine hardware count *of the arithmetic*. What it cannot capture is that the arithmetic is not the bottleneck: the composed `W_eff` is written to and read from HBM once per chunk, and that bandwidth is what drops utilization from 195 to 86 TFLOPS. A metric that counts multiply-accumulates faithfully can still be a poor predictor of time, and that is exactly the gap the AC is pointing at.
 
 - [x] 🔴 **Throughput and memory for both arms at every depth, at random init.** ⏱ 3h. Script: `scripts/paper_throughput.py`. Covers training step tok/s, prefill tok/s, decode ms/token, peak memory, and MFU against both the total and the active FLOPs denominators. Six depth points (4/8/12/16/20/24) span 37M to ~1.3B active params. Random init is sufficient and standard: throughput does not depend on weight values.
 
@@ -134,4 +153,4 @@ Day 7: write. Stretch items if anything finished early: d4 second dataset, d8 Mo
 
 ## The one-line version
 
-The FLOPs framing is not survivable; the active-parameter framing is. Two things changed since this list was written: the throughput ask is narrower than it looked (report tok/s and memory, do not owe a Pareto plot), and the shipped router is per-sequence hard top-1 rather than chunk-amortized soft mixing. Fix the description before you defend the numbers, then find out whether dense d20 beats you at matched wall-clock and rebuild the claim around what is left.
+The FLOPs framing is not survivable and the AC says so in their first sentence; the active-parameter framing is. Retitle away from "compute-efficient", move the headline to matched active *parameters*, concede the wall-clock regression in the abstract rather than in Section 4.6, and find out whether dense d20 beats you at matched wall-clock before someone else does. Everything else on this list is cheaper than that decision and none of it substitutes for it.
