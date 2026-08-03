@@ -1,0 +1,459 @@
+
+DENSE D8:
+measuring 48 projections over 4096 tokens (1 batches of 4x1024)
+
+==============================================================================
+PER LAYER  (mean over projections)
+==============================================================================
+  layer   headroom       dof    top1   verdict
+      0     0.9975     126.2   0.109   real headroom for up to ~126 conditioning directions
+      1     0.9950     198.0   0.071   real headroom for up to ~197 conditioning directions
+      2     0.9921     101.7   0.198   real headroom for up to ~101 conditioning directions
+      3     0.9902      71.5   0.230   real headroom for up to ~71 conditioning directions
+      4     0.9830     194.1   0.122   real headroom for up to ~194 conditioning directions
+      5     0.9848     227.0   0.118   real headroom for up to ~227 conditioning directions
+      6     0.9836     157.2   0.155   real headroom for up to ~157 conditioning directions
+      7     0.9888     178.5   0.178   real headroom for up to ~178 conditioning directions
+
+==============================================================================
+SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)
+==============================================================================
+  layer   demand   supply   align   null  excess    reach reach%   what it means
+      0    311.4     42.7   0.096  0.028  +0.068    232.5  21.3%   partly aligned: some of the free variation is useful
+           106.2      0.0   0.000  0.000  +0.000     71.6  19.0%   attn projections: linear, supply is ZERO by construction
+      1    341.0    120.2   0.187  0.050  +0.137    214.7  27.9%   partly aligned: some of the free variation is useful
+           179.8      0.0   0.000  0.000  +0.000    159.6  26.0%   attn projections: linear, supply is ZERO by construction
+      2    260.0    161.1   0.204  0.050  +0.154    208.6  31.6%   partly aligned: some of the free variation is useful
+            87.1      0.0   0.000  0.000  +0.000     72.6  30.2%   attn projections: linear, supply is ZERO by construction
+      3    150.6    103.0   0.278  0.031  +0.248     71.0  40.9%   partly aligned: some of the free variation is useful
+            67.3      0.0   0.000  0.000  +0.000     48.7  38.9%   attn projections: linear, supply is ZERO by construction
+      4    252.5     86.3   0.378  0.036  +0.341    115.4  42.1%   supply covers demand: conditioning is redundant here
+           180.2      0.0   0.000  0.000  +0.000    107.4  39.0%   attn projections: linear, supply is ZERO by construction
+      5    215.6     84.3   0.299  0.033  +0.266    107.9  42.8%   partly aligned: some of the free variation is useful
+           202.6      0.0   0.000  0.000  +0.000    100.6  38.9%   attn projections: linear, supply is ZERO by construction
+      6    407.8     92.1   0.322  0.047  +0.275    233.8  39.1%   partly aligned: some of the free variation is useful
+            69.4      0.0   0.000  0.000  +0.000     59.7  42.2%   attn projections: linear, supply is ZERO by construction
+      7    381.0     61.3   0.352  0.037  +0.314    120.1  43.3%   supply covers demand: conditioning is redundant here
+           120.4      0.0   0.000  0.000  +0.000     63.6  37.4%   attn projections: linear, supply is ZERO by construction
+
+  FFN mean: demand  290.0   supply   93.9   alignment 0.264
+  excess over null +0.225   reachable demand 36.1% of measured
+
+  TWO CONTROLS, read them before the raw alignment.
+  null    CKA after permuting the token index on the supply side. Both Grams
+          have magnitude-dominated diagonals, so unrelated Grams score high
+          for trivial reasons. Only alignment MINUS null is signal.
+  reach%  fraction of the demand a linear router could even in principle
+          predict from x. The rest is minibatch and label noise that inflates
+          the spectrum and offers nothing to condition on. If this is small,
+          there is no headroom for ANY x-conditioned design and the measured
+          demand was never the opportunity it looked like.
+
+  Read it this way. A plain linear projection has J_t = W for every token,
+  so it supplies zero operator variation and its entire demand is unmet.
+  An FFN supplies variation for free because it is nonlinear. Where alignment
+  is high the free variation already points where the gradients pull, and no
+  conditioning scheme can add anything there at any price. Where alignment is
+  low there is room, and the cheap way to buy it is more nonlinearity per FLOP
+  (depth multiplies linear regions, width only adds them), not more parameters.
+
+==============================================================================
+PER PROJECTION  (mean over layers)
+==============================================================================
+  projection           headroom       dof    top1
+  attn.c_k               0.9972      67.1   0.102
+  attn.c_proj            0.9873     265.4   0.040
+  attn.c_q               0.9909     167.1   0.049
+  attn.c_v               0.9800       7.1   0.475
+  mlp.c_fc               0.9878     290.0   0.037
+  mlp.c_proj             0.9930     144.2   0.183
+
+==============================================================================
+HOW TO READ THIS
+==============================================================================
+  headroom  fraction of the per-token weight-gradient signal that a single
+            static operator cannot represent. This is the ceiling on what
+            ANY input-conditioned design can win at that layer, before
+            architecture, routing or optimization enter the picture.
+  dof       independent directions the tokens disagree along. Compare to
+            K-1 for a template bank and to R for ConditionedLinear. Biased
+            low by 1/(1 + dof/N); at N=4096 a true value of 64 reads as
+            63.
+  top1      share of the dispersion in its leading direction. Near 1 means
+            the disagreement is essentially rank-1.
+
+  model-wide: headroom 0.9894, dof 156.8
+  => there is real headroom. Size K or R against the per-layer dof column
+     rather than uniformly, and spend nothing where headroom is ~0.
+
+wrote out/headroom_d8.json
+
+
+
+DENSE D12:
+
+measuring 72 projections over 4096 tokens (1 batches of 4x1024)
+
+==============================================================================
+PER LAYER  (mean over projections)
+==============================================================================
+  layer   headroom       dof    top1   verdict
+      0     0.9984     164.4   0.063   real headroom for up to ~164 conditioning directions
+      1     0.9974     193.7   0.153   real headroom for up to ~193 conditioning directions
+      2     0.9942     141.0   0.079   real headroom for up to ~140 conditioning directions
+      3     0.9914     172.3   0.206   real headroom for up to ~172 conditioning directions
+      4     0.9827     187.5   0.100   real headroom for up to ~187 conditioning directions
+      5     0.9875     288.6   0.116   real headroom for up to ~288 conditioning directions
+      6     0.9830     260.8   0.132   real headroom for up to ~260 conditioning directions
+      7     0.9894     207.4   0.213   real headroom for up to ~207 conditioning directions
+      8     0.9809     206.4   0.155   real headroom for up to ~206 conditioning directions
+      9     0.9835     278.8   0.106   real headroom for up to ~278 conditioning directions
+     10     0.9822     238.7   0.105   real headroom for up to ~238 conditioning directions
+     11     0.9895     163.4   0.226   real headroom for up to ~163 conditioning directions
+
+==============================================================================
+SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)
+==============================================================================
+  layer   demand   supply   align   null  excess    reach reach%   what it means
+      0    329.6     43.8   0.071  0.029  +0.042    513.4  26.6%   AT THE NULL: the free variation carries no information about demand
+           116.0      0.0   0.000  0.000  +0.000    149.3  23.1%   attn projections: linear, supply is ZERO by construction
+      1    337.3    118.0   0.126  0.048  +0.078    468.6  29.5%   partly aligned: some of the free variation is useful
+           205.7      0.0   0.000  0.000  +0.000    255.1  30.0%   attn projections: linear, supply is ZERO by construction
+      2    226.6    190.6   0.164  0.050  +0.114    231.1  35.0%   partly aligned: some of the free variation is useful
+           103.7      0.0   0.000  0.000  +0.000     91.9  32.1%   attn projections: linear, supply is ZERO by construction
+      3    225.5    111.1   0.240  0.039  +0.201    119.7  40.3%   partly aligned: some of the free variation is useful
+            59.1      0.0   0.000  0.000  +0.000     48.8  38.9%   attn projections: linear, supply is ZERO by construction
+      4    354.9    103.3   0.337  0.047  +0.291    224.3  42.8%   partly aligned: some of the free variation is useful
+           184.9      0.0   0.000  0.000  +0.000    131.5  40.9%   attn projections: linear, supply is ZERO by construction
+      5    380.6    147.4   0.320  0.058  +0.262    225.4  41.9%   partly aligned: some of the free variation is useful
+           199.3      0.0   0.000  0.000  +0.000    162.4  40.4%   attn projections: linear, supply is ZERO by construction
+      6    534.4    141.9   0.359  0.067  +0.291    289.5  40.4%   partly aligned: some of the free variation is useful
+           113.4      0.0   0.000  0.000  +0.000     82.3  43.5%   attn projections: linear, supply is ZERO by construction
+      7    338.8     82.3   0.381  0.041  +0.340    137.1  45.4%   supply covers demand: conditioning is redundant here
+            52.3      0.0   0.000  0.000  +0.000     36.6  45.3%   attn projections: linear, supply is ZERO by construction
+      8    587.3    124.6   0.400  0.067  +0.333    283.1  42.2%   supply covers demand: conditioning is redundant here
+           155.2      0.0   0.000  0.000  +0.000     83.2  44.9%   attn projections: linear, supply is ZERO by construction
+      9    323.8     85.5   0.240  0.041  +0.199    162.1  44.6%   partly aligned: some of the free variation is useful
+           235.9      0.0   0.000  0.000  +0.000    136.7  43.2%   attn projections: linear, supply is ZERO by construction
+     10    603.1    109.2   0.291  0.063  +0.228    283.0  42.7%   partly aligned: some of the free variation is useful
+           139.3      0.0   0.000  0.000  +0.000    102.0  45.7%   attn projections: linear, supply is ZERO by construction
+     11    450.3     26.6   0.332  0.027  +0.306    191.1  47.2%   supply covers demand: conditioning is redundant here
+            98.4      0.0   0.000  0.000  +0.000     54.2  39.9%   attn projections: linear, supply is ZERO by construction
+
+  FFN mean: demand  391.0   supply  107.0   alignment 0.272
+  excess over null +0.224   reachable demand 39.9% of measured
+
+  TWO CONTROLS, read them before the raw alignment.
+  null    CKA after permuting the token index on the supply side. Both Grams
+          have magnitude-dominated diagonals, so unrelated Grams score high
+          for trivial reasons. Only alignment MINUS null is signal.
+  reach%  fraction of the demand a linear router could even in principle
+          predict from x. The rest is minibatch and label noise that inflates
+          the spectrum and offers nothing to condition on. If this is small,
+          there is no headroom for ANY x-conditioned design and the measured
+          demand was never the opportunity it looked like.
+
+  Read it this way. A plain linear projection has J_t = W for every token,
+  so it supplies zero operator variation and its entire demand is unmet.
+  An FFN supplies variation for free because it is nonlinear. Where alignment
+  is high the free variation already points where the gradients pull, and no
+  conditioning scheme can add anything there at any price. Where alignment is
+  low there is room, and the cheap way to buy it is more nonlinearity per FLOP
+  (depth multiplies linear regions, width only adds them), not more parameters.
+
+==============================================================================
+PER PROJECTION  (mean over layers)
+==============================================================================
+  projection           headroom       dof    top1
+  attn.c_k               0.9976      88.6   0.115
+  attn.c_proj            0.9848     280.7   0.061
+  attn.c_q               0.9922     176.3   0.045
+  attn.c_v               0.9747       8.8   0.472
+  mlp.c_fc               0.9882     391.0   0.028
+  mlp.c_proj             0.9926     306.0   0.108
+
+==============================================================================
+HOW TO READ THIS
+==============================================================================
+  headroom  fraction of the per-token weight-gradient signal that a single
+            static operator cannot represent. This is the ceiling on what
+            ANY input-conditioned design can win at that layer, before
+            architecture, routing or optimization enter the picture.
+  dof       independent directions the tokens disagree along. Compare to
+            K-1 for a template bank and to R for ConditionedLinear. Biased
+            low by 1/(1 + dof/N); at N=4096 a true value of 64 reads as
+            63.
+  top1      share of the dispersion in its leading direction. Near 1 means
+            the disagreement is essentially rank-1.
+
+  model-wide: headroom 0.9883, dof 208.6
+  => there is real headroom. Size K or R against the per-layer dof column
+     rather than uniformly, and spend nothing where headroom is ~0.
+
+wrote out/headroom_d12.json
+
+DENSE D20:
+
+
+measuring 120 projections over 4096 tokens (1 batches of 4x1024)
+
+==============================================================================
+PER LAYER  (mean over projections)
+==============================================================================
+  layer   headroom       dof    top1   verdict
+      0     0.9992      35.4   0.186   real headroom for up to ~35 conditioning directions
+      1     0.9989      62.3   0.106   real headroom for up to ~62 conditioning directions
+      2     0.9981     118.4   0.073   real headroom for up to ~118 conditioning directions
+      3     0.9975     141.7   0.100   real headroom for up to ~141 conditioning directions
+      4     0.9963     117.7   0.172   real headroom for up to ~117 conditioning directions
+      5     0.9956     159.8   0.052   real headroom for up to ~159 conditioning directions
+      6     0.9950     157.7   0.079   real headroom for up to ~157 conditioning directions
+      7     0.9951     122.6   0.196   real headroom for up to ~122 conditioning directions
+      8     0.9887     172.0   0.071   real headroom for up to ~171 conditioning directions
+      9     0.9875     199.7   0.097   real headroom for up to ~199 conditioning directions
+     10     0.9896     127.9   0.115   real headroom for up to ~127 conditioning directions
+     11     0.9878      58.8   0.269   real headroom for up to ~58 conditioning directions
+     12     0.9815     186.5   0.119   real headroom for up to ~186 conditioning directions
+     13     0.9891     214.4   0.116   real headroom for up to ~214 conditioning directions
+     14     0.9853     208.3   0.167   real headroom for up to ~208 conditioning directions
+     15     0.9914     198.6   0.201   real headroom for up to ~198 conditioning directions
+     16     0.9784      74.7   0.229   real headroom for up to ~74 conditioning directions
+     17     0.9874      96.3   0.193   real headroom for up to ~96 conditioning directions
+     18     0.9873     192.2   0.225   real headroom for up to ~192 conditioning directions
+     19     0.9751     139.1   0.263   real headroom for up to ~139 conditioning directions
+
+==============================================================================
+SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)
+==============================================================================
+  layer   demand   supply   align   null  excess    reach reach%   what it means
+      0     20.8     65.0   0.016  0.009  +0.007     53.3  35.4%   AT THE NULL: the free variation carries no information about demand
+            21.1      0.0   0.000  0.000  +0.000     39.9  31.2%   attn projections: linear, supply is ZERO by construction
+      1     37.2    142.8   0.031  0.018  +0.013     94.4  39.7%   AT THE NULL: the free variation carries no information about demand
+            52.1      0.0   0.000  0.000  +0.000     71.7  38.0%   attn projections: linear, supply is ZERO by construction
+      2    102.9    189.4   0.056  0.034  +0.022    208.2  38.8%   AT THE NULL: the free variation carries no information about demand
+           143.8      0.0   0.000  0.000  +0.000    236.7  34.5%   attn projections: linear, supply is ZERO by construction
+      3    174.7    138.9   0.071  0.038  +0.033    292.3  39.5%   AT THE NULL: the free variation carries no information about demand
+            92.6      0.0   0.000  0.000  +0.000    115.8  39.1%   attn projections: linear, supply is ZERO by construction
+      4    199.2     18.2   0.117  0.013  +0.104    287.1  40.7%   partly aligned: some of the free variation is useful
+           126.3      0.0   0.000  0.000  +0.000    181.1  38.2%   attn projections: linear, supply is ZERO by construction
+      5    139.4    174.6   0.081  0.038  +0.042    206.7  41.8%   AT THE NULL: the free variation carries no information about demand
+           119.2      0.0   0.000  0.000  +0.000    180.7  41.0%   attn projections: linear, supply is ZERO by construction
+      6    184.2    214.9   0.116  0.049  +0.067    223.9  44.3%   partly aligned: some of the free variation is useful
+            98.8      0.0   0.000  0.000  +0.000    105.4  43.9%   attn projections: linear, supply is ZERO by construction
+      7    242.3    156.5   0.167  0.047  +0.119    226.0  47.0%   partly aligned: some of the free variation is useful
+            54.5      0.0   0.000  0.000  +0.000     56.7  44.2%   attn projections: linear, supply is ZERO by construction
+      8    306.4    122.0   0.174  0.047  +0.127    277.4  48.6%   partly aligned: some of the free variation is useful
+           151.3      0.0   0.000  0.000  +0.000    164.5  46.3%   attn projections: linear, supply is ZERO by construction
+      9    321.2    182.3   0.196  0.059  +0.137    325.0  47.6%   partly aligned: some of the free variation is useful
+           102.0      0.0   0.000  0.000  +0.000    103.0  52.6%   attn projections: linear, supply is ZERO by construction
+     10    202.2    271.4   0.195  0.057  +0.138    190.2  51.3%   partly aligned: some of the free variation is useful
+           100.5      0.0   0.000  0.000  +0.000    109.5  45.8%   attn projections: linear, supply is ZERO by construction
+     11    126.3    182.9   0.207  0.037  +0.170    136.5  48.1%   partly aligned: some of the free variation is useful
+            54.8      0.0   0.000  0.000  +0.000     45.0  48.2%   attn projections: linear, supply is ZERO by construction
+     12    149.7    163.6   0.206  0.038  +0.167    125.0  51.2%   partly aligned: some of the free variation is useful
+           138.0      0.0   0.000  0.000  +0.000    116.0  49.2%   attn projections: linear, supply is ZERO by construction
+     13    274.9    134.9   0.235  0.047  +0.187    166.7  50.9%   partly aligned: some of the free variation is useful
+           137.8      0.0   0.000  0.000  +0.000    142.2  49.8%   attn projections: linear, supply is ZERO by construction
+     14    405.7    142.7   0.258  0.059  +0.199    267.8  49.1%   partly aligned: some of the free variation is useful
+            82.8      0.0   0.000  0.000  +0.000     74.1  48.4%   attn projections: linear, supply is ZERO by construction
+     15    334.8    113.1   0.245  0.048  +0.197    208.8  51.4%   partly aligned: some of the free variation is useful
+            39.2      0.0   0.000  0.000  +0.000     34.5  49.8%   attn projections: linear, supply is ZERO by construction
+     16    204.0    147.0   0.130  0.042  +0.087    200.8  50.5%   partly aligned: some of the free variation is useful
+            27.3      0.0   0.000  0.000  +0.000     28.0  56.1%   attn projections: linear, supply is ZERO by construction
+     17     93.1     42.0   0.072  0.015  +0.057    101.7  53.2%   partly aligned: some of the free variation is useful
+           107.2      0.0   0.000  0.000  +0.000    148.6  55.1%   attn projections: linear, supply is ZERO by construction
+     18    155.3     55.0   0.142  0.023  +0.119     92.9  60.3%   partly aligned: some of the free variation is useful
+            51.2      0.0   0.000  0.000  +0.000     44.0  49.7%   attn projections: linear, supply is ZERO by construction
+     19    331.9     41.6   0.314  0.029  +0.285    175.4  58.5%   partly aligned: some of the free variation is useful
+            93.5      0.0   0.000  0.000  +0.000     56.3  46.7%   attn projections: linear, supply is ZERO by construction
+
+  FFN mean: demand  200.3   supply  134.9   alignment 0.151
+  excess over null +0.114   reachable demand 47.4% of measured
+
+  TWO CONTROLS, read them before the raw alignment.
+  null    CKA after permuting the token index on the supply side. Both Grams
+          have magnitude-dominated diagonals, so unrelated Grams score high
+          for trivial reasons. Only alignment MINUS null is signal.
+  reach%  fraction of the demand a linear router could even in principle
+          predict from x. The rest is minibatch and label noise that inflates
+          the spectrum and offers nothing to condition on. If this is small,
+          there is no headroom for ANY x-conditioned design and the measured
+          demand was never the opportunity it looked like.
+
+  Read it this way. A plain linear projection has J_t = W for every token,
+  so it supplies zero operator variation and its entire demand is unmet.
+  An FFN supplies variation for free because it is nonlinear. Where alignment
+  is high the free variation already points where the gradients pull, and no
+  conditioning scheme can add anything there at any price. Where alignment is
+  low there is room, and the cheap way to buy it is more nonlinearity per FLOP
+  (depth multiplies linear regions, width only adds them), not more parameters.
+
+==============================================================================
+PER PROJECTION  (mean over layers)
+==============================================================================
+  projection           headroom       dof    top1
+  attn.c_k               0.9981      80.8   0.134
+  attn.c_proj            0.9843     122.6   0.107
+  attn.c_q               0.9891     135.9   0.068
+  attn.c_v               0.9840      19.6   0.441
+  mlp.c_fc               0.9918     200.3   0.059
+  mlp.c_proj             0.9941     276.1   0.100
+
+==============================================================================
+HOW TO READ THIS
+==============================================================================
+  headroom  fraction of the per-token weight-gradient signal that a single
+            static operator cannot represent. This is the ceiling on what
+            ANY input-conditioned design can win at that layer, before
+            architecture, routing or optimization enter the picture.
+  dof       independent directions the tokens disagree along. Compare to
+            K-1 for a template bank and to R for ConditionedLinear. Biased
+            low by 1/(1 + dof/N); at N=4096 a true value of 64 reads as
+            63.
+  top1      share of the dispersion in its leading direction. Near 1 means
+            the disagreement is essentially rank-1.
+
+  model-wide: headroom 0.9902, dof 139.2
+  => there is real headroom. Size K or R against the per-layer dof column
+     rather than uniformly, and spend nothing where headroom is ~0.
+
+wrote out/headroom_d20.json
+
+
+
+
+DENSE D22:
+measuring 132 projections over 4096 tokens (1 batches of 4x1024)
+
+==============================================================================
+PER LAYER  (mean over projections)
+==============================================================================
+  layer   headroom       dof    top1   verdict
+      0     0.9991      96.7   0.073   real headroom for up to ~96 conditioning directions
+      1     0.9988      55.0   0.261   real headroom for up to ~55 conditioning directions
+      2     0.9983      79.9   0.170   real headroom for up to ~79 conditioning directions
+      3     0.9978     119.6   0.175   real headroom for up to ~119 conditioning directions
+      4     0.9947     162.1   0.110   real headroom for up to ~162 conditioning directions
+      5     0.9925     164.2   0.078   real headroom for up to ~164 conditioning directions
+      6     0.9908     126.4   0.099   real headroom for up to ~126 conditioning directions
+      7     0.9923     100.1   0.221   real headroom for up to ~100 conditioning directions
+      8     0.9875     138.0   0.127   real headroom for up to ~137 conditioning directions
+      9     0.9915     231.2   0.125   real headroom for up to ~231 conditioning directions
+     10     0.9899     180.4   0.171   real headroom for up to ~180 conditioning directions
+     11     0.9945      46.9   0.308   real headroom for up to ~46 conditioning directions
+     12     0.9841     213.6   0.193   real headroom for up to ~213 conditioning directions
+     13     0.9906     267.2   0.187   real headroom for up to ~267 conditioning directions
+     14     0.9871     429.8   0.223   real headroom for up to ~429 conditioning directions
+     15     0.9895     346.0   0.274   real headroom for up to ~346 conditioning directions
+     16     0.9861     282.5   0.224   real headroom for up to ~282 conditioning directions
+     17     0.9904     324.6   0.201   real headroom for up to ~324 conditioning directions
+     18     0.9869     291.4   0.252   real headroom for up to ~291 conditioning directions
+     19     0.9872      18.1   0.480   real headroom for up to ~18 conditioning directions
+     20     0.9885      70.0   0.287   real headroom for up to ~70 conditioning directions
+     21     0.9774     112.0   0.270   real headroom for up to ~112 conditioning directions
+
+==============================================================================
+SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)
+==============================================================================
+  layer   demand   supply   align   null  excess    reach reach%   what it means
+      0     89.4     85.2   0.038  0.022  +0.017     95.7  44.9%   AT THE NULL: the free variation carries no information about demand
+            94.0      0.0   0.000  0.000  +0.000    108.8  39.7%   attn projections: linear, supply is ZERO by construction
+      1    148.2     22.4   0.041  0.013  +0.028    251.8  43.1%   AT THE NULL: the free variation carries no information about demand
+            44.9      0.0   0.000  0.000  +0.000     60.1  45.5%   attn projections: linear, supply is ZERO by construction
+      2    115.3    166.4   0.060  0.033  +0.027    203.9  42.4%   AT THE NULL: the free variation carries no information about demand
+            90.5      0.0   0.000  0.000  +0.000    183.7  38.7%   attn projections: linear, supply is ZERO by construction
+      3    203.5    101.4   0.085  0.035  +0.050    293.5  44.3%   AT THE NULL: the free variation carries no information about demand
+            41.9      0.0   0.000  0.000  +0.000     68.4  41.2%   attn projections: linear, supply is ZERO by construction
+      4    195.9    199.1   0.120  0.048  +0.073    273.8  46.9%   partly aligned: some of the free variation is useful
+           192.9      0.0   0.000  0.000  +0.000    237.7  44.5%   attn projections: linear, supply is ZERO by construction
+      5    183.8    172.2   0.127  0.043  +0.084    182.3  47.5%   partly aligned: some of the free variation is useful
+           108.7      0.0   0.000  0.000  +0.000    130.7  46.8%   attn projections: linear, supply is ZERO by construction
+      6    187.4    229.0   0.157  0.050  +0.107    179.0  51.8%   partly aligned: some of the free variation is useful
+            99.1      0.0   0.000  0.000  +0.000     92.9  48.1%   attn projections: linear, supply is ZERO by construction
+      7    243.5    170.4   0.206  0.049  +0.157    210.5  49.7%   partly aligned: some of the free variation is useful
+            86.0      0.0   0.000  0.000  +0.000     94.8  47.5%   attn projections: linear, supply is ZERO by construction
+      8    280.6    124.1   0.236  0.045  +0.191    246.6  51.4%   partly aligned: some of the free variation is useful
+           123.0      0.0   0.000  0.000  +0.000    126.2  48.1%   attn projections: linear, supply is ZERO by construction
+      9    359.1    170.2   0.216  0.061  +0.155    368.6  50.4%   partly aligned: some of the free variation is useful
+           138.7      0.0   0.000  0.000  +0.000    173.6  48.5%   attn projections: linear, supply is ZERO by construction
+     10    166.3    216.3   0.174  0.046  +0.128    142.7  51.8%   partly aligned: some of the free variation is useful
+            71.2      0.0   0.000  0.000  +0.000     88.9  47.4%   attn projections: linear, supply is ZERO by construction
+     11    174.2    164.5   0.157  0.042  +0.115    169.1  49.5%   partly aligned: some of the free variation is useful
+            23.4      0.0   0.000  0.000  +0.000     21.3  50.4%   attn projections: linear, supply is ZERO by construction
+     12    269.8    182.7   0.194  0.054  +0.140    236.5  50.4%   partly aligned: some of the free variation is useful
+            43.8      0.0   0.000  0.000  +0.000     44.3  51.4%   attn projections: linear, supply is ZERO by construction
+     13    642.1    111.6   0.260  0.065  +0.195    436.2  50.7%   partly aligned: some of the free variation is useful
+            49.1      0.0   0.000  0.000  +0.000     88.1  50.4%   attn projections: linear, supply is ZERO by construction
+     14   1040.9    145.8   0.292  0.095  +0.197    719.4  48.4%   partly aligned: some of the free variation is useful
+            65.4      0.0   0.000  0.000  +0.000     53.7  51.9%   attn projections: linear, supply is ZERO by construction
+     15    738.9    129.4   0.268  0.075  +0.193    456.3  51.0%   partly aligned: some of the free variation is useful
+            23.1      0.0   0.000  0.000  +0.000     46.6  47.0%   attn projections: linear, supply is ZERO by construction
+     16    312.5    106.9   0.181  0.044  +0.137    207.0  54.6%   partly aligned: some of the free variation is useful
+            48.5      0.0   0.000  0.000  +0.000     38.5  50.6%   attn projections: linear, supply is ZERO by construction
+     17    557.2     86.4   0.200  0.054  +0.147    323.4  54.3%   partly aligned: some of the free variation is useful
+            54.1      0.0   0.000  0.000  +0.000     73.7  56.6%   attn projections: linear, supply is ZERO by construction
+     18    670.6     59.9   0.181  0.049  +0.132    419.4  52.9%   partly aligned: some of the free variation is useful
+            38.3      0.0   0.000  0.000  +0.000     32.3  49.5%   attn projections: linear, supply is ZERO by construction
+     19     28.1     45.4   0.061  0.009  +0.052     28.6  62.9%   partly aligned: some of the free variation is useful
+            19.0      0.0   0.000  0.000  +0.000     17.1  52.7%   attn projections: linear, supply is ZERO by construction
+     20     63.6     70.7   0.129  0.016  +0.113     44.8  62.2%   partly aligned: some of the free variation is useful
+            48.4      0.0   0.000  0.000  +0.000     37.7  51.0%   attn projections: linear, supply is ZERO by construction
+     21     88.7     28.1   0.212  0.012  +0.200     50.8  67.4%   partly aligned: some of the free variation is useful
+           109.9      0.0   0.000  0.000  +0.000     72.0  52.2%   attn projections: linear, supply is ZERO by construction
+
+  FFN mean: demand  307.2   supply  126.7   alignment 0.164
+  excess over null +0.120   reachable demand 51.3% of measured
+
+  TWO CONTROLS, read them before the raw alignment.
+  null    CKA after permuting the token index on the supply side. Both Grams
+          have magnitude-dominated diagonals, so unrelated Grams score high
+          for trivial reasons. Only alignment MINUS null is signal.
+  reach%  fraction of the demand a linear router could even in principle
+          predict from x. The rest is minibatch and label noise that inflates
+          the spectrum and offers nothing to condition on. If this is small,
+          there is no headroom for ANY x-conditioned design and the measured
+          demand was never the opportunity it looked like.
+
+  Read it this way. A plain linear projection has J_t = W for every token,
+  so it supplies zero operator variation and its entire demand is unmet.
+  An FFN supplies variation for free because it is nonlinear. Where alignment
+  is high the free variation already points where the gradients pull, and no
+  conditioning scheme can add anything there at any price. Where alignment is
+  low there is room, and the cheap way to buy it is more nonlinearity per FLOP
+  (depth multiplies linear regions, width only adds them), not more parameters.
+
+==============================================================================
+PER PROJECTION  (mean over layers)
+==============================================================================
+  projection           headroom       dof    top1
+  attn.c_k               0.9980      68.1   0.173
+  attn.c_proj            0.9863      81.8   0.226
+  attn.c_q               0.9860     132.1   0.068
+  attn.c_v               0.9886      11.5   0.571
+  mlp.c_fc               0.9912     307.2   0.045
+  mlp.c_proj             0.9941     450.8   0.147
+
+==============================================================================
+HOW TO READ THIS
+==============================================================================
+  headroom  fraction of the per-token weight-gradient signal that a single
+            static operator cannot represent. This is the ceiling on what
+            ANY input-conditioned design can win at that layer, before
+            architecture, routing or optimization enter the picture.
+  dof       independent directions the tokens disagree along. Compare to
+            K-1 for a template bank and to R for ConditionedLinear. Biased
+            low by 1/(1 + dof/N); at N=4096 a true value of 64 reads as
+            63.
+  top1      share of the dispersion in its leading direction. Near 1 means
+            the disagreement is essentially rank-1.
+
+  model-wide: headroom 0.9907, dof 175.3
+  => there is real headroom. Size K or R against the per-layer dof column
+     rather than uniformly, and spend nothing where headroom is ~0.
+
+wrote out/headroom_d22.json
+
+
+
+
+

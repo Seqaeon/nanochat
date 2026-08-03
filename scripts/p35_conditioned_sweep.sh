@@ -399,6 +399,48 @@ if [[ "$RUN_GROUPS" == *g* ]]; then
 #    run "G3c_ffn_last_neck_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last --p34-ffn-last-depth 3
 fi
 
+#
+# ── H. headroom-informed experiments ─────────────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group h
+#
+# Guided by conditioning_headroom.py run on actual d8/d12/d20/d22 checkpoints
+# (headroom_results.log). Key findings that inform these experiments:
+#
+#   1. The d22-interpolated profile used by G1 was ANTI-CORRELATED with the
+#      actual d8 demand. Native d8 profile is: early+layer6 = high demand,
+#      layer3 = lowest.  d22 said the opposite.
+#   2. attn.c_v has DOF ~7-12 at EVERY depth (top1 ~0.47), nearly rank-1.
+#      E4 wastes 25% of its R budget on a projection whose ceiling is ~10 DOF.
+#   3. FFN excess alignment (supply meeting demand) is lowest in early layers
+#      and highest in late layers, consistently across all depths.
+#      => attention nonlinearity helps MORE in early layers.
+#   4. c_proj (DOF 82-265) and c_q (DOF 132-176) have the highest attention
+#      demand.  c_k (DOF 67-89) is moderate.
+#
+#   H1  G1 with the CORRECT profile: measured on the target depth's own ckpt.
+#   H2  E4 skipping c_v entirely.  Same R, 25% fewer conditioned projections.
+#   H3  E4 early-layers-only: conditioning only the first half of layers where
+#       FFN supply is poorly aligned and unmet demand is highest.
+#   H4  E4 on c_proj + c_q only: concentrate R on the two highest-DOF projections.
+#   H5  Orthogonal combination: E4 (targeted) on attention + G1 (native) on FFN.
+if [[ "$RUN_GROUPS" == *h* ]]; then
+    # H1: FFN reallocation with depth-native profile
+    run "H1_ffn_native_d${DEPTH}"       "$BASE_COMMON" --p34-ffn-schedule measured_native
+    # H2: E4 without c_v (skip the projection with DOF ~7)
+    run "H2_cond_skip_v_d${DEPTH}"      "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites attn --cond-attn-projs qko
+    # H3: E4 early-layers-only (first half has lowest FFN excess)
+    run "H3_cond_early_half_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites attn --cond-layer-frac 0.5
+    # H4: E4 on c_proj + c_q only (highest DOF projections)
+    run "H4_cond_qo_only_d${DEPTH}"    "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites attn --cond-attn-projs qo
+    # H5: orthogonal stack: targeted E4 + native G1 FFN reallocation
+    run "H5_cond_qko_native_ffn_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
+        --cond-gate-source tied --cond-sites attn --cond-attn-projs qko \
+        --p34-ffn-schedule measured_native
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  done, depth ${DEPTH}"

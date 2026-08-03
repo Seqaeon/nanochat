@@ -579,6 +579,7 @@ RESEARCH_ALLOWED_KEYS = {
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
     "cond_router_rank", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
+    "cond_attn_projs", "cond_layer_frac",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",
@@ -6701,10 +6702,21 @@ class RemixedMultiAttention(nn.Module):
                 # attention just retrieved", and attention conditions on its own
                 # input, since nothing else is available at that point.
                 ck = dict(ck, gate_source='router', signal_dim=None)
-            self.c_q    = ConditionedLinear(self.n_embd, self.n_head * self.head_dim,     zero_init_base=False, **ck)
-            self.c_k    = ConditionedLinear(self.n_embd, self.n_kv_head * self.head_dim,  zero_init_base=False, **ck)
-            self.c_v    = ConditionedLinear(self.n_embd, self.n_kv_head * self.v_head_dim, zero_init_base=False, **ck)
-            self.c_proj = ConditionedLinear(self.n_embd, self.n_embd,                     zero_init_base=True,  **ck)
+            # Per-projection conditioning: cond_attn_projs controls which of
+            # q/k/v/o get ConditionedLinear vs plain dense.  Default 'qkvo' = all.
+            _projs = str(getattr(config, 'cond_attn_projs', 'qkvo')).lower()
+            # Per-layer conditioning: cond_layer_frac restricts conditioning to
+            # the first N% of layers (where unmet demand is highest). Default 1.0 = all.
+            _frac = float(getattr(config, 'cond_layer_frac', 1.0))
+            _layer_ok = (layer_idx / max(1, config.n_layer)) < _frac
+            def _mk(in_f, out_f, proj_char, zero_init):
+                if proj_char in _projs and _layer_ok:
+                    return ConditionedLinear(in_f, out_f, zero_init_base=zero_init, **ck)
+                return _DenseProj(in_f, out_f)
+            self.c_q    = _mk(self.n_embd, self.n_head * self.head_dim,      'q', False)
+            self.c_k    = _mk(self.n_embd, self.n_kv_head * self.head_dim,   'k', False)
+            self.c_v    = _mk(self.n_embd, self.n_kv_head * self.v_head_dim, 'v', False)
+            self.c_proj = _mk(self.n_embd, self.n_embd,                      'o', True)
         elif mode == 'ckr':
             n_br = getattr(config, 'cclblock_ckr_branches', 4)
             ksz = getattr(config, 'cclblock_ckr_kernel_size', 64)
@@ -9047,6 +9059,18 @@ _D22_REACHABLE = (40.1, 63.9, 48.9, 90.2, 91.9, 87.3, 97.1, 121.0, 144.2, 181.0,
 _D22_SUPPLY    = (85.2, 22.4, 166.4, 101.4, 199.1, 172.2, 229.0, 170.4, 124.1, 170.2, 216.3,
                   164.5, 182.7, 111.6, 145.8, 129.4, 106.9, 86.4, 59.9, 45.4, 70.7, 28.1)
 
+# Native per-depth reachable profiles, measured on actual checkpoints at each depth.
+# These are the CORRECT profiles to use for FFN reallocation, not d22 interpolation.
+# From headroom_results.log (FFN c_fc reachable demand column).
+_NATIVE_REACHABLE = {
+    8:  (232.5, 214.7, 208.6, 71.0, 115.4, 107.9, 233.8, 120.1),
+    12: (513.4, 468.6, 231.1, 119.7, 224.3, 225.4, 289.5, 137.1, 283.1, 162.1, 283.0, 191.1),
+    20: (53.3, 94.4, 208.2, 292.3, 287.1, 206.7, 223.9, 226.0, 277.4, 325.0,
+         190.2, 136.5, 125.0, 166.7, 267.8, 208.8, 200.8, 101.7, 92.9, 175.4),
+    22: (95.7, 251.8, 203.9, 293.5, 273.8, 182.3, 179.0, 210.5, 246.6, 368.6, 142.7,
+         169.1, 236.5, 436.2, 719.4, 456.3, 207.0, 323.4, 419.4, 28.6, 44.8, 50.8),
+}
+
 
 def _interp_profile(profile, n_layer):
     """Resample a 22-layer profile onto n_layer by relative depth."""
@@ -9087,6 +9111,16 @@ def resolve_ffn_schedule(config, n_layer):
         return vals
     if spec == 'measured':
         r = _interp_profile(_D22_REACHABLE, n_layer)
+        return [base * n_layer * x / sum(r) for x in r]
+    if spec == 'measured_native':
+        if n_layer in _NATIVE_REACHABLE:
+            r = list(_NATIVE_REACHABLE[n_layer])
+        else:
+            # Fall back to interpolating from nearest measured depth
+            nearest = min(_NATIVE_REACHABLE, key=lambda k: abs(k - n_layer))
+            r = _interp_profile(_NATIVE_REACHABLE[nearest], n_layer)
+            print0(f"p34_ffn_schedule='measured_native': no d{n_layer} profile, "
+                   f"interpolating from d{nearest}")
         return [base * n_layer * x / sum(r) for x in r]
     if spec == 'shrink':
         r = _interp_profile(_D22_REACHABLE, n_layer)

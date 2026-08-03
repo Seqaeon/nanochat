@@ -420,6 +420,10 @@ parser.add_argument("--cond-mult-scale", type=float, default=-1.0,
                     help="35: bound on |c| for the composition branch. -1 uses 1/m, which makes every factor I + c u v^T have spectral norm <= 1+1/m and the whole product <= e for any m. Raising it trades the stability guarantee for range")
 parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"],
                     help="35: multiplicative implementation. 'wy' compact (one pass over activations), 'loop' sequential reference")
+parser.add_argument("--cond-attn-projs", type=str, default="qkvo",
+                    help="35: which attention projections get ConditionedLinear. 'qkvo' = all (default), 'qko' = skip c_v, 'qo' = Q and output only, 'o' = output only. Headroom data shows c_v DOF is ~7-12 across all depths, so 'qko' saves 25%% cost on a projection whose ceiling is near zero")
+parser.add_argument("--cond-layer-frac", type=float, default=1.0,
+                    help="35: fraction of layers (from first) that get ConditionedLinear on attention. 0.5 = first half only. Headroom data shows early layers have lowest FFN excess (most unmet demand), so concentrating nonlinearity there may help")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
@@ -810,6 +814,8 @@ def build_model_meta(depth):
         cond_chunk_size=getattr(args, 'cond_chunk_size', 0),
         cond_mult_scale=getattr(args, 'cond_mult_scale', -1.0),
         cond_mult_impl=getattr(args, 'cond_mult_impl', 'wy'),
+        cond_attn_projs=getattr(args, 'cond_attn_projs', 'qkvo'),
+        cond_layer_frac=getattr(args, 'cond_layer_frac', 1.0),
         cclblock_film_gate=bool(getattr(args, 'cclblock_film_gate', 0)),
         cclblock_attn_shadow_dim=getattr(args, 'cclblock_attn_shadow_dim', 0),
         cclblock_dynamic_ratio=getattr(args, 'cclblock_dynamic_ratio', 0.25),

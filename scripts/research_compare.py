@@ -188,6 +188,8 @@ def run_training_sweep(args):
         "--cond-chunk-size", str(getattr(args, 'cond_chunk_size', 0)),
         "--cond-mult-scale", str(getattr(args, 'cond_mult_scale', -1.0)),
         "--cond-mult-impl", str(getattr(args, 'cond_mult_impl', 'wy')),
+        "--cond-attn-projs", str(getattr(args, 'cond_attn_projs', 'qkvo')),
+        "--cond-layer-frac", str(getattr(args, 'cond_layer_frac', 1.0)),
         "--cclblock-film-gate", str(getattr(args, 'cclblock_film_gate', 0)),
         "--cclblock-attn-shadow-dim", str(getattr(args, 'cclblock_attn_shadow_dim', 0)),
         "--cclblock-dynamic-ratio", str(getattr(args, 'cclblock_dynamic_ratio', 0.25)),
@@ -834,6 +836,8 @@ if __name__ == "__main__":
     parser.add_argument("--cond-chunk-size", type=int, default=0)
     parser.add_argument("--cond-mult-scale", type=float, default=-1.0)
     parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"])
+    parser.add_argument("--cond-attn-projs", type=str, default="qkvo")
+    parser.add_argument("--cond-layer-frac", type=float, default=1.0)
     parser.add_argument("--cclblock-film-gate", type=int, default=0, choices=[0, 1])
     parser.add_argument("--cclblock-attn-shadow-dim", type=int, default=0)
     parser.add_argument("--cclblock-dynamic-ratio", type=float, default=0.25)
