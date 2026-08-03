@@ -192,6 +192,71 @@ def alignment(G_demand, G_supply, eps=1e-12):
     return ((a * b).sum() / den).item() if den > eps else 0.0
 
 
+def alignment_null(G_demand, G_supply, draws=8, seed=0):
+    """CKA under a random re-pairing of tokens: the null the raw number needs.
+
+    Both Grams have diagonals dominated by per-token magnitude (gradient norm on
+    one side, Jacobian deviation on the other), and those magnitudes correlate
+    for trivial reasons: an unusual token is unusual in both. Two UNRELATED
+    random Grams score ~0.5 on this measure for exactly that reason. Permuting
+    the token index on one side destroys the per-token correspondence while
+    preserving both spectra, so it isolates how much alignment is real.
+
+    Report alignment - null. A value at the null means the layer's free operator
+    variation carries no information about what the gradients want.
+    """
+    g = torch.Generator(device='cpu').manual_seed(seed)
+    N = G_supply.shape[0]
+    vals = []
+    for _ in range(draws):
+        idx = torch.randperm(N, generator=g).to(G_supply.device)
+        vals.append(alignment(G_demand, G_supply[idx][:, idx]))
+    return sum(vals) / len(vals)
+
+
+def predictable_demand(X, A, ridge=1e-3):
+    """How much of the demand ANY x-conditioned scheme could possibly reach.
+
+    The per-token gradient is g_t = a_t x_t^T. x_t is known to a router by
+    definition, so the only part that can be unpredictable is a_t. Much of a_t
+    is minibatch and label noise, which no operator conditioned on x can
+    anticipate, and that noise inflates the demand spectrum without offering
+    anything to exploit. Projecting A onto the column space of X keeps only the
+    part a linear router could have predicted and discards the rest.
+
+    This is a LOWER bound on reachable demand: a nonlinear router could do
+    better than a ridge fit. It is still the right first bound, because every
+    router in the p35 sweep was linear in x.
+
+    Returns (dof_reachable, energy_fraction).
+
+    The fraction is an ENERGY ratio, tr(G_pred)/tr(G_full) on the centered Grams,
+    not a ratio of participation ratios. A participation ratio is not monotone in
+    rank: projecting onto a smaller subspace can flatten the spectrum and RAISE
+    the PR, which is why a PR ratio produced impossible values above 100%. Energy
+    is the quantity that actually partitions.
+    """
+    Xd, Ad = X.double(), A.double()
+    n, d = Xd.shape
+    Gx = Xd.T @ Xd
+    Gx = Gx + ridge * Gx.diagonal().mean() * torch.eye(d, device=Xd.device, dtype=Xd.dtype)
+    A_hat = Xd @ torch.linalg.solve(Gx, Xd.T @ Ad)
+
+    def centered_gram(A_):
+        G = (A_ @ A_.T) * (Xd @ Xd.T)
+        r = G.mean(dim=1, keepdim=True)
+        return G - r - r.T + G.mean()
+
+    Gf, Gp = centered_gram(Ad), centered_gram(A_hat)
+    tf = Gf.diagonal().sum()
+    if not torch.isfinite(tf) or tf <= 0:
+        return float('nan'), float('nan')
+    ev = torch.linalg.eigvalsh(Gp / Gp.diagonal().mean().clamp(min=1e-12)).clamp(min=0.0)
+    tot = ev.sum()
+    pr = ((tot ** 2) / (ev.square().sum() + 1e-12)).item() if tot > 0 else 0.0
+    return pr, (Gp.diagonal().sum() / tf).clamp(0, 1).item()
+
+
 @torch.no_grad()
 def _subsample(t, n):
     flat = t.reshape(-1, t.shape[-1])
@@ -334,13 +399,18 @@ def main():
         parts = name.split('.')
         layer = int(parts[parts.index('h') + 1])
         proj = '.'.join(parts[parts.index('h') + 2:])
-        sup, ali = 0.0, 0.0
+        sup, ali, null = 0.0, 0.0, 0.0
         if name in ffn_of and PRE is not None and h == h:
             W1, W2, gprime = ffn_of[name]
             sup, Gs = supply_from_grams(gprime(PRE.to(device)), W1.to(device), W2.to(device))
             ali = alignment(Gd, Gs)
+            null = alignment_null(Gd, Gs)
+        reach, reach_frac = (float('nan'), float('nan'))
+        if h == h:
+            reach, reach_frac = predictable_demand(X.to(device), A.to(device))
         rows.append(dict(layer=layer, proj=proj, headroom=h, dof=dof, top1=top1, n=n,
-                         supply=sup, align=ali,
+                         supply=sup, align=ali, align_null=null,
+                         reach=reach, reach_frac=reach_frac,
                          unmet=(dof * (1.0 - ali)) if dof == dof else float('nan')))
 
     rows.sort(key=lambda r: (r['layer'], r['proj']))
@@ -378,27 +448,44 @@ def main():
     print("\n" + "=" * 78)
     print("SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)")
     print("=" * 78)
-    print(f"  {'layer':>5s}  {'demand':>7s}  {'supply':>7s}  {'align':>6s}  {'UNMET':>7s}   what it means")
+    print(f"  {'layer':>5s}  {'demand':>7s}  {'supply':>7s}  {'align':>6s} {'null':>6s} {'excess':>7s}  "
+          f"{'reach':>7s} {'reach%':>6s}   what it means")
     for layer in sorted(by_layer):
         ffn = [r for r in by_layer[layer] if r['supply'] > 0]
         att = [r for r in by_layer[layer] if r['proj'].startswith('attn') and r['headroom'] == r['headroom']]
         if ffn:
             r = ffn[0]
-            v = ("supply already covers demand: conditioning is redundant here"
-                 if r['align'] > 0.5 else
-                 "the free variation is largely misaligned with what tokens want"
-                 if r['align'] > 0.1 else
-                 "the nonlinearity varies the operator, but not where it is wanted")
-            print(f"  {layer:>5d}  {r['dof']:7.1f}  {r['supply']:7.1f}  {r['align']:6.3f}  {r['unmet']:7.1f}   FFN: {v}")
+            ex = r['align'] - r['align_null']
+            v = ("supply covers demand: conditioning is redundant here" if ex > 0.30 else
+                 "partly aligned: some of the free variation is useful" if ex > 0.05 else
+                 "AT THE NULL: the free variation carries no information about demand"
+                 if ex > -0.05 else "below the null")
+            print(f"  {layer:>5d}  {r['dof']:7.1f}  {r['supply']:7.1f}  {r['align']:6.3f} "
+                  f"{r['align_null']:6.3f} {ex:+7.3f}  {r['reach']:7.1f} {r['reach_frac']:6.1%}   {v}")
         if att:
             d = sum(x['dof'] for x in att) / len(att)
-            print(f"  {'':>5s}  {d:7.1f}  {0.0:7.1f}  {0.0:6.3f}  {d:7.1f}   attn projections: linear, so supply is ZERO by construction")
+            rf = [x['reach_frac'] for x in att if x['reach_frac'] == x['reach_frac']]
+            print(f"  {'':>5s}  {d:7.1f}  {0.0:7.1f}  {0.0:6.3f} {0.0:6.3f} {0.0:+7.3f}  "
+                  f"{sum(x['reach'] for x in att)/len(att):7.1f} {(sum(rf)/len(rf) if rf else 0):6.1%}   "
+                  f"attn projections: linear, supply is ZERO by construction")
 
     fa = [r for r in rows if r['supply'] > 0]
     if fa:
         print(f"\n  FFN mean: demand {sum(r['dof'] for r in fa)/len(fa):6.1f}   "
               f"supply {sum(r['supply'] for r in fa)/len(fa):6.1f}   "
               f"alignment {sum(r['align'] for r in fa)/len(fa):.3f}")
+        rf = [r['reach_frac'] for r in fa if r['reach_frac'] == r['reach_frac']]
+        print(f"  excess over null {sum(r['align']-r['align_null'] for r in fa)/len(fa):+.3f}   "
+              f"reachable demand {sum(rf)/len(rf):.1%} of measured")
+        print("\n  TWO CONTROLS, read them before the raw alignment.")
+        print("  null    CKA after permuting the token index on the supply side. Both Grams")
+        print("          have magnitude-dominated diagonals, so unrelated Grams score high")
+        print("          for trivial reasons. Only alignment MINUS null is signal.")
+        print("  reach%  fraction of the demand a linear router could even in principle")
+        print("          predict from x. The rest is minibatch and label noise that inflates")
+        print("          the spectrum and offers nothing to condition on. If this is small,")
+        print("          there is no headroom for ANY x-conditioned design and the measured")
+        print("          demand was never the opportunity it looked like.")
         print("\n  Read it this way. A plain linear projection has J_t = W for every token,")
         print("  so it supplies zero operator variation and its entire demand is unmet.")
         print("  An FFN supplies variation for free because it is nonlinear. Where alignment")
