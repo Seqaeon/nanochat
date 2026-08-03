@@ -174,12 +174,12 @@ echo "════════════════════════�
 # a measured K_eff of 1.52 the bank is behaving as K~2 already, so if A2 matches
 # A1 the extra six templates are pure storage. A3 is the new layer at the R the
 # DOF table points to.
-#if [[ "$RUN_GROUPS" == *a* ]]; then
-#    # run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
+if [[ "$RUN_GROUPS" == *a* ]]; then
+    run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
 #    run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
-#    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
+    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
 #    run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
-#fi
+fi
 
 # ── B. how much conditioning is actually useful ─────────────────────────────
 # R is a free capacity knob now: it is decoupled from storage layout and costs
