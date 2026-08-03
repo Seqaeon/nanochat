@@ -383,10 +383,10 @@ echo "════════════════════════�
 #       The plain variants cut parameters; the _iso variants hold them fixed and
 #       concentrate the same width into fewer blocks.
 if [[ "$RUN_GROUPS" == *g* ]]; then
-    run "G1_ffn_measured_d${DEPTH}"    "$BASE_COMMON" --p34-ffn-schedule measured
-    run "G2_ffn_shrink_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule shrink
-    run "G3_ffn_last_only_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last
-    run "G4_ffn_every2_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every2
+#    run "G1_ffn_measured_d${DEPTH}"    "$BASE_COMMON" --p34-ffn-schedule measured
+#    run "G2_ffn_shrink_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule shrink
+#    run "G3_ffn_last_only_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last
+#    run "G4_ffn_every2_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every2
     run "G5_ffn_every2_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every2_iso
     run "G6_ffn_every4_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every4
     run "G7_ffn_every4_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every4_iso
