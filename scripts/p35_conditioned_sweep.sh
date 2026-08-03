@@ -71,10 +71,14 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
 export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 
 FORCE=0
+SHOW_STATUS=0
+REDO=""
 RUN_GROUPS="a b c d e"   # f and g are opt-in: run it explicitly at depth 12
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
+        --status) SHOW_STATUS=1; shift ;;
+        --redo)   REDO="$REDO $2"; shift 2 ;;
         --group)  RUN_GROUPS="$2"; shift 2 ;;
         [0-9]*)   DEPTH="$1"; shift ;;
         *) echo "unknown arg: $1"; exit 1 ;;
@@ -90,23 +94,78 @@ STATEFILE="${LOGFILE%.log}_state.json"
 [[ "$FORCE" == 1 ]] && rm -f "$STATEFILE"
 [[ -f "$STATEFILE" ]] || echo '{"completed":[]}' > "$STATEFILE"
 
-done_already() {
+# The state file records a FINGERPRINT of the exact flags each tag ran with, not
+# just the tag. A bare tag list cannot say whether an arm still means what it
+# meant when it was marked done, so editing a sweep definition kept silently
+# skipping the new version. Three guards now: the fingerprint must match, the run
+# directory must exist, and --status / --redo let you inspect and clear entries.
+done_already() {   # done_already <tag> <fingerprint>
     [[ "$FORCE" -eq 1 ]] && return 1
-    python3 -c "
-import json,sys
-try: s=json.load(open('$STATEFILE'))
+    if [[ ! -d "${OUT_BASE}/$1" ]]; then
+        say "WARN  $1: state says done but ${OUT_BASE}/$1 has no artifacts. Re-running."
+        return 1
+    fi
+    TAG="$1" FP="$2" python3 - <<'PYEOF'
+import json, os, sys
+try: s = json.load(open(os.environ['STATEFILE']))
 except Exception: sys.exit(1)
-sys.exit(0 if '$1' in s.get('completed',[]) else 1)" 2>/dev/null
-}
-mark_done() {
-    python3 - <<PYEOF
-import json, os
-try: s=json.load(open('$STATEFILE'))
-except Exception: s={'completed':[]}
-if '$1' not in s.setdefault('completed',[]): s['completed'].append('$1')
-json.dump(s, open('${STATEFILE}.tmp','w'), indent=2); os.rename('${STATEFILE}.tmp','$STATEFILE')
+e = s.get('completed', {})
+e = dict.fromkeys(e, '') if isinstance(e, list) else e   # migrate the old list format
+tag, fp = os.environ['TAG'], os.environ['FP']
+if tag not in e: sys.exit(1)
+sys.exit(0 if e[tag] in ('', fp) else 1)   # '' is a pre-fingerprint entry: trust it
 PYEOF
 }
+mark_done() {   # mark_done <tag> <fingerprint>
+    TAG="$1" FP="$2" python3 - <<'PYEOF'
+import json, os
+p = os.environ['STATEFILE']
+try: s = json.load(open(p))
+except Exception: s = {}
+e = s.get('completed', {})
+e = dict.fromkeys(e, '') if isinstance(e, list) else e
+e[os.environ['TAG']] = os.environ['FP']
+s['completed'] = e
+json.dump(s, open(p + '.tmp', 'w'), indent=2); os.rename(p + '.tmp', p)
+PYEOF
+}
+show_status() {
+    python3 - <<'PYEOF'
+import json, os
+try: s = json.load(open(os.environ['STATEFILE']))
+except Exception: print("  (no state file yet)"); raise SystemExit
+e = s.get('completed', {})
+e = dict.fromkeys(e, '') if isinstance(e, list) else e
+if not e: print("  (nothing marked done)")
+for k in sorted(e):
+    ok = os.path.isdir(os.path.join(os.environ.get('OUT_BASE', ''), k))
+    print(f"  {k:38s} {'artifacts present' if ok else 'NO ARTIFACTS -> will re-run'}"
+          f"{'  (no fingerprint)' if not e[k] else ''}")
+PYEOF
+}
+clear_tag() {
+    TAG="$1" python3 - <<'PYEOF'
+import json, os
+p = os.environ['STATEFILE']
+try: s = json.load(open(p))
+except Exception: raise SystemExit
+e = s.get('completed', {})
+e = dict.fromkeys(e, '') if isinstance(e, list) else e
+if e.pop(os.environ['TAG'], None) is not None: print("  cleared " + os.environ['TAG'])
+s['completed'] = e
+json.dump(s, open(p + '.tmp', 'w'), indent=2); os.rename(p + '.tmp', p)
+PYEOF
+}
+
+# STATEFILE and OUT_BASE are read from the environment by the python helpers above.
+export STATEFILE OUT_BASE
+
+for _t in $REDO; do clear_tag "$_t"; done
+if [[ "$SHOW_STATUS" == 1 ]]; then
+    echo "state: $STATEFILE"
+    show_status
+    exit 0
+fi
 
 # Everything except the horizon is shared with p33's REMIX_COMMON, so a p35 arm
 # and a p33 arm differ only in the layer under test.
@@ -142,21 +201,28 @@ COND_COMMON="$SHARED --models remixed-linear \
 HORIZON="--target-param-data-ratio ${RATIO:-10.5}"
 [[ -n "$TOKEN_BUDGET" ]] && HORIZON="$HORIZON --target-tokens $TOKEN_BUDGET"
 
+# Status lines go through the log too. Sending them to bare stdout while training
+# output went through `tee` made them appear out of order relative to the run they
+# describe, which reads as arms executing in the wrong sequence.
+say() { echo "$@" | tee -a "$LOGFILE"; }
+
 run() {   # run <tag> <common> <extra flags...>
     local tag="$1"; shift
     local common="$1"; shift
-    if done_already "$tag"; then echo "⏭  $tag (done)"; return 0; fi
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║  $tag"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    local fp; fp=$(printf '%s|%s|%s|%s' "$common" "$HORIZON" "$*" "$DEPTH" | cksum | cut -d' ' -f1)
+    if done_already "$tag" "$fp"; then say "SKIP  $tag (done, flags unchanged)"; return 0; fi
+    say ""
+    say "=============================================================="
+    say "  $tag"
+    say "  flags: $*"
+    say "=============================================================="
     local dir="${OUT_BASE}/${tag}"
     [[ "$FORCE" == 1 && -d "$dir" ]] && rm -rf "$dir"
     if bash scripts/research_sweep.sh $common $HORIZON --out-dir "$dir" "$@" \
          $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $tag"; mark_done "$tag"
+        say "OK    $tag"; mark_done "$tag" "$fp"
     else
-        echo "❌  $tag FAILED, will retry next run"
+        say "FAIL  $tag, will retry next run"
     fi
 }
 
@@ -339,3 +405,4 @@ echo "  A cond_dof_pr near R means the coefficients stayed independent; near 1"
 echo "  means it collapsed the same way the K=8 router did, and the design does"
 echo "  not work either. That is the result to report either way."
 echo "════════════════════════════════════════════════════════════"
+
