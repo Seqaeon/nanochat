@@ -90,7 +90,7 @@ def parse_args():
 
 # ── the measurement ──────────────────────────────────────────────────────────
 
-def headroom_from_grams(X, A, eps=1e-12):
+def headroom_from_grams(X, A, eps=1e-12, want_gram=False):
     """Spectrum of the per-token weight-gradient dispersion, from activations alone.
 
     X: (N, d_in)  layer inputs
@@ -125,13 +125,71 @@ def headroom_from_grams(X, A, eps=1e-12):
         # "the tokens agree". At init the dense recipe zero-inits attn.c_proj and
         # mlp.c_proj, so nothing flows back to q/k/v/c_fc on step 0. Reported
         # separately so it cannot be misread as "conditioning cannot help".
-        return float('nan'), float('nan'), float('nan'), N
+        return (float('nan'),) * 3 + (N,) + ((Gc,) if want_gram else ())
     if disp <= eps:
-        return 0.0, 0.0, 0.0, N
+        return (0.0, 0.0, 0.0, N) + ((Gc,) if want_gram else ())
     headroom = (disp / (disp + mean_energy.clamp(min=0) + eps)).item()
     dof = ((disp ** 2) / (evals.square().sum() + eps)).item()
     top1 = (evals.max() / disp).item()
-    return headroom, dof, top1, N
+    return (headroom, dof, top1, N) + ((Gc,) if want_gram else ())
+
+
+def supply_from_grams(Dact, W1, W2, eps=1e-12):
+    """Spectrum of the per-token JACOBIAN dispersion an FFN already supplies.
+
+    headroom_from_grams measures DEMAND: how many independent directions the
+    tokens disagree along about what the weight should become. This measures
+    SUPPLY: how many independent directions the layer's effective operator
+    already varies along, for free, because it is nonlinear.
+
+    That distinction is the one the p35 results turned on. A dense linear
+    projection has J_t = W for every token, so it supplies exactly zero
+    diversity, and everything ConditionedLinear did was an expensive way to buy
+    some. An FFN with y = W2 g(W1 x) has J_t = W2 diag(g'(W1 x_t)) W1, which
+    already varies per token at no extra cost. If supply already covers demand,
+    conditioning is redundant no matter how it is implemented.
+
+    Never forms a single Jacobian. With d_t = g'(W1 x_t),
+
+        <J_s, J_t>_F = tr(D_s W2^T W2 D_t W1 W1^T) = d_s^T M d_t
+        M = (W2^T W2) * (W1 W1^T)          Hadamard, h x h, built once
+
+    so the whole N x N Gram is D M D^T. Verified against explicit Jacobians to
+    2e-16 relative.
+
+    Returns (supply_dof, Gram) with the Gram centered, so it is the dispersion
+    around the mean Jacobian, which is what a dense layer would have used.
+    """
+    Dact = Dact.double()
+    M = (W2.double().T @ W2.double()) * (W1.double() @ W1.double().T)
+    Dc = Dact - Dact.mean(dim=0, keepdim=True)
+    G = Dc @ M @ Dc.T
+    G = G / G.diagonal().mean().clamp(min=eps)
+    ev = torch.linalg.eigvalsh(G).clamp(min=0.0)
+    tot = ev.sum()
+    if tot <= eps:
+        return 0.0, G
+    return ((tot ** 2) / (ev.square().sum() + eps)).item(), G
+
+
+def alignment(G_demand, G_supply, eps=1e-12):
+    """Centered kernel alignment between demand and supply, in token space.
+
+    Matching dimension COUNTS is not the same as matching directions: a layer
+    could vary its operator a great deal, in directions no token wants. Both
+    Grams live over the same tokens, so CKA (Kornblith et al. 2019) asks the
+    question that matters: is the variation the layer already supplies pointed
+    where the gradients are pulling?
+
+    1.0 = the free variation is exactly the wanted variation, and conditioning
+    has nothing to add. 0.0 = none of the demand is met, which is the analytic
+    value for any plain linear projection since it supplies no variation at all.
+    """
+    a, b = G_demand.double(), G_supply.double()
+    a = a - a.mean(0, keepdim=True) - a.mean(1, keepdim=True) + a.mean()
+    b = b - b.mean(0, keepdim=True) - b.mean(1, keepdim=True) + b.mean()
+    den = a.norm() * b.norm()
+    return ((a * b).sum() / den).item() if den > eps else 0.0
 
 
 @torch.no_grad()
@@ -145,12 +203,15 @@ def _subsample(t, n):
 
 def collect(model, batches, target_modules, n_tokens, device):
     """One forward and backward per batch, capturing (input, grad_output) per layer."""
-    store = {name: {'x': [], 'a': []} for name in target_modules}
+    store = {name: {'x': [], 'a': [], 'pre': []} for name in target_modules}
     handles = []
 
     def mk_hook(name):
         def fwd_hook(mod, inp, out):
             store[name]['x'].append(inp[0].detach())
+            # For an FFN's first projection this output IS the pre-activation,
+            # which is all the supply side needs.
+            store[name]['pre'].append(out.detach())
 
         def bwd_hook(mod, grad_in, grad_out):
             store[name]['a'].append(grad_out[0].detach())
@@ -162,7 +223,7 @@ def collect(model, batches, target_modules, n_tokens, device):
         handles.append(mod.register_full_backward_hook(b))
 
     per_batch = max(1, n_tokens // max(1, len(batches)))
-    kept = {name: {'x': [], 'a': []} for name in target_modules}
+    kept = {name: {'x': [], 'a': [], 'pre': []} for name in target_modules}
     for ids in batches:
         model.zero_grad(set_to_none=True)
         loss = model(ids, ids)
@@ -174,6 +235,9 @@ def collect(model, batches, target_modules, n_tokens, device):
             a = store[name]['a'][-1]
             kept[name]['x'].append(_subsample(x, per_batch).float().cpu())
             kept[name]['a'].append(_subsample(a, per_batch).float().cpu())
+            if store[name]['pre']:
+                kept[name]['pre'].append(_subsample(store[name]['pre'][-1], per_batch).float().cpu())
+                store[name]['pre'].clear()
             store[name]['x'].clear()
             store[name]['a'].clear()
 
@@ -182,8 +246,9 @@ def collect(model, batches, target_modules, n_tokens, device):
     out = {}
     for name in target_modules:
         if kept[name]['x']:
+            pre = torch.cat(kept[name]['pre'])[:n_tokens] if kept[name]['pre'] else None
             out[name] = (torch.cat(kept[name]['x'])[:n_tokens],
-                         torch.cat(kept[name]['a'])[:n_tokens])
+                         torch.cat(kept[name]['a'])[:n_tokens], pre)
     return out
 
 
@@ -233,11 +298,19 @@ def main():
     # ── which layers ─────────────────────────────────────────────────────────
     # Any module with a single (in -> out) linear action is measurable. We take
     # every attention/MLP projection, whatever class currently implements it.
-    targets = {}
+    targets, ffn_of = {}, {}
     for name, mod in model.named_modules():
         leaf = name.rsplit('.', 1)[-1]
         if leaf in ('c_q', 'c_k', 'c_v', 'c_proj', 'c_fc') and 'transformer.h.' in name:
             targets[name] = mod
+            if leaf == 'c_fc':
+                parent = model.get_submodule(name.rsplit('.', 1)[0])
+                # Supply is only defined where a nonlinearity sits between two
+                # known projections. ReLU^2 gives g'(z) = 2 relu(z).
+                if hasattr(parent, 'c_proj') and hasattr(parent.c_proj, 'weight') \
+                        and hasattr(mod, 'weight'):
+                    ffn_of[name] = (mod.weight, parent.c_proj.weight,
+                                    lambda z: 2.0 * torch.relu(z))
     if not targets:
         print("no projections found")
         return
@@ -256,12 +329,19 @@ def main():
 
     # ── report ───────────────────────────────────────────────────────────────
     rows = []
-    for name, (X, A) in data.items():
-        h, dof, top1, n = headroom_from_grams(X.to(device), A.to(device))
+    for name, (X, A, PRE) in data.items():
+        h, dof, top1, n, Gd = headroom_from_grams(X.to(device), A.to(device), want_gram=True)
         parts = name.split('.')
         layer = int(parts[parts.index('h') + 1])
         proj = '.'.join(parts[parts.index('h') + 2:])
-        rows.append(dict(layer=layer, proj=proj, headroom=h, dof=dof, top1=top1, n=n))
+        sup, ali = 0.0, 0.0
+        if name in ffn_of and PRE is not None and h == h:
+            W1, W2, gprime = ffn_of[name]
+            sup, Gs = supply_from_grams(gprime(PRE.to(device)), W1.to(device), W2.to(device))
+            ali = alignment(Gd, Gs)
+        rows.append(dict(layer=layer, proj=proj, headroom=h, dof=dof, top1=top1, n=n,
+                         supply=sup, align=ali,
+                         unmet=(dof * (1.0 - ali)) if dof == dof else float('nan')))
 
     rows.sort(key=lambda r: (r['layer'], r['proj']))
     print("\n" + "=" * 78)
@@ -294,6 +374,38 @@ def main():
         else:
             verdict = f"real headroom for up to ~{int(d)} conditioning directions"
         print(f"  {layer:>5d}  {h:>9.4f}  {d:>8.1f}  {t:>6.3f}   {verdict}")
+
+    print("\n" + "=" * 78)
+    print("SUPPLY vs DEMAND   (the number the whole conditioning programme turned on)")
+    print("=" * 78)
+    print(f"  {'layer':>5s}  {'demand':>7s}  {'supply':>7s}  {'align':>6s}  {'UNMET':>7s}   what it means")
+    for layer in sorted(by_layer):
+        ffn = [r for r in by_layer[layer] if r['supply'] > 0]
+        att = [r for r in by_layer[layer] if r['proj'].startswith('attn') and r['headroom'] == r['headroom']]
+        if ffn:
+            r = ffn[0]
+            v = ("supply already covers demand: conditioning is redundant here"
+                 if r['align'] > 0.5 else
+                 "the free variation is largely misaligned with what tokens want"
+                 if r['align'] > 0.1 else
+                 "the nonlinearity varies the operator, but not where it is wanted")
+            print(f"  {layer:>5d}  {r['dof']:7.1f}  {r['supply']:7.1f}  {r['align']:6.3f}  {r['unmet']:7.1f}   FFN: {v}")
+        if att:
+            d = sum(x['dof'] for x in att) / len(att)
+            print(f"  {'':>5s}  {d:7.1f}  {0.0:7.1f}  {0.0:6.3f}  {d:7.1f}   attn projections: linear, so supply is ZERO by construction")
+
+    fa = [r for r in rows if r['supply'] > 0]
+    if fa:
+        print(f"\n  FFN mean: demand {sum(r['dof'] for r in fa)/len(fa):6.1f}   "
+              f"supply {sum(r['supply'] for r in fa)/len(fa):6.1f}   "
+              f"alignment {sum(r['align'] for r in fa)/len(fa):.3f}")
+        print("\n  Read it this way. A plain linear projection has J_t = W for every token,")
+        print("  so it supplies zero operator variation and its entire demand is unmet.")
+        print("  An FFN supplies variation for free because it is nonlinear. Where alignment")
+        print("  is high the free variation already points where the gradients pull, and no")
+        print("  conditioning scheme can add anything there at any price. Where alignment is")
+        print("  low there is room, and the cheap way to buy it is more nonlinearity per FLOP")
+        print("  (depth multiplies linear regions, width only adds them), not more parameters.")
 
     print("\n" + "=" * 78)
     print("PER PROJECTION  (mean over layers)")

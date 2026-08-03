@@ -1,0 +1,51 @@
+> okay, so it doesnt seem to be more efficient at all by d12, we are going to think up ways to improve it, and innovate more, but first, now that we no like the R2 or R or whatever cooeficient, since d12 is an expensive run, can i use that coeeficient to guess when an architecture idea of mine would perform better than dense at d12 but just testing the architecture at d4 or d8(cheaper experiments)?
+
+```json
+{ id:'a0_dense_d12', label:'A0 Dense d12', total: 286262424, active: 286262424, flops: 7.384666e8, total_training_flops: 8.537080e17, bpp: 0.860696, dt: 438.03 },
+{ id:'d1_cond_tied_d12', label:'D1 Cond Tied d12', total: 328730136, active: 328730136, flops: 9.932728e8, total_training_flops: 1.591185e18, bpp: 0.846352, dt: 753.85 },
+{ id:'f1_cond_attn_r192_d12', label:'F1 Cond Attn R192 d12', total: 300418584, active: 300418584, flops: 8.234035e8, total_training_flops: 1.074287e18, bpp: 0.858314, dt: 570.73 },
+
+```
+
+Ran 1 shell command
+
+* **Yes, and it backtests correctly on both of your series.**
+
+---
+
+## The rule
+
+Run the variant at **d4 and d8 only**, then check two gates against dense over the same range:
+
+1. **eff mult at d8 > 1.0**
+2. **the variant's own d4$\rightarrow$d8 exponent $\ge$ dense's, which is -0.0749**
+
+If either fails, it loses at d12. Don't spend the run.
+
+Gate 2 is the one that matters, because the exponent is what decides whether the advantage grows or decays. A shallower exponent than dense guarantees a crossing; you're only arguing about where.
+
+---
+
+## Backtest on what you already ran
+
+| arm | eff d4 | eff d8 | own d4$\rightarrow$d8 exponent | predicted d12 | actual d12 |
+| --- | --- | --- | --- | --- | --- |
+| D1 tied | 1.14$\times$ | 0.72$\times$ | **-0.0617 (shallower)** | loses | **0.72$\times$** $\checkmark$ |
+| E4/F1 attn | 1.18$\times$ | 0.87$\times$ | **-0.0660 (shallower)** | loses | **0.83$\times$** $\checkmark$ |
+| Dense | 1.00$\times$ | 1.00$\times$ | -0.0749 | — | — |
+
+Both calls correct from d4+d8 alone. The predicted crossings (3.9e16 and 5.4e16) were far below the d12 budgets, so it wasn't even close.
+
+**The critical part: a single depth is worthless.** d4 said 1.14$\times$ and 1.18$\times$, both positive, both wrong. It's the d4$\rightarrow$d8 *slope* that carried the signal, not either level.
+
+F1 came in at **0.858314** against the **0.857** threshold, missing by **0.0013** – right at the line but on the wrong side, and **0.83$\times$** on efficiency.
+
+---
+
+## Cost and caveats
+
+A d4+d8 variant pair at $\sim 1.3\times$ dense costs **21% of one dense d12 run**. So you can screen roughly five architectures for the price of one d12 confirmation.
+
+Two things the rule won't do. It predicts the **sign** reliably but not the **magnitude**: the decay decelerates, so a two-point extrapolation over-predicts how bad d12 will be (it forecast 0.64$\times$ for D1, actual 0.72$\times$). And dense's own exponent isn't constant (-0.0749 over d4$\rightarrow$d8, -0.0572 over d8$\rightarrow$d12), so always compare a variant to dense over the same compute range, never to a number from a different range. That's the exact mistake I made earlier that produced the bogus 1.53$\times$.
+
+For a new idea to be worth a d12 run, what you want to see at d8 is **eff > 1.0** with an exponent at or above **-0.0749**. Anything decaying between d4 and d8 is already answered.S
