@@ -102,6 +102,8 @@ class GPTConfig:
     p22_route_affine: int = 0
     # Phase 36: the controls for the p35 result.
     p34_ffn_schedule: str = ''      # per-layer FFN width: list, or 'measured'/'shrink'/'last'/'every2'/'every4'(_iso)
+    p34_ffn_no_ffn_replacement: str = 'none'  # what to put in layers with schedule=0: 'none' | 'linear' (D->D)
+    p34_ffn_last_depth: int = 1     # FFN depth in the last layer: 1=D->4D->D, 2=D->4D->4D->D, 3=D->D->4D->D
     p36_swiglu_ffn: int = 0        # dense baseline with a SwiGLU FFN instead of ReLU^2
     p36_swiglu_mult: float = 8.0 / 3.0  # hidden width multiple, 8/3 = parameter parity
     cond_sites: str = 'both'       # 'both' | 'attn' | 'ffn': where cond layers go
@@ -572,7 +574,8 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln", "legacy_init_fallback",
-    "p22_route_affine", "p34_ffn_schedule", "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
+    "p22_route_affine", "p34_ffn_schedule", "p34_ffn_no_ffn_replacement", "p34_ffn_last_depth",
+    "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
     "cond_router_rank", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
@@ -9099,6 +9102,62 @@ def resolve_ffn_schedule(config, n_layer):
     raise ValueError(f"Unknown p34_ffn_schedule {spec!r}")
 
 
+class LinearMLP(nn.Module):
+    """D -> D linear projection, no activation. Cheap placeholder for layers
+    where the FFN schedule removes the FFN entirely.
+
+    Gives the residual stream a channel-recombination opportunity without the
+    expressivity (and cost) of a full nonlinear FFN. This tests whether the FFN's
+    feature recombination or its nonlinearity is the binding constraint in
+    sparse-FFN architectures.
+    """
+    def __init__(self, config):
+        super().__init__()
+        d = config.n_embd
+        self.proj = Linear(d, d, bias=False)
+
+    def forward(self, x):
+        return self.proj(x)
+
+
+class DeepMLP(nn.Module):
+    """Multi-stage FFN. Two variants behind p34_ffn_last_depth:
+
+      depth=2  D -> 4D (ReLU^2) -> 4D (ReLU^2) -> D    'wide-wide'
+      depth=3  D -> D  (ReLU^2) -> 4D (ReLU^2) -> D    'bottleneck'
+
+    From the Montufar/Telgarsky depth-separation results, the number of linear
+    regions grows exponentially in depth but only polynomially in width. If the
+    headroom diagnostic showed unmet demand at the deeper layers, concentrating
+    depth in one FFN may recover more expressivity per FLOP than distributing
+    width across many shallow FFNs.
+    """
+    def __init__(self, config, depth_mode=2):
+        super().__init__()
+        d = config.n_embd
+        mult = float(getattr(config, 'p34_ffn_mult', 4.0))
+        h = max(1, int(round(d * mult)))
+        if depth_mode == 2:
+            # D -> 4D -> 4D -> D
+            self.c_fc1 = Linear(d, h, bias=False)
+            self.c_fc2 = Linear(h, h, bias=False)
+            self.c_proj = Linear(h, d, bias=False)
+        elif depth_mode == 3:
+            # D -> D -> 4D -> D
+            self.c_fc1 = Linear(d, d, bias=False)
+            self.c_fc2 = Linear(d, h, bias=False)
+            self.c_proj = Linear(h, d, bias=False)
+        else:
+            raise ValueError(f"DeepMLP depth_mode must be 2 or 3, got {depth_mode}")
+        self.depth_mode = depth_mode
+
+    def forward(self, x):
+        x = F.relu(self.c_fc1(x)).square()
+        x = F.relu(self.c_fc2(x)).square()
+        x = self.c_proj(x)
+        return x
+
+
 class SwiGLUMLP(nn.Module):
     """SwiGLU feedforward: y = W_down( SiLU(W_gate x) * (W_up x) ).
 
@@ -9139,9 +9198,19 @@ class Block(nn.Module):
         _mone_k = getattr(config, 'p20_mone_experts', 0)
         _ncea_k = getattr(config, 'p20_ncea_branches', 0)
         _adwi = getattr(config, 'p20_adwi', 0)
-        if resolve_ffn_schedule(config, config.n_layer)[layer_idx] <= 0:
-            # Schedule says no FFN in this block: attention only.
-            self.mlp = None
+        _ffn_sched = resolve_ffn_schedule(config, config.n_layer)[layer_idx]
+        _no_ffn_repl = str(getattr(config, 'p34_ffn_no_ffn_replacement', 'none')).strip()
+        _last_depth = int(getattr(config, 'p34_ffn_last_depth', 1))
+        _is_last_layer = (layer_idx == config.n_layer - 1)
+        if _ffn_sched <= 0:
+            # Schedule says no FFN in this block.
+            if _no_ffn_repl == 'linear':
+                self.mlp = LinearMLP(config)
+            else:
+                self.mlp = None
+        elif _is_last_layer and _last_depth > 1 and _ffn_sched > 0:
+            # Deep FFN in the final layer: depth_mode 2 = D->4D->4D->D, 3 = D->D->4D->D
+            self.mlp = DeepMLP(config, depth_mode=_last_depth)
         elif getattr(config, 'p36_swiglu_ffn', 0):
             self.mlp = SwiGLUMLP(config)
         elif _hrcs > 0:

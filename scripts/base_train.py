@@ -391,6 +391,11 @@ parser.add_argument("--cclblock-modulation", type=str, default="weight",
 # Phase 35: ConditionedLinear (--cclblock-modulation cond)
 parser.add_argument("--p34-ffn-schedule", type=str, default="",
                     help="34: per-layer FFN width. Comma list of multipliers (0 = no FFN in that block), or a preset: 'measured' (reallocate at fixed params by measured reachable demand), 'shrink' (cut only over-provisioned layers), 'last', 'every2', 'every4', 'every2_iso', 'every4_iso'")
+parser.add_argument("--p34-ffn-no-ffn-replacement", type=str, default="none",
+                    choices=["none", "linear"],
+                    help="34: what to put in layers where the FFN schedule is 0. 'none' = attention only, 'linear' = D->D linear projection (channel recombination without nonlinearity)")
+parser.add_argument("--p34-ffn-last-depth", type=int, default=1, choices=[1, 2, 3],
+                    help="34: FFN depth for the last layer. 1=standard D->4D->D, 2=deep D->4D->4D->D, 3=bottleneck D->D->4D->D")
 parser.add_argument("--p36-swiglu-ffn", type=int, default=0, choices=[0, 1],
                     help="36: dense baseline with a SwiGLU FFN instead of ReLU^2, at parameter parity. The control for the p35 cond-tied result, which reduces exactly to y = W0 x + U*SiLU(2 V^T x)")
 parser.add_argument("--p36-swiglu-mult", type=float, default=8.0/3.0,

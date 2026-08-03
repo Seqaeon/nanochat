@@ -387,9 +387,16 @@ if [[ "$RUN_GROUPS" == *g* ]]; then
 #    run "G2_ffn_shrink_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule shrink
 #    run "G3_ffn_last_only_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last
 #    run "G4_ffn_every2_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every2
-    run "G5_ffn_every2_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every2_iso
-    run "G6_ffn_every4_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every4
-    run "G7_ffn_every4_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every4_iso
+#    run "G5_ffn_every2_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every2_iso
+#    run "G6_ffn_every4_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every4
+#    run "G7_ffn_every4_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every4_iso
+    # G3 extensions: rescue the last-only skeleton with cheap replacements
+    #   G3a: D->D linear in FFN-less layers (tests recombination vs nonlinearity)
+    run "G3a_ffn_last_linear_d${DEPTH}" "$BASE_COMMON" --p34-ffn-schedule last --p34-ffn-no-ffn-replacement linear
+    #   G3b: deep final FFN D->4D->4D->D (tests depth-in-one-spot)
+    run "G3b_ffn_last_deep_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last --p34-ffn-last-depth 2
+    #   G3c: bottleneck final FFN D->D->4D->D (cheapest depth extension)
+    run "G3c_ffn_last_neck_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last --p34-ffn-last-depth 3
 fi
 
 echo ""
