@@ -71,7 +71,7 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
 export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 
 FORCE=0
-RUN_GROUPS="a b c d e"
+RUN_GROUPS="a b c d e"   # f is opt-in: run it explicitly at depth 12
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
@@ -174,12 +174,12 @@ echo "════════════════════════�
 # a measured K_eff of 1.52 the bank is behaving as K~2 already, so if A2 matches
 # A1 the extra six templates are pure storage. A3 is the new layer at the R the
 # DOF table points to.
-if [[ "$RUN_GROUPS" == *a* ]]; then
-    run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
+#if [[ "$RUN_GROUPS" == *a* ]]; then
+#    run "A0_dense_d${DEPTH}"      "$BASE_COMMON"
 #    run "A1_remix_K8_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 8
-    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
+#    # run "A2_remix_K2_d${DEPTH}"     "$REMIX_COMMON" --p22-n-templates 2
 #    run "A3_cond_R256_d${DEPTH}"    "$COND_COMMON"  --cond-rank 256
-fi
+#fi
 
 # ── B. how much conditioning is actually useful ─────────────────────────────
 # R is a free capacity knob now: it is decoupled from storage layout and costs
@@ -254,16 +254,40 @@ fi
 #       Q/K/V/O do not, so this separates "the FFN wanted a better activation"
 #       from "the projections wanted one at all".
 #   E5  D1 with ReLU^2 instead of SiLU: is the specific activation load-bearing?
-if [[ "$RUN_GROUPS" == *e* ]]; then
-    run "E1_dense_swiglu_d${DEPTH}"    "$BASE_COMMON" --p36-swiglu-ffn 1
-    run "E2_cond_linear_branch_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
-        --cond-gate-source tied --cond-coeff-act one
+#if [[ "$RUN_GROUPS" == *e* ]]; then
+#    run "E1_dense_swiglu_d${DEPTH}"    "$BASE_COMMON" --p36-swiglu-ffn 1
+#    run "E2_cond_linear_branch_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
+#        --cond-gate-source tied --cond-coeff-act one
 #    run "E3_cond_tied_ffn_d${DEPTH}"   "$COND_COMMON" --cond-rank 256 \
 #        --cond-gate-source tied --cond-sites ffn
-    run "E4_cond_tied_attn_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 \
-        --cond-gate-source tied --cond-sites attn
+#    run "E4_cond_tied_attn_d${DEPTH}"  "$COND_COMMON" --cond-rank 256 \
+#        --cond-gate-source tied --cond-sites attn
 #    run "E5_cond_tied_sigmoid_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
 #        --cond-gate-source tied --cond-coeff-act sigmoid
+#fi
+#
+# ── F. the >200M regime test ────────────────────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 12 --group f
+#
+# Every variant measured so far is sub-200M (d4 = 36.7M, d8 = 125.8M); only dense
+# has a >200M point. Efficiency also falls with R (R/D 0.25 -> 1.09x, 0.50 ->
+# 1.04x, 1.00 -> 0.92x, 2.00 -> 0.74x, floor-corrected) and attention-only beats
+# both-sites per unit spent, so R=192 at d12 puts R/D back at 0.25, the
+# best-tested ratio, combined with the best-performing site restriction. That
+# pairing has never been run at any depth.
+#
+# F1 costs about 1.21x the dense d12 budget.
+# SUCCESS THRESHOLD: BPB below ~0.857. Dense at that compute is 0.8577 by the
+# floor-corrected 3-point fit and 0.8567 by the local d8->d12 slope of -0.0542.
+#
+# Run F2 ONLY if F1 clears the threshold. It is the exact matched control:
+# identical params, tokens and FLOPs, so the nonlinearity comparison needs no
+# scaling assumption. That mechanism was worth 0.0285 BPB at d4 and 0.0142 at d8.
+if [[ "$RUN_GROUPS" == *f* ]]; then
+    run "F1_cond_attn_R192_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
+        --cond-gate-source tied --cond-sites attn
+    run "F2_cond_attn_R192_linear_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
+        --cond-gate-source tied --cond-sites attn --cond-coeff-act one
 fi
 
 echo ""
