@@ -796,6 +796,8 @@ def build_model_meta(depth):
         ral_rank=getattr(args, 'ral_rank', 32),
         # Phase 35: ConditionedLinear
         p34_ffn_schedule=getattr(args, 'p34_ffn_schedule', ''),
+        p34_ffn_no_ffn_replacement=getattr(args, 'p34_ffn_no_ffn_replacement', 'none'),
+        p34_ffn_last_depth=getattr(args, 'p34_ffn_last_depth', 1),
         p36_swiglu_ffn=getattr(args, 'p36_swiglu_ffn', 0),
         p36_swiglu_mult=getattr(args, 'p36_swiglu_mult', 8.0/3.0),
         cond_sites=getattr(args, 'cond_sites', 'both'),
