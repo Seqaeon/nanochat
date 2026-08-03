@@ -172,7 +172,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--cclblock-orth-lambda" "$2")
             shift 2
             ;;
-        --p36-swiglu-ffn|--p36-swiglu-mult|--cond-sites)
+        --p36-swiglu-ffn|--p36-swiglu-mult|--cond-sites|--p34-ffn-schedule)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

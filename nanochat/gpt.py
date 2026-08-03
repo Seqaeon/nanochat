@@ -101,6 +101,7 @@ class GPTConfig:
     # way to grow operator norm is to concentrate. See RemixedLinear._affine_weights.
     p22_route_affine: int = 0
     # Phase 36: the controls for the p35 result.
+    p34_ffn_schedule: str = ''      # per-layer FFN width: list, or 'measured'/'shrink'/'last'/'every2'/'every4'(_iso)
     p36_swiglu_ffn: int = 0        # dense baseline with a SwiGLU FFN instead of ReLU^2
     p36_swiglu_mult: float = 8.0 / 3.0  # hidden width multiple, 8/3 = parameter parity
     cond_sites: str = 'both'       # 'both' | 'attn' | 'ffn': where cond layers go
@@ -571,7 +572,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p24_sequence_gated_act",
     # Phase 30: LayerNorm ablation
     "remix_disable_ln_basis", "dense_intermediate_ln", "legacy_init_fallback",
-    "p22_route_affine", "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
+    "p22_route_affine", "p34_ffn_schedule", "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
     "cond_router_rank", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
@@ -6394,8 +6395,9 @@ class _DenseAttnAdapter(nn.Module):
 
 class RemixedFeedForward(nn.Module):
     """Feedforward path using RemixedLinear (or RAL) in the base MLP framework."""
-    def __init__(self, config):
+    def __init__(self, config, layer_idx=0):
         super().__init__()
+        self._sched_mult = resolve_ffn_schedule(config, config.n_layer)[layer_idx]
         use_ral = getattr(config, 'use_ral', False)
         mode = getattr(config, 'cclblock_modulation', 'weight')
         use_decoupled = mode == 'decoupled'
@@ -6471,7 +6473,7 @@ class RemixedFeedForward(nn.Module):
             self.c_fc   = AttentionEntropyStratifiedLinear(config.n_embd, 4 * config.n_embd, n_strata=n_str, delta_rank=d_rank)
             self.c_proj = AttentionEntropyStratifiedLinear(4 * config.n_embd, config.n_embd, n_strata=n_str, delta_rank=d_rank)
         elif mode == 'cond' and not _cond_site_enabled(config, 'ffn'):
-            _h = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            _h = max(1, int(round(config.n_embd * self._sched_mult)))
             self.c_fc   = _DenseProj(config.n_embd, _h)
             self.c_proj = _DenseProj(_h, config.n_embd)
         elif mode == 'cond' and _cond_site_enabled(config, 'ffn'):
@@ -6479,7 +6481,7 @@ class RemixedFeedForward(nn.Module):
             # free knob, and zero_init_base mirrors the dense baseline's init
             # (in-projection uniform, out-projection zeros).
             ck = _conditioned_linear_kwargs(config)
-            _h = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            _h = max(1, int(round(config.n_embd * self._sched_mult)))
             self.c_fc   = ConditionedLinear(config.n_embd, _h, zero_init_base=False, **ck)
             self.c_proj = ConditionedLinear(_h, config.n_embd, zero_init_base=True, **ck)
         elif mode == 'ckr' or mode == 'ckr_ffn':
@@ -6600,7 +6602,7 @@ class RemixedFeedForward(nn.Module):
             # goes further and drops the hidden layer entirely, leaving one
             # RemixedLinear D->D whose LayerNorm and output gate supply the
             # nonlinearity that relu^2 supplied before.
-            _hidden = max(1, int(round(config.n_embd * getattr(config, 'p34_ffn_mult', 4.0))))
+            _hidden = max(1, int(round(config.n_embd * self._sched_mult)))
             self._single = bool(getattr(config, 'p34_ffn_single', 0))
             if self._single:
                 self.c_fc = _linear_cls(config.n_embd, config.n_embd, context_dim=config.remix_context_dim, basis_size=config.remix_basis_size, remixed_linear_kwargs=kwargs, scale_basis=scale, film_gate=film_gate, routing_scope='per_sequence')
@@ -7211,7 +7213,8 @@ class RemixedBlock(nn.Module):
         self.attn = (_DenseAttnAdapter(config, layer_idx)
                      if getattr(config, 'p34_dense_attn', 0)
                      else RemixedMultiAttention(config, layer_idx))
-        self.ffwd = RemixedFeedForward(config)
+        self.ffwd = (None if resolve_ffn_schedule(config, config.n_layer)[layer_idx] <= 0
+                     else RemixedFeedForward(config, layer_idx))
         self._p24_sliced_scope = getattr(config, 'p24_sliced_weight_scope', 'per_token')
         self._p24_folded_scope = getattr(config, 'p24_folded_mod_scope', 'per_layer')
         self._p24_seq_scope = getattr(config, 'p24_sequence_gated_scope', 'per_layer')
@@ -7258,9 +7261,9 @@ class RemixedBlock(nn.Module):
             # re-implementing the formula here. Disable for LoKR since b_shrunk varies per-layer
             # making a single shared basis_size impossible — those blocks fall back to per-RL gates.
             _first_rl = next(
-                (m for m in [self.attn.c_q, self.attn.c_k, self.attn.c_v,
-                              getattr(self.attn, 'c_proj', None),
-                              self.ffwd.c_fc, self.ffwd.c_proj]
+                (m for m in ([self.attn.c_q, self.attn.c_k, self.attn.c_v,
+                              getattr(self.attn, 'c_proj', None)]
+                             + ([self.ffwd.c_fc, self.ffwd.c_proj] if self.ffwd is not None else []))
                  if isinstance(m, (RemixedLinear, RemixedLinearFused))),
                 None
             )
@@ -7421,7 +7424,8 @@ class RemixedBlock(nn.Module):
                 pass  # Skip FFN
             else:
                 scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
-                x = x + scale * self.ffwd(norm_fn_mlp(x), ctx_signal, p24_shared=p24_shared)
+                if self.ffwd is not None:
+                    x = x + scale * self.ffwd(norm_fn_mlp(x), ctx_signal, p24_shared=p24_shared)
             self._last_ctx = ctx_signal
             return x, ctx_signal
 
@@ -7433,7 +7437,8 @@ class RemixedBlock(nn.Module):
             self._clear_shared_basis()
             x = x + attn_out
             ctx = self.shadow_ctx_proj(shadow_ctx)
-            x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
+            if self.ffwd is not None:
+                x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
 
@@ -7453,7 +7458,8 @@ class RemixedBlock(nn.Module):
                 q_peak = q_stats.abs().amax(dim=-1, keepdim=True)
                 geom = torch.cat([q_norm, q_mean, q_std, q_peak], dim=-1)
                 ctx = self.ctx_proj_geom(geom)
-            x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
+            if self.ffwd is not None:
+                x = x + self.ffwd(norm(x), ctx, p24_shared=p24_shared)
             self._last_ctx = ctx.detach()
             return x, self._last_ctx
 
@@ -7468,7 +7474,8 @@ class RemixedBlock(nn.Module):
             x = x + attn_out
             ctx_src_ffn = norm(x_entry if self.is_shifted else x)
             ctx_ffn = self.ctx_stream_ffn(ctx_src_ffn)   # (B, T, ctx_dim)
-            x = x + self.ffwd(norm(x), ctx_ffn, p24_shared=p24_shared)
+            if self.ffwd is not None:
+                x = x + self.ffwd(norm(x), ctx_ffn, p24_shared=p24_shared)
             self._last_ctx = ctx_ffn.detach()
             return x, self._last_ctx
         else:
@@ -7496,8 +7503,9 @@ class RemixedBlock(nn.Module):
             # Phase 23: shared context gates — 3 matmuls for all 6 RL gate decisions
             block_ctx_gates = self._ctx_gates(ctx) if self._ctx_gates is not None else None
 
-            x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
-                               context_gates=block_ctx_gates, p24_shared=p24_shared)
+            if self.ffwd is not None:
+                x = x + self.ffwd(norm(x), ctx, route_weights=block_route,
+                                   context_gates=block_ctx_gates, p24_shared=p24_shared)
             out_ctx = ctx.detach() if (local or self.is_shifted or is_dacs) else ctx
             self._last_ctx = out_ctx
             return x, out_ctx
@@ -8966,8 +8974,10 @@ class MoELinear(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, layer_idx=0):
         super().__init__()
+        _mult = resolve_ffn_schedule(config, config.n_layer)[layer_idx]
+        _hidden = max(1, int(round(config.n_embd * _mult)))
         _per_k = getattr(config, 'p21_per_experts', 0)
         if _per_k > 0:
             _per_topk = getattr(config, 'p21_per_topk', 0)
@@ -8977,18 +8987,18 @@ class MLP(nn.Module):
             self.c_proj = MoELinear(4 * config.n_embd, config.n_embd, K=_per_k,
                                     topk=_per_topk, learned_route=_per_learned)
         else:
-            self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-            self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+            self.c_fc = Linear(config.n_embd, _hidden, bias=False)
+            self.c_proj = Linear(_hidden, config.n_embd, bias=False)
         # 18I: Dynamic Activation (learned mix of ReLU², GELU, SiLU)
         self.dynamic_act = DynamicActivation() if getattr(config, 'p18_dynamic_activation', 0) else None
         # 18F: Per-Channel Scale after projection
         self.channel_scale = PerChannelScale(config.n_embd) if getattr(config, 'p18_per_channel_scale', 0) else None
         # 19G: Spectral Reparameterization
         srp_mode = getattr(config, 'p19_spectral_reparam', 0)
-        self.srp_proj = SpectralReparamLinear(4 * config.n_embd, config.n_embd) if srp_mode >= 1 else None
-        self.srp_fc = SpectralReparamLinear(config.n_embd, 4 * config.n_embd) if srp_mode >= 2 else None
+        self.srp_proj = SpectralReparamLinear(_hidden, config.n_embd) if srp_mode >= 1 else None
+        self.srp_fc = SpectralReparamLinear(config.n_embd, _hidden) if srp_mode >= 2 else None
         # Phase 30: optional intermediate LayerNorm for dense+LN ablation
-        self.ln_intermediate = nn.LayerNorm(4 * config.n_embd) if getattr(config, 'dense_intermediate_ln', 0) else None
+        self.ln_intermediate = nn.LayerNorm(_hidden) if getattr(config, 'dense_intermediate_ln', 0) else None
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -9022,6 +9032,71 @@ class _DenseProj(nn.Module):
 
     def forward(self, x, context_state=None, **_ignored):
         return self.proj(x)
+
+
+# Measured on the dense d22 checkpoint by scripts/conditioning_headroom.py.
+# reachable = per-layer demand x the fraction a linear router could predict from x;
+# supply    = per-layer Jacobian dispersion the FFN's nonlinearity already provides.
+# Both are participation ratios over 4096 tokens. All 22 layers had IDENTICAL width,
+# so the spread is a property of the activations, not of the architecture.
+_D22_REACHABLE = (40.1, 63.9, 48.9, 90.2, 91.9, 87.3, 97.1, 121.0, 144.2, 181.0, 86.1,
+                  86.2, 136.0, 325.5, 503.8, 376.8, 170.6, 302.6, 354.7, 17.7, 39.6, 59.8)
+_D22_SUPPLY    = (85.2, 22.4, 166.4, 101.4, 199.1, 172.2, 229.0, 170.4, 124.1, 170.2, 216.3,
+                  164.5, 182.7, 111.6, 145.8, 129.4, 106.9, 86.4, 59.9, 45.4, 70.7, 28.1)
+
+
+def _interp_profile(profile, n_layer):
+    """Resample a 22-layer profile onto n_layer by relative depth."""
+    m = len(profile)
+    if n_layer == m:
+        return list(profile)
+    out = []
+    for i in range(n_layer):
+        pos = (i / max(1, n_layer - 1)) * (m - 1)
+        lo = int(pos); hi = min(lo + 1, m - 1); f = pos - lo
+        out.append(profile[lo] * (1 - f) + profile[hi] * f)
+    return out
+
+
+def resolve_ffn_schedule(config, n_layer):
+    """Per-layer FFN width multiplier. 0 at a layer means NO FFN in that block.
+
+    p34_ffn_schedule accepts a comma-separated list of multipliers, or a preset:
+
+      ''            uniform p34_ffn_mult, the standard transformer
+      'measured'    reallocate at FIXED total parameters, proportional to the
+                    measured reachable demand. FLOP-neutral, so any gain is free.
+      'shrink'      cut only the over-provisioned layers to their reachable level
+                    and leave the rest. Removes compute, which is the direction
+                    that actually moves the efficiency metric.
+      'last'        FFN only in the final block
+      'every2' / 'every4'          FFN every 2nd / 4th block, same width
+      'every2_iso' / 'every4_iso'  same, width scaled up to hold parameters fixed
+    """
+    base = float(getattr(config, 'p34_ffn_mult', 4.0))
+    spec = str(getattr(config, 'p34_ffn_schedule', '') or '').strip()
+    if not spec:
+        return [base] * n_layer
+    if ',' in spec:
+        vals = [float(v) for v in spec.split(',') if v.strip() != '']
+        if len(vals) != n_layer:
+            raise ValueError(f"p34_ffn_schedule has {len(vals)} entries for {n_layer} layers")
+        return vals
+    if spec == 'measured':
+        r = _interp_profile(_D22_REACHABLE, n_layer)
+        return [base * n_layer * x / sum(r) for x in r]
+    if spec == 'shrink':
+        r = _interp_profile(_D22_REACHABLE, n_layer)
+        sup = _interp_profile(_D22_SUPPLY, n_layer)
+        return [base * min(1.0, ri / max(si, 1e-9)) for ri, si in zip(r, sup)]
+    if spec == 'last':
+        return [0.0] * (n_layer - 1) + [base]
+    for stride, iso in ((2, False), (4, False), (2, True), (4, True)):
+        if spec == f"every{stride}" + ("_iso" if iso else ""):
+            keep = [i for i in range(n_layer) if i % stride == stride - 1]
+            w = base * (n_layer / max(1, len(keep))) if iso else base
+            return [w if i in keep else 0.0 for i in range(n_layer)]
+    raise ValueError(f"Unknown p34_ffn_schedule {spec!r}")
 
 
 class SwiGLUMLP(nn.Module):
@@ -9064,7 +9139,10 @@ class Block(nn.Module):
         _mone_k = getattr(config, 'p20_mone_experts', 0)
         _ncea_k = getattr(config, 'p20_ncea_branches', 0)
         _adwi = getattr(config, 'p20_adwi', 0)
-        if getattr(config, 'p36_swiglu_ffn', 0):
+        if resolve_ffn_schedule(config, config.n_layer)[layer_idx] <= 0:
+            # Schedule says no FFN in this block: attention only.
+            self.mlp = None
+        elif getattr(config, 'p36_swiglu_ffn', 0):
             self.mlp = SwiGLUMLP(config)
         elif _hrcs > 0:
             self.mlp = HashRoutedMLP(config, scale_factor=_hrcs)
@@ -9097,7 +9175,7 @@ class Block(nn.Module):
                                        aux_weight=getattr(config, 'p23_std_moe_aux_weight', 0.01),
                                        use_quantile_route=getattr(config, 'p23_quantile_route', 0))
         else:
-            self.mlp = MLP(config)
+            self.mlp = MLP(config, layer_idx)
 
         # 18H: Mixture norm (learned RMSNorm + LayerNorm blend)
         if getattr(config, 'p18_mixture_norm', 0):
@@ -9122,7 +9200,7 @@ class Block(nn.Module):
         # 19J: Weight noise — add isotropic noise to key weights during training
         if self.training and self._weight_noise_eps > 0:
             eps = self._weight_noise_eps
-            for p in self.mlp.parameters():
+            for p in (self.mlp.parameters() if self.mlp is not None else ()):
                 if p.ndim == 2:  # only perturb weight matrices, not biases
                     p.data.add_(eps * torch.randn_like(p))
         attn_out = self.attn(norm_fn_attn(x), ve, cos_sin, window_size, kv_cache,
@@ -9143,11 +9221,13 @@ class Block(nn.Module):
             pass  # Skip FFN
         else:
             scale = 1.0 / (1.0 - self.layer_drop) if self.training and self.layer_drop > 0 else 1.0
-            block_out = scale * self.mlp(norm_fn_mlp(x))
-            # 19A: Residual Gate Scaling
-            if self.residual_alpha is not None:
-                block_out = F.softplus(self.residual_alpha).to(block_out.dtype) * block_out
-            x = x + block_out
+            # self.mlp is None when p34_ffn_schedule zeroes this layer's FFN.
+            if self.mlp is not None:
+                block_out = scale * self.mlp(norm_fn_mlp(x))
+                # 19A: Residual Gate Scaling
+                if self.residual_alpha is not None:
+                    block_out = F.softplus(self.residual_alpha).to(block_out.dtype) * block_out
+                x = x + block_out
         # 19J: Undo weight noise (subtract it back so gradients update the clean weights)
         if self.training and self._weight_noise_eps > 0:
             # NOTE: We don't undo here — the noise is effectively a different perturbation each step.
@@ -10288,8 +10368,7 @@ class GPT(nn.Module):
                     # RemixedLinear: sort gate vs structural
                     remix_linears = [
                         block.attn.c_q, block.attn.c_k, block.attn.c_v, block.attn.c_proj,
-                        block.ffwd.c_fc, block.ffwd.c_proj,
-                    ]
+                    ] + ([block.ffwd.c_fc, block.ffwd.c_proj] if block.ffwd is not None else [])
                     # 13b: Dual-optimizer CKR — route CKR gate params to dedicated AdamW
                     ckr_dual = (self.cclblock_modulation == 'ckr' and
                                 getattr(self.config, 'cclblock_ckr_dual_optim', 0))

@@ -173,6 +173,7 @@ def run_training_sweep(args):
         "--use-ral", str(getattr(args, 'use_ral', 0)),
         "--ral-rank", str(getattr(args, 'ral_rank', 32)),
         # Phase 35: ConditionedLinear
+        "--p34-ffn-schedule", str(getattr(args, 'p34_ffn_schedule', '')),
         "--p36-swiglu-ffn", str(getattr(args, 'p36_swiglu_ffn', 0)),
         "--p36-swiglu-mult", str(getattr(args, 'p36_swiglu_mult', 8.0/3.0)),
         "--cond-sites", str(getattr(args, 'cond_sites', 'both')),
@@ -816,6 +817,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-ral", type=int, default=0, choices=[0, 1])
     parser.add_argument("--ral-rank", type=int, default=32)
     # Phase 35: ConditionedLinear (--cclblock-modulation cond)
+    parser.add_argument("--p34-ffn-schedule", type=str, default="")
     parser.add_argument("--p36-swiglu-ffn", type=int, default=0, choices=[0, 1])
     parser.add_argument("--p36-swiglu-mult", type=float, default=8.0/3.0)
     parser.add_argument("--cond-sites", type=str, default="both", choices=["both", "attn", "ffn"])

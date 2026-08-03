@@ -71,7 +71,7 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-out/.triton_cache}"
 export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 
 FORCE=0
-RUN_GROUPS="a b c d e"   # f is opt-in: run it explicitly at depth 12
+RUN_GROUPS="a b c d e"   # f and g are opt-in: run it explicitly at depth 12
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
@@ -283,11 +283,47 @@ echo "════════════════════════�
 # Run F2 ONLY if F1 clears the threshold. It is the exact matched control:
 # identical params, tokens and FLOPs, so the nonlinearity comparison needs no
 # scaling assumption. That mechanism was worth 0.0285 BPB at d4 and 0.0142 at d8.
-if [[ "$RUN_GROUPS" == *f* ]]; then
-    run "F1_cond_attn_R192_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
-        --cond-gate-source tied --cond-sites attn
-    run "F2_cond_attn_R192_linear_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
-        --cond-gate-source tied --cond-sites attn --cond-coeff-act one
+#if [[ "$RUN_GROUPS" == *f* ]]; then
+#    run "F1_cond_attn_R192_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
+#        --cond-gate-source tied --cond-sites attn
+#    run "F2_cond_attn_R192_linear_d${DEPTH}" "$COND_COMMON" --cond-rank 192 \
+#        --cond-gate-source tied --cond-sites attn --cond-coeff-act one
+#fi
+
+# ── G. FFN allocation across depth ──────────────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group g
+#
+# All DENSE. This is a claim about where a dense transformer puts its own
+# capacity, so it needs no conditioning machinery to test.
+#
+# scripts/conditioning_headroom.py on the dense d22 checkpoint measured, per
+# layer, the demand (per-token gradient dispersion), the fraction of it a linear
+# router could reach, and the supply (Jacobian dispersion the FFN nonlinearity
+# already provides). Supply totals 0.81x reachable demand, so the model has
+# roughly the right AMOUNT of FFN. It is in the wrong PLACES, by up to 29x:
+#
+#   layers 0-7, 10-12, 19-20   over-provisioned, up to 3.4x
+#   layers 13-15, 17-18, 21    under-provisioned, up to 5.9x  (layer 18: 60 vs 355)
+#
+# All 22 layers had identical width, so that spread is a property of the
+# activations, not of the architecture, and it is not circular.
+#
+#   G1  reallocate at FIXED parameters, proportional to measured reachable
+#       demand. FLOP-neutral, so any BPB gain is free efficiency. Run this first:
+#       it is the cleanest test of whether the measurement predicts anything.
+#   G2  shrink only the over-provisioned layers. Removes compute, which is the
+#       direction that actually moves the efficiency metric.
+#   G3-G7  how much FFN is needed at all, and whether placement or total matters.
+#       The plain variants cut parameters; the _iso variants hold them fixed and
+#       concentrate the same width into fewer blocks.
+if [[ "$RUN_GROUPS" == *g* ]]; then
+    run "G1_ffn_measured_d${DEPTH}"    "$BASE_COMMON" --p34-ffn-schedule measured
+    run "G2_ffn_shrink_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule shrink
+    run "G3_ffn_last_only_d${DEPTH}"   "$BASE_COMMON" --p34-ffn-schedule last
+    run "G4_ffn_every2_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every2
+    run "G5_ffn_every2_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every2_iso
+    run "G6_ffn_every4_d${DEPTH}"      "$BASE_COMMON" --p34-ffn-schedule every4
+    run "G7_ffn_every4_iso_d${DEPTH}"  "$BASE_COMMON" --p34-ffn-schedule every4_iso
 fi
 
 echo ""
