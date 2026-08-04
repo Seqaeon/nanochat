@@ -1829,6 +1829,7 @@ class RemixedLinear(nn.Module):
                 self._qrouter = None
             # Diagnostics
             self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+            self.register_buffer('_template_weights_buf', torch.zeros(self.lokr_n_experts), persistent=False)
         elif self.n_templates > 1:
             self.template_topk = int(remixed_linear_kwargs.get('template_topk', 0))
             if self._use_global_bank:
@@ -1839,6 +1840,7 @@ class RemixedLinear(nn.Module):
                 self.template_mixing = None
                 self.template_route = None
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+                self.register_buffer('_template_weights_buf', torch.zeros(self.n_templates), persistent=False)
             elif self.template_delta_rank > 0:
                 # Phase 31: shared base + K rank-r deltas.  T_k = T_0 + U_k V_k^T, so
                 #     y = h T_0^T + sum_k a_k (h V_k) U_k^T
@@ -1879,6 +1881,7 @@ class RemixedLinear(nn.Module):
                         self.register_buffer('template_route', route_init)
                     self._qrouter = None
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+                self.register_buffer('_template_weights_buf', torch.zeros(self.n_templates), persistent=False)
             elif self.route_side == 'basis':
                 # Phase 31: the routed factor is W_b. Bank is (K, basis, in) and the
                 # output map W_m is a single shared (out, basis) matrix. For an
@@ -1910,6 +1913,7 @@ class RemixedLinear(nn.Module):
                         self.register_buffer('template_route', route_init)
                     self._qrouter = None
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+                self.register_buffer('_template_weights_buf', torch.zeros(self.n_templates), persistent=False)
             else:
                 # Legacy: K separate template_mixing matrices: each (out_features, basis_size)
                 # With drop_basis_proj this is (out, in) — LN acts on x directly.
@@ -1942,6 +1946,7 @@ class RemixedLinear(nn.Module):
                     self._qrouter = None
                 # Diagnostics
                 self.register_buffer('_template_entropy_buf', torch.zeros(1), persistent=False)
+                self.register_buffer('_template_weights_buf', torch.zeros(self.n_templates), persistent=False)
         else:
             self.template_mixing = nn.Parameter(torch.randn(out_features, basis_size))
         # Phase 30: optionally disable intermediate LayerNorm for ablation
@@ -2299,6 +2304,10 @@ class RemixedLinear(nn.Module):
             w_f = weights_all.float()
             ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
             self._template_entropy_buf.copy_(ent.detach())
+            if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                w_mean = w_f.mean(dim=tuple(range(w_f.ndim - 1)))
+                if self._template_weights_buf.shape == w_mean.shape:
+                    self._template_weights_buf.copy_(w_mean.detach())
             if self.training and not torch.compiler.is_compiling():
                 self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
                 self._gate_stats['template_entropy'] = ent.detach()
@@ -2523,6 +2532,10 @@ class RemixedLinear(nn.Module):
                 ent = -(prob_f * torch.log(prob_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 if hasattr(self, '_template_entropy_buf'):
                     self._template_entropy_buf.copy_(ent.detach())
+                if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                    w_mean = prob_f.mean(dim=tuple(range(prob_f.ndim - 1)))
+                    if self._template_weights_buf.shape == w_mean.shape:
+                        self._template_weights_buf.copy_(w_mean.detach())
                 if self.training and not torch.compiler.is_compiling():
                     self._gate_stats['template_weights'] = prob_f.mean(dim=tuple(range(prob_f.ndim - 1))).detach()
                     self._gate_stats['template_entropy'] = ent.detach()
@@ -2561,6 +2574,10 @@ class RemixedLinear(nn.Module):
                 w_f = rw.float()
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
+                if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                    w_mean = w_f.mean(dim=tuple(range(w_f.ndim - 1)))
+                    if self._template_weights_buf.shape == w_mean.shape:
+                        self._template_weights_buf.copy_(w_mean.detach())
                 if self.training and not torch.compiler.is_compiling():
                     self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
                     self._gate_stats['template_entropy'] = ent.detach()
@@ -2631,6 +2648,10 @@ class RemixedLinear(nn.Module):
                     w_f = weights_all.float()
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                        w_mean = w_f.mean(dim=tuple(range(w_f.ndim - 1)))
+                        if self._template_weights_buf.shape == w_mean.shape:
+                            self._template_weights_buf.copy_(w_mean.detach())
                     if self.training and not torch.compiler.is_compiling():
                         self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
                         self._gate_stats['template_entropy'] = ent.detach()
@@ -2709,6 +2730,10 @@ class RemixedLinear(nn.Module):
                     w_f = weights_all.float()
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                        w_mean = w_f.mean(dim=tuple(range(w_f.ndim - 1)))
+                        if self._template_weights_buf.shape == w_mean.shape:
+                            self._template_weights_buf.copy_(w_mean.detach())
                     if self.training and not torch.compiler.is_compiling():
                         self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
                         self._gate_stats['template_entropy'] = ent.detach()
@@ -2725,6 +2750,10 @@ class RemixedLinear(nn.Module):
                     w_f = F.softmax(route_logits.float(), dim=-1)
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if hasattr(self, '_template_weights_buf') and self._template_weights_buf is not None:
+                        w_mean = w_f.mean(dim=tuple(range(w_f.ndim - 1)))
+                        if self._template_weights_buf.shape == w_mean.shape:
+                            self._template_weights_buf.copy_(w_mean.detach())
                     if self.training and not torch.compiler.is_compiling():
                         self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
                         self._gate_stats['template_entropy'] = ent.detach()
