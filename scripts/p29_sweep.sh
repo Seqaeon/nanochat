@@ -175,7 +175,7 @@ P29_OUT_BASE="${P29_OUT_BASE:-out/sweep_p29}"
 #   --target-active-params 1  → sparse variants get token budget = ratio × active_params
 #   --p22-template-routing-learned 1 → learned (gradient-driven) routing weights
 REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
-  --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
+  --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} --total-batch-size 524288 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
   --target-param-data-ratio 10.5 \
@@ -202,7 +202,7 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
 # Uses --models base (standard transformer, no remix-linear).
 # Higher device-batch-size (128) since there is no MoE/remix overhead.
 BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
-  --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-128}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
+  --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-128}} --total-batch-size 524288 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
   --target-param-data-ratio 10.5 \
@@ -289,7 +289,7 @@ else
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
       --p22-n-templates 8 --p23-quantile-route 1 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 128 --p22-template-topk 0 --p31-drop-basis-proj 1 --p29-grad-equalize 1 \
+      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 --p29-grad-equalize 1 \
       --p31-route-side narrow --p31-basis-side-templates -1 --remix-template-lr-scale 1.0 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then
         echo "✅  $TAG done"
