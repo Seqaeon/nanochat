@@ -121,6 +121,8 @@ class GPTConfig:
     cond_chunk_size: int = 0      # >0 routes once per chunk from its first token (0 = per token)
     cond_mult_scale: float = -1.0 # bound on |c| for the composition branch (-1 = 1/m, the stable default)
     cond_mult_impl: str = 'wy'    # 'wy' (compact, 2 GEMMs) | 'loop' (sequential reference)
+    cond_attn_projs: str = 'qkvo' # 'qkvo' (default, all) | 'qko' (skip c_v) | 'qo' | 'o'
+    cond_layer_frac: float = 1.0  # fraction of layers (from start) that get ConditionedLinear
     # Fix 1D: PermutationMoE expert mode — 'full' (original D×D), 'low_rank', or 'factored'
     perm_expert_mode: str = 'low_rank'
     # Fix 1D: rank for low_rank mode (rank = max(8, base_embed_dim // perm_rank_ratio))
