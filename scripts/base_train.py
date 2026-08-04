@@ -1193,7 +1193,7 @@ def collect_gate_stats(model, step):
     result = {'step': step, 'layers': layers_seen}
     for k in accum:
         if isinstance(accum[k], list):
-            result[k] = [x / counts[k] for x in accum[k]]
+            result[k] = [x / max(c, 1) for x, c in zip(accum[k], counts[k])]
         else:
             result[k] = accum[k] / counts[k]
 
