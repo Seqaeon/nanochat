@@ -178,7 +178,7 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
   --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
-  --target-param-data-ratio 20 \
+  --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
@@ -205,7 +205,7 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-128}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
-  --target-param-data-ratio 20 \
+  --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
@@ -682,23 +682,23 @@ fi
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-#TAG="29BASE_DENSE_D${DEPTH}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $BASE_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29BASE_DENSE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      --out-dir "$_RUN_DIR" \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 #
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
