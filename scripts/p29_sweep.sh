@@ -178,7 +178,7 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
   --device-batch-size ${REMIX_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-16}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 --aspect-ratio $ASPECT_RATIO \
-  --target-param-data-ratio 10.5 \
+  --target-param-data-ratio 20 \
   --warmup-ratio 0.005 \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
@@ -205,13 +205,13 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --device-batch-size ${BASE_DEVICE_BATCH_SIZE:-${DEVICE_BATCH_SIZE:-128}} --total-batch-size -1 --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
   --sequence-len 2048 \
-  --target-param-data-ratio 10.5 \
+  --target-param-data-ratio 20 \
   --warmup-ratio 0.005 \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
   --target-tokens -1 \
-  --target-active-params 0 --target-flops 6.058865e16\
+  --target-active-params 0 --target-flops -1\
   --save-every 200"
 
 
