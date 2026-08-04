@@ -1139,6 +1139,22 @@ def collect_gate_stats(model, step):
         if not isinstance(mod, (RemixedLinear, DualGateLinear, ConditionedLinear)):
             continue
         gs = getattr(mod, '_gate_stats', {})
+        # Under torch.compile, _gate_stats is empty because its writes are
+        # guarded by `not torch.compiler.is_compiling()`.  But the registered
+        # buffers (_template_entropy_buf, _template_weights_buf) are always
+        # populated via .copy_() inside the compiled graph, so fall back to
+        # those to recover template routing diagnostics.
+        if not gs:
+            gs = {}
+            _ent_buf = getattr(mod, '_template_entropy_buf', None)
+            _tw_buf  = getattr(mod, '_template_weights_buf', None)
+            if _ent_buf is not None and _ent_buf.numel() > 0 and _ent_buf.abs().sum().item() > 0:
+                gs['template_entropy'] = _ent_buf.detach()
+            if _tw_buf is not None and _tw_buf.numel() > 0 and _tw_buf.abs().sum().item() > 0:
+                gs['template_weights'] = _tw_buf.detach()
+                # Reconstruct template_weights_std from the per-template means
+                # (the buffer holds the mean weight per template across the batch)
+                gs['template_weights_std'] = _tw_buf.std().detach()
         if not gs:
             continue
         layers_seen += 1
