@@ -299,7 +299,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --p31-chunk-route-impl|--p31-top1-gate|--p31-template-delta-rank|--p31-route-side|--p31-drop-basis-proj|--p31-basis-side-templates|--seed|--p34-ffn-mult|--p34-ffn-single|--p34-dense-attn)
+        --p31-chunk-route-impl|--p31-top1-gate|--p31-template-delta-rank|--p31-route-side|--p31-drop-basis-proj|--p31-basis-side-templates|--seed|--p34-ffn-mult|--p34-ffn-single|--p34-dense-attn|--remix-template-block-diag|--remix-template-lr-scale|--p29-grad-equalize)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
