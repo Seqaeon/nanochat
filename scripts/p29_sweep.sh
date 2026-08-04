@@ -211,7 +211,7 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --final-lr-frac 0.05 \
   --research-dim -1 \
   --target-tokens -1 \
-  --target-active-params 0 \
+  --target-active-params 0 --target-flops 6.058865e16\
   --save-every 200"
 
 
@@ -274,30 +274,30 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
 #   - Soft routing over 8 templates, amortized over 64 tokens
 #   - Basis size = MODEL_DIM (Full rank)
 # ══════════════════════════════════════════════════════
-TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p23-quantile-route 1 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 2048 --p22-template-topk 0 --p31-drop-basis-proj 1 --p29-grad-equalize 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 --remix-template-lr-scale 1.0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="29C_CHUNK64_BASELINE_8T_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "29C" "$TAG" "Chunk routing N=64 (Full rank baseline)"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p23-quantile-route 1 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 2048 --p22-template-topk 0 --p31-drop-basis-proj 1 --p29-grad-equalize 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 --remix-template-lr-scale 1.0 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # 29C-G: chunk routing, HARD TOP-1, grouped fast path
@@ -682,23 +682,23 @@ fi
 #   - Chinchilla-optimal token budget from total params
 #   - Provides reference curve for all other variants
 # ══════════════════════════════════════════════════════
-#TAG="29BASE_DENSE_D${DEPTH}"
-#if check_completed "$TAG"; then
-#    echo "⏭  Skipping $TAG (already completed)"
-#else
-#    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
-#    _SAVED=$(get_out_dir "$TAG")
-#    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
-#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-#    if bash scripts/research_sweep.sh $BASE_COMMON \
-#      --out-dir "$_RUN_DIR" \
-#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-#        echo "✅  $TAG done"
-#        mark_completed "$TAG"
-#    else
-#        echo "❌  $TAG FAILED — will retry next run"
-#    fi
-#fi
+TAG="29BASE_DENSE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      --out-dir "$_RUN_DIR" \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
 #
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"

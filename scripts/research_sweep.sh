@@ -112,6 +112,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--target-param-data-ratio" "$2")
             shift 2
             ;;
+        --target-flops)
+            EXTRA_ARGS+=("--target-flops" "$2")
+            shift 2
+            ;;
         --sequence-len)
             EXTRA_ARGS+=("--sequence-len" "$2")
             shift 2
