@@ -193,8 +193,8 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
   --remix-use-basis-gate 0 \
   --remix-use-output-gate 1 \
   --remix-basis-gate-mode centered \
-  --target-tokens 0 \
-  --target-active-params 1 \
+  --target-tokens -1 \
+  --target-active-params 0 \
   --save-every 200 \
   --p23-quantile-route 1"
 
@@ -210,8 +210,8 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --warmdown-ratio 0.65 \
   --final-lr-frac 0.05 \
   --research-dim -1 \
-  --target-tokens 0 \
-  --target-active-params 1 \
+  --target-tokens -1 \
+  --target-active-params 0 \
   --save-every 200"
 
 
