@@ -2299,6 +2299,10 @@ class RemixedLinear(nn.Module):
             w_f = weights_all.float()
             ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
             self._template_entropy_buf.copy_(ent.detach())
+            if self.training and not torch.compiler.is_compiling():
+                self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
+                self._gate_stats['template_entropy'] = ent.detach()
+                self._gate_stats['template_weights_std'] = w_f.std(dim=tuple(range(w_f.ndim - 1))).mean().detach()
         return h_pre
 
     def non_gate_parameters(self):
@@ -2519,6 +2523,10 @@ class RemixedLinear(nn.Module):
                 ent = -(prob_f * torch.log(prob_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 if hasattr(self, '_template_entropy_buf'):
                     self._template_entropy_buf.copy_(ent.detach())
+                if self.training and not torch.compiler.is_compiling():
+                    self._gate_stats['template_weights'] = prob_f.mean(dim=tuple(range(prob_f.ndim - 1))).detach()
+                    self._gate_stats['template_entropy'] = ent.detach()
+                    self._gate_stats['template_weights_std'] = prob_f.std(dim=tuple(range(prob_f.ndim - 1))).mean().detach()
 
             pre_output = base_out + expert_delta
 
@@ -2553,6 +2561,10 @@ class RemixedLinear(nn.Module):
                 w_f = rw.float()
                 ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                 self._template_entropy_buf.copy_(ent.detach())
+                if self.training and not torch.compiler.is_compiling():
+                    self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
+                    self._gate_stats['template_entropy'] = ent.detach()
+                    self._gate_stats['template_weights_std'] = w_f.std(dim=tuple(range(w_f.ndim - 1))).mean().detach()
 
             # ── Fully vectorized expert computation (single pair of einsums) ────────
             # Accumulated in float32 to avoid instability with relu.square() and massive reductions
@@ -2619,6 +2631,10 @@ class RemixedLinear(nn.Module):
                     w_f = weights_all.float()
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if self.training and not torch.compiler.is_compiling():
+                        self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
+                        self._gate_stats['template_entropy'] = ent.detach()
+                        self._gate_stats['template_weights_std'] = w_f.std(dim=tuple(range(w_f.ndim - 1))).mean().detach()
             elif self._global_bank is not None:
                 # Phase 28E/F: global template bank — compute W_eff once per forward, apply as bmm.
                 # Routing is done by the per-layer router inside GlobalTemplateBank.
@@ -2693,6 +2709,10 @@ class RemixedLinear(nn.Module):
                     w_f = weights_all.float()
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if self.training and not torch.compiler.is_compiling():
+                        self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
+                        self._gate_stats['template_entropy'] = ent.detach()
+                        self._gate_stats['template_weights_std'] = w_f.std(dim=tuple(range(w_f.ndim - 1))).mean().detach()
             else:
                 # Legacy Phase 22: MoE-style per-token template routing
                 if getattr(self, '_qrouter', None) is not None:
@@ -2705,6 +2725,10 @@ class RemixedLinear(nn.Module):
                     w_f = F.softmax(route_logits.float(), dim=-1)
                     ent = -(w_f * torch.log(w_f.clamp(min=1e-8))).sum(dim=-1).mean()
                     self._template_entropy_buf.copy_(ent.detach())
+                    if self.training and not torch.compiler.is_compiling():
+                        self._gate_stats['template_weights'] = w_f.mean(dim=tuple(range(w_f.ndim - 1))).detach()
+                        self._gate_stats['template_entropy'] = ent.detach()
+                        self._gate_stats['template_weights_std'] = w_f.std(dim=tuple(range(w_f.ndim - 1))).mean().detach()
                 topk = getattr(self, 'template_topk', 0)
                 if topk > 0 and topk < self.n_templates:
                     # Hard top-k sparse routing — stack all templates, matmul, gather

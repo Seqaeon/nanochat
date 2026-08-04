@@ -1144,13 +1144,35 @@ def collect_gate_stats(model, step):
         layers_seen += 1
         for k, v in gs.items():
             if isinstance(v, torch.Tensor):
-                v = v.item()
-            accum[k]  = accum.get(k, 0.0) + v
-            counts[k] = counts.get(k, 0) + 1
+                if v.numel() == 1:
+                    v_val = v.item()
+                    accum[k]  = accum.get(k, 0.0) + v_val
+                    counts[k] = counts.get(k, 0) + 1
+                else:
+                    v_list = [x.item() for x in v]
+                    if k not in accum:
+                        accum[k] = [0.0] * len(v_list)
+                        counts[k] = 0
+                    for i_k, val_k in enumerate(v_list):
+                        accum[k][i_k] += val_k
+                    counts[k] += 1
+            elif isinstance(v, (list, tuple)):
+                if k not in accum:
+                    accum[k] = [0.0] * len(v)
+                    counts[k] = 0
+                for i_k, val_k in enumerate(v):
+                    accum[k][i_k] += val_k
+                counts[k] += 1
+            elif isinstance(v, (int, float)):
+                accum[k]  = accum.get(k, 0.0) + float(v)
+                counts[k] = counts.get(k, 0) + 1
 
     result = {'step': step, 'layers': layers_seen}
     for k in accum:
-        result[k] = accum[k] / counts[k]
+        if isinstance(accum[k], list):
+            result[k] = [x / counts[k] for x in accum[k]]
+        else:
+            result[k] = accum[k] / counts[k]
 
     # Gradient norms (only meaningful after loss.backward())
     gate_sq, gate_n, struct_sq, struct_n = 0.0, 0, 0.0, 0
@@ -2307,8 +2329,19 @@ while True:
         # ── Gate stats logging ────────────────────────────────────────────────
         if gate_stats_log and args.gate_stats_every > 0 and (step % args.gate_stats_every == 0 or last_step):
             gs = collect_gate_stats(model, step)
+            tmpl_str = ""
+            if 'template_weights' in gs:
+                tw = gs['template_weights']
+                if isinstance(tw, list):
+                    tw_fmt = "[" + ", ".join(f"{w:.3f}" for w in tw) + "]"
+                else:
+                    tw_fmt = f"{tw:.3f}"
+                tmpl_str = f" | tmpl_w={tw_fmt}"
+            if 'template_entropy' in gs:
+                tmpl_str += f" H={gs['template_entropy']:.3f}"
             print0(
                 f"  gate_stats | layers={gs['layers']} "
+                f"{tmpl_str} "
                 f"| basis µ={gs.get('basis_mean',float('nan')):.3f} "
                 f"σ={gs.get('basis_std',float('nan')):.3f} "
                 f"dead={gs.get('basis_dead',float('nan')):.1%} "
