@@ -152,6 +152,7 @@ def run_training_sweep(args):
         "--p31-basis-side-templates", str(getattr(args, 'p31_basis_side_templates', 0)),
         "--remix-template-block-diag", str(getattr(args, 'remix_template_block_diag', 0)),
         "--remix-template-lr-scale",   str(getattr(args, 'remix_template_lr_scale', 1.0)),
+        "--p29-grad-equalize",         str(getattr(args, 'p29_grad_equalize', 0)),
         "--target-active-params",     str(getattr(args, 'target_active_params', 0)),
         "--remix-basis-gate-rank", str(getattr(args, 'remix_basis_gate_rank', 8)),
         "--cclblock-modulation", str(args.cclblock_modulation),
@@ -784,6 +785,7 @@ if __name__ == "__main__":
     parser.add_argument("--p31-drop-basis-proj", type=int, default=0, choices=[0, 1], help="31: drop W_b entirely — h=LN(x) then a routed (out,in) template. Applied only where in_features <= basis_size (c_fc, attention); skipped on c_proj")
     parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank")
     parser.add_argument("--remix-template-lr-scale",   type=float, default=1.0, help="29: LR multiplier for template_bank Muon group")
+    parser.add_argument("--p29-grad-equalize",         type=int, default=0, choices=[0, 1], help="29: per-template gradient equalization to prevent template collapse")
     parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")
     parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode")
     # CCL block modulation

@@ -82,6 +82,7 @@ class GPTConfig:
     # Phase 29: RemixedLinear optimizer optimizations
     p29_template_block_diag: int = 0        # Block-diagonal Muon for template_bank (0=off, 1=on — uses K blocks)
     p29_template_lr_scale: float = 1.0      # LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR)
+    p29_grad_equalize: int = 0              # gradient equalization across templates (0=off, 1=on; MST-inspired)
     # Phase 34: FFN-shape study. The dense FFN spends its capacity on a 4x width
     # expansion (D -> 4D -> D). If per-token weight mixing supplies that capacity
     # instead, the expansion is redundant and the FFN gets much cheaper. These
@@ -1957,6 +1958,21 @@ class RemixedLinear(nn.Module):
 
         self.bias = nn.Parameter(torch.zeros(out_features))
 
+        # Phase 29: per-template gradient equalization (MST-inspired).
+        # Normalizes each template's gradient to the mean norm across all K
+        # templates, preventing the dominant-template feedback loop where the
+        # most-routed template receives disproportionately more gradient and
+        # reinforces its dominance (same pathology as MST sub-collapse).
+        if self.template_bank is not None and remixed_linear_kwargs.get('grad_equalize', False):
+            K = self.template_bank.shape[0]
+            def _template_grad_equalize(grad, _K=K):
+                # grad: (K, out, basis) or (K, basis, in) for route_side='basis'
+                per_tmpl_norms = grad.norm(dim=tuple(range(1, grad.ndim)), keepdim=True)  # (K, 1, 1)
+                mean_norm = per_tmpl_norms.mean()
+                scale = mean_norm / (per_tmpl_norms + 1e-8)
+                return grad * scale
+            self.template_bank.register_hook(_template_grad_equalize)
+
         if self.use_context:
             # --- Gate network design ---
             #
@@ -2124,6 +2140,9 @@ class RemixedLinear(nn.Module):
                 yield from self.grassmann_alpha.parameters()
             if self.template_route is not None and isinstance(self.template_route, nn.Parameter):
                 yield self.template_route
+            # QuantileBalancedRouter — its route_proj replaces template_route
+            if getattr(self, '_qrouter', None) is not None:
+                yield from self._qrouter.gate_parameters()
             # LoKR route projection (only when learned — i.e., requires_grad=True)
             if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
                 yield self.lokr_route_proj

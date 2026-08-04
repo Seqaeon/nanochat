@@ -206,6 +206,7 @@ parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 
 # Phase 29: RemixedLinear optimizer optimizations
 parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=[0, 1], help="29: block-diagonal Muon for template_bank (prevents cross-template gradient contamination)")
 parser.add_argument("--remix-template-lr-scale", type=float, default=1.0, help="29: LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR, MST-inspired)")
+parser.add_argument("--p29-grad-equalize", type=int, default=0, choices=[0, 1], help="29: per-template gradient equalization to prevent template collapse (MST-inspired)")
 # ── MST: Modular Sub-Transformer ──
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
@@ -769,6 +770,7 @@ def build_model_meta(depth):
             route_side=getattr(args, 'p31_route_side', 'output'),
             drop_basis_proj=bool(getattr(args, 'p31_drop_basis_proj', 0)),
             basis_side_templates=getattr(args, 'p31_basis_side_templates', 0),
+            grad_equalize=bool(getattr(args, 'p29_grad_equalize', 0)),
         ),
 
         # Fix 1A
@@ -949,6 +951,7 @@ def build_model_meta(depth):
         # Phase 29: RemixedLinear optimizer optimizations
         p29_template_block_diag=getattr(args, 'remix_template_block_diag', 0),
         p29_template_lr_scale=getattr(args, 'remix_template_lr_scale', 1.0),
+        p29_grad_equalize=getattr(args, 'p29_grad_equalize', 0),
         # MST: Modular Sub-Transformer
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
