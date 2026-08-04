@@ -1168,17 +1168,24 @@ def collect_gate_stats(model, step):
                     v_list = [x.item() for x in v]
                     if k not in accum:
                         accum[k] = [0.0] * len(v_list)
-                        counts[k] = 0
+                        counts[k] = [0] * len(v_list)
+                    # Extend accumulator if this layer has more elements
+                    while len(accum[k]) < len(v_list):
+                        accum[k].append(0.0)
+                        counts[k].append(0)
                     for i_k, val_k in enumerate(v_list):
                         accum[k][i_k] += val_k
-                    counts[k] += 1
+                        counts[k][i_k] += 1
             elif isinstance(v, (list, tuple)):
                 if k not in accum:
                     accum[k] = [0.0] * len(v)
-                    counts[k] = 0
+                    counts[k] = [0] * len(v)
+                while len(accum[k]) < len(v):
+                    accum[k].append(0.0)
+                    counts[k].append(0)
                 for i_k, val_k in enumerate(v):
                     accum[k][i_k] += val_k
-                counts[k] += 1
+                    counts[k][i_k] += 1
             elif isinstance(v, (int, float)):
                 accum[k]  = accum.get(k, 0.0) + float(v)
                 counts[k] = counts.get(k, 0) + 1
