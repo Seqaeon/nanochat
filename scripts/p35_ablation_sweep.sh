@@ -213,6 +213,39 @@ else
 fi
 
 # ══════════════════════════════════════════════════════
+# ARM F: K=1, No Context, No Gates
+#   - RemixedLinear with n_templates=1 AND no context/gates
+#   - This makes it y = W_m @ LN(W_b @ x) + bias (bare factored linear)
+#   - Isolates: does the output gate carry the 0.008 gap to dense?
+#   - If F ≈ 35A → output gate is useless in K=1 mode
+#   - If F < 35A → output gate helps even without routing
+#   - If F ≈ Dense → bare factorization matches dense
+# ══════════════════════════════════════════════════════
+TAG="35F_K1_NO_GATES_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "35F" "$TAG" "K=1 no routing, NO context/gates — bare factorized linear"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 1 \
+      --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
 # ARM B: No Context / No Gates
 #   - RemixedLinear with 8 templates, chunk routing, but NO context
 #     stream, NO basis gate, NO output gate
@@ -236,7 +269,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
+      --p22-n-templates 8 --p31-template-delta-rank 0 \
       --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
       --p31-route-side narrow --p31-basis-side-templates -1 \
       --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
@@ -270,7 +303,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
+      --p22-n-templates 8 --p31-template-delta-rank 0 \
       --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
       --p31-route-side narrow --p31-basis-side-templates -1 \
       --remix-disable-ln-basis 1 \
@@ -332,7 +365,7 @@ else
     mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
     if bash scripts/research_sweep.sh $REMIX_COMMON \
       --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p23-quantile-route 0 --p31-template-delta-rank 0 \
+      --p22-n-templates 8 --p31-template-delta-rank 0 \
       --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
       --p31-route-side narrow --p31-basis-side-templates -1 \
       $DEPTH 2>&1 | tee -a "$LOGFILE"; then

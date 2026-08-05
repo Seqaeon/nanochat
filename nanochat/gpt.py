@@ -2138,19 +2138,21 @@ class RemixedLinear(nn.Module):
                 yield from self.poly_coeffs.parameters()
             if hasattr(self, "grassmann_alpha"):
                 yield from self.grassmann_alpha.parameters()
-            if self.template_route is not None and isinstance(self.template_route, nn.Parameter):
-                yield self.template_route
-            # QuantileBalancedRouter — its route_proj replaces template_route
-            if getattr(self, '_qrouter', None) is not None:
-                yield from self._qrouter.gate_parameters()
-            # LoKR route projection (only when learned — i.e., requires_grad=True)
-            if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
-                yield self.lokr_route_proj
             # lowrank basis gate — basis_gate_coeffs (Linear) + basis_gate_vectors + basis_gate_lr_scale
             if self.basis_gate_mode == 'lowrank' and hasattr(self, 'basis_gate_coeffs') and self.basis_gate_coeffs is not None:
                 yield from self.basis_gate_coeffs.parameters()
                 yield self.basis_gate_vectors
                 yield self.basis_gate_lr_scale
+        # Routing parameters — yielded regardless of use_context, since routing
+        # is orthogonal to the context/gate system.  When use_context=False these
+        # would otherwise fall into the catch-all optimizer group with the wrong LR.
+        if self.template_route is not None and isinstance(self.template_route, nn.Parameter):
+            yield self.template_route
+        if getattr(self, '_qrouter', None) is not None:
+            yield from self._qrouter.gate_parameters()
+        # LoKR route projection (only when learned — i.e., requires_grad=True)
+        if self.lokr_route_proj is not None and self.lokr_route_proj.requires_grad:
+            yield self.lokr_route_proj
         if self.route_affine_scale is not None:
             yield self.route_affine_scale
 
