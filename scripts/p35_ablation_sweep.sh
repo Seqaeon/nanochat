@@ -157,7 +157,7 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
   --target-active-params 0 \
   --save-every 200 \
   --p23-quantile-route 1 \
-  --target-flops $TARGET_FLOPS"
+  --target-flops -1"
 
 # ── Common flags for dense arms ──────────────────────────────────────────────
 BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
@@ -172,7 +172,7 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --target-tokens -1 \
   --target-active-params 0 \
   --save-every 200 \
-  --target-flops $TARGET_FLOPS"
+  --target-flops -1"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -189,29 +189,29 @@ echo ""
 #   - If A ≈ full RemixedLinear → routing adds nothing
 #   - If A ≪ dense → factorization itself is the problem
 # ══════════════════════════════════════════════════════
-TAG="35A_K1_NO_ROUTE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35A" "$TAG" "K=1 single template — no routing, pure factorized linear"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
-
+#TAG="35A_K1_NO_ROUTE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35A" "$TAG" "K=1 single template — no routing, pure factorized linear"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
+#
 # ══════════════════════════════════════════════════════
 # ARM F: K=1, No Context, No Gates
 #   - RemixedLinear with n_templates=1 AND no context/gates
@@ -221,29 +221,29 @@ fi
 #   - If F < 35A → output gate helps even without routing
 #   - If F ≈ Dense → bare factorization matches dense
 # ══════════════════════════════════════════════════════
-TAG="35F_K1_NO_GATES_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35F" "$TAG" "K=1 no routing, NO context/gates — bare factorized linear"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 1 \
-      --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35F_K1_NO_GATES_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35F" "$TAG" "K=1 no routing, NO context/gates — bare factorized linear"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 1 \
+#      --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARM B: No Context / No Gates
@@ -255,31 +255,31 @@ fi
 #   - If B ≈ full RemixedLinear → gates are useless overhead
 #   - If B < full RemixedLinear → gates help, problem is elsewhere
 # ══════════════════════════════════════════════════════
-TAG="35B_NO_GATES_8T_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35B" "$TAG" "8T chunk routing, NO context/gates — pure routing overhead"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 \
-      --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35B_NO_GATES_8T_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35B" "$TAG" "8T chunk routing, NO context/gates — pure routing overhead"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      --remix-use-context 0 --remix-use-output-gate 0 --remix-use-basis-gate 0 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARM C: No Intermediate LayerNorm
@@ -289,31 +289,31 @@ fi
 #   - If C > full RemixedLinear → LN is actively harmful
 #   - If C ≈ full RemixedLinear → LN is neutral
 # ══════════════════════════════════════════════════════
-TAG="35C_NO_LN_8T_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35C" "$TAG" "8T chunk routing, NO intermediate LN — test LN impact"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 \
-      --remix-disable-ln-basis 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35C_NO_LN_8T_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35C" "$TAG" "8T chunk routing, NO intermediate LN — test LN impact"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      --remix-disable-ln-basis 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARM D: Dense Baseline + Intermediate LN
@@ -323,58 +323,58 @@ fi
 #   - If D < plain dense → LN itself is the problem
 #   - If D ≈ plain dense → LN is fine, RemixedLinear has other issues
 # ══════════════════════════════════════════════════════
-TAG="35D_DENSE_WITH_LN_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35D" "$TAG" "Dense baseline + intermediate LN — LN control experiment"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $BASE_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --dense-intermediate-ln 1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35D_DENSE_WITH_LN_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35D" "$TAG" "Dense baseline + intermediate LN — LN control experiment"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $BASE_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --dense-intermediate-ln 1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARM E: Full 29C RemixedLinear (Reference)
 #   - Exact same config as the 29C sweep, but FLOP-matched
 #   - Provides the direct comparison point for arms A-D
 # ══════════════════════════════════════════════════════
-TAG="35E_FULL_REMIX_8T_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35E" "$TAG" "Full 29C RemixedLinear — FLOP-matched reference"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35E_FULL_REMIX_8T_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35E" "$TAG" "Full 29C RemixedLinear — FLOP-matched reference"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 # ══════════════════════════════════════════════════════
 # ARM G: K=1 + Fixed Output Gate (gate basis init fix)
@@ -414,30 +414,30 @@ fi
 #   - If H < 35E → gate was broken, fixing it helps routing
 #   - If H ≈ 35E → gate doesn't help even when working
 # ══════════════════════════════════════════════════════
-TAG="35H_FULL_REMIX_FIXED_GATE_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35H" "$TAG" "Full K=8 remix + fixed output gate"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35H_FULL_REMIX_FIXED_GATE_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35H" "$TAG" "Full K=8 remix + fixed output gate"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 
 # ══════════════════════════════════════════════════════
@@ -446,31 +446,31 @@ fi
 #   - Penalizes pairwise cosine similarity to prevent collapse
 #   - Tests: can forced diversity make K=8 beat K=1?
 # ══════════════════════════════════════════════════════
-TAG="35I_REMIX_DIVERSITY_D${DEPTH}"
-if check_completed "$TAG"; then
-    echo "⏭  Skipping $TAG (already completed)"
-else
-    print_header "35I" "$TAG" "K=8 + fixed gate + diversity loss λ=0.05"
-    _SAVED=$(get_out_dir "$TAG")
-    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
-    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
-        echo "🗑  --force: removing old run directory: $_RUN_DIR"
-        rm -rf "$_RUN_DIR"
-    fi
-    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
-    if bash scripts/research_sweep.sh $REMIX_COMMON \
-      --out-dir "$_RUN_DIR" \
-      --p22-n-templates 8 --p31-template-delta-rank 0 \
-      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
-      --p31-route-side narrow --p31-basis-side-templates -1 \
-      --p35-template-diversity-lambda 0.05 \
-      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
-        echo "✅  $TAG done"
-        mark_completed "$TAG"
-    else
-        echo "❌  $TAG FAILED — will retry next run"
-    fi
-fi
+#TAG="35I_REMIX_DIVERSITY_D${DEPTH}"
+#if check_completed "$TAG"; then
+#    echo "⏭  Skipping $TAG (already completed)"
+#else
+#    print_header "35I" "$TAG" "K=8 + fixed gate + diversity loss λ=0.05"
+#    _SAVED=$(get_out_dir "$TAG")
+#    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+#    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+#        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+#        rm -rf "$_RUN_DIR"
+#    fi
+#    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+#    if bash scripts/research_sweep.sh $REMIX_COMMON \
+#      --out-dir "$_RUN_DIR" \
+#      --p22-n-templates 8 --p31-template-delta-rank 0 \
+#      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+#      --p31-route-side narrow --p31-basis-side-templates -1 \
+#      --p35-template-diversity-lambda 0.05 \
+#      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+#        echo "✅  $TAG done"
+#        mark_completed "$TAG"
+#    else
+#        echo "❌  $TAG FAILED — will retry next run"
+#    fi
+#fi
 
 
 echo ""
