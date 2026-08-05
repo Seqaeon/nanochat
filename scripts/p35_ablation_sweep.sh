@@ -440,6 +440,39 @@ else
 fi
 
 
+# ══════════════════════════════════════════════════════
+# ARM I: Full K=8 + Fixed Gate + Template Diversity Loss
+#   - Same as 35H but with p35_template_diversity_lambda=0.05
+#   - Penalizes pairwise cosine similarity to prevent collapse
+#   - Tests: can forced diversity make K=8 beat K=1?
+# ══════════════════════════════════════════════════════
+TAG="35I_REMIX_DIVERSITY_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "35I" "$TAG" "K=8 + fixed gate + diversity loss λ=0.05"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 --p31-template-delta-rank 0 \
+      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+      --p31-route-side narrow --p31-basis-side-templates -1 \
+      --p35-template-diversity-lambda 0.05 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║     Phase 35 Ablation Sweep Complete                        ║"
@@ -452,6 +485,7 @@ echo "  35B: No gates/context    → gate overhead"
 echo "  35C: No intermediate LN  → LN harm"
 echo "  35D: Dense + LN          → LN control"
 echo "  35E: Full RemixedLinear  → reference (broken gate)"
-echo "  35G: K=1 + fixed gate    → does unfrozen gate help K=1?"
+echo "  35G: K=1 + fixed gate    → 1.056 BEATS DENSE"
 echo "  35H: Full remix fixed    → does unfrozen gate help K=8?"
-echo "  Dense D8 baseline        → 1.058 BPP (from previous run)"
+echo "  35I: K=8 + diversity     → can forced diversity make K=8 beat K=1?"
+echo "  Dense D4 baseline        → 1.058 BPP (from previous run)"

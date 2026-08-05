@@ -95,6 +95,10 @@ class GPTConfig:
     # basis became xavier; its basis_modulator bias of 2.0 read back as 0.0).
     # Only for re-running checkpoints trained before that was corrected.
     legacy_init_fallback: int = 0
+    # Phase 35: template bank diversity regularization. Penalizes high pairwise
+    # cosine similarity between templates within each RemixedLinear layer to
+    # prevent template collapse. 0 = off. Reasonable range: 0.01–0.1.
+    p35_template_diversity_lambda: float = 0.0
     # Phase 36: affine-hull routing for the template bank. 0 = softmax (simplex),
     # 1 = alpha = 1/K + s*(beta - mean(beta)), unconstrained and possibly negative.
     # Targets the two mechanisms behind the measured collapse: the alpha_k
@@ -1612,6 +1616,7 @@ class RemixedLinear(nn.Module):
         # Operator-space modulation: none|householder|spectral|ocd
         self.operator_modulation = remixed_linear_kwargs.get('operator_modulation', 'none')
         self._last_orth_loss = None
+        self._template_diversity_loss = None
         # Phase 22: MoE-style overparameterized template mixing
         # n_templates > 1 creates K template_mixing matrices with content routing
         self.n_templates = remixed_linear_kwargs.get('n_templates', 1)
@@ -2825,6 +2830,23 @@ class RemixedLinear(nn.Module):
             self._last_orth_loss = overlap.pow(2).mean()
         else:
             self._last_orth_loss = None
+
+        # Phase 35: template diversity loss — penalize pairwise cosine similarity
+        # between templates to prevent collapse (especially in attention Q/K/V).
+        if (self.training and self.template_bank is not None
+                and self.n_templates > 1 and not torch.compiler.is_compiling()):
+            bank = self.template_bank.float()                          # (K, out, basis)
+            K = bank.shape[0]
+            flat = bank.reshape(K, -1)                                 # (K, out*basis)
+            flat = F.normalize(flat, dim=-1)                           # unit vectors
+            cos_mat = flat @ flat.T                                    # (K, K)
+            # Upper triangle only (exclude diagonal self-similarity)
+            mask = torch.triu(torch.ones(K, K, device=bank.device, dtype=torch.bool), diagonal=1)
+            pairwise_cos = cos_mat[mask]                               # (K*(K-1)/2,)
+            # Mean squared cosine: 0 = perfectly diverse, 1 = collapsed
+            self._template_diversity_loss = pairwise_cos.pow(2).mean()
+        else:
+            self._template_diversity_loss = None
 
         if gate_out is not None:
             pre_output = pre_output * gate_out
@@ -11039,6 +11061,16 @@ class GPT(nn.Module):
                         orth_terms.append(mod._last_orth_loss.to(dtype=loss.dtype))
                 if orth_terms:
                     loss = loss + orth_lambda * torch.stack(orth_terms).mean()
+
+            # Phase 35: template diversity regularization — penalizes template collapse.
+            div_lambda = float(getattr(self.config, 'p35_template_diversity_lambda', 0.0))
+            if div_lambda > 0.0 and loss_reduction == 'mean':
+                div_terms = []
+                for mod in self.modules():
+                    if isinstance(mod, RemixedLinear) and mod._template_diversity_loss is not None:
+                        div_terms.append(mod._template_diversity_loss.to(dtype=loss.dtype))
+                if div_terms:
+                    loss = loss + div_lambda * torch.stack(div_terms).mean()
 
             # Phase 24: sliced-weight routing balance loss
             p24_balance_coeff = float(getattr(self.config, 'p24_sliced_weight_balance_coeff', 0.0))

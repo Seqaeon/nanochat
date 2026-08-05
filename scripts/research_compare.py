@@ -158,6 +158,7 @@ def run_training_sweep(args):
         "--remix-basis-gate-rank", str(getattr(args, 'remix_basis_gate_rank', 8)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
+        "--p35-template-diversity-lambda", str(getattr(args, 'p35_template_diversity_lambda', 0.0)),
         "--cclblock-context-stream", str(args.cclblock_context_stream),
         "--cclblock-ema-factor", str(args.cclblock_ema_factor),
         "--cclblock-stale-ctx-lag", str(args.cclblock_stale_ctx_lag),
@@ -797,6 +798,8 @@ if __name__ == "__main__":
                              "or 'normalization' (CCLBlock with AdaRMSNorm)")
     parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                         help="OCD overlap penalty weight (0 disables)")
+    parser.add_argument("--p35-template-diversity-lambda", type=float, default=0.0,
+                        help="Template bank diversity loss weight — penalizes pairwise cosine similarity (0 disables)")
     parser.add_argument("--cclblock-context-stream", type=str, default="local", 
                         choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                         help="Context stream type")

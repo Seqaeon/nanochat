@@ -427,6 +427,8 @@ parser.add_argument("--cond-layer-frac", type=float, default=1.0,
                     help="35: fraction of layers (from first) that get ConditionedLinear on attention. 0.5 = first half only. Headroom data shows early layers have lowest FFN excess (most unmet demand), so concentrating nonlinearity there may help")
 parser.add_argument("--cclblock-orth-lambda", type=float, default=0.0,
                     help="OCD overlap penalty weight (0 disables)")
+parser.add_argument("--p35-template-diversity-lambda", type=float, default=0.0,
+                    help="Template bank diversity loss — penalizes pairwise cosine similarity between templates (0 disables)")
 parser.add_argument("--cclblock-context-stream", type=str, default="local", 
                     choices=["local", "shifted", "ema", "selective", "multiscale", "ssm", "boundary", "chunk", "predictive_chunk", "evidence_ssm", "dacs", "prefix", "warmup_ema", "dacs_ema", "decay_prefix"],
                     help="Context stream: 'local', 'shifted', 'ema', 'selective', 'multiscale', 'ssm', 'boundary', 'chunk', 'predictive_chunk', 'evidence_ssm', 'dacs', 'prefix', 'warmup_ema', 'dacs_ema', 'decay_prefix'")
@@ -784,6 +786,7 @@ def build_model_meta(depth):
         # CCL block redesign
         cclblock_modulation=getattr(args, 'cclblock_modulation', 'weight'),
         cclblock_orth_lambda=getattr(args, 'cclblock_orth_lambda', 0.0),
+        p35_template_diversity_lambda=getattr(args, 'p35_template_diversity_lambda', 0.0),
         cclblock_context_stream=getattr(args, 'cclblock_context_stream', 'local'),
         cclblock_ema_factor=getattr(args, 'cclblock_ema_factor', 0.99),
         cclblock_stale_ctx_lag=getattr(args, 'cclblock_stale_ctx_lag', 0),
