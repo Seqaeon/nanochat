@@ -26,7 +26,7 @@ FORCE=0
 if [[ "${1:-}" == "--force" ]]; then FORCE=1; shift; fi
 
 DEPTH="${1:-8}"
-TARGET_FLOPS="6.058865e+16"
+TARGET_FLOPS="4.704626e+17"
 
 LOGFILE="sweep_p35_ablation_d${DEPTH}.log"
 STATEFILE="${LOGFILE%.log}_state.json"
@@ -157,7 +157,7 @@ REMIX_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models remixed-linear \
   --target-active-params 0 \
   --save-every 200 \
   --p23-quantile-route 1 \
-  --target-flops -1"
+  --target-flops $TARGET_FLOPS"
 
 # ── Common flags for dense arms ──────────────────────────────────────────────
 BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
@@ -172,7 +172,7 @@ BASE_COMMON="--fp8 --max-shards ${MAX_SHARDS:-170} --models base \
   --target-tokens -1 \
   --target-active-params 0 \
   --save-every 200 \
-  --target-flops -1"
+  --target-flops $TARGET_FLOPS"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -180,6 +180,31 @@ echo "║     Phase 35: RemixedLinear Ablation Sweep (D${DEPTH})          ║"
 echo "║     Target FLOPs: ${TARGET_FLOPS}                          ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
+
+# ══════════════════════════════════════════════════════
+# 29BASE: Dense transformer baseline
+#   - Standard transformer (no MoE, no remix-linear)
+#   - Chinchilla-optimal token budget from total params
+#   - Provides reference curve for all other variants
+# ══════════════════════════════════════════════════════
+TAG="29BASE_DENSE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "29BASE" "$TAG" "Dense baseline — standard transformer (depth ${DEPTH})"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P29_OUT_BASE}/${TAG}}"
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_base/base" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $BASE_COMMON \
+      --out-dir "$_RUN_DIR" \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
 
 # ══════════════════════════════════════════════════════
 # ARM A: K=1 Single Template (No Routing)
