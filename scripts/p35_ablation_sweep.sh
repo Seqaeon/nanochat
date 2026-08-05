@@ -376,6 +376,69 @@ else
     fi
 fi
 
+# ══════════════════════════════════════════════════════
+# ARM G: K=1 + Fixed Output Gate (gate basis init fix)
+#   - Same as 35A but with the output_gate_basis init fix
+#     (randn*0.01 instead of zeros — breaks zero-gradient trap)
+#   - Tests: does a working output gate help K=1?
+#   - If G < 35A → gate was broken, fixing it helps
+#   - If G ≈ 35A → gate genuinely adds nothing
+# ══════════════════════════════════════════════════════
+TAG="35G_K1_FIXED_GATE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "35G" "$TAG" "K=1 + fixed output gate — does unfrozen gate help?"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
+# ══════════════════════════════════════════════════════
+# ARM H: Full K=8 Remix + Fixed Output Gate
+#   - Same as 35E but with the output_gate_basis init fix
+#   - Tests: does a working output gate help K=8 routing?
+#   - If H < 35E → gate was broken, fixing it helps routing
+#   - If H ≈ 35E → gate doesn't help even when working
+# ══════════════════════════════════════════════════════
+TAG="35H_FULL_REMIX_FIXED_GATE_D${DEPTH}"
+if check_completed "$TAG"; then
+    echo "⏭  Skipping $TAG (already completed)"
+else
+    print_header "35H" "$TAG" "Full K=8 remix + fixed output gate"
+    _SAVED=$(get_out_dir "$TAG")
+    _RUN_DIR="${_SAVED:-${P35_OUT_BASE}/${TAG}}"
+    if [[ "$FORCE" == 1 ]] && [[ -d "$_RUN_DIR" ]]; then
+        echo "🗑  --force: removing old run directory: $_RUN_DIR"
+        rm -rf "$_RUN_DIR"
+    fi
+    mark_started "$TAG" "${_RUN_DIR}/depth_${DEPTH}/ckpt_remixed-linear/remixed-linear" "$_RUN_DIR"
+    if bash scripts/research_sweep.sh $REMIX_COMMON \
+      --out-dir "$_RUN_DIR" \
+      --p22-n-templates 8 --p31-template-delta-rank 0 \
+      --p28-chunk-routing-size 256 --p22-template-topk 0 --p31-drop-basis-proj 1 \
+      --p31-route-side narrow --p31-basis-side-templates -1 \
+      $DEPTH 2>&1 | tee -a "$LOGFILE"; then
+        echo "✅  $TAG done"
+        mark_completed "$TAG"
+    else
+        echo "❌  $TAG FAILED — will retry next run"
+    fi
+fi
+
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -384,8 +447,11 @@ echo "╚═══════════════════════�
 echo ""
 echo "Results summary — compare final val BPB across:"
 echo "  35A: K=1 no routing      → factorization overhead"
+echo "  35F: K=1 no gates        → bare factored linear"
 echo "  35B: No gates/context    → gate overhead"
 echo "  35C: No intermediate LN  → LN harm"
 echo "  35D: Dense + LN          → LN control"
-echo "  35E: Full RemixedLinear  → reference"
-echo "  Dense D8 baseline        → 1.058 BPB (from previous run)"
+echo "  35E: Full RemixedLinear  → reference (broken gate)"
+echo "  35G: K=1 + fixed gate    → does unfrozen gate help K=1?"
+echo "  35H: Full remix fixed    → does unfrozen gate help K=8?"
+echo "  Dense D8 baseline        → 1.058 BPP (from previous run)"

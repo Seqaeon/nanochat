@@ -2067,7 +2067,9 @@ class RemixedLinear(nn.Module):
             # rather than O(ctx_dim*out_features).
             r = remixed_linear_kwargs.get('output_gate_rank', 8)
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
-            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            # Small random init (not zeros!) — zero basis creates a zero-gradient
+            # trap for output_gate_scale: d tanh(s*0)/ds = 0 × sech²(0) = 0.
+            self.output_gate_basis  = nn.Parameter(torch.randn(r, out_features) * 0.01)
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale, starts small
             if self.operator_modulation == 'householder':
                 self.operator_householder = Linear(context_dim, basis_size, bias=True)
@@ -2959,7 +2961,7 @@ class RemixedLinearFused(nn.Module):
         if self.use_context and use_output_gate:
             r = output_gate_rank
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
-            self.output_gate_basis = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_basis = nn.Parameter(torch.randn(r, out_features) * 0.01)
             self.output_gate_scale = nn.Parameter(torch.ones(1) * 0.1)
 
         # Entropy tracking (diagnostic only)
@@ -3233,7 +3235,7 @@ class DualGateLinear(nn.Module):
         if self.use_context and self.use_output_gate:
             r = int(remixed_linear_kwargs.get('output_gate_rank', 8))
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
-            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_basis  = nn.Parameter(torch.randn(r, out_features) * 0.01)
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)
             nn.init.zeros_(self.output_gate_coeffs.weight)
             nn.init.zeros_(self.output_gate_coeffs.bias)
@@ -3356,7 +3358,7 @@ class OutputGatedLinear(nn.Module):
         if self.use_context and self.use_output_gate:
             r = int(remixed_linear_kwargs.get('output_gate_rank', 8))
             self.output_gate_coeffs = Linear(context_dim, r, bias=True)
-            self.output_gate_basis  = nn.Parameter(torch.zeros(r, out_features))
+            self.output_gate_basis  = nn.Parameter(torch.randn(r, out_features) * 0.01)
             self.output_gate_scale  = nn.Parameter(torch.ones(1) * 0.1)
             nn.init.zeros_(self.output_gate_coeffs.weight)
             nn.init.zeros_(self.output_gate_coeffs.bias)
@@ -9876,12 +9878,13 @@ class GPT(nn.Module):
                             torch.nn.init.xavier_uniform_(sub.basis_gate_context.weight)
                             if sub.basis_gate_context.bias is not None:
                                 torch.nn.init.zeros_(sub.basis_gate_context.bias)
-                        # Low-rank output gate: xavier for coeffs, zero for basis
-                        # gate_basis zeros => gate_logits=0 => tanh(0)=0 => gate=1.0 at init
+                        # Low-rank output gate: xavier for coeffs, small random for basis.
+                        # Zero basis creates a zero-gradient trap for output_gate_scale:
+                        # d tanh(s*0)/ds = 0 × sech²(0) = 0, so scale can never learn.
                         if hasattr(sub, 'output_gate_coeffs'):
                             torch.nn.init.xavier_uniform_(sub.output_gate_coeffs.weight)
                             torch.nn.init.zeros_(sub.output_gate_coeffs.bias)
-                            torch.nn.init.zeros_(sub.output_gate_basis)
+                            torch.nn.init.normal_(sub.output_gate_basis, std=0.01)
                             torch.nn.init.constant_(sub.output_gate_scale, 0.1)
                     continue  # Skip further processing of this module's sub-components here
 
