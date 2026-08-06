@@ -118,14 +118,17 @@ def parse_args():
                         "held-out tokens beyond the cap are dropped from scoring only; the "
                         "fit still uses every training token.")
     p.add_argument("--reach-signals", type=str, default="own",
-                   help="comma list of signals the router reads, from own,late,label. 'own' is "
-                        "the layer's own input, which is what every router in the p35 sweep and "
-                        "every earlier version of this measurement used. 'late' is the last "
-                        "block's output, standing in for any lookahead or two-pass design. "
-                        "'label' is the target token embedding and is a strict ORACLE, since "
-                        "dL/dy depends on the label and no causal router can have it. Only the "
-                        "nonlinear fit and its control are run for the extra signals; the "
-                        "lin_r/mlp_r pair is already settled on 'own'.")
+                   help="comma list of signals the router reads, from own,late,label,oracle. "
+                        "'own' is the layer's own input, which is what every router in the p35 "
+                        "sweep and every earlier version of this measurement used. 'late' is the "
+                        "last block's output, standing in for any lookahead or two-pass design. "
+                        "'oracle' is own concatenated with the target embedding and is THE upper "
+                        "bound, since the cross-entropy gradient depends on the label directly "
+                        "and no causal router can have it. 'label' is the target embedding ALONE "
+                        "and is NOT an oracle: it discards the forward state, is not a superset "
+                        "of own, and normally scores below it for reasons that say nothing about "
+                        "reachability. Only the nonlinear fit and its control run for the extra "
+                        "signals; the lin_r/mlp_r pair is already settled on 'own'.")
     p.add_argument("--gram-tokens", type=int, default=4096,
                    help="cap on tokens used for every Gram-spectrum measurement (headroom, "
                         "dof, top1, supply, alignment, reach%%). These are N x N eigen"
@@ -516,14 +519,20 @@ def collect_signals(model, batches, n_tokens, device):
 
       late    the last block's output. Not causally available to layer L in this
               architecture, so it stands in for any two-pass or lookahead design.
-      label   the embedding of the TARGET token. a_t = dL/dy_t is a function of
-              the label, so this is a strict ORACLE: no causal router can have
-              it. It exists to separate "our routers read the wrong thing" from
-              "the demand is not a function of anything a forward pass knows".
+      label   the embedding of the TARGET token, ALONE. This is not an oracle and
+              must not be read as one: it is not a superset of the layer's own
+              input, so it discards the forward state and will usually score
+              BELOW `own` for reasons that say nothing about reachability.
+      oracle  concat(own input, target embedding). This IS the upper bound. The
+              cross-entropy gradient wrt logits is (p - onehot(y)), so the label
+              enters a_t directly and no causal router can ever have it. It is
+              what separates "our routers read the wrong thing" from "the demand
+              is not a function of anything a forward pass knows".
 
     If reach does not move under `late`, no rearrangement of forward information
-    helps. If it does not move under `label` either, the unreached demand is
-    minibatch noise and the ceiling is not an architecture problem at all.
+    helps. If it does not move under `oracle` either, the unreached demand is not
+    label-dependence either, it is minibatch sampling noise, and the ceiling is
+    not an architecture problem at all.
     """
     out = {'late': [], 'label': []}
     grab = {}
@@ -668,9 +677,9 @@ def main():
     data = collect(model, batches, targets, args.tokens, device)
 
     sig_names = [s.strip() for s in args.reach_signals.split(',') if s.strip()]
-    bad = [s for s in sig_names if s not in ('own', 'late', 'label')]
+    bad = [s for s in sig_names if s not in ('own', 'late', 'label', 'oracle')]
     if bad:
-        raise SystemExit(f"unknown --reach-signals {bad}, pick from own,late,label")
+        raise SystemExit(f"unknown --reach-signals {bad}, pick from own,late,label,oracle")
     alt = {}
     if args.nonlinear_reach and [s for s in sig_names if s != 'own']:
         print(f"capturing alternate router signals: {[s for s in sig_names if s != 'own']}")
@@ -710,13 +719,19 @@ def main():
                 for s in sig_names:
                     if s == 'own' or router is None:
                         continue
+                    if s == 'oracle':
+                        # The upper bound has to CONTAIN the layer's own input.
+                        # The label on its own is not a superset of it and scores
+                        # below `own` for reasons unrelated to reachability.
+                        Sig = torch.cat([Xf, alt['label'][:Xf.shape[0]].to(device)], dim=1)
+                    else:
+                        Sig = alt[s][:Xf.shape[0]].to(device)
                     # Same X for the Grams, same split, same rank, same steps:
                     # only the router's INPUT changes, so the difference is
                     # attributable to the signal and to nothing else.
                     r2 = reach_by_router(Xf, Af, rank=args.reach_rank,
                                          steps=args.reach_steps, holdout=args.reach_holdout,
-                                         score_tokens=args.reach_score_tokens,
-                                         S=alt[s][:Xf.shape[0]].to(device))
+                                         score_tokens=args.reach_score_tokens, S=Sig)
                     if r2 is not None:
                         router[f'{s}_mlp'] = r2['mlp_r']
                         router[f'{s}_null'] = r2['mlp_null']
@@ -867,27 +882,39 @@ def main():
             print(f"  {'own':10s} {own:8.3f} {agg(ok, 'mlp_null'):8.3f} {0.0:+8.3f}   "
                   f"the layer's own input, what every arm used")
             desc = {'late': "last block output: any lookahead or two-pass design",
-                    'label': "target embedding: a strict ORACLE, no causal router has it"}
+                    'label': "target embedding ALONE: not a superset of own, not an oracle",
+                    'oracle': "own + target embedding: THE upper bound, no causal router has it"}
+            # `label` alone discards the forward state, so it is not comparable
+            # upward and must not enter the max that drives the verdict.
             best = own
             for s in extra:
                 v, n_ = agg(ok, f'{s}_mlp'), agg(ok, f'{s}_null')
-                best = max(best, v)
+                if s != 'label':
+                    best = max(best, v)
                 print(f"  {s:10s} {v:8.3f} {n_:8.3f} {v - own:+8.3f}   {desc.get(s, '')}")
             print("\n  READ IT THIS WAY")
-            if best - own < 0.03:
-                print(f"  Nothing moves it. The best alternate signal gains {best - own:+.3f}, and")
-                print("  that includes the oracle if you ran it. The unreached demand is not a")
-                print("  function of anything in the forward pass, so it is minibatch and label")
-                print("  noise rather than information a better-informed router could exploit.")
-                print("  No routing scheme can reach it, at any cost, from any signal. Combined")
-                print("  with group K, that closes per-token operator conditioning: neither the")
-                print("  router's function class, nor its capacity, nor its input is the cap.")
-            elif 'label' in extra and agg(ok, 'label_mlp') - own > 0.10 and \
-                    all(agg(ok, f'{s}_mlp') - own < 0.05 for s in extra if s != 'label'):
-                print("  Only the ORACLE moves it. The demand is predictable, but only from the")
-                print("  label, which no causal router can see. That is a clean impossibility")
-                print("  result rather than a design failure, and it is the honest end of the")
-                print("  direction: the headroom is real and structurally unreachable.")
+            has_oracle = 'oracle' in extra
+            orc = agg(ok, 'oracle_mlp') - own if has_oracle else None
+            if best - own < 0.03 and (not has_oracle or orc < 0.03):
+                print(f"  Nothing moves it. The best signal gains {best - own:+.3f}"
+                      + (f", and the ORACLE gains {orc:+.3f}." if has_oracle else "."))
+                if has_oracle:
+                    print("  The oracle carries the label, and the cross-entropy gradient depends")
+                    print("  on the label directly, so if even that does not move it the unreached")
+                    print("  demand is not label-dependence either. It is minibatch sampling noise:")
+                    print("  a different draw would ask for a different update. Nothing can reach")
+                    print("  it, and the ceiling is not an architecture problem at all.")
+                else:
+                    print("  But no ORACLE was run, so this rules out forward-available signals")
+                    print("  only. Re-run with --reach-signals own,oracle before concluding that")
+                    print("  the demand is unreachable rather than merely label-dependent.")
+                print("  Combined with group K, this closes per-token operator conditioning:")
+                print("  neither the router's function class, nor its capacity, nor its input.")
+            elif has_oracle and orc > 0.10 and best - own < 0.03:
+                print(f"  Only the ORACLE moves it, by {orc:+.3f}. The demand IS predictable, but")
+                print("  only from the label, which no causal router can ever see. That is a clean")
+                print("  impossibility result rather than a design failure, and it is the honest")
+                print("  end of the direction: the headroom is real and structurally unreachable.")
             else:
                 print(f"  A forward-available signal gains {best - own:+.3f} over the layer's own")
                 print("  input. The routers were reading the wrong thing, which is a different")
