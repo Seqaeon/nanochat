@@ -533,6 +533,65 @@ if [[ "$RUN_GROUPS" == *j* ]]; then
         --cond-rank 192 --cond-router-act gelu
 fi
 
+#
+# ── K. move the budget from the operator to the selector ─────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group k
+#
+# Group J settled two things at d8.
+#
+# 1. THE OPERATOR AXIS IS FLAT. All GELU, all on c_q and c_proj:
+#
+#      R=256  bpb 0.950388  +23.5%  mult 0.969
+#      R=192  bpb 0.953522  +18.0%  mult 0.958
+#      R=128  bpb 0.955394  +12.7%  mult 0.969
+#
+#    Non-monotonic, spread 0.011 against a 0.024 noise floor. Halving R was
+#    exactly compute-neutral: quality fell 0.005 bpb and compute fell 8.8%, and
+#    they cancelled. Two points 8.8% apart in compute land on the same
+#    multiplier, which is what a saturated axis looks like. Scanning R further
+#    is not an experiment, it is a scan of a flat surface.
+#
+# 2. THE NONLINEARITY REPLICATED, and grew as R shrank:
+#
+#      R=256  I2 -> I1    +0.00129 bpb   +0.023 mult
+#      R=128  J1b -> J1   +0.00218 bpb   +0.038 mult
+#      mean   +0.00174 bpb, 1.9 sigma, at a cost of 1024 parameters in 128.6M
+#
+#    Two of two in the predicted direction, and bigger where the operator was
+#    smaller. That is what the pivot predicts: shrink the operator and the
+#    selector matters more.
+#
+# So stop varying R against a fixed router. Hold TOTAL COST fixed and move the
+# budget across the layer. Per conditioned projection at n_embd=512, where the
+# additive branch costs 2*512*R and the router costs 512*rr + rr*R + rr:
+#
+#      K1   R=64  rr=64    102,464 params/proj
+#      K2   R=32  rr=128   102,528 params/proj     0.06% apart
+#
+# Same cost, budget shifted from operator to selector, nonlinearity held
+# constant so it is not a confound. This is the pivot as a single controlled
+# comparison rather than a scan:
+#
+#   K2 > K1   addressability is the binding constraint. Push further with
+#             R=16 rr=256, and the direction has a mechanism behind it.
+#   K2 = K1   the pivot is wrong. The 0.969 plateau is neither the operator nor
+#             the selector, and the next thing to question is the SIGNAL the
+#             router reads rather than the function it computes: every router
+#             here sees only the layer's own input.
+#
+# Read both against J1 at 0.969, which is R=128 rr=64 and costs 68% more per
+# projection than either.
+if [[ "$RUN_GROUPS" == *k* ]]; then
+    K_BASE="--cond-sites attn --cond-attn-projs qo \
+            --cond-gate-source router --cond-router-act gelu"
+    # K1: budget in the operator.
+    run "K1_cond_R64_rr64_d${DEPTH}"   "$COND_COMMON" $K_BASE \
+        --cond-rank 64 --cond-router-rank 64
+    # K2: the same budget in the selector.
+    run "K2_cond_R32_rr128_d${DEPTH}"  "$COND_COMMON" $K_BASE \
+        --cond-rank 32 --cond-router-rank 128
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  done, depth ${DEPTH}"
