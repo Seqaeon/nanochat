@@ -441,6 +441,54 @@ if [[ "$RUN_GROUPS" == *h* ]]; then
         --p34-ffn-schedule measured_native
 fi
 
+#
+# ── I. the router, not the operator ──────────────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group i
+#
+# Every arm A through H spent its FLOPs on the OPERATOR (K templates, rank R,
+# block width) and left the router a single linear projection. conditioning_
+# headroom.py --nonlinear-reach on the dense d22 checkpoint says that was the
+# binding constraint. Held out, at r=64, with a permutation control of -0.024
+# and 123 of 132 projections resolved:
+#
+#   projection      lin_r    mlp_r     gain
+#   attn.c_proj     0.263    0.413   +0.150
+#   attn.c_k        0.339    0.480   +0.141
+#   attn.c_q        0.328    0.462   +0.135
+#   attn.c_v        0.459    0.579   +0.120
+#   mlp.c_fc        0.244    0.298   +0.054
+#   mlp.c_proj      0.411    0.410   -0.001   (13/22 resolved, discount)
+#   resolved        0.338    0.445   +0.107
+#
+# lin_r and mlp_r are parameter-matched and FLOP-matched, so the entire gain is
+# the nonlinearity. A rank-64 nonlinear router reaches 0.445 against the FULL
+# rank (1408) linear router's 0.512, at 1/22 of the cost. The gain is an
+# ATTENTION phenomenon: +0.12 to +0.15 on all four attention projections and
+# +0.054 on the FFN, which already selects with its own activation mask.
+#
+#   I1  the arm the measurement implies: rank-64 GELU router on c_q and c_proj.
+#   I2  THE CONTROL, and the reason I1 is interpretable. Identical in every way
+#       except --cond-router-act none. Without it a win is attributable to the
+#       rank-64 router or to moving off gate_source=tied, not to nonlinearity.
+#       I1 minus I2 is exactly the mlp_r minus lin_r the measurement priced.
+#   I3  does the gain stack across projections, or is qo already most of it.
+#   I4  stacks the nonlinear router with H3's layer targeting, which is
+#       orthogonal: H3 chose WHICH LAYERS, I1 changes WHAT THE ROUTER IS.
+#
+# Read I1 against H4 (0.925), which is the same projections and the same rank
+# with no router at all. The gap to close is 0.062.
+if [[ "$RUN_GROUPS" == *i* ]]; then
+    I_BASE="--cond-rank 256 --cond-sites attn --cond-attn-projs qo \
+            --cond-gate-source router --cond-router-rank 64"
+    run "I1_cond_qo_nlrouter_d${DEPTH}"  "$COND_COMMON" $I_BASE --cond-router-act gelu
+    run "I2_cond_qo_linrouter_d${DEPTH}" "$COND_COMMON" $I_BASE --cond-router-act none
+    run "I3_cond_all_nlrouter_d${DEPTH}" "$COND_COMMON" --cond-rank 256 \
+        --cond-sites attn --cond-attn-projs qkvo \
+        --cond-gate-source router --cond-router-rank 64 --cond-router-act gelu
+    run "I4_cond_qo_nl_early_d${DEPTH}"  "$COND_COMMON" $I_BASE \
+        --cond-router-act gelu --cond-layer-frac 0.5
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  done, depth ${DEPTH}"

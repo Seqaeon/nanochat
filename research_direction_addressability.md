@@ -233,13 +233,72 @@ than in another round of d12 sweeps.
    Unlike the per-layer width profile, which failed to predict anything, this is a
    prediction about the router and it has never been tested.
 
+## Result on dense d22
+
+Run at `--tokens 49152 --gram-tokens 4096 --reach-rank 64`. Controls clean:
+permutation control -0.024, `mlp_train` 0.438 against `mlp_r` 0.445 so no
+overfitting, 123 of 132 projections resolved.
+
+| projection | d_in | lin_r | mlp_r | gain |
+|---|---|---|---|---|
+| attn.c_proj | 1408 | 0.263 | 0.413 | **+0.150** |
+| attn.c_k | 1408 | 0.339 | 0.480 | **+0.141** |
+| attn.c_q | 1408 | 0.328 | 0.462 | **+0.135** |
+| attn.c_v | 1408 | 0.459 | 0.579 | **+0.120** |
+| mlp.c_fc | 1408 | 0.244 | 0.298 | +0.054 |
+| mlp.c_proj | 5632 | 0.411 | 0.410 | -0.001 (13/22 resolved, discount) |
+| **resolved** | | **0.338** | **0.445** | **+0.107** |
+
+Above the 0.10 threshold, so the hypothesis holds. Two things sharpen it.
+
+**The headline is the cost, not the gain.** A rank-64 nonlinear router reaches
+0.445 where the FULL-rank (1408) linear router reaches 0.512. It recovers 87
+percent of full-rank reach at 1/22 of the cost. That is the trade none of the
+arms A through H ever made.
+
+**It is an attention phenomenon, and that is a mechanism claim rather than a
+pattern.** Attention projections gain +0.120 to +0.150; the FFN gains +0.054 and
+its output projection gains nothing. A plain linear projection has no selector at
+all, so it is addressability-limited by construction. An FFN already has one for
+free in its activation mask, so it is not. The pivot therefore holds **where
+there is no free selector**, and the correct general statement is narrower than
+the one this document opened with:
+
+> Adding a selector pays only where none already exists. Adding capacity pays
+> nowhere we have measured.
+
+That single sentence also explains the FFN allocation failure in section 3
+without any new assumption. Those arms were adding capacity next to a selector
+that was already doing the work.
+
+`reach%` climbs monotonically with depth, 41 percent at layer 0 to 72 percent at
+layer 21, and the FFN alignment excess climbs with it. Late layers are far more
+addressable than early ones, which is a second allocation axis and is untested.
+
+**The honest caveat.** +0.107 of reach is not +10.7 percent of anything. Reach
+measures what a router could predict about the demand, not the loss the model
+recovers by acting on it. The conversion factor is unknown and could be small.
+That is what group I is for.
+
 ## Status
 
-- `reach_by_router()` implemented in `scripts/conditioning_headroom.py`, behind
-  `--nonlinear-reach`, with the holdout, the permutation control, the
-  convergence diagnostic and the underpower guard.
-- Validated on synthetic targets: recovers +0.57 gain on a purely nonlinear
-  target, zero on a linear one, zero on noise, and is immune to the prediction
-  magnitude trap.
-- Not yet run on a real checkpoint. That is the next action, and it decides
-  whether the rest of this document is a research direction or a negative result.
+- `reach_by_router()` implemented in `scripts/conditioning_headroom.py` behind
+  `--nonlinear-reach`, with holdout, permutation control, convergence
+  diagnostic, per-projection resolution and an underpower guard. Validated on
+  synthetic targets: +0.57 on a purely nonlinear target, zero on a linear one,
+  zero on noise, immune to the prediction magnitude trap, and it returns the
+  wrong sign below roughly 32x d_in tokens, which is why the guard exists.
+- `--cond-router-act gelu|relu2` implemented in `ConditionedLinear`, threaded
+  through `base_train.py`, `research_compare.py` and `research_sweep.sh`. The
+  nonlinearity sits in the router's hidden layer, so it is parameter-matched and
+  FLOP-matched to the linear rank-r router it replaces. Tested in
+  `tests/test_nonlinear_router.py`: 43.8 percent of the router's output is
+  unreachable by any linear map of its signal, identity holds at init, and the
+  gradient chain behind the two zero-inits unlocks at steps 1, 2 and 3 rather
+  than trapping.
+- Sweep group `i` added: `bash scripts/p35_conditioned_sweep.sh 8 --group i`.
+  I1 is the arm, **I2 is the matched linear-router control without which I1 is
+  uninterpretable**, I3 asks whether the gain stacks across projections, I4
+  stacks it with H3's layer targeting. Read I1 against H4 at 0.925; the gap to
+  close is 0.062.
+- Not yet run.

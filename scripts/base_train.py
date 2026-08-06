@@ -415,6 +415,8 @@ parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["
                     help="35: coefficient activation, all equal to 1 at zero logits: 'centered' 1+tanh, 'linear' 1+z (unbounded, can flip sign), 'sigmoid' 2*sigmoid, 'one' c=1")
 parser.add_argument("--cond-router-rank", type=int, default=0,
                     help="35: factor the router as d_sig -> rr -> R (0 = full-rank router). The router is ~1/3 of the added params at R=256")
+parser.add_argument("--cond-router-act", type=str, default="none", choices=["none", "gelu", "relu2"],
+                    help="35: nonlinearity in the router's hidden layer (needs --cond-router-rank > 0). Same params and same FLOPs as the linear rank-rr router. conditioning_headroom.py --nonlinear-reach on dense d22 measured +0.107 held-out reach for this at r=64, +0.12 to +0.15 on every attention projection")
 parser.add_argument("--cond-chunk-size", type=int, default=0,
                     help="35: route once per chunk from its first token (0 = per token). Ignored when --cond-gate-source tied")
 parser.add_argument("--cond-mult-scale", type=float, default=-1.0,
@@ -816,6 +818,7 @@ def build_model_meta(depth):
         cond_gate_source=getattr(args, 'cond_gate_source', 'router'),
         cond_coeff_act=getattr(args, 'cond_coeff_act', 'centered'),
         cond_router_rank=getattr(args, 'cond_router_rank', 0),
+        cond_router_act=getattr(args, 'cond_router_act', 'none'),
         cond_chunk_size=getattr(args, 'cond_chunk_size', 0),
         cond_mult_scale=getattr(args, 'cond_mult_scale', -1.0),
         cond_mult_impl=getattr(args, 'cond_mult_impl', 'wy'),

@@ -123,6 +123,9 @@ class GPTConfig:
     cond_gate_source: str = 'router'  # 'router' (own proj of x) | 'tied' (reuse V^T x) | 'ctx' (context stream)
     cond_coeff_act: str = 'centered'  # 'centered' (1+tanh) | 'linear' (1+z) | 'sigmoid' (2σ)
     cond_router_rank: int = 0     # >0 factorizes the router as d_sig -> rr -> R (0 = full)
+    cond_router_act: str = 'none' # 'none' | 'gelu' | 'relu2': nonlinearity in the router's
+                                  # hidden layer. Needs cond_router_rank > 0. Same parameters
+                                  # and same FLOPs as the linear rank-rr router it replaces.
     cond_chunk_size: int = 0      # >0 routes once per chunk from its first token (0 = per token)
     cond_mult_scale: float = -1.0 # bound on |c| for the composition branch (-1 = 1/m, the stable default)
     cond_mult_impl: str = 'wy'    # 'wy' (compact, 2 GEMMs) | 'loop' (sequential reference)
@@ -585,7 +588,7 @@ RESEARCH_ALLOWED_KEYS = {
     "p36_swiglu_ffn", "p36_swiglu_mult", "cond_sites",
     # Phase 35: ConditionedLinear
     "cond_rank", "cond_mult_steps", "cond_gate_source", "cond_coeff_act",
-    "cond_router_rank", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
+    "cond_router_rank", "cond_router_act", "cond_chunk_size", "cond_mult_impl", "cond_mult_scale",
     "cond_attn_projs", "cond_layer_frac",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
@@ -5598,7 +5601,7 @@ class ConditionedLinear(nn.Module):
     def __init__(self, in_features, out_features, rank=256, mult_steps=0,
                  signal_dim=None, gate_source='router', coeff_act='centered',
                  router_rank=0, chunk_size=0, mult_impl='wy', mult_scale=-1.0,
-                 zero_init_base=False, **_ignored):
+                 zero_init_base=False, router_act='none', **_ignored):
         super().__init__()
         self.in_features  = in_features
         self.out_features = out_features
@@ -5618,6 +5621,9 @@ class ConditionedLinear(nn.Module):
             raise ValueError(f"Unknown cond_coeff_act {coeff_act!r}")
         if mult_impl not in ('wy', 'loop'):
             raise ValueError(f"Unknown cond_mult_impl {mult_impl!r}")
+        if router_act not in ('none', 'gelu', 'relu2'):
+            raise ValueError(f"Unknown cond_router_act {router_act!r}")
+        self.router_act = router_act
 
         # Every parameter is a bare nn.Parameter rather than a Linear submodule on
         # purpose: GPT.init_weights walks modules() and xavier-initializes any
@@ -5634,13 +5640,32 @@ class ConditionedLinear(nn.Module):
         # is the control that separates "conditioning" from "just more
         # nonlinearity": under 'tied' this layer is a plain gated low-rank branch
         # with no independent conditioning signal at all.
+        # router_act != 'none' puts a nonlinearity between route_down and route_w,
+        # making the router  sig -> Linear(sig_dim, rr) -> act -> Linear(rr, n_coeff)
+        # at exactly the parameter count and FLOP count of the linear rank-rr
+        # router it replaces. conditioning_headroom.py --nonlinear-reach measures
+        # this exact pair on a trained checkpoint: on dense d22 the nonlinearity
+        # raised held-out reach from 0.338 to 0.445 at r=64, +0.107 overall and
+        # +0.120 to +0.150 on every attention projection, against a permutation
+        # control of -0.024. A rank-64 nonlinear router recovers 87% of what a
+        # FULL-rank (1408) linear router reaches, at 1/22 of its cost.
+        # The bias is not decoration: without it the hidden units cannot place
+        # their nonlinearity anywhere but the origin, and the measured router had
+        # one.
         self.route_w = None
         self.route_down = None
+        self.route_b = None
         if gate_source in ('router', 'ctx'):
             if self.router_rank > 0:
                 self.route_down = nn.Parameter(torch.empty(sig_dim, self.router_rank))
                 self.route_w    = nn.Parameter(torch.empty(self.router_rank, n_coeff))
+                if router_act != 'none':
+                    self.route_b = nn.Parameter(torch.empty(self.router_rank))
             else:
+                if router_act != 'none':
+                    raise ValueError("cond_router_act needs cond_router_rank > 0: the "
+                                     "nonlinearity goes in the router's hidden layer, and a "
+                                     "full-rank router has none")
                 self.route_w    = nn.Parameter(torch.empty(sig_dim, n_coeff))
 
         # Additive branch
@@ -5664,6 +5689,8 @@ class ConditionedLinear(nn.Module):
         """Conditioning params, routed to the lower-LR gate group."""
         if self.route_down is not None:
             yield self.route_down
+        if self.route_b is not None:
+            yield self.route_b
         if self.route_w is not None:
             yield self.route_w
 
@@ -5688,6 +5715,11 @@ class ConditionedLinear(nn.Module):
         # Zero router → c ≡ 1; zero U → correction ≡ 0; random V → live dL/dU.
         if self.route_down is not None:
             nn.init.normal_(self.route_down, std=self.signal_dim ** -0.5)
+        if self.route_b is not None:
+            # Nonzero so the hidden units do not all start at the same point on
+            # the activation curve, which would make them exactly redundant and
+            # cost the router most of its rank at step 0.
+            nn.init.normal_(self.route_b, std=0.5)
         if self.route_w is not None:
             nn.init.zeros_(self.route_w)
         if self.add_v is not None:
@@ -5767,6 +5799,9 @@ class ConditionedLinear(nn.Module):
         h = norm(sig).to(dtype=dtype)  # rmsnorm: c_proj sees ReLU² activations
         if self.route_down is not None:
             h = h @ self.route_down.to(dtype=dtype)
+            if self.route_b is not None:
+                h = h + self.route_b.to(dtype=dtype)
+                h = F.gelu(h) if self.router_act == 'gelu' else torch.relu(h).square()
         c = h @ self.route_w.to(dtype=dtype)
 
         if self.chunk_size > 0:
@@ -5914,6 +5949,7 @@ def _conditioned_linear_kwargs(config):
         gate_source=gate_source,
         coeff_act=getattr(config, 'cond_coeff_act', 'centered'),
         router_rank=getattr(config, 'cond_router_rank', 0),
+        router_act=getattr(config, 'cond_router_act', 'none'),
         chunk_size=getattr(config, 'cond_chunk_size', 0),
         mult_impl=getattr(config, 'cond_mult_impl', 'wy'),
         mult_scale=getattr(config, 'cond_mult_scale', -1.0),
