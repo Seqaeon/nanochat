@@ -1,0 +1,2220 @@
+════════════════════════════════════════════════════════════
+  P35 ConditionedLinear   depth 8  D=512
+  groups: i   horizon: per-arm, sized by active params
+════════════════════════════════════════════════════════════
+WARN  I1_cond_qo_nlrouter_d8: state says done but out/sweep_p35/I1_cond_qo_nlrouter_d8 has no artifacts. Re-running.
+
+==============================================================
+  I1_cond_qo_nlrouter_d8
+  flags: --cond-rank 256 --cond-sites attn --cond-attn-projs qo --cond-gate-source router --cond-router-rank 64 --cond-router-act gelu
+==============================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Thu Aug  6 12:11:20 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000009:00:00.0 Off |                    0 |
+| N/A   35C    P0             80W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/sweep_p35/I1_cond_qo_nlrouter_d8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 703ms
+   Building nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+      Built nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+Prepared 1 package in 1.59s
+Uninstalled 1 package in 1ms
+Installed 1 package in 1ms
+ - nanochat==0.1.0 (from file:///root)
+ + nanochat==0.1.0 (from file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-08-06 12:11:41,422 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/agent-harnesses "HTTP/1.1 200 OK"
+2026-08-06 12:11:41,663 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:11:41,856 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,017 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,277 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_interface.py "HTTP/1.1 307 Temporary Redirect"
+2026-08-06 12:11:42,287 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/_C.abi3.so "HTTP/1.1 302 Found"
+2026-08-06 12:11:42,312 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,321 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_config.py "HTTP/1.1 307 Temporary Redirect"
+2026-08-06 12:11:42,348 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2Fflash_attn_interface.py "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,357 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,359 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/__init__.py "HTTP/1.1 307 Temporary Redirect"
+2026-08-06 12:11:42,392 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2Fflash_attn_config.py "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,394 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2F__init__.py "HTTP/1.1 200 OK"
+2026-08-06 12:11:42,430 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_3%2F__init__.py "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [remixed-linear]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens -1 --target-param-data-ratio 10.5 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 1 --remix-basis-gate-rank 8 --cclblock-modulation cond --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites attn --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 64 --cond-router-act gelu --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed -1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 300 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892
+2026-08-06 12:11:57,746 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:11:57,996 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:11:58,261 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-08-06 12:12:00,257 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "attn",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 64,
+  "cond_router_act": "gelu",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "cond",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false
+}
+Modulation diagnostics: no position-conditioned layers found (mode=cond)
+Checkpoints directory: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 33/37 linear layers, skipped 4 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=True)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 30,148,096
+research                : 0
+scalars                 : 16
+total                   : 130,811,408
+Estimated FLOPs per token (total):  3.161549e+08
+Estimated FLOPs per token (active): 3.161549e+08
+Estimated active params:            130,811,408
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.186851 for depth 8
+μP LR scaling OVERRIDDEN to 1.224745
+Calculated number of iterations from target data:param ratio: 1,879
+Total number of training tokens: 492,568,576
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 1.557280e+17
+Total active training FLOPs estimate: 1.557280e+17
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0806 12:12:01.224000 587 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:[W806 12:12:52.086678045 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 3.8 GB allocated
+step 00000/01879 (0.00%) | loss: 10.396853 | lrm: 0.11 | lr(adamw:7.417e-03, muon:2.134e-03) | dt: 473.70ms | tok/sec: 553,399 | bf16_mfu: 17.69 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:14:29,910 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000200.pt
+2026-08-06 12:14:29,914 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000200.json
+2026-08-06 12:14:30,964 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000200_rank0.pt
+step 00200/01879 (10.64%) | loss: 4.048115 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 301.99ms | tok/sec: 868,051 | bf16_mfu: 27.75 | epoch: 1 pq: 1 rg: 17 | total time: 1.13m | eta: 10.0m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:15:29,559 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000400.pt
+2026-08-06 12:15:29,563 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000400.json
+2026-08-06 12:15:30,560 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01879 (21.29%) | loss: 3.681224 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 304.56ms | tok/sec: 860,727 | bf16_mfu: 27.51 | epoch: 1 pq: 2 rg: 30 | total time: 2.10m | eta: 8.0m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:16:29,599 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000600.pt
+2026-08-06 12:16:29,603 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000600.json
+2026-08-06 12:16:30,647 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01879 (31.93%) | loss: 3.549548 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 312.02ms | tok/sec: 840,163 | bf16_mfu: 26.86 | epoch: 1 pq: 3 rg: 44 | total time: 3.07m | eta: 6.7m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:17:29,900 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000800.pt
+2026-08-06 12:17:29,904 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000800.json
+2026-08-06 12:17:30,911 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01879 (42.58%) | loss: 3.448571 | lrm: 0.89 | lr(adamw:5.938e-02, muon:1.709e-02) | dt: 285.33ms | tok/sec: 918,752 | bf16_mfu: 29.37 | epoch: 1 pq: 4 rg: 58 | total time: 4.05m | eta: 5.5m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:18:29,742 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001000.pt
+2026-08-06 12:18:29,746 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001000.json
+2026-08-06 12:18:30,836 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01879 (53.22%) | loss: 3.365317 | lrm: 0.73 | lr(adamw:4.899e-02, muon:1.410e-02) | dt: 300.66ms | tok/sec: 871,883 | bf16_mfu: 27.87 | epoch: 1 pq: 5 rg: 73 | total time: 5.02m | eta: 4.5m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:19:29,799 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001200.pt
+2026-08-06 12:19:29,803 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001200.json
+2026-08-06 12:19:30,790 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01879 (63.86%) | loss: 3.299620 | lrm: 0.58 | lr(adamw:3.861e-02, muon:1.111e-02) | dt: 291.94ms | tok/sec: 897,952 | bf16_mfu: 28.70 | epoch: 1 pq: 7 rg: 5 | total time: 5.99m | eta: 3.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:20:30,250 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001400.pt
+2026-08-06 12:20:30,254 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001400.json
+2026-08-06 12:20:31,270 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01879 (74.51%) | loss: 3.236301 | lrm: 0.42 | lr(adamw:2.822e-02, muon:8.119e-03) | dt: 367.97ms | tok/sec: 712,412 | bf16_mfu: 22.77 | epoch: 1 pq: 8 rg: 20 | total time: 6.97m | eta: 2.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:21:30,834 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001600.pt
+2026-08-06 12:21:30,838 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001600.json
+2026-08-06 12:21:31,805 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01879 (85.15%) | loss: 3.179203 | lrm: 0.27 | lr(adamw:1.783e-02, muon:5.130e-03) | dt: 287.32ms | tok/sec: 912,387 | bf16_mfu: 29.17 | epoch: 1 pq: 9 rg: 34 | total time: 7.95m | eta: 1.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:22:31,700 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001800.pt
+2026-08-06 12:22:31,703 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001800.json
+2026-08-06 12:22:32,794 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001800_rank0.pt
+Removed previous periodic checkpoint at step 001600
+step 01800/01879 (95.80%) | loss: 3.152611 | lrm: 0.11 | lr(adamw:7.441e-03, muon:2.141e-03) | dt: 280.13ms | tok/sec: 935,791 | bf16_mfu: 29.91 | epoch: 1 pq: 10 rg: 48 | total time: 8.93m | eta: 0.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+step 01878/01879 (99.95%) | loss: 3.130971 | lrm: 0.05 | lr(adamw:3.390e-03, muon:9.754e-04) | dt: 268.72ms | tok/sec: 975,533 | bf16_mfu: 31.19 | epoch: 1 pq: 11 rg: 3 | total time: 9.32m | eta: 0.0m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 01879 | Validation bpb: 0.950388 | val_loss: 3.117444
+<|bos|>The capital of France is the capital of the world. It is the capital of the world. It is
+<|bos|>The chemical symbol of gold is gold. It is a symbol of gold's purity and purity. It is also
+<|bos|>If yesterday was Friday, then tomorrow will be Friday. The next day will be Friday. The next day will be Friday.
+<|bos|>The opposite of hot is the hot water. The hot water is the hot water that is used to boil
+<|bos|>The planets of the solar system are: 1. The solar system is a planet of the solar system. 2
+<|bos|>My favorite color is the red, which is a red color. I have a red color for the
+<|bos|>If 5*x + 3 = 13, then x is the number of times the number of times the number of times the number of times
+2026-08-06 12:23:57,689 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001879.pt
+2026-08-06 12:23:57,692 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001879.json
+2026-08-06 12:23:58,675 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001879_rank0.pt
+step 01879/01879 (final) | loss: 3.130971 | early_stop: 0
+Peak memory usage: 120025.03MiB
+Total training time: 9.32m
+Minimum validation bpb: 0.950388
+Minimum validation loss (nats/byte): 3.117444
+Final Validation BPB for remixed-linear: 0.9504
+
+--- Generating Report ---
+Saved plot to out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/comparison_depth_8.png
+Saved TSV data to out/sweep_p35/I1_cond_qo_nlrouter_d8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/sweep_p35/I1_cond_qo_nlrouter_d8
+================================================================
+OK    I1_cond_qo_nlrouter_d8
+WARN  I2_cond_qo_linrouter_d8: state says done but out/sweep_p35/I2_cond_qo_linrouter_d8 has no artifacts. Re-running.
+
+==============================================================
+  I2_cond_qo_linrouter_d8
+  flags: --cond-rank 256 --cond-sites attn --cond-attn-projs qo --cond-gate-source router --cond-router-rank 64 --cond-router-act none
+==============================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Thu Aug  6 12:24:06 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000009:00:00.0 Off |                    0 |
+| N/A   41C    P0             83W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/sweep_p35/I2_cond_qo_linrouter_d8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 356ms
+   Building nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+      Built nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+Prepared 1 package in 1.05s
+Uninstalled 1 package in 1ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-08-06 12:24:18,262 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:24:18,434 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:24:18,605 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [remixed-linear]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens -1 --target-param-data-ratio 10.5 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 1 --remix-basis-gate-rank 8 --cclblock-modulation cond --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites attn --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 64 --cond-router-act none --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed -1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 300 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892
+2026-08-06 12:24:26,701 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:24:26,857 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:24:27,028 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-08-06 12:24:28,431 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "attn",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 64,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "cond",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false
+}
+Modulation diagnostics: no position-conditioned layers found (mode=cond)
+Checkpoints directory: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 33/37 linear layers, skipped 4 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=True)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 30,147,072
+research                : 0
+scalars                 : 16
+total                   : 130,810,384
+Estimated FLOPs per token (total):  3.161487e+08
+Estimated FLOPs per token (active): 3.161487e+08
+Estimated active params:            130,810,384
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.186850 for depth 8
+μP LR scaling OVERRIDDEN to 1.224745
+Calculated number of iterations from target data:param ratio: 1,879
+Total number of training tokens: 492,568,576
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 1.557249e+17
+Total active training FLOPs estimate: 1.557249e+17
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0806 12:24:29.075000 35809 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:[W806 12:25:21.444367074 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 3.8 GB allocated
+step 00000/01879 (0.00%) | loss: 10.398941 | lrm: 0.11 | lr(adamw:7.417e-03, muon:2.134e-03) | dt: 477.29ms | tok/sec: 549,232 | bf16_mfu: 17.56 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:26:35,947 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000200.pt
+2026-08-06 12:26:35,951 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000200.json
+2026-08-06 12:26:36,923 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000200_rank0.pt
+step 00200/01879 (10.64%) | loss: 4.058285 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 289.80ms | tok/sec: 904,574 | bf16_mfu: 28.92 | epoch: 1 pq: 1 rg: 17 | total time: 0.87m | eta: 7.7m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:27:32,306 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000400.pt
+2026-08-06 12:27:32,310 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000400.json
+2026-08-06 12:27:33,275 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01879 (21.29%) | loss: 3.689358 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 269.07ms | tok/sec: 974,272 | bf16_mfu: 31.14 | epoch: 1 pq: 2 rg: 30 | total time: 1.78m | eta: 6.8m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:28:29,542 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000600.pt
+2026-08-06 12:28:29,546 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000600.json
+2026-08-06 12:28:30,928 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01879 (31.93%) | loss: 3.558011 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 291.87ms | tok/sec: 898,158 | bf16_mfu: 28.71 | epoch: 1 pq: 3 rg: 44 | total time: 2.71m | eta: 5.9m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:29:27,031 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000800.pt
+2026-08-06 12:29:27,034 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000800.json
+2026-08-06 12:29:28,040 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01879 (42.58%) | loss: 3.455813 | lrm: 0.89 | lr(adamw:5.938e-02, muon:1.709e-02) | dt: 260.14ms | tok/sec: 1,007,700 | bf16_mfu: 32.21 | epoch: 1 pq: 4 rg: 58 | total time: 3.63m | eta: 5.0m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:30:22,766 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001000.pt
+2026-08-06 12:30:22,769 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001000.json
+2026-08-06 12:30:23,752 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01879 (53.22%) | loss: 3.370612 | lrm: 0.73 | lr(adamw:4.899e-02, muon:1.410e-02) | dt: 280.52ms | tok/sec: 934,489 | bf16_mfu: 29.87 | epoch: 1 pq: 5 rg: 73 | total time: 4.53m | eta: 4.0m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:31:24,580 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001200.pt
+2026-08-06 12:31:24,583 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001200.json
+2026-08-06 12:31:25,569 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01879 (63.86%) | loss: 3.305004 | lrm: 0.58 | lr(adamw:3.861e-02, muon:1.111e-02) | dt: 291.18ms | tok/sec: 900,293 | bf16_mfu: 28.78 | epoch: 1 pq: 7 rg: 5 | total time: 5.54m | eta: 3.2m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:32:22,078 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001400.pt
+2026-08-06 12:32:22,082 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001400.json
+2026-08-06 12:32:23,068 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01879 (74.51%) | loss: 3.241063 | lrm: 0.42 | lr(adamw:2.822e-02, muon:8.119e-03) | dt: 355.64ms | tok/sec: 737,100 | bf16_mfu: 23.56 | epoch: 1 pq: 8 rg: 20 | total time: 6.47m | eta: 2.2m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:33:19,443 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001600.pt
+2026-08-06 12:33:19,447 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001600.json
+2026-08-06 12:33:20,397 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01879 (85.15%) | loss: 3.185217 | lrm: 0.27 | lr(adamw:1.783e-02, muon:5.130e-03) | dt: 270.67ms | tok/sec: 968,498 | bf16_mfu: 30.96 | epoch: 1 pq: 9 rg: 34 | total time: 7.39m | eta: 1.3m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:34:16,722 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001800.pt
+2026-08-06 12:34:16,725 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001800.json
+2026-08-06 12:34:17,735 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001800_rank0.pt
+Removed previous periodic checkpoint at step 001600
+step 01800/01879 (95.80%) | loss: 3.157196 | lrm: 0.11 | lr(adamw:7.441e-03, muon:2.141e-03) | dt: 258.19ms | tok/sec: 1,015,322 | bf16_mfu: 32.46 | epoch: 1 pq: 10 rg: 48 | total time: 8.32m | eta: 0.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+step 01878/01879 (99.95%) | loss: 3.135375 | lrm: 0.05 | lr(adamw:3.390e-03, muon:9.754e-04) | dt: 253.05ms | tok/sec: 1,035,940 | bf16_mfu: 33.12 | epoch: 1 pq: 11 rg: 3 | total time: 8.68m | eta: 0.0m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 01879 | Validation bpb: 0.951678 | val_loss: 3.121674
+<|bos|>The capital of France is the capital of the world. The capital of the world is the capital of the
+<|bos|>The chemical symbol of gold is gold. The symbol of gold is gold. The symbol of gold is gold.
+<|bos|>If yesterday was Friday, then tomorrow will be Friday. The first day of the week is the first day of the week.
+<|bos|>The opposite of hot is the hot. The hot is the hot. The hot is the cold. The
+<|bos|>The planets of the solar system are: 1. The sun is the sun's most abundant source of energy. 
+<|bos|>My favorite color is red, but I love the color of the color. I love the color of
+<|bos|>If 5*x + 3 = 13, then x is 5*x + 3 = 13. If 5*x
+2026-08-06 12:35:36,573 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001879.pt
+2026-08-06 12:35:36,576 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001879.json
+2026-08-06 12:35:37,700 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001879_rank0.pt
+step 01879/01879 (final) | loss: 3.135375 | early_stop: 0
+Peak memory usage: 119513.00MiB
+Total training time: 8.68m
+Minimum validation bpb: 0.951678
+Minimum validation loss (nats/byte): 3.121674
+Final Validation BPB for remixed-linear: 0.9517
+
+--- Generating Report ---
+Saved plot to out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/comparison_depth_8.png
+Saved TSV data to out/sweep_p35/I2_cond_qo_linrouter_d8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/sweep_p35/I2_cond_qo_linrouter_d8
+================================================================
+OK    I2_cond_qo_linrouter_d8
+WARN  I3_cond_all_nlrouter_d8: state says done but out/sweep_p35/I3_cond_all_nlrouter_d8 has no artifacts. Re-running.
+
+==============================================================
+  I3_cond_all_nlrouter_d8
+  flags: --cond-rank 256 --cond-sites attn --cond-attn-projs qkvo --cond-gate-source router --cond-router-rank 64 --cond-router-act gelu
+==============================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Thu Aug  6 12:35:44 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000009:00:00.0 Off |                    0 |
+| N/A   42C    P0             83W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/sweep_p35/I3_cond_all_nlrouter_d8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 363ms
+   Building nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+      Built nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+Prepared 1 package in 1.08s
+Uninstalled 1 package in 0.74ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-08-06 12:35:58,575 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:35:58,770 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:35:58,945 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [remixed-linear]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens -1 --target-param-data-ratio 10.5 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 1 --remix-basis-gate-rank 8 --cclblock-modulation cond --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites attn --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 64 --cond-router-act gelu --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qkvo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed -1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 300 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892
+2026-08-06 12:36:07,347 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:36:07,526 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:36:07,688 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-08-06 12:36:09,294 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "attn",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 64,
+  "cond_router_act": "gelu",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "cond",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false
+}
+Modulation diagnostics: no position-conditioned layers found (mode=cond)
+Checkpoints directory: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 17/21 linear layers, skipped 4 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=True)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 35,129,856
+research                : 0
+scalars                 : 16
+total                   : 135,793,168
+Estimated FLOPs per token (total):  3.460454e+08
+Estimated FLOPs per token (active): 3.460454e+08
+Estimated active params:            135,793,168
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.189277 for depth 8
+μP LR scaling OVERRIDDEN to 1.224745
+Calculated number of iterations from target data:param ratio: 2,079
+Total number of training tokens: 544,997,376
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 1.885939e+17
+Total active training FLOPs estimate: 1.885939e+17
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0806 12:36:09.992000 4878 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:[W806 12:37:04.981207878 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 3.9 GB allocated
+step 00000/02079 (0.00%) | loss: 10.397631 | lrm: 0.10 | lr(adamw:6.676e-03, muon:1.921e-03) | dt: 587.22ms | tok/sec: 446,417 | bf16_mfu: 15.62 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:38:38,425 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000200.pt
+2026-08-06 12:38:38,428 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000200.json
+2026-08-06 12:38:39,473 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000200_rank0.pt
+step 00200/02079 (9.62%) | loss: 4.053338 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 363.33ms | tok/sec: 721,512 | bf16_mfu: 25.25 | epoch: 1 pq: 1 rg: 17 | total time: 1.13m | eta: 11.2m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:39:51,048 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000400.pt
+2026-08-06 12:39:51,051 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000400.json
+2026-08-06 12:39:52,073 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/02079 (19.24%) | loss: 3.682337 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 355.36ms | tok/sec: 737,680 | bf16_mfu: 25.81 | epoch: 1 pq: 2 rg: 30 | total time: 2.32m | eta: 10.0m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:41:04,193 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000600.pt
+2026-08-06 12:41:04,196 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000600.json
+2026-08-06 12:41:05,330 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/02079 (28.86%) | loss: 3.548987 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 373.72ms | tok/sec: 701,451 | bf16_mfu: 24.54 | epoch: 1 pq: 3 rg: 44 | total time: 3.51m | eta: 8.8m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:42:18,209 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000800.pt
+2026-08-06 12:42:18,212 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000800.json
+2026-08-06 12:42:19,207 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/02079 (38.48%) | loss: 3.456820 | lrm: 0.95 | lr(adamw:6.338e-02, muon:1.824e-02) | dt: 360.94ms | tok/sec: 726,273 | bf16_mfu: 25.41 | epoch: 1 pq: 4 rg: 58 | total time: 4.71m | eta: 7.6m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:43:31,506 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001000.pt
+2026-08-06 12:43:31,510 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001000.json
+2026-08-06 12:43:32,589 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/02079 (48.10%) | loss: 3.372464 | lrm: 0.81 | lr(adamw:5.399e-02, muon:1.553e-02) | dt: 379.75ms | tok/sec: 690,314 | bf16_mfu: 24.15 | epoch: 1 pq: 5 rg: 73 | total time: 5.90m | eta: 6.4m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:44:44,987 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001200.pt
+2026-08-06 12:44:44,990 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001200.json
+2026-08-06 12:44:45,968 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/02079 (57.72%) | loss: 3.308882 | lrm: 0.67 | lr(adamw:4.460e-02, muon:1.283e-02) | dt: 364.08ms | tok/sec: 720,026 | bf16_mfu: 25.19 | epoch: 1 pq: 7 rg: 5 | total time: 7.10m | eta: 5.2m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:46:00,766 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001400.pt
+2026-08-06 12:46:00,769 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001400.json
+2026-08-06 12:46:01,883 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/02079 (67.34%) | loss: 3.245290 | lrm: 0.53 | lr(adamw:3.521e-02, muon:1.013e-02) | dt: 440.56ms | tok/sec: 595,030 | bf16_mfu: 20.82 | epoch: 1 pq: 8 rg: 20 | total time: 8.33m | eta: 4.1m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:47:13,636 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001600.pt
+2026-08-06 12:47:13,640 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001600.json
+2026-08-06 12:47:14,659 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/02079 (76.96%) | loss: 3.191302 | lrm: 0.39 | lr(adamw:2.582e-02, muon:7.430e-03) | dt: 357.88ms | tok/sec: 732,498 | bf16_mfu: 25.63 | epoch: 1 pq: 9 rg: 34 | total time: 9.51m | eta: 2.9m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:48:26,621 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001800.pt
+2026-08-06 12:48:26,624 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001800.json
+2026-08-06 12:48:27,598 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001800_rank0.pt
+Removed previous periodic checkpoint at step 001600
+step 01800/02079 (86.58%) | loss: 3.159381 | lrm: 0.25 | lr(adamw:1.643e-02, muon:4.729e-03) | dt: 345.61ms | tok/sec: 758,492 | bf16_mfu: 26.54 | epoch: 1 pq: 10 rg: 48 | total time: 10.70m | eta: 1.7m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+<|bos|>The capital of France is the French capital of France. The capital of France is the French capital of France
+<|bos|>The chemical symbol of gold is gold. It is a symbol of purity and purity. It is also used in
+<|bos|>If yesterday was Friday, then tomorrow will be Friday. The day will be Friday, and the day will be Friday. The
+<|bos|>The opposite of hot is the opposite of cold. The opposite of hot is the opposite of cold. The
+<|bos|>The planets of the solar system are: 1) the Sun, 2) the Earth, 3) the
+<|bos|>My favorite color is red. I love red. I love blue. I love red. I love
+<|bos|>If 5*x + 3 = 13, then x is 13. If 5*x + 3 = 13, then
+2026-08-06 12:49:41,043 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_002000.pt
+2026-08-06 12:49:41,046 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_002000.json
+2026-08-06 12:49:42,052 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_002000_rank0.pt
+Removed previous periodic checkpoint at step 001800
+step 02000/02079 (96.20%) | loss: 3.100525 | lrm: 0.11 | lr(adamw:7.046e-03, muon:2.027e-03) | dt: 351.67ms | tok/sec: 745,431 | bf16_mfu: 26.08 | epoch: 1 pq: 11 rg: 62 | total time: 11.89m | eta: 0.5m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+step 02078/02079 (99.95%) | loss: 3.086155 | lrm: 0.05 | lr(adamw:3.385e-03, muon:9.739e-04) | dt: 377.83ms | tok/sec: 693,823 | bf16_mfu: 24.28 | epoch: 1 pq: 12 rg: 18 | total time: 12.36m | eta: 0.0m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 02079 | Validation bpb: 0.940915 | val_loss: 3.086370
+<|bos|>The capital of France is the French capital of France. The capital of France is the French capital of France
+<|bos|>The chemical symbol of gold is gold. It is a symbol of purity and purity. It is also a symbol
+<|bos|>If yesterday was Friday, then tomorrow will be Friday. The day will be Friday, and the day will be Friday. The
+<|bos|>The opposite of hot is the opposite of cold. The opposite of hot is the opposite of cold. The
+<|bos|>The planets of the solar system are: 1. The Sun, 2. The Earth, 3. The
+<|bos|>My favorite color is red. I love red. I love blue. I love blue. I love
+<|bos|>If 5*x + 3 = 13, then x is 13. If 5*x + 3 = 13, then
+2026-08-06 12:51:20,764 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_002079.pt
+2026-08-06 12:51:20,768 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_002079.json
+2026-08-06 12:51:21,813 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_002079_rank0.pt
+step 02079/02079 (final) | loss: 3.086155 | early_stop: 0
+Peak memory usage: 126300.66MiB
+Total training time: 12.36m
+Minimum validation bpb: 0.940915
+Minimum validation loss (nats/byte): 3.086370
+Final Validation BPB for remixed-linear: 0.9409
+
+--- Generating Report ---
+Saved plot to out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/comparison_depth_8.png
+Saved TSV data to out/sweep_p35/I3_cond_all_nlrouter_d8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/sweep_p35/I3_cond_all_nlrouter_d8
+================================================================
+OK    I3_cond_all_nlrouter_d8
+WARN  I4_cond_qo_nl_early_d8: state says done but out/sweep_p35/I4_cond_qo_nl_early_d8 has no artifacts. Re-running.
+
+==============================================================
+  I4_cond_qo_nl_early_d8
+  flags: --cond-rank 256 --cond-sites attn --cond-attn-projs qo --cond-gate-source router --cond-router-rank 64 --cond-router-act gelu --cond-layer-frac 0.5
+==============================================================
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Thu Aug  6 12:51:29 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000009:00:00.0 Off |                    0 |
+| N/A   42C    P0             83W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/sweep_p35/I4_cond_qo_nl_early_d8
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 344ms
+   Building nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+      Built nanochat @ file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6
+Prepared 1 package in 1.08s
+Uninstalled 1 package in 0.75ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 8
+================================================================
+2026-08-06 12:51:41,222 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:51:41,381 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:51:41,553 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 8
+Target Tokens: Auto (per-model param count)
+================================================================
+  Overriding default target_dim (128) with full model_dim 512
+
+--- Training remixed-linear ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [remixed-linear]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 8 --aspect-ratio 64 --head-dim 128 --model-dim 512 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens -1 --target-param-data-ratio 10.5 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 1 --remix-basis-gate-rank 8 --cclblock-modulation cond --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites attn --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 64 --cond-router-act gelu --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qo --cond-layer-frac 0.5 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed -1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --compile --fp8 --tokenizer-dir tokenizer --data-dir data --max-shards 300 --use-remix-linear --moe-embed-dim 512 --moe-router-dim 512 --remix-context-dim 512 --remix-basis-size 512 --embedding-lr 0.104074 --unembedding-lr 0.0245175 --matrix-lr 0.0329274 --scalar-lr 0.152507 --checkpoints-dir /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear --model-tag remixed-linear --mu-p-scale-override 1.2247448713915892
+2026-08-06 12:51:49,592 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-08-06 12:51:49,757 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-08-06 12:51:49,933 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-08-06 12:51:51,203 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 8,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 512,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 512,
+  "moe_embed_dim": 512,
+  "dropout": 0.0,
+  "use_remix_linear": true,
+  "remix_context_dim": 512,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 512,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "attn",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 64,
+  "cond_router_act": "gelu",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qo",
+  "cond_layer_frac": 0.5,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": 256,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "cond",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false
+}
+Modulation diagnostics: no position-conditioned layers found (mode=cond)
+Checkpoints directory: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear
+✓ FP8 training enabled (tensorwise scaling) - converted 41/45 linear layers, skipped 4 (too small)
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=True)
+Parameter counts:
+wte                     : 16,777,216
+wpe                     : 0
+value_embeds            : 67,108,864
+lm_head                 : 16,777,216
+transformer_matrices    : 27,657,216
+research                : 0
+scalars                 : 16
+total                   : 128,320,528
+Estimated FLOPs per token (total):  3.012096e+08
+Estimated FLOPs per token (active): 3.012096e+08
+Estimated active params:            128,320,528
+remix_context_dim auto-scaled to 512 (n_embd=512 // ratio=6)
+router_context_window auto-capped to 256 (sequence_len=2048 > 512). Set router_context_window explicitly to override.
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.185434 for depth 8
+μP LR scaling OVERRIDDEN to 1.224745
+Calculated number of iterations from target data:param ratio: 1,779
+Total number of training tokens: 466,354,176
+Tokens : Scaling params ratio: 10.50
+Total training FLOPs estimate: 1.404704e+17
+Total active training FLOPs estimate: 1.404704e+17
+Research mode with OneCycle disabled: using base warmup/flat/warmdown schedule
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0806 12:51:51.849000 42021 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:[W806 12:52:35.622489620 reducer.cpp:1431] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+Warmup complete. Steady-state VRAM: 3.5 GB allocated
+step 00000/01779 (0.00%) | loss: 10.399250 | lrm: 0.11 | lr(adamw:7.417e-03, muon:2.134e-03) | dt: 383.99ms | tok/sec: 682,688 | bf16_mfu: 20.79 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:53:48,512 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000200.pt
+2026-08-06 12:53:48,515 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000200.json
+2026-08-06 12:53:49,585 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000200_rank0.pt
+step 00200/01779 (11.24%) | loss: 4.048315 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 235.19ms | tok/sec: 1,114,606 | bf16_mfu: 33.95 | epoch: 1 pq: 1 rg: 17 | total time: 0.76m | eta: 6.3m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:54:38,172 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000400.pt
+2026-08-06 12:54:38,175 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000400.json
+2026-08-06 12:54:39,177 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/01779 (22.48%) | loss: 3.696859 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 236.06ms | tok/sec: 1,110,508 | bf16_mfu: 33.82 | epoch: 1 pq: 2 rg: 30 | total time: 1.56m | eta: 5.5m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:55:27,600 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000600.pt
+2026-08-06 12:55:27,603 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000600.json
+2026-08-06 12:55:28,711 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000600_rank0.pt
+Removed previous periodic checkpoint at step 000400
+step 00600/01779 (33.73%) | loss: 3.558882 | lrm: 1.00 | lr(adamw:6.676e-02, muon:1.921e-02) | dt: 231.18ms | tok/sec: 1,133,939 | bf16_mfu: 34.54 | epoch: 1 pq: 3 rg: 44 | total time: 2.35m | eta: 4.7m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:56:17,139 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_000800.pt
+2026-08-06 12:56:17,142 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_000800.json
+2026-08-06 12:56:18,074 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_000800_rank0.pt
+Removed previous periodic checkpoint at step 000600
+step 00800/01779 (44.97%) | loss: 3.451157 | lrm: 0.85 | lr(adamw:5.705e-02, muon:1.641e-02) | dt: 233.26ms | tok/sec: 1,123,822 | bf16_mfu: 34.23 | epoch: 1 pq: 4 rg: 58 | total time: 3.15m | eta: 3.9m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:57:06,541 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001000.pt
+2026-08-06 12:57:06,545 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001000.json
+2026-08-06 12:57:07,610 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001000_rank0.pt
+Removed previous periodic checkpoint at step 000800
+step 01000/01779 (56.21%) | loss: 3.365085 | lrm: 0.69 | lr(adamw:4.607e-02, muon:1.326e-02) | dt: 237.04ms | tok/sec: 1,105,895 | bf16_mfu: 33.68 | epoch: 1 pq: 5 rg: 73 | total time: 3.95m | eta: 3.1m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:57:56,152 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001200.pt
+2026-08-06 12:57:56,156 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001200.json
+2026-08-06 12:57:57,178 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001200_rank0.pt
+Removed previous periodic checkpoint at step 001000
+step 01200/01779 (67.45%) | loss: 3.298000 | lrm: 0.53 | lr(adamw:3.510e-02, muon:1.010e-02) | dt: 231.80ms | tok/sec: 1,130,896 | bf16_mfu: 34.44 | epoch: 1 pq: 7 rg: 5 | total time: 4.75m | eta: 2.3m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:58:45,698 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001400.pt
+2026-08-06 12:58:45,701 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001400.json
+2026-08-06 12:58:46,733 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001400_rank0.pt
+Removed previous periodic checkpoint at step 001200
+step 01400/01779 (78.70%) | loss: 3.232779 | lrm: 0.36 | lr(adamw:2.413e-02, muon:6.943e-03) | dt: 246.18ms | tok/sec: 1,064,853 | bf16_mfu: 32.43 | epoch: 1 pq: 8 rg: 20 | total time: 5.54m | eta: 1.5m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+2026-08-06 12:59:35,126 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001600.pt
+2026-08-06 12:59:35,129 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001600.json
+2026-08-06 12:59:36,059 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001600_rank0.pt
+Removed previous periodic checkpoint at step 001400
+step 01600/01779 (89.94%) | loss: 3.178958 | lrm: 0.20 | lr(adamw:1.316e-02, muon:3.786e-03) | dt: 239.61ms | tok/sec: 1,094,059 | bf16_mfu: 33.32 | epoch: 1 pq: 9 rg: 34 | total time: 6.34m | eta: 0.7m
+  gate_stats | layers=0  | basis µ=nan σ=nan dead=nan% sat=nan% | out µ=nan σ=nan | ∇gate=0.000e+00 ∇struct=0.000e+00
+step 01778/01779 (99.94%) | loss: 3.133128 | lrm: 0.05 | lr(adamw:3.393e-03, muon:9.762e-04) | dt: 240.52ms | tok/sec: 1,089,887 | bf16_mfu: 33.19 | epoch: 1 pq: 10 rg: 38 | total time: 7.05m | eta: 0.0m
+/usr/local/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:1598: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+Step 01779 | Validation bpb: 0.956476 | val_loss: 3.137414
+<|bos|>The capital of France is the capital of the country. The capital of France is the capital of the country
+<|bos|>The chemical symbol of gold is gold. It is a symbol of gold. It is a symbol of gold.
+<|bos|>If yesterday was Friday, then tomorrow will be Friday. If tomorrow was Friday, then tomorrow will be Friday. If tomorrow was
+<|bos|>The opposite of hot is the fact that the temperature of the hot water is 100 degrees Celsius.
+<|bos|>The planets of the solar system are: Jupiter, Saturn, and Saturn. The planets of the solar system are: Jupiter
+<|bos|>My favorite color is the red. I've been using red for a while now, but I've
+<|bos|>If 5*x + 3 = 13, then x is the number of times the number of times the number of times the number of times
+2026-08-06 13:01:10,407 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/model_001779.pt
+2026-08-06 13:01:10,411 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/meta_001779.json
+2026-08-06 13:01:11,341 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-q9X3cVMlvxtARa1XtZDdx6/out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/ckpt_remixed-linear/remixed-linear/optim_001779_rank0.pt
+step 01779/01779 (final) | loss: 3.133128 | early_stop: 0
+Peak memory usage: 109455.47MiB
+Total training time: 7.05m
+Minimum validation bpb: 0.956476
+Minimum validation loss (nats/byte): 3.137414
+Final Validation BPB for remixed-linear: 0.9565
+
+--- Generating Report ---
+Saved plot to out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/comparison_depth_8.png
+Saved TSV data to out/sweep_p35/I4_cond_qo_nl_early_d8/depth_8/results_depth_8.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/sweep_p35/I4_cond_qo_nl_early_d8
+================================================================
+OK    I4_cond_qo_nl_early_d8
+

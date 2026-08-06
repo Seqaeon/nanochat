@@ -73,7 +73,7 @@ export TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}"
 FORCE=0
 SHOW_STATUS=0
 REDO=""
-RUN_GROUPS="a b c d e"   # f and g are opt-in: run it explicitly at depth 12
+RUN_GROUPS="a b c d e"   # f g h i j are opt-in: name them with --group
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
@@ -487,6 +487,50 @@ if [[ "$RUN_GROUPS" == *i* ]]; then
         --cond-gate-source router --cond-router-rank 64 --cond-router-act gelu
     run "I4_cond_qo_nl_early_d${DEPTH}"  "$COND_COMMON" $I_BASE \
         --cond-router-act gelu --cond-layer-frac 0.5
+fi
+
+#
+# ── J. shrink the operator, keep the selector ────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group j
+#
+# Group I result at d8, against dense 0.960236 at 1.260714e17:
+#
+#   arm                          bpb        dC     mult
+#   H4  qo, tied, no router   0.954680   +19.7%   0.925
+#   I2  qo, LINEAR r64        0.951678   +23.5%   0.947
+#   I1  qo, GELU r64          0.950388   +23.5%   0.969   <- best arm to date
+#   I4  I1 + early half       0.956476   +11.4%   0.961
+#   I3  qkvo, GELU r64        0.940915   +49.6%   0.954
+#
+# Two clean steps of +0.022, and 0.031 left to dense. But I1 minus I2 is
+# 0.00129 bpb against a 0.0013 noise floor, so the nonlinearity is a ONE SIGMA
+# effect on one pair of runs. It is not bankable yet, which is why J1b exists.
+#
+# The larger lever is the other half of the layer. The additive branch is 84% of
+# the added parameters, and the demand measurement says R=256 is oversized for
+# these two projections: c_q carries 132-176 DOF and c_proj 82-265. Cutting R
+# takes compute out of the operator while leaving the selector alone, which is
+# the whole thesis of the pivot stated as an experiment. Holding I1's bpb fixed:
+#
+#   R=192 -> 0.999    R=128 -> 1.030    R=96 -> 1.046
+#
+# bpb will not hold exactly; the question is whether it holds well enough. If
+# J1 lands at or above 1.0 that is the first arm in this programme to beat dense
+# on FLOPs per BPB, and R=96 is the next step down.
+if [[ "$RUN_GROUPS" == *j* ]]; then
+    J_BASE="--cond-sites attn --cond-attn-projs qo \
+            --cond-gate-source router --cond-router-rank 64"
+    # J1: I1 with the operator cut in half. The arm that can cross 1.0.
+    run "J1_cond_qo_nl_R128_d${DEPTH}"  "$COND_COMMON" $J_BASE \
+        --cond-rank 128 --cond-router-act gelu
+    # J1b: THE SECOND MATCHED PAIR. Same as J1 with a linear router, so
+    # J1 minus J1b is an independent replicate of I1 minus I2 at a different R.
+    # Two pairs agreeing turns a one-sigma effect into a result.
+    run "J1b_cond_qo_lin_R128_d${DEPTH}" "$COND_COMMON" $J_BASE \
+        --cond-rank 128 --cond-router-act none
+    # J2: the intermediate rank, to locate the knee if J1 loses quality.
+    run "J2_cond_qo_nl_R192_d${DEPTH}"  "$COND_COMMON" $J_BASE \
+        --cond-rank 192 --cond-router-act gelu
 fi
 
 echo ""
