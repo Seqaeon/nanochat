@@ -160,9 +160,15 @@ before a single training run is spent on one. The default r=64 matches the
 `--cond-router-rank 64` arm we already have a result for.
 
 ```
-python -m scripts.conditioning_headroom --checkpoint DIR --tokens 32768 \
+python -m scripts.conditioning_headroom --checkpoint DIR \
+    --tokens 49152 --gram-tokens 4096 \
     --nonlinear-reach --reach-rank 64 --json out/reach.json
 ```
+
+`--tokens` and `--gram-tokens` are separate on purpose. The Gram spectra are
+N x N eigendecompositions that converge at a few thousand tokens and are what
+`headroom_results.log` already used; at N=32768 that matrix is 8.6 GB in float64
+and cusolver's workspace query fails. Only the router fit needs the large sample.
 
 Two methodological points that the implementation had to get right, both found by
 testing the estimator against synthetic targets with known answers:
@@ -174,6 +180,12 @@ testing the estimator against synthetic targets with known answers:
   that had learned only the training mean scored +0.27 on the permutation
   control, because the predicted gradient `c x_t^T` varies with `x_t` even when
   `c` does not.
+- **Projections do not all resolve at once.** `d_in` varies by 4x across
+  projection types, because `mlp.c_proj` reads the FFN hidden width rather than
+  the model dimension. At any given `--tokens` the narrow projections resolve and
+  that one does not, so resolution is tested per projection using its own
+  permutation control, the gain is averaged over resolved projections only, and
+  unresolved rows are printed rather than silently folded in.
 - **The measurement needs about 32x d_in tokens.** On a synthetic target with a
   known nonlinear component, the recovered gain is +0.25 at N = 16384 and stable
   through N = 65536, but at N = 4096 it comes back at **-0.29**, the wrong sign.

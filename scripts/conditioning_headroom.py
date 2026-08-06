@@ -47,14 +47,17 @@ Usage:
     python -m scripts.conditioning_headroom --checkpoint DIR --tokens 8192 --json out/headroom.json
 
     # is the reach% ceiling the router's linearity or its capacity?
-    python -m scripts.conditioning_headroom --checkpoint DIR --tokens 32768 \
+    python -m scripts.conditioning_headroom --checkpoint DIR \
+        --tokens 49152 --gram-tokens 4096 \
         --nonlinear-reach --reach-rank 64 --json out/reach.json
 
---nonlinear-reach needs far more tokens than the rest of the report. Everything
-else is a spectrum of an N x N Gram and is fine at N=4096; the router fit is a
-regression with up to n_embd features that is scored on held out tokens, and at
-N=4096 it does not generalize at all. Use --tokens 32768 or more, and read the
-UNDERPOWERED guard before reading the gain column.
+--nonlinear-reach needs far more tokens than the rest of the report, and the two
+are separate flags for that reason. Everything else is the spectrum of an N x N
+Gram, which is fine at N=4096 and is what headroom_results.log already used; at
+N=32768 that matrix is 8.6 GB in float64 and cusolver's syevd workspace query
+fails outright. The router fit is a regression in d_in features scored on held
+out tokens, and it needs roughly 32x d_in to resolve. Raise --tokens, leave
+--gram-tokens alone, and read the UNDERPOWERED guard before the gain column.
 """
 
 import argparse
@@ -114,10 +117,36 @@ def parse_args():
                    help="cap on tokens used to SCORE (the Gram is quadratic in this). All "
                         "held-out tokens beyond the cap are dropped from scoring only; the "
                         "fit still uses every training token.")
+    p.add_argument("--gram-tokens", type=int, default=4096,
+                   help="cap on tokens used for every Gram-spectrum measurement (headroom, "
+                        "dof, top1, supply, alignment, reach%%). These are N x N eigen"
+                        "decompositions costing O(N^2) memory and O(N^3) time in float64, and "
+                        "they converge long before the router fit does: at N=32768 the matrix "
+                        "is 8.6 GB and cusolver's syevd workspace query fails outright. Only "
+                        "--nonlinear-reach needs the full --tokens, so raising --tokens for it "
+                        "does not have to drag this along. The 4096 default reproduces the "
+                        "numbers already in headroom_results.log.")
     return p.parse_args()
 
 
 # ── the measurement ──────────────────────────────────────────────────────────
+
+def _eigvalsh(M):
+    """eigvalsh that reports a bad matrix instead of dying inside cusolver.
+
+    cusolver raises CUSOLVER_STATUS_INVALID_VALUE for two unrelated reasons, a
+    non-finite entry and a workspace query it cannot satisfy, and its message
+    blames NaN in both cases. Checking finiteness first separates them, and
+    falling back to the CPU covers the size case. Returns None if the matrix is
+    genuinely not finite, which callers already treat as "no gradient here".
+    """
+    if not torch.isfinite(M).all():
+        return None
+    try:
+        return torch.linalg.eigvalsh(M).clamp(min=0.0)
+    except Exception:
+        return torch.linalg.eigvalsh(M.cpu()).clamp(min=0.0).to(M.device)
+
 
 def headroom_from_grams(X, A, eps=1e-12, want_gram=False):
     """Spectrum of the per-token weight-gradient dispersion, from activations alone.
@@ -146,7 +175,9 @@ def headroom_from_grams(X, A, eps=1e-12, want_gram=False):
     Gc = G - row - row.T + tot
     # |gbar|^2 * N is the trace the mean direction accounts for
     mean_energy = tot * N
-    evals = torch.linalg.eigvalsh(Gc).clamp(min=0.0)
+    evals = _eigvalsh(Gc)
+    if evals is None:
+        return (float('nan'),) * 3 + (N,) + ((Gc,) if want_gram else ())
     disp = evals.sum()
     total = disp + mean_energy.clamp(min=0)
     if total <= eps:
@@ -194,7 +225,9 @@ def supply_from_grams(Dact, W1, W2, eps=1e-12):
     Dc = Dact - Dact.mean(dim=0, keepdim=True)
     G = Dc @ M @ Dc.T
     G = G / G.diagonal().mean().clamp(min=eps)
-    ev = torch.linalg.eigvalsh(G).clamp(min=0.0)
+    ev = _eigvalsh(G)
+    if ev is None:
+        return 0.0, G
     tot = ev.sum()
     if tot <= eps:
         return 0.0, G
@@ -280,7 +313,9 @@ def predictable_demand(X, A, ridge=1e-3):
     tf = Gf.diagonal().sum()
     if not torch.isfinite(tf) or tf <= 0:
         return float('nan'), float('nan')
-    ev = torch.linalg.eigvalsh(Gp / Gp.diagonal().mean().clamp(min=1e-12)).clamp(min=0.0)
+    ev = _eigvalsh(Gp / Gp.diagonal().mean().clamp(min=1e-12))
+    if ev is None:
+        return float('nan'), float('nan')
     tot = ev.sum()
     pr = ((tot ** 2) / (ev.square().sum() + 1e-12)).item() if tot > 0 else 0.0
     return pr, (Gp.diagonal().sum() / tf).clamp(0, 1).item()
@@ -575,21 +610,30 @@ def main():
 
     # ── report ───────────────────────────────────────────────────────────────
     rows = []
+    ng = args.gram_tokens
+    if args.tokens > ng:
+        print(f"Gram measurements use the first {ng} tokens (--gram-tokens); "
+              f"only --nonlinear-reach uses all {args.tokens}")
     for name, (X, A, PRE) in data.items():
-        h, dof, top1, n, Gd = headroom_from_grams(X.to(device), A.to(device), want_gram=True)
+        # Two different sample sizes on purpose. The Gram spectra are N x N
+        # eigendecompositions and converge at a few thousand tokens; the router
+        # fit is a regression in d_in features and does not.
+        Xg, Ag = X[:ng].to(device), A[:ng].to(device)
+        h, dof, top1, n, Gd = headroom_from_grams(Xg, Ag, want_gram=True)
         parts = name.split('.')
         layer = int(parts[parts.index('h') + 1])
         proj = '.'.join(parts[parts.index('h') + 2:])
         sup, ali, null = 0.0, 0.0, 0.0
         if name in ffn_of and PRE is not None and h == h:
             W1, W2, gprime = ffn_of[name]
-            sup, Gs = supply_from_grams(gprime(PRE.to(device)), W1.to(device), W2.to(device))
+            sup, Gs = supply_from_grams(gprime(PRE[:ng].to(device)),
+                                        W1.to(device), W2.to(device))
             ali = alignment(Gd, Gs)
             null = alignment_null(Gd, Gs)
         reach, reach_frac = (float('nan'), float('nan'))
         router = None
         if h == h:
-            reach, reach_frac = predictable_demand(X.to(device), A.to(device))
+            reach, reach_frac = predictable_demand(Xg, Ag)
             if args.nonlinear_reach:
                 router = reach_by_router(X.to(device), A.to(device), rank=args.reach_rank,
                                          steps=args.reach_steps, holdout=args.reach_holdout,
@@ -619,8 +663,8 @@ def main():
         t = sum(x['top1'] for x in ok) / len(ok)
         if h != h:  # NaN
             verdict = "no gradient reaches this layer (see --warmup-steps)"
-        elif d > 0.5 * args.tokens:
-            verdict = f"dof unresolvable at N={args.tokens}, raise --tokens"
+        elif d > 0.5 * ng:
+            verdict = f"dof unresolvable at N={ng}, raise --gram-tokens"
         elif h < 0.05:
             verdict = "no headroom: conditioning cannot help here"
         elif t > 0.6:
@@ -692,12 +736,19 @@ def main():
         print("  the price of the nonlinearity at a router cost we already have a run for.")
         print(f"  Scores are 1 - tr(cg(A - Ahat))/tr(cg(A - abar)), so a predictor no better")
         print(f"  than a static one scores 0 and a worse one scores negative.")
-        print(f"\n  {'projection':18s} {'lin_full':>9s} {'lin_r':>8s} {'mlp_r':>8s} "
-              f"{'mlp_tr':>7s} {'mlp_null':>9s} {'gain':>8s}")
+        print("  A projection resolves only when its own permuted control is near zero.")
+        print("  d_in differs 4x across projection types here (mlp.c_proj reads the FFN")
+        print("  hidden width), so they do not all resolve at the same --tokens and one")
+        print("  unresolved projection must not be allowed to speak for the rest.")
+        print(f"\n  {'projection':18s} {'d_in':>6s} {'lin_full':>9s} {'lin_r':>8s} "
+              f"{'mlp_r':>8s} {'mlp_tr':>7s} {'mlp_null':>9s} {'gain':>8s}  ok")
 
         def agg(rs, key):
             v = [x['router'][key] for x in rs if x['router'][key] == x['router'][key]]
             return sum(v) / len(v) if v else float('nan')
+
+        def resolved(x):
+            return x['router']['mlp_null'] > -0.10
 
         by_p = {}
         for r in rt:
@@ -705,15 +756,24 @@ def main():
         for proj in sorted(by_p):
             rs = by_p[proj]
             lr, mr = agg(rs, 'lin_r'), agg(rs, 'mlp_r')
-            print(f"  {proj:18s} {agg(rs, 'lin_full'):9.3f} {lr:8.3f} {mr:8.3f} "
-                  f"{agg(rs, 'mlp_train'):7.3f} {agg(rs, 'mlp_null'):9.3f} {mr - lr:+8.3f}")
+            nok = sum(1 for x in rs if resolved(x))
+            print(f"  {proj:18s} {rs[0]['router']['d_in']:6d} {agg(rs, 'lin_full'):9.3f} "
+                  f"{lr:8.3f} {mr:8.3f} {agg(rs, 'mlp_train'):7.3f} "
+                  f"{agg(rs, 'mlp_null'):9.3f} {mr - lr:+8.3f}  {nok}/{len(rs)}")
+        ok = [x for x in rt if resolved(x)]
         lf, lr, mr, mn = (agg(rt, 'lin_full'), agg(rt, 'lin_r'),
                           agg(rt, 'mlp_r'), agg(rt, 'mlp_null'))
         mtr = agg(rt, 'mlp_train')
-        gain = mr - lr
-        print(f"  {'-' * 72}")
-        print(f"  {'model-wide':18s} {lf:9.3f} {lr:8.3f} {mr:8.3f} {mtr:7.3f} "
-              f"{mn:9.3f} {gain:+8.3f}")
+        gain = (agg(ok, 'mlp_r') - agg(ok, 'lin_r')) if ok else float('nan')
+        print(f"  {'-' * 80}")
+        print(f"  {'all':18s} {'':6s} {lf:9.3f} {lr:8.3f} {mr:8.3f} {mtr:7.3f} "
+              f"{mn:9.3f} {'':8s}  {len(ok)}/{len(rt)}")
+        if ok:
+            print(f"  {'resolved only':18s} {'':6s} {agg(ok, 'lin_full'):9.3f} "
+                  f"{agg(ok, 'lin_r'):8.3f} {agg(ok, 'mlp_r'):8.3f} "
+                  f"{agg(ok, 'mlp_train'):7.3f} {agg(ok, 'mlp_null'):9.3f} {gain:+8.3f}")
+        print("\n  The gain is taken over RESOLVED projections only. Everything else is")
+        print("  reported so an unresolved row is visible rather than silently averaged in.")
         print(f"\n  lin_full also scores {agg(rt, 'lin_full_energy'):.3f} on the legacy energy")
         print("  formula tr(G_pred)/tr(G_full), which is what headroom_results.log reports.")
         print("  The two are not comparable and the residual form is the honest one: a trained")
@@ -723,10 +783,13 @@ def main():
         n_tr, d_in_max = r0['n_train'], max(x['router']['d_in'] for x in rt)
         dof_seen = [x['dof'] for x in rt if x['dof'] == x['dof']]
         dof_mean = sum(dof_seen) / max(1, len(dof_seen))
-        if lf < 0.05 or mn < -0.10:
-            print(f"  UNDERPOWERED, no verdict. lin_full scores {lf:+.3f} and the permuted")
-            print(f"  control {mn:+.3f} on held out tokens, so nothing here generalizes and the")
-            print("  gain column is measuring fitting noise, not the router.")
+        if len(ok) < 0.5 * len(rt):
+            worst = max((x for x in rt if not resolved(x)),
+                        key=lambda x: x['router']['d_in'])
+            print(f"  UNDERPOWERED, no verdict. Only {len(ok)} of {len(rt)} projections have a")
+            print(f"  permuted control near zero, so most of the table is fitting noise. The")
+            print(f"  widest unresolved one is {worst['proj']} at d_in={worst['router']['d_in']} "
+                  f"with a control of {worst['router']['mlp_null']:+.3f}.")
             print(f"  You fit {n_tr} train tokens against up to {d_in_max} input features with a")
             print(f"  demand of ~{dof_mean:.0f} dof. Re-run with --tokens {max(32768, 32 * d_in_max)}")
             print("  or higher. On a synthetic target with a known nonlinear component, N = 32x")
@@ -789,8 +852,8 @@ def main():
     print("            architecture, routing or optimization enter the picture.")
     print("  dof       independent directions the tokens disagree along. Compare to")
     print("            K-1 for a template bank and to R for ConditionedLinear. Biased")
-    print(f"            low by 1/(1 + dof/N); at N={args.tokens} a true value of 64 reads as")
-    print(f"            {64 / (1 + 64 / args.tokens):.0f}.")
+    print(f"            low by 1/(1 + dof/N); at N={ng} a true value of 64 reads as")
+    print(f"            {64 / (1 + 64 / ng):.0f}.")
     print("  top1      share of the dispersion in its leading direction. Near 1 means")
     print("            the disagreement is essentially rank-1.")
     print(f"\n  model-wide: headroom {all_h:.4f}, dof {all_d:.1f}")
@@ -805,7 +868,7 @@ def main():
     if args.json:
         os.makedirs(os.path.dirname(args.json) or '.', exist_ok=True)
         with open(args.json, 'w') as f:
-            json.dump({'rows': rows, 'tokens': args.tokens,
+            json.dump({'rows': rows, 'tokens': args.tokens, 'gram_tokens': ng,
                        'checkpoint': args.checkpoint}, f, indent=2)
         print(f"\nwrote {args.json}")
 
