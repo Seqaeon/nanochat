@@ -280,6 +280,87 @@ measures what a router could predict about the demand, not the loss the model
 recovers by acting on it. The conversion factor is unknown and could be small.
 That is what group I is for.
 
+## The pivot failed its own controlled test
+
+Groups I, J and K ran at d8. The full picture, against dense at 0.960236 and
+1.260714e17:
+
+| arm | bpb | dC | mult |
+|---|---|---|---|
+| I1 R256 nl | 0.950388 | +23.5% | 0.969 |
+| J1 R128 nl | 0.955394 | +12.7% | 0.969 |
+| I4 nl early half | 0.956476 | +11.4% | 0.961 |
+| J2 R192 nl | 0.953522 | +18.0% | 0.958 |
+| I3 qkvo nl | 0.940915 | +49.6% | 0.954 |
+| K1 R64 rr64 | 0.958974 | +7.4% | 0.952 |
+| I2 R256 lin | 0.951678 | +23.5% | 0.947 |
+| K2 R32 rr128 | 0.959317 | +7.4% | 0.946 |
+| H3 early half | 0.953883 | +19.7% | 0.938 |
+| J1b R128 lin | 0.957577 | +12.7% | 0.931 |
+| H4 qo tied | 0.954680 | +19.7% | 0.925 |
+
+**K is the controlled test and it came back null.** K1 and K2 are 0.06 percent
+apart in cost with the budget moved from the operator to the selector and the
+nonlinearity held constant. K2 minus K1 is +0.00034 bpb, 0.26 sigma, and if
+anything the operator arm is ahead. At fixed cost it does not matter how the
+conditioning budget is split.
+
+Worse for the thesis, the whole family is flat. Excluding D1, eleven arms span
+0.925 to 0.969, which is 1.8 sigma in total. R, router rank, the operator and
+selector split, layer targeting and projection selection have all been varied
+and none of them moved the result outside noise. That is a fixed tax buying a
+fixed benefit, not a design waiting to be tuned.
+
+**One thing survived.** The router nonlinearity, in two matched pairs that share
+everything else:
+
+| pair | Δbpb | Δmult |
+|---|---|---|
+| R=256, I2 → I1 | +0.00129 | +0.023 |
+| R=128, J1b → J1 | +0.00218 | +0.038 |
+
+Mean +0.00174 bpb at 1.9 sigma, for 1024 parameters in 128.6M. The effect grew
+as the operator shrank, which is the one prediction the pivot made that held.
+
+So the corrected position is narrower again. The router's FUNCTION CLASS is
+worth something. Its CAPACITY is not, and neither is the operator's.
+
+## The last axis: what the router reads
+
+Every router in this project, and every earlier version of this measurement,
+fed the router the layer's own input. `reach_by_router(..., S=...)` now varies
+that while holding the Grams, the split, the rank and the step count fixed, so
+the difference is attributable to the signal and to nothing else.
+
+```
+python -m scripts.conditioning_headroom --checkpoint DIR \
+    --tokens 49152 --gram-tokens 4096 --nonlinear-reach \
+    --reach-signals own,late,label --json out/reach_signals.json
+```
+
+Three signals chosen to bracket the question rather than to scan it:
+
+- `own` the layer's own input, the 0.445 baseline.
+- `late` the last block's output. Not causally available to layer L here, so it
+  stands in for any lookahead or two-pass design.
+- `label` the target token embedding. Since `a_t = dL/dy_t` is a function of the
+  label, this is a strict ORACLE that no causal router can have. It separates
+  "our routers read the wrong thing" from "the demand is not a function of
+  anything a forward pass knows".
+
+The readout is pre-registered in the script:
+
+- **Nothing moves (best gain under 0.03), including the oracle.** The unreached
+  demand is minibatch and label noise, not information. No routing scheme can
+  reach it at any cost from any signal, and combined with K that closes per-token
+  operator conditioning: not the router's function class, not its capacity, not
+  its input.
+- **Only the oracle moves it.** The demand is predictable but only from the
+  label. A clean impossibility result rather than a design failure.
+- **A forward-available signal moves it.** The routers were reading the wrong
+  thing, which is a different and fixable problem from everything I through K
+  ruled out.
+
 ## Status
 
 - `reach_by_router()` implemented in `scripts/conditioning_headroom.py` behind
@@ -296,9 +377,18 @@ That is what group I is for.
   unreachable by any linear map of its signal, identity holds at init, and the
   gradient chain behind the two zero-inits unlocks at steps 1, 2 and 3 rather
   than trapping.
-- Sweep group `i` added: `bash scripts/p35_conditioned_sweep.sh 8 --group i`.
-  I1 is the arm, **I2 is the matched linear-router control without which I1 is
-  uninterpretable**, I3 asks whether the gain stacks across projections, I4
-  stacks it with H3's layer targeting. Read I1 against H4 at 0.925; the gap to
-  close is 0.062.
-- Not yet run.
+- Sweep groups `i`, `j` and `k` added to `scripts/p35_conditioned_sweep.sh`, all
+  run at d8. Each group header carries the previous group's table and its own
+  pre-registered readout, so the reasoning travels with the code.
+- `reach_by_router(..., S=...)` takes the router's input signal separately from
+  the Gram geometry, with `--reach-signals own,late,label` and
+  `collect_signals()` capturing the alternates on the same token subsample.
+  Verified on synthetic data where the demand is driven by a signal the layer
+  cannot see: reach is -0.035 from the wrong signal and +0.423 from the right
+  one, symmetric in both directions, with the null flat at -0.035 throughout.
+- **The signal comparison has not been run on a real checkpoint. It is the last
+  planned experiment in this direction.** Three of its four possible readouts
+  end the direction, two of them with a publishable negative result. That is the
+  intended design, not a defect: after roughly thirty arms across three depths
+  with nothing above 0.969, the useful thing left to establish is *why* rather
+  than to keep searching for a configuration.

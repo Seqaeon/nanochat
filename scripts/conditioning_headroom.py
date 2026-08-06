@@ -117,6 +117,15 @@ def parse_args():
                    help="cap on tokens used to SCORE (the Gram is quadratic in this). All "
                         "held-out tokens beyond the cap are dropped from scoring only; the "
                         "fit still uses every training token.")
+    p.add_argument("--reach-signals", type=str, default="own",
+                   help="comma list of signals the router reads, from own,late,label. 'own' is "
+                        "the layer's own input, which is what every router in the p35 sweep and "
+                        "every earlier version of this measurement used. 'late' is the last "
+                        "block's output, standing in for any lookahead or two-pass design. "
+                        "'label' is the target token embedding and is a strict ORACLE, since "
+                        "dL/dy depends on the label and no causal router can have it. Only the "
+                        "nonlinear fit and its control are run for the extra signals; the "
+                        "lin_r/mlp_r pair is already settled on 'own'.")
     p.add_argument("--gram-tokens", type=int, default=4096,
                    help="cap on tokens used for every Gram-spectrum measurement (headroom, "
                         "dof, top1, supply, alignment, reach%%). These are N x N eigen"
@@ -322,7 +331,7 @@ def predictable_demand(X, A, ridge=1e-3):
 
 
 def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
-                    ridge=1e-3, eps=1e-12, score_tokens=4096):
+                    ridge=1e-3, eps=1e-12, score_tokens=4096, S=None):
     """Reach as a function of the ROUTER rather than of the operator.
 
     predictable_demand() answers "how much of the demand could a full-rank LINEAR
@@ -375,12 +384,26 @@ def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
     is returned for exactly that: a low mlp_train means the optimizer failed and
     the run says nothing, not that the headroom is absent.
 
+    S IS THE SIGNAL THE ROUTER READS, and defaults to X. Every router in the p35
+    sweep, and every earlier version of this measurement, fed the router the
+    layer's own input. Group K then showed that at fixed cost it does not matter
+    how the conditioning budget is split between the operator and the router, so
+    the remaining question is not what the router COMPUTES but what it SEES.
+    Passing S separately answers that: the fits use S, while the Grams keep using
+    X because the demand is a property of the layer's real geometry and does not
+    change with the router's input. Note that a_t = dL/dy_t depends on the label,
+    so a signal carrying label information is an ORACLE and bounds what any
+    causal router could ever reach; it is there to tell an unlucky architecture
+    apart from an impossible one.
+
     Returns a dict of held out scores.
     """
     import torch.nn.functional as F
 
     dev = X.device
-    N, d_in = X.shape
+    if S is None:
+        S = X
+    N, d_in = S.shape          # d_in is the ROUTER's input width, which may differ from X's
     d_out = A.shape[1]
     n_te = max(64, int(round(holdout * N)))
     if N - n_te < 128:
@@ -388,6 +411,7 @@ def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
     idx = torch.randperm(N, generator=torch.Generator().manual_seed(seed)).to(dev)
     te, tr = idx[:n_te], idx[n_te:]
     Xtr, Atr, Xte, Ate = X[tr], A[tr], X[te], A[te]
+    Str, Ste = S[tr], S[te]
 
     # Scoring is quadratic in the number of tokens it scores on, so it is capped
     # independently of the fit. All n_train tokens are used to FIT; at most
@@ -425,12 +449,13 @@ def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
                       / base_tr).clamp(-1, 1))
 
     # lin_full: the closed form ridge, fit on the train split only so it is
-    # scored on the same tokens as the other two.
-    Xt, At = Xtr.double(), Atr.double()
+    # scored on the same tokens as the other two. Fit FROM the signal S, which is
+    # X unless the caller is asking what a differently-informed router could do.
+    Xt, At = Str.double(), Atr.double()
     Gx = Xt.T @ Xt
     Gx = Gx + ridge * Gx.diagonal().mean() * torch.eye(d_in, device=dev, dtype=Xt.dtype)
     B = torch.linalg.solve(Gx, Xt.T @ At)
-    Ahat_full = Xd @ B
+    Ahat_full = Ste.double()[:n_s] @ B
     G_pred = (Ahat_full @ Ahat_full.T).mul_(Kx)
     energy_legacy = float((((G_pred.diagonal().sum() - G_pred.sum() / n_s))
                            / t_full).clamp(0, 1))
@@ -439,8 +464,8 @@ def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
     # Standardizing x is absorbed by the first layer and scaling the target by
     # one global scalar is absorbed by the last, so neither changes the function
     # class of either predictor. Both keep Adam in a sane range.
-    xm, xs = Xtr.mean(0), Xtr.std(0).clamp(min=eps)
-    Xtr_n, Xte_n = (Xtr - xm) / xs, (Xte - xm) / xs
+    xm, xs = Str.mean(0), Str.std(0).clamp(min=eps)
+    Xtr_n, Xte_n = (Str - xm) / xs, (Ste - xm) / xs
 
     def fit(nonlinear, target):
         torch.manual_seed(seed)
@@ -480,6 +505,40 @@ def _subsample(t, n):
         return flat
     stride = flat.shape[0] // n
     return flat[::stride][:n]
+
+
+def collect_signals(model, batches, n_tokens, device):
+    """Per-token signals a router could read INSTEAD of the layer's own input.
+
+    Returned on the same token subsample as collect(), because _subsample is a
+    deterministic stride over (B*T) and every tensor here has the same (B, T)
+    layout. Two signals, chosen to bracket the question rather than to scan:
+
+      late    the last block's output. Not causally available to layer L in this
+              architecture, so it stands in for any two-pass or lookahead design.
+      label   the embedding of the TARGET token. a_t = dL/dy_t is a function of
+              the label, so this is a strict ORACLE: no causal router can have
+              it. It exists to separate "our routers read the wrong thing" from
+              "the demand is not a function of anything a forward pass knows".
+
+    If reach does not move under `late`, no rearrangement of forward information
+    helps. If it does not move under `label` either, the unreached demand is
+    minibatch noise and the ceiling is not an architecture problem at all.
+    """
+    out = {'late': [], 'label': []}
+    grab = {}
+    h = model.transformer.h[-1].register_forward_hook(
+        lambda m, i, o: grab.__setitem__('late', (o[0] if isinstance(o, tuple) else o).detach()))
+    per_batch = max(1, n_tokens // max(1, len(batches)))
+    with torch.no_grad():
+        for ids in batches:
+            model(ids, ids)
+            out['late'].append(_subsample(grab['late'], per_batch).float().cpu())
+            # targets are the next-token ids, so shift and pad the last position
+            tgt = torch.cat([ids[:, 1:], ids[:, -1:]], dim=1)
+            out['label'].append(_subsample(model.transformer.wte(tgt), per_batch).float().cpu())
+    h.remove()
+    return {k: torch.cat(v)[:n_tokens] for k, v in out.items()}
 
 
 def collect(model, batches, target_modules, n_tokens, device):
@@ -608,6 +667,15 @@ def main():
 
     data = collect(model, batches, targets, args.tokens, device)
 
+    sig_names = [s.strip() for s in args.reach_signals.split(',') if s.strip()]
+    bad = [s for s in sig_names if s not in ('own', 'late', 'label')]
+    if bad:
+        raise SystemExit(f"unknown --reach-signals {bad}, pick from own,late,label")
+    alt = {}
+    if args.nonlinear_reach and [s for s in sig_names if s != 'own']:
+        print(f"capturing alternate router signals: {[s for s in sig_names if s != 'own']}")
+        alt = collect_signals(model, batches, args.tokens, device)
+
     # ── report ───────────────────────────────────────────────────────────────
     rows = []
     ng = args.gram_tokens
@@ -635,9 +703,23 @@ def main():
         if h == h:
             reach, reach_frac = predictable_demand(Xg, Ag)
             if args.nonlinear_reach:
-                router = reach_by_router(X.to(device), A.to(device), rank=args.reach_rank,
+                Xf, Af = X.to(device), A.to(device)
+                router = reach_by_router(Xf, Af, rank=args.reach_rank,
                                          steps=args.reach_steps, holdout=args.reach_holdout,
                                          score_tokens=args.reach_score_tokens)
+                for s in sig_names:
+                    if s == 'own' or router is None:
+                        continue
+                    # Same X for the Grams, same split, same rank, same steps:
+                    # only the router's INPUT changes, so the difference is
+                    # attributable to the signal and to nothing else.
+                    r2 = reach_by_router(Xf, Af, rank=args.reach_rank,
+                                         steps=args.reach_steps, holdout=args.reach_holdout,
+                                         score_tokens=args.reach_score_tokens,
+                                         S=alt[s][:Xf.shape[0]].to(device))
+                    if r2 is not None:
+                        router[f'{s}_mlp'] = r2['mlp_r']
+                        router[f'{s}_null'] = r2['mlp_null']
         rows.append(dict(layer=layer, proj=proj, headroom=h, dof=dof, top1=top1, n=n,
                          supply=sup, align=ali, align_null=null,
                          reach=reach, reach_frac=reach_frac, router=router,
@@ -774,6 +856,44 @@ def main():
                   f"{agg(ok, 'mlp_train'):7.3f} {agg(ok, 'mlp_null'):9.3f} {gain:+8.3f}")
         print("\n  The gain is taken over RESOLVED projections only. Everything else is")
         print("  reported so an unresolved row is visible rather than silently averaged in.")
+
+        extra = [s for s in sig_names if s != 'own' and any(f'{s}_mlp' in x['router'] for x in rt)]
+        if extra and ok:
+            print("\n  WHAT THE ROUTER READS   (same Grams, same split, same rank; only the")
+            print("  router's input differs. Resolved projections only.)")
+            hdr = "  " + f"{'signal':10s} {'mlp_r':>8s} {'null':>8s} {'vs own':>8s}   what it is"
+            print(hdr)
+            own = agg(ok, 'mlp_r')
+            print(f"  {'own':10s} {own:8.3f} {agg(ok, 'mlp_null'):8.3f} {0.0:+8.3f}   "
+                  f"the layer's own input, what every arm used")
+            desc = {'late': "last block output: any lookahead or two-pass design",
+                    'label': "target embedding: a strict ORACLE, no causal router has it"}
+            best = own
+            for s in extra:
+                v, n_ = agg(ok, f'{s}_mlp'), agg(ok, f'{s}_null')
+                best = max(best, v)
+                print(f"  {s:10s} {v:8.3f} {n_:8.3f} {v - own:+8.3f}   {desc.get(s, '')}")
+            print("\n  READ IT THIS WAY")
+            if best - own < 0.03:
+                print(f"  Nothing moves it. The best alternate signal gains {best - own:+.3f}, and")
+                print("  that includes the oracle if you ran it. The unreached demand is not a")
+                print("  function of anything in the forward pass, so it is minibatch and label")
+                print("  noise rather than information a better-informed router could exploit.")
+                print("  No routing scheme can reach it, at any cost, from any signal. Combined")
+                print("  with group K, that closes per-token operator conditioning: neither the")
+                print("  router's function class, nor its capacity, nor its input is the cap.")
+            elif 'label' in extra and agg(ok, 'label_mlp') - own > 0.10 and \
+                    all(agg(ok, f'{s}_mlp') - own < 0.05 for s in extra if s != 'label'):
+                print("  Only the ORACLE moves it. The demand is predictable, but only from the")
+                print("  label, which no causal router can see. That is a clean impossibility")
+                print("  result rather than a design failure, and it is the honest end of the")
+                print("  direction: the headroom is real and structurally unreachable.")
+            else:
+                print(f"  A forward-available signal gains {best - own:+.3f} over the layer's own")
+                print("  input. The routers were reading the wrong thing, which is a different")
+                print("  and fixable problem from everything groups I through K ruled out.")
+                print("  Next: feed that signal to ConditionedLinear (--cond-gate-source ctx is")
+                print("  the existing hook) and re-run the matched pair.")
         print(f"\n  lin_full also scores {agg(rt, 'lin_full_energy'):.3f} on the legacy energy")
         print("  formula tr(G_pred)/tr(G_full), which is what headroom_results.log reports.")
         print("  The two are not comparable and the residual form is the honest one: a trained")
