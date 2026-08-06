@@ -45,6 +45,16 @@ Usage:
     python -m scripts.conditioning_headroom --checkpoint out/sweep_p33/A1_.../
     python -m scripts.conditioning_headroom --depth 4 --steps 0   # random init
     python -m scripts.conditioning_headroom --checkpoint DIR --tokens 8192 --json out/headroom.json
+
+    # is the reach% ceiling the router's linearity or its capacity?
+    python -m scripts.conditioning_headroom --checkpoint DIR --tokens 32768 \
+        --nonlinear-reach --reach-rank 64 --json out/reach.json
+
+--nonlinear-reach needs far more tokens than the rest of the report. Everything
+else is a spectrum of an N x N Gram and is fine at N=4096; the router fit is a
+regression with up to n_embd features that is scored on held out tokens, and at
+N=4096 it does not generalize at all. Use --tokens 32768 or more, and read the
+UNDERPOWERED guard before reading the gain column.
 """
 
 import argparse
@@ -85,6 +95,25 @@ def parse_args():
     p.add_argument("--random-data", action="store_true",
                    help="use random token ids instead of the corpus (smoke test only: "
                         "headroom on random data is meaningless)")
+    p.add_argument("--nonlinear-reach", action="store_true",
+                   help="also fit a rank-r LINEAR and a rank-r NONLINEAR router per "
+                        "projection and score both on held out tokens. The reach%% column "
+                        "everywhere else is a full-rank linear fit, which the estimator's "
+                        "own docstring calls a lower bound; this measures how much of that "
+                        "bound is the router's linearity rather than its capacity. Costs a "
+                        "few minutes of fitting and no training FLOPs.")
+    p.add_argument("--reach-rank", type=int, default=64,
+                   help="r for the two matched routers. The default matches the "
+                        "--cond-router-rank 64 arm that was already trained, so mlp_r minus "
+                        "lin_r prices the nonlinearity at a router cost we have a run for.")
+    p.add_argument("--reach-steps", type=int, default=400,
+                   help="Adam steps per router fit")
+    p.add_argument("--reach-holdout", type=float, default=0.25,
+                   help="fraction of tokens held out. Scores are computed only on these.")
+    p.add_argument("--reach-score-tokens", type=int, default=4096,
+                   help="cap on tokens used to SCORE (the Gram is quadratic in this). All "
+                        "held-out tokens beyond the cap are dropped from scoring only; the "
+                        "fit still uses every training token.")
     return p.parse_args()
 
 
@@ -257,6 +286,158 @@ def predictable_demand(X, A, ridge=1e-3):
     return pr, (Gp.diagonal().sum() / tf).clamp(0, 1).item()
 
 
+def reach_by_router(X, A, rank=64, steps=400, lr=3e-3, holdout=0.25, seed=0,
+                    ridge=1e-3, eps=1e-12, score_tokens=4096):
+    """Reach as a function of the ROUTER rather than of the operator.
+
+    predictable_demand() answers "how much of the demand could a full-rank LINEAR
+    map from x reach", and its own docstring flags that as a lower bound. Every
+    router in the p35 sweep was linear, and the answer came back between 44 and
+    52 percent at every depth, every layer and every projection across four
+    checkpoints. That invariance is why this function exists. If the cap is the
+    router's linearity and not its rank, then the programme has been buying
+    operator capacity (K templates, rank R, block width) to serve a selector that
+    cannot address more than half of what the loss is asking for, and the cheap
+    move is a nonlinear router rather than a bigger operator.
+
+    Three predictors are fit on one train split and scored on one held out split,
+    so the numbers are directly comparable:
+
+        lin_full   ridge, full rank, closed form. The existing measurement.
+        lin_r      x -> Linear(d_in, r) -> Linear(r, d_out)
+        mlp_r      x -> Linear(d_in, r) -> GELU -> Linear(r, d_out)
+
+    lin_r and mlp_r have identical parameter counts and identical FLOPs, so
+    mlp_r minus lin_r is the value of the nonlinearity at fixed router cost.
+    That difference is the decision this measurement exists to make: it is what a
+    cheap nonlinear router would buy, priced before a training run is spent on one.
+
+    THE SCORE IS A RESIDUAL AGAINST A STATIC BASELINE, NOT AN ENERGY.
+    predictable_demand() reports tr(G_pred)/tr(G_full), which is a fraction of
+    explained signal only when the predictor is an orthogonal projection. Ridge
+    is; a trained net is not, and a net emitting large uncorrelated predictions
+    would score near 1 on that formula while explaining nothing. Everything here
+    is scored instead as
+
+        1 - tr(cg(A - A_hat)) / tr(cg(A - abar))       cg = double-centered Gram
+
+    where abar is the TRAIN mean. The abar denominator is not cosmetic. A
+    constant predictor still shrinks tr(cg(A - c)) because the predicted gradient
+    c x_t^T varies with x_t even when c does not, so without it a net that had
+    learned nothing but the mean scored +0.27 on the permuted control. Against
+    this baseline a mean-predictor scores exactly 0, which is what makes the
+    permutation control readable. The quantity is therefore the fraction of the
+    TOKEN-VARYING demand a router of this form explains beyond a static one,
+    which is the question the conditioning programme is actually asking.
+
+    HOLDOUT IS NOT OPTIONAL. r*(d_in + d_out) parameters can memorize N tokens.
+    Every score is on tokens the fit never saw, and mlp_null repeats the
+    nonlinear fit against a permuted target as a second control. A large mlp_r
+    next to a large mlp_null is a fitting artifact, not headroom.
+
+    UNDERFITTING IS THE OTHER FAILURE. If the fit does not converge, the gain
+    reads as zero and the verdict wrongly says the direction is dead. mlp_train
+    is returned for exactly that: a low mlp_train means the optimizer failed and
+    the run says nothing, not that the headroom is absent.
+
+    Returns a dict of held out scores.
+    """
+    import torch.nn.functional as F
+
+    dev = X.device
+    N, d_in = X.shape
+    d_out = A.shape[1]
+    n_te = max(64, int(round(holdout * N)))
+    if N - n_te < 128:
+        return None
+    idx = torch.randperm(N, generator=torch.Generator().manual_seed(seed)).to(dev)
+    te, tr = idx[:n_te], idx[n_te:]
+    Xtr, Atr, Xte, Ate = X[tr], A[tr], X[te], A[te]
+
+    # Scoring is quadratic in the number of tokens it scores on, so it is capped
+    # independently of the fit. All n_train tokens are used to FIT; at most
+    # score_tokens of each split are used to SCORE. The Gram trace converges in
+    # the scoring sample long before the regression converges in the fitting one,
+    # and without the cap a --tokens 32768 run allocates gigabytes per projection.
+    def cap(idx_len, t):
+        return t[:min(idx_len, score_tokens)]
+
+    Xte_s, Ate_s = cap(n_te, Xte), cap(n_te, Ate)
+    n_s = Xte_s.shape[0]
+    Xd = Xte_s.double()
+    Kx = Xd @ Xd.T
+    Xtr_s, Atr_s = cap(N - n_te, Xtr), cap(N - n_te, Atr)
+    Ktr = Xtr_s.double() @ Xtr_s.double().T
+
+    def centered_trace(T, K):
+        # tr(cg(G)) = tr(G) - sum(G)/n for the double centering
+        # G - r1^T - 1r^T + mean(G), so none of those terms need materializing.
+        G = (T.double() @ T.double().T).mul_(K)
+        return G.diagonal().sum() - G.sum() / G.shape[0]
+
+    abar = Atr.mean(0, keepdim=True)
+    t_full = centered_trace(Ate_s, Kx)
+    base = centered_trace(Ate_s - abar, Kx)
+    base_tr = centered_trace(Atr_s - abar, Ktr)
+    if not (torch.isfinite(base) and base > 0 and torch.isfinite(t_full) and t_full > 0):
+        return None
+
+    def score(A_hat):
+        return float((1.0 - centered_trace(Ate_s - A_hat[:n_s], Kx) / base).clamp(-1, 1))
+
+    def score_train(A_hat):
+        return float((1.0 - centered_trace(Atr_s - A_hat[:Atr_s.shape[0]], Ktr)
+                      / base_tr).clamp(-1, 1))
+
+    # lin_full: the closed form ridge, fit on the train split only so it is
+    # scored on the same tokens as the other two.
+    Xt, At = Xtr.double(), Atr.double()
+    Gx = Xt.T @ Xt
+    Gx = Gx + ridge * Gx.diagonal().mean() * torch.eye(d_in, device=dev, dtype=Xt.dtype)
+    B = torch.linalg.solve(Gx, Xt.T @ At)
+    Ahat_full = Xd @ B
+    G_pred = (Ahat_full @ Ahat_full.T).mul_(Kx)
+    energy_legacy = float((((G_pred.diagonal().sum() - G_pred.sum() / n_s))
+                           / t_full).clamp(0, 1))
+    del G_pred
+
+    # Standardizing x is absorbed by the first layer and scaling the target by
+    # one global scalar is absorbed by the last, so neither changes the function
+    # class of either predictor. Both keep Adam in a sane range.
+    xm, xs = Xtr.mean(0), Xtr.std(0).clamp(min=eps)
+    Xtr_n, Xte_n = (Xtr - xm) / xs, (Xte - xm) / xs
+
+    def fit(nonlinear, target):
+        torch.manual_seed(seed)
+        layers = [nn.Linear(d_in, rank)]
+        if nonlinear:
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(rank, d_out, bias=False))
+        net = nn.Sequential(*layers).to(dev)
+        s = target.std().clamp(min=eps)
+        tgt = target / s
+        opt = torch.optim.Adam(net.parameters(), lr=lr)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=steps)
+        n, bs = Xtr_n.shape[0], min(1024, Xtr_n.shape[0])
+        for _ in range(steps):
+            j = torch.randint(0, n, (bs,), device=dev)
+            opt.zero_grad(set_to_none=True)
+            F.mse_loss(net(Xtr_n[j]), tgt[j]).backward()
+            opt.step()
+            sched.step()
+        with torch.no_grad():
+            return net(Xte_n) * s, net(Xtr_n) * s
+
+    shuffled = Atr[torch.randperm(Atr.shape[0], generator=torch.Generator().manual_seed(seed + 1)).to(dev)]
+    lin_te, _ = fit(False, Atr)
+    mlp_te, mlp_tr = fit(True, Atr)
+    null_te, _ = fit(True, shuffled)
+    return dict(lin_full=score(Ahat_full.float()), lin_full_energy=energy_legacy,
+                lin_r=score(lin_te), mlp_r=score(mlp_te), mlp_train=score_train(mlp_tr),
+                mlp_null=score(null_te), rank=rank, n_test=n_te,
+                n_train=int(N - n_te), d_in=int(d_in))
+
+
 @torch.no_grad()
 def _subsample(t, n):
     flat = t.reshape(-1, t.shape[-1])
@@ -406,11 +587,16 @@ def main():
             ali = alignment(Gd, Gs)
             null = alignment_null(Gd, Gs)
         reach, reach_frac = (float('nan'), float('nan'))
+        router = None
         if h == h:
             reach, reach_frac = predictable_demand(X.to(device), A.to(device))
+            if args.nonlinear_reach:
+                router = reach_by_router(X.to(device), A.to(device), rank=args.reach_rank,
+                                         steps=args.reach_steps, holdout=args.reach_holdout,
+                                         score_tokens=args.reach_score_tokens)
         rows.append(dict(layer=layer, proj=proj, headroom=h, dof=dof, top1=top1, n=n,
                          supply=sup, align=ali, align_null=null,
-                         reach=reach, reach_frac=reach_frac,
+                         reach=reach, reach_frac=reach_frac, router=router,
                          unmet=(dof * (1.0 - ali)) if dof == dof else float('nan')))
 
     rows.sort(key=lambda r: (r['layer'], r['proj']))
@@ -493,6 +679,83 @@ def main():
         print("  conditioning scheme can add anything there at any price. Where alignment is")
         print("  low there is room, and the cheap way to buy it is more nonlinearity per FLOP")
         print("  (depth multiplies linear regions, width only adds them), not more parameters.")
+
+    rt = [r for r in rows if r.get('router')]
+    if rt:
+        r0 = rt[0]['router']
+        print("\n" + "=" * 78)
+        print(f"ROUTER CEILING   (held out on {r0['n_test']} tokens, r={r0['rank']})")
+        print("=" * 78)
+        print("  Every reach% above is a FULL RANK LINEAR fit. These four columns ask")
+        print("  whether that ceiling is the router's linearity or its capacity. lin_r and")
+        print("  mlp_r have the same parameters and the same FLOPs, so their difference is")
+        print("  the price of the nonlinearity at a router cost we already have a run for.")
+        print(f"  Scores are 1 - tr(cg(A - Ahat))/tr(cg(A - abar)), so a predictor no better")
+        print(f"  than a static one scores 0 and a worse one scores negative.")
+        print(f"\n  {'projection':18s} {'lin_full':>9s} {'lin_r':>8s} {'mlp_r':>8s} "
+              f"{'mlp_tr':>7s} {'mlp_null':>9s} {'gain':>8s}")
+
+        def agg(rs, key):
+            v = [x['router'][key] for x in rs if x['router'][key] == x['router'][key]]
+            return sum(v) / len(v) if v else float('nan')
+
+        by_p = {}
+        for r in rt:
+            by_p.setdefault(r['proj'], []).append(r)
+        for proj in sorted(by_p):
+            rs = by_p[proj]
+            lr, mr = agg(rs, 'lin_r'), agg(rs, 'mlp_r')
+            print(f"  {proj:18s} {agg(rs, 'lin_full'):9.3f} {lr:8.3f} {mr:8.3f} "
+                  f"{agg(rs, 'mlp_train'):7.3f} {agg(rs, 'mlp_null'):9.3f} {mr - lr:+8.3f}")
+        lf, lr, mr, mn = (agg(rt, 'lin_full'), agg(rt, 'lin_r'),
+                          agg(rt, 'mlp_r'), agg(rt, 'mlp_null'))
+        mtr = agg(rt, 'mlp_train')
+        gain = mr - lr
+        print(f"  {'-' * 72}")
+        print(f"  {'model-wide':18s} {lf:9.3f} {lr:8.3f} {mr:8.3f} {mtr:7.3f} "
+              f"{mn:9.3f} {gain:+8.3f}")
+        print(f"\n  lin_full also scores {agg(rt, 'lin_full_energy'):.3f} on the legacy energy")
+        print("  formula tr(G_pred)/tr(G_full), which is what headroom_results.log reports.")
+        print("  The two are not comparable and the residual form is the honest one: a trained")
+        print("  net is not an orthogonal projection, and the energy form would reward it for")
+        print("  emitting large predictions that explain nothing.")
+        print("\n  VERDICT")
+        n_tr, d_in_max = r0['n_train'], max(x['router']['d_in'] for x in rt)
+        dof_seen = [x['dof'] for x in rt if x['dof'] == x['dof']]
+        dof_mean = sum(dof_seen) / max(1, len(dof_seen))
+        if lf < 0.05 or mn < -0.10:
+            print(f"  UNDERPOWERED, no verdict. lin_full scores {lf:+.3f} and the permuted")
+            print(f"  control {mn:+.3f} on held out tokens, so nothing here generalizes and the")
+            print("  gain column is measuring fitting noise, not the router.")
+            print(f"  You fit {n_tr} train tokens against up to {d_in_max} input features with a")
+            print(f"  demand of ~{dof_mean:.0f} dof. Re-run with --tokens {max(32768, 32 * d_in_max)}")
+            print("  or higher. On a synthetic target with a known nonlinear component, N = 32x")
+            print("  d_in is where the permuted control reaches zero and the gain stops moving;")
+            print("  below it the gain is not merely noisy, it comes out with the WRONG SIGN.")
+        elif mn > 0.10:
+            print(f"  mlp_null is {mn:+.3f}, not ~0. A fit on permuted targets should not")
+            print("  generalize at all, so the held out split is leaking and the gain column")
+            print("  is not trustworthy. Raise --tokens or --reach-holdout and re-run.")
+        elif mtr < 0.05:
+            print(f"  The fit did not converge: mlp_train is only {mtr:+.3f}, so the network")
+            print("  never learned the training split either. The gain column says nothing")
+            print("  about headroom. Raise --reach-steps, or lower --reach-rank.")
+        elif gain > 0.10:
+            print(f"  The nonlinearity buys {gain:+.3f} of reach at ZERO extra router FLOPs.")
+            print("  The ceiling was the router's linearity, not the operator's capacity, and")
+            print("  every arm in the p35 sweep was spending on the wrong side of the layer.")
+            print(f"  Next: one d8 arm with a rank-{r0['rank']} nonlinear router on the two")
+            print("  highest-demand projections. That is ~5% overhead against the ~20% that")
+            print("  H3 and H4 paid, and it needs only their quality gain to clear 1.0x.")
+        elif gain > 0.03:
+            print(f"  The nonlinearity buys {gain:+.3f}, real but small. A nonlinear router")
+            print("  alone will not close the 6% gap to dense at d8. Worth one arm only if it")
+            print("  stacks with the targeting that H3 and H4 already found.")
+        else:
+            print(f"  The nonlinearity buys {gain:+.3f}, nothing. The unreachable half of the")
+            print("  demand is not a function of the current token at all, so no router of any")
+            print("  design can address it and per-token operator conditioning cannot pay at")
+            print("  any price. That is a real finding and it is the end of this direction.")
 
     print("\n" + "=" * 78)
     print("PER PROJECTION  (mean over layers)")
