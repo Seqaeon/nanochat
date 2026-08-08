@@ -280,8 +280,8 @@ if has overhead; then
         # not overhead, so cutting it only slides along the parameter curve. O2 by
         # contrast was +0.0001 bpb for -10.2% FLOPs, i.e. genuinely free. This arm
         # keeps O2 and drops O1, and is the one expected to win.
-        run STACK_noO1 "$DEPTH" $MST_FULL \
-            --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
+#        run STACK_noO1 "$DEPTH" $MST_FULL \
+#            --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
     fi
 fi
 
