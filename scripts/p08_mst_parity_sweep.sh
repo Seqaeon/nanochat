@@ -37,11 +37,15 @@
 # and optimizer memory do. Since MST's remaining total-params "win" was only ever
 # the VE table size, that axis is being traded away knowingly.
 #
-#   bash scripts/p08_mst_parity_sweep.sh                 # L=8, 3 seeds, all groups
-#   bash scripts/p08_mst_parity_sweep.sh --seeds 1       # fast first pass
-#   bash scripts/p08_mst_parity_sweep.sh --group combo   # one group
+#   bash scripts/p08_mst_parity_sweep.sh                 # default depth 8, all groups
+#   bash scripts/p08_mst_parity_sweep.sh 8               # depth positionally, as in p07
+#   bash scripts/p08_mst_parity_sweep.sh 8 16            # several depths, in order
+#   bash scripts/p08_mst_parity_sweep.sh --seeds 1 8     # fast first pass
+#   bash scripts/p08_mst_parity_sweep.sh --group combo 8 # one group
 #   bash scripts/p08_mst_parity_sweep.sh --group d16     # confirm at L=16
-#   bash scripts/p08_mst_parity_sweep.sh --force         # ignore completion state
+#   bash scripts/p08_mst_parity_sweep.sh --force 8       # ignore completion state
+#
+# DEPTH=8 as an environment variable still works, for consistency with p32.
 #
 # Reference points to beat (single seed, current ladder):
 #   MST full recipe   L=8  1.0510    L=16  0.8810
@@ -53,20 +57,22 @@ set -o pipefail
 FORCE=0
 RUN_GROUPS="control combo g1 g2 g3"
 SEEDS=1
+DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)  FORCE=1; shift ;;
         --group)  RUN_GROUPS="$2"; shift 2 ;;
         --seeds)  SEEDS="$2"; shift 2 ;;
-        *) echo "unknown arg: $1"; exit 1 ;;
+        # Bare integers are depths, as in p07. Several may be given.
+        [0-9]*)   DEPTHS+=("$1"); shift ;;
+        *) echo "unknown arg: $1"; echo "usage: $0 [--force] [--group G] [--seeds N] [DEPTH ...]"; exit 1 ;;
     esac
 done
+# Fall back to the DEPTH env var, then 8, so p32-style invocation still works.
+[ ${#DEPTHS[@]} -eq 0 ] && DEPTHS=("${DEPTH:-8}")
 
-DEPTH="${DEPTH:-8}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
-MODEL_DIM=$(( ((DEPTH * ASPECT_RATIO + 127) / 128) * 128 ))
-SUB_DIM=$(( MODEL_DIM / N_SUBS ))
 
 # G1 needs sub_dim divisible by the target head_dim. At the depths this sweep
 # uses that is automatic (L=8 -> d=128, L=16 -> d=256), but most of the ladder is
@@ -82,19 +88,10 @@ check_divisible() {                       # check_divisible <sub_dim> <head_dim>
 }
 
 OUT_BASE="${OUT_BASE:-out/p08_mst_parity}"
-LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p08_d${DEPTH}.log}"
-STATE="${OUT_BASE}/p08_state_d${DEPTH}.json"
 mkdir -p "$OUT_BASE"
-[ "$FORCE" -eq 1 ] && rm -f "$STATE"
-[ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
 
-echo "════════════════════════════════════════════════════════════"
-echo "  P08 MST dense-parity fixes (G1/G2/G3)"
-echo "  depth ${DEPTH}   D=${MODEL_DIM}   N=${N_SUBS}   d=${SUB_DIM}"
-echo "  seeds ${SEEDS}   groups: ${RUN_GROUPS}"
-echo "  out ${OUT_BASE}"
-echo "════════════════════════════════════════════════════════════"
-
+# The helpers below read $STATE, $COMMON, $LOGFILE and $SEEDS at call time, so
+# they are defined once and pick up whatever the current depth iteration set.
 done_already() {
     [ "$FORCE" -eq 1 ] && return 1
     python3 -c "
@@ -132,9 +129,6 @@ mst_config() {                            # mst_config <sub_dim> <n_subs>
       --mst-multi-scale-windows 1"
 }
 
-# The paper's proposed model at this depth: the arm every delta is measured from.
-MST_FULL="$(mst_config "$SUB_DIM" "$N_SUBS")"
-
 # Unlike p32, seeds are passed explicitly so the arms are reproducible. Note that
 # --seed controls weight init only, not dataloader order, so the spread across
 # seeds here is init variance (p32 measured that at sigma <= 0.0003 bpb at L=8),
@@ -147,7 +141,10 @@ run() {                                   # run <tag> <depth> <flags...>
         if done_already "$t"; then echo "⏭  $t"; continue; fi
         echo ""
         echo "━━━ $t  (depth $depth) ━━━"
-        local dir="${OUT_BASE}/${t}"
+        # Scoped by depth, not just by tag: tags repeat across depths, and the
+        # d16 group runs at 16 from inside a depth-8 sweep. This also lands
+        # base_train's mst_results.csv in a per-depth directory.
+        local dir="${OUT_BASE}/d${depth}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
         if bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
                "$@" "$depth" 2>&1 | tee -a "$LOGFILE"; then
@@ -159,6 +156,26 @@ run() {                                   # run <tag> <depth> <flags...>
 }
 
 has() { echo " $RUN_GROUPS " | grep -q " $1 "; }
+
+# ════ per-depth body ════════════════════════════════════════════════════════
+for DEPTH in "${DEPTHS[@]}"; do
+
+MODEL_DIM=$(( ((DEPTH * ASPECT_RATIO + 127) / 128) * 128 ))
+SUB_DIM=$(( MODEL_DIM / N_SUBS ))
+LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p08_d${DEPTH}.log}"
+STATE="${OUT_BASE}/p08_state_d${DEPTH}.json"
+[ "$FORCE" -eq 1 ] && rm -f "$STATE"
+[ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
+
+# The paper's proposed model at this depth: the arm every delta is measured from.
+MST_FULL="$(mst_config "$SUB_DIM" "$N_SUBS")"
+
+echo "════════════════════════════════════════════════════════════"
+echo "  P08 MST dense-parity fixes (G1/G2/G3)"
+echo "  depth ${DEPTH}   D=${MODEL_DIM}   N=${N_SUBS}   d=${SUB_DIM}"
+echo "  seeds ${SEEDS}   groups: ${RUN_GROUPS}"
+echo "  out ${OUT_BASE}"
+echo "════════════════════════════════════════════════════════════"
 
 # ---------------------------------------------------------------- control
 # The anchor. Without a same-sweep baseline the deltas are not readable, because
@@ -218,7 +235,9 @@ fi
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
 # only after L=8 names a winner, and only for that winner plus its baseline, so
 # the transfer argument of Table 6 covers these fixes too.
-if has d16; then
+# It always runs at L=16 regardless of the depth being swept, so skip it when the
+# main groups are already at 16 rather than paying twice under a second tag.
+if has d16 && [ "$DEPTH" -ne 16 ]; then
     echo ""; echo "### D16: transfer check for the L=8 winner"
     D16=16
     MD16=$(( ((D16 * ASPECT_RATIO + 127) / 128) * 128 ))
@@ -234,9 +253,11 @@ fi
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  P08 complete for depth ${DEPTH}"
-echo "  results: ${OUT_BASE}/mst_results*.csv   log: ${LOGFILE}"
+echo "  results: ${OUT_BASE}/d${DEPTH}/mst_results*.csv   log: ${LOGFILE}"
 echo ""
 echo "  Read it as: every delta is against CTRL_mst_full in this same sweep."
 echo "  The bar is ~0.03 bpb of total improvement, which is what turns the"
 echo "  corrected FLOPs multiplier from 0.86x into roughly 1.15x."
 echo "════════════════════════════════════════════════════════════"
+
+done
