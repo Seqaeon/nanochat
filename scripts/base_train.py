@@ -1723,38 +1723,38 @@ if model_config.use_mst and master_process:
             if os.path.abspath(cwd_csv) != os.path.abspath(csv_path):
                 self._append_row(cwd_csv, row)
 
-    @staticmethod
-    def _append_row(csv_path, row):
-        """Append one result row, never misaligning against an older header.
+        @staticmethod
+        def _append_row(csv_path, row):
+            """Append one result row, never misaligning against an older header.
 
-        Each MST stage adds config columns, so a CSV written by an earlier stage
-        has fewer fields than `row`. Appending under the new fieldnames would put
-        extra values on every line while leaving the header short, silently
-        skewing every column for whoever reads it later. Instead, divert to a
-        numbered sibling file when the header does not match.
-        """
-        fieldnames = list(row.keys())
-        if os.path.exists(csv_path):
-            with open(csv_path, newline='') as f:
-                existing = next(csv.reader(f), None)
-            if existing != fieldnames:
-                stem, ext = os.path.splitext(csv_path)
-                n = 2
-                while os.path.exists(f"{stem}_v{n}{ext}"):
-                    with open(f"{stem}_v{n}{ext}", newline='') as f:
-                        if next(csv.reader(f), None) == fieldnames:
-                            break
-                    n += 1
-                print0(f"[MST] {os.path.basename(csv_path)} has an older column set; "
-                       f"writing to {os.path.basename(stem)}_v{n}{ext} instead")
-                csv_path = f"{stem}_v{n}{ext}"
-        write_header = not os.path.exists(csv_path)
-        with open(csv_path, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if write_header:
-                writer.writeheader()
-            writer.writerow(row)
-        print0(f"[MST] Results appended → {csv_path}")
+            Each MST stage adds config columns, so a CSV written by an earlier stage
+            has fewer fields than `row`. Appending under the new fieldnames would put
+            extra values on every line while leaving the header short, silently
+            skewing every column for whoever reads it later. Instead, divert to a
+            numbered sibling file when the header does not match.
+            """
+            fieldnames = list(row.keys())
+            if os.path.exists(csv_path):
+                with open(csv_path, newline='') as f:
+                    existing = next(csv.reader(f), None)
+                if existing != fieldnames:
+                    stem, ext = os.path.splitext(csv_path)
+                    n = 2
+                    while os.path.exists(f"{stem}_v{n}{ext}"):
+                        with open(f"{stem}_v{n}{ext}", newline='') as f:
+                            if next(csv.reader(f), None) == fieldnames:
+                                break
+                        n += 1
+                    print0(f"[MST] {os.path.basename(csv_path)} has an older column set; "
+                           f"writing to {os.path.basename(stem)}_v{n}{ext} instead")
+                    csv_path = f"{stem}_v{n}{ext}"
+            write_header = not os.path.exists(csv_path)
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+            print0(f"[MST] Results appended → {csv_path}")
 
     _mst_tracker = _MSTTracker(model_config, checkpoint_dir)
     _mst_diag_log = os.path.join(checkpoint_dir, 'mst_diagnostics.jsonl')

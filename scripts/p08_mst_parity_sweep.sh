@@ -244,12 +244,12 @@ echo "════════════════════════�
 # The FLOP-neutral arm the first pass missed. G2 measured +0.0021 at L=8 both
 # alone and in combination, so it is dropped; G1 and G3 were -0.0101 and -0.0092
 # and are near-additive, predicting about -0.019.
-if has best; then
-    echo ""; echo "### BEST: G1+G3, no G2"
-    if check_divisible "$SUB_DIM" 64; then
-        run BEST_g1_64_g3 "$DEPTH" $MST_FULL --mst-sub-head-dim 64 --mst-per-stream-ve 1
-    fi
-fi
+#if has best; then
+#    echo ""; echo "### BEST: G1+G3, no G2"
+#    if check_divisible "$SUB_DIM" 64; then
+#        run BEST_g1_64_g3 "$DEPTH" $MST_FULL --mst-sub-head-dim 64 --mst-per-stream-ve 1
+#    fi
+#fi
 
 # ---------------------------------------------------------------- overhead
 # Stage 13. Unlike everything above, these CUT FLOPs rather than holding them
@@ -265,16 +265,23 @@ fi
 # dense baseline already does under SSSL).
 if has overhead; then
     echo ""; echo "### OVERHEAD: output head (O1) and window composition (O2)"
-    run O2_compose_windows "$DEPTH" $MST_FULL --mst-compose-windows 1
-    run O1_head_half    "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 2 ))
-    run O1_head_quarter "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 4 ))
-    run O1_half_O2      "$DEPTH" $MST_FULL \
-        --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
+#    run O2_compose_windows "$DEPTH" $MST_FULL --mst-compose-windows 1
+#    run O1_head_half    "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 2 ))
+#    run O1_head_quarter "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 4 ))
+#    run O1_half_O2      "$DEPTH" $MST_FULL \
+#        --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
     # Everything that survived, together.
     if check_divisible "$SUB_DIM" 64; then
         run STACK_all "$DEPTH" $MST_FULL \
             --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
             --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
+        # O1 measured at +0.046 bpb for -27.7% FLOPs at L=8, which the matmul-param
+        # scaling law predicts almost exactly (+0.042): the output head is capacity,
+        # not overhead, so cutting it only slides along the parameter curve. O2 by
+        # contrast was +0.0001 bpb for -10.2% FLOPs, i.e. genuinely free. This arm
+        # keeps O2 and drops O1, and is the one expected to win.
+        run STACK_noO1 "$DEPTH" $MST_FULL \
+            --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
     fi
 fi
 
@@ -296,9 +303,11 @@ if has d16 && [ "$DEPTH" -ne 16 ]; then
     # G2 dropped after the L=8 result; the full stack carries the overhead cuts too,
     # which are worth -24.7% FLOPs at this depth against -12.9% at L=32.
     run D16_g1_64_g3 "$D16" $MST_FULL_16 --mst-sub-head-dim 64 --mst-per-stream-ve 1
+    # O1 dropped: it costs bpb in line with the parameter scaling law, so it is not
+    # a free saving. O2 was free at L=8; whether it stays free at L=16, where long
+    # context is worth more, is the main thing this arm is testing.
     run D16_stack    "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
-        --mst-lm-head-dim $(( MD16 / 2 )) --mst-compose-windows 1
+        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
     SEEDS="$SEEDS_SAVE"
 fi
 
