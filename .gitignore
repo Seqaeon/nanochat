@@ -20,3 +20,8 @@ tokenizer/
 *.pt
 *.pth
 *.ckpt
+*.swp
+*.swo
+.*.swp
+.*.swo
+

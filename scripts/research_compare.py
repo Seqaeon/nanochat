@@ -189,6 +189,7 @@ def run_training_sweep(args):
         "--cond-coeff-act", str(getattr(args, 'cond_coeff_act', 'centered')),
         "--cond-router-rank", str(getattr(args, 'cond_router_rank', 0)),
         "--cond-router-act", str(getattr(args, 'cond_router_act', 'none')),
+        "--cond-live-init", str(getattr(args, 'cond_live_init', 0.0)),
         "--cond-chunk-size", str(getattr(args, 'cond_chunk_size', 0)),
         "--cond-mult-scale", str(getattr(args, 'cond_mult_scale', -1.0)),
         "--cond-mult-impl", str(getattr(args, 'cond_mult_impl', 'wy')),
@@ -842,6 +843,7 @@ if __name__ == "__main__":
     parser.add_argument("--cond-coeff-act", type=str, default="centered", choices=["centered", "linear", "sigmoid", "one"])
     parser.add_argument("--cond-router-rank", type=int, default=0)
     parser.add_argument("--cond-router-act", type=str, default="none")
+    parser.add_argument("--cond-live-init", type=float, default=0.0)
     parser.add_argument("--cond-chunk-size", type=int, default=0)
     parser.add_argument("--cond-mult-scale", type=float, default=-1.0)
     parser.add_argument("--cond-mult-impl", type=str, default="wy", choices=["wy", "loop"])

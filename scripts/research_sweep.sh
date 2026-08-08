@@ -190,7 +190,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         # Phase 35: ConditionedLinear (--cclblock-modulation cond)
         --cond-rank|--cond-mult-steps|--cond-gate-source|--cond-coeff-act|\
-        --cond-router-rank|--cond-router-act|--cond-chunk-size|--cond-mult-impl|--cond-mult-scale|\
+        --cond-router-rank|--cond-router-act|--cond-live-init|--cond-chunk-size|--cond-mult-impl|--cond-mult-scale|\
         --cond-attn-projs|--cond-layer-frac)
             EXTRA_ARGS+=("$1" "$2")
             shift 2

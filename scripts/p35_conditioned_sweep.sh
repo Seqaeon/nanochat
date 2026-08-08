@@ -592,6 +592,52 @@ if [[ "$RUN_GROUPS" == *k* ]]; then
         --cond-rank 32 --cond-router-rank 128
 fi
 
+#
+# ── L. the branch is dead at step 0 ──────────────────────────────────────────
+#   bash scripts/p35_conditioned_sweep.sh 8 --group l
+#
+# K came back null, so the budget split is not the cap. Then the TRAINING CURVES
+# said the premise was wrong. At matched tokens, in the flat-LR region where the
+# schedule is not a confound, dense leads every conditioned arm:
+#
+#   step   dense      K1      I1      E4      D1
+#    200  3.9606  -0.117  -0.088  -0.071  -0.081
+#    400  3.6476  -0.045  -0.034  -0.034  -0.043
+#    600  3.5175  -0.043  -0.032  -0.038  -0.046
+#
+# Conditioning is worse per TOKEN as well as per FLOP. Every apparent win, D1's
+# 0.9337 included, was a larger parameter count buying a larger token budget.
+# That also explains why reach predicted nothing (R^2 = -1.83 against the mean):
+# reach measures information, and these arms are not short of information, they
+# learn worse per token.
+#
+# The deficit is largest at step 200 and shrinks, which is a cold start rather
+# than missing capacity. And the cause is in reset_parameters: add_u and route_w
+# are both zeroed, so at step 0 the branch contributes nothing and NONE of the
+# five conditioning tensors receive any gradient. They unlock in a chain over
+# three steps and spend the rest of training catching up. This codebase has been
+# bitten by the same class of bug twice: output_gate_basis zero-init froze every
+# gate scale for the whole Phase 35 ablation, and template_route was exactly
+# zero in every shipped run so "learned routing" was frozen uniform routing.
+#
+# --cond-live-init draws every factor nonzero and subtracts the branch's mean
+# contribution from W0, so the composite operator starts exactly at the dense
+# init while every parameter is live. Verified: composite std matches dense to
+# 0.1%, step-0 loss is unchanged, 5/5 tensors get gradient at step 0 against 0/5.
+#
+# L1 against J1 (0.969) is a matched pair differing only in the initialization.
+# If the cold start explains the 0.03 to 0.05 per-token deficit, this closes it
+# and clears 1.0. If it does not, the conditioned parameterization is worse per
+# token for structural reasons and no routing design fixes that.
+if [[ "$RUN_GROUPS" == *l* ]]; then
+    L_BASE="--cond-sites attn --cond-attn-projs qo --cond-gate-source router \
+            --cond-router-rank 64 --cond-router-act gelu --cond-rank 128"
+    run "L1_cond_liveinit_d${DEPTH}"      "$COND_COMMON" $L_BASE --cond-live-init 1.0
+    # L2: half-scale branch, in case a full-strength cancelled perturbation
+    # makes W0 too large relative to the dense init it is standing in for.
+    run "L2_cond_liveinit_half_d${DEPTH}" "$COND_COMMON" $L_BASE --cond-live-init 0.5
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  done, depth ${DEPTH}"
