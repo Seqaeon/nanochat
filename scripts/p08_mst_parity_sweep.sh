@@ -304,18 +304,67 @@ echo "════════════════════════�
 # 'roll' shifts by d//2 so streams keep half their channels and specialization
 # survives; 'shuffle' is maximal mixing but erases stream identity, which fights
 # the multi-scale windows. Sites: between layers, between attention and FFN, or both.
-if has mix; then
-    echo ""; echo "### MIX: free cross-stream mixing (zero params, zero FLOPs)"
-    BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+#if has mix; then
+#    echo ""; echo "### MIX: free cross-stream mixing (zero params, zero FLOPs)"
+#    BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+#    if check_divisible "$SUB_DIM" 64; then
+#        for site in layer ffn both; do
+#            run "MIX_roll_${site}" "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#                --mst-channel-mix roll --mst-channel-mix-site "$site"
+#        done
+#        # Maximal mixing, run only at the best site once 'roll' has named one.
+#        run MIX_shuffle_layer "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-channel-mix shuffle --mst-channel-mix-site layer
+#    fi
+#fi
+
+# ---------------------------------------------------------------- mixiso
+# The first MIX pass was not a clean test of the mechanism, for two reasons.
+#
+#   1. CONFOUND. Attention windows are indexed by SLOT (window_sizes[j] against the
+#      j axis of (B,T,N,d)), not by channel. Permuting the partition therefore
+#      reassigns which channels get which attention scale, so MIX_roll_layer coming
+#      back 5 sigma worse is as consistent with "the window specialization broke" as
+#      with "mixing does not help". Preserving a channel's scale under a d/2 shift is
+#      not possible while scales are per-stream: each slot then holds channels from
+#      two scale groups and attention takes one window per stream. So the way to
+#      separate the two effects is to remove the specialization, not to preserve it.
+#
+#   2. DEPTH. Shifted partitions work by composition. With a d/2 shift the reachable
+#      span grows about half a block per layer, so at N=4 a channel needs roughly six
+#      layers to reach all four streams. L=8 completes that once; L=32 completes it
+#      four times. Testing a depth-dependent mechanism at the shallowest depth and
+#      generalizing was the error.
+#
+# This group fixes both. Multi-scale windows OFF makes every stream share the layer
+# window, so there is no specialization to scramble and the mixing arms are exactly
+# FLOP-identical to their own control. The group is depth-agnostic, so the depth test
+# is just: --group mixiso 16.
+#
+# Two seeds, because MIX_roll_ffn landed at 1.6 sigma, which is unmeasured rather
+# than null. The reference arms are included and will only run their missing seed.
+if has mixiso; then
+    echo ""; echo "### MIXISO: mixing without the window confound (uniform windows)"
+    SEEDS_SAVE="$SEEDS"; SEEDS=2
     if check_divisible "$SUB_DIM" 64; then
-        for site in layer ffn both; do
-            run "MIX_roll_${site}" "$DEPTH" $MST_FULL $BEST_SO_FAR \
-                --mst-channel-mix roll --mst-channel-mix-site "$site"
-        done
-        # Maximal mixing, run only at the best site once 'roll' has named one.
-        run MIX_shuffle_layer "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-channel-mix shuffle --mst-channel-mix-site layer
+        # Uniform windows: msw off (a later flag wins), so compose-windows is a no-op
+        # and every stream inherits the SSSL layer window. Costs more attention FLOPs
+        # than the multi-scale schedule, which is fine: the comparison is within this
+        # setting, and all three arms below carry identical FLOPs.
+        UNIFORM="$MST_FULL --mst-multi-scale-windows 0 \
+                 --mst-sub-head-dim 64 --mst-per-stream-ve 1"
+        run MIXISO_uni_none      "$DEPTH" $UNIFORM
+        run MIXISO_uni_roll_ffn  "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site ffn
+        run MIXISO_uni_roll_layer "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site layer
+
+        # Second seed for the two arms the first pass could not resolve, reusing the
+        # completed s1 runs. Same flags as the originals or the comparison is void.
+        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+        run STACK_noO1   "$DEPTH" $MST_FULL $BEST_SO_FAR
+        run MIX_roll_ffn "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-channel-mix roll --mst-channel-mix-site ffn
     fi
+    SEEDS="$SEEDS_SAVE"
 fi
 
 
