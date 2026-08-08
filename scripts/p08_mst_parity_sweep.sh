@@ -431,9 +431,16 @@ fi
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
 # only after L=8 names a winner, and only for that winner plus its baseline, so
 # the transfer argument of Table 6 covers these fixes too.
-# It always runs at L=16 regardless of the depth being swept, so skip it when the
-# main groups are already at 16 rather than paying twice under a second tag.
-if has d16 && [ "$DEPTH" -ne 16 ]; then
+# Its arms are pinned to L=16 regardless of the depth being swept, so `--group d16`
+# does the same thing from a depth-8 or a depth-16 invocation. It is opt-in (not in the
+# default RUN_GROUPS), so it never runs by accident.
+#
+# There used to be a `[ "$DEPTH" -ne 16 ]` guard here to avoid training the same config
+# twice when the main groups were also at 16 (D16_stack is the same config as
+# STACK_noO1). That silently turned `--group d16 16` into a no-op that still printed a
+# success banner. Duplication is now the caller's problem and is visible in the arm
+# list; a flag that quietly does nothing is not.
+if has d16; then
     echo ""; echo "### D16: transfer check for the L=8 winner"
     D16=16
     MD16=$(( ((D16 * ASPECT_RATIO + 127) / 128) * 128 ))
