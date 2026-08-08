@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead mix"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -367,6 +367,59 @@ if has mixiso; then
     SEEDS="$SEEDS_SAVE"
 fi
 
+
+# ---------------------------------------------------------------- couple
+# Stage 15. Five mechanisms, all stacked on STACK_noO1 (which already has 2 seeds and
+# serves as the control at no cost).
+#
+#   F1 --mst-distribute-block-muon  distribute_w is (N*d, d), structurally identical to
+#      c_proj_w, but was omitted from setup_optimizer's stacked_names. Muon therefore
+#      orthogonalizes across all N coupling blocks jointly -- the exact cross-contamination
+#      that 1B exists to remove -- and it never gets the sub-LR correction. The coupling
+#      was the only part of the model still optimized as if it were one dense matrix, which
+#      is a candidate explanation for why all twelve coupling enrichments hit equifinality.
+#   F2 --mst-trans-spectral-lr      agg_up (D,d) and agg_down (d,D) are the only weights
+#      whose fan_out/fan_in is not 1. Under Muon's spectral normalization they want LRs
+#      differing by N; today they share one matrix_lr.
+#   F3 --mst-transition-every       couple every k-th layer (last always couples). The
+#      coupling is ~20% of a layer and our own data says it saturates.
+#   F4 --mst-talking-heads          learned (N*n_head)^2 mixing along the head axis before
+#      c_proj. Dense MHA is ALSO block-diagonal per head and works because W_O mixes them;
+#      MST blocks W_O too. Measured +0.006% params, +0.005% FLOPs: effectively free.
+#   F5 --mst-wo-mode dense          the full version of F4's mechanism. Measured +19.7%
+#      params / +16.3% FLOPs at L=32, +5.7% FLOPs at L=8.
+#
+# SCORING. Use sigma = 0.00184 (measured over five 2-seed arms), NOT the 0.0003 in the
+# paper, which measures kernel nondeterminism because p32 never passed --seed. Resolution
+# floor at 2 seeds is 0.0037 bpb. F5 must buy >0.0058 bpb at L=8 to pay for its FLOPs.
+# F3's saving is depth-dependent (-2.1% FLOPs at L=8 but -7.6% at L=32), so judge it at L=8
+# on whether it COSTS bpb, not on the L=8 FLOP payoff.
+if has couple; then
+    echo ""; echo "### COUPLE: Stage 15 coupling optimization + attention mixing"
+    SEEDS_SAVE="$SEEDS"; SEEDS=2
+    if check_divisible "$SUB_DIM" 64; then
+        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+        # Free and possibly explanatory, so these run first.
+        run CPL_distmuon           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-distribute-block-muon 1
+        run CPL_talking            "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-talking-heads 1
+        run CPL_spectral           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-trans-spectral-lr 1
+        run CPL_distmuon_spectral  "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-distribute-block-muon 1 --mst-trans-spectral-lr 1
+        run CPL_talking_distmuon   "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-talking-heads 1 --mst-distribute-block-muon 1
+        # Cost cuts.
+        run CPL_every2             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 2
+        run CPL_every4             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 4
+        # If F1 fixes how the coupling is trained, coupling less often may cost less.
+        run CPL_every2_distmuon    "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-transition-every 2 --mst-distribute-block-muon 1
+        # The expensive arm.
+        run CPL_dense_wo           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-wo-mode dense
+        # Control, reusing its completed seeds. Flags must stay byte-identical.
+        run STACK_noO1             "$DEPTH" $MST_FULL $BEST_SO_FAR
+    fi
+    SEEDS="$SEEDS_SAVE"
+fi
 
 # ---------------------------------------------------------------- d16
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this

@@ -368,6 +368,8 @@ while [[ $# -gt 0 ]]; do
         --mst-sub-head-dim|--mst-final-norm|--mst-per-stream-ve|\
         --mst-lm-head-dim|--mst-compose-windows|\
         --mst-channel-mix|--mst-channel-mix-site|\
+        --mst-distribute-block-muon|--mst-trans-spectral-lr|\
+        --mst-talking-heads|--mst-wo-mode|\
         --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")
             shift 2

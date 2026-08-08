@@ -462,6 +462,20 @@ class GPTConfig:
     mst_channel_mix_site: str = 'layer'             # 'layer' (alternate the offset on odd layers)
                                                     # | 'ffn' (permute between attention and FFN, which is where
                                                     #   ShuffleNet puts its shuffle) | 'both'
+    # Stage 15: coupling optimization + cross-stream mixing in attention.
+    mst_distribute_block_muon: int = 0              # F1: give distribute_w the same block-diagonal Newton-Schulz
+                                                    #     and sub-LR that the per-stream weights get. It is
+                                                    #     (N*d, d), structurally identical to c_proj_w, but was
+                                                    #     omitted, so Muon orthogonalizes across all N coupling
+                                                    #     blocks jointly (the exact cross-contamination 1B fixes).
+    mst_trans_spectral_lr: int = 0                  # F2: agg_up_w (D,d) and agg_down_w (d,D) get LR scaled by
+                                                    #     sqrt(N) and 1/sqrt(N) per the spectral condition,
+                                                    #     instead of sharing one matrix_lr.
+    mst_talking_heads: int = 0                      # F4: learned (N*n_head)^2 mixing along the head axis before
+                                                    #     c_proj. MHA is already block-diagonal per head and works
+                                                    #     because W_O mixes them; MST blocks W_O too. ~1K params.
+    mst_wo_mode: str = 'block'                      # F5: 'block' (per-stream c_proj) | 'dense' (full D x D over
+                                                    #     the concatenated attention outputs, i.e. MHA's W_O)
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -649,6 +663,9 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_lm_head_dim", "mst_compose_windows",
     # MST Stage 14: free cross-stream mixing
     "mst_channel_mix", "mst_channel_mix_site",
+    # MST Stage 15: coupling optimization + attention cross-stream mixing
+    "mst_distribute_block_muon", "mst_trans_spectral_lr",
+    "mst_talking_heads", "mst_wo_mode",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

@@ -329,6 +329,19 @@ parser.add_argument("--mst-channel-mix", type=str, default='none', choices=['non
 parser.add_argument("--mst-channel-mix-site", type=str, default='layer', choices=['layer', 'ffn', 'both'],
                     help="MST: where to permute. layer=alternate offset on odd layers; "
                          "ffn=between attention and FFN; both")
+# MST Stage 15: coupling optimization + attention cross-stream mixing
+parser.add_argument("--mst-distribute-block-muon", type=int, default=0, choices=[0, 1],
+                    help="MST F1: give distribute_w block-diagonal Newton-Schulz + sub-LR, like the "
+                         "per-stream weights already get (it is (N*d, d) but was omitted)")
+parser.add_argument("--mst-trans-spectral-lr", type=int, default=0, choices=[0, 1],
+                    help="MST F2: scale agg_up/agg_down LRs by sqrt(N) and 1/sqrt(N) per the "
+                         "spectral condition instead of sharing one matrix_lr")
+parser.add_argument("--mst-talking-heads", type=int, default=0, choices=[0, 1],
+                    help="MST F4: learned (N*n_head)^2 mixing along the head axis before c_proj, "
+                         "restoring what dense MHA's W_O does across heads")
+parser.add_argument("--mst-wo-mode", type=str, default='block', choices=['block', 'dense'],
+                    help="MST F5: attention output projection. block=per-stream (default), "
+                         "dense=full D x D over concatenated outputs (+20% layer params)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -1048,6 +1061,11 @@ def build_model_meta(depth):
         # Stage 14: free cross-stream mixing
         mst_channel_mix=getattr(args, 'mst_channel_mix', 'none'),
         mst_channel_mix_site=getattr(args, 'mst_channel_mix_site', 'layer'),
+        # Stage 15: coupling optimization + attention cross-stream mixing
+        mst_distribute_block_muon=getattr(args, 'mst_distribute_block_muon', 0),
+        mst_trans_spectral_lr=getattr(args, 'mst_trans_spectral_lr', 0),
+        mst_talking_heads=getattr(args, 'mst_talking_heads', 0),
+        mst_wo_mode=getattr(args, 'mst_wo_mode', 'block'),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1728,6 +1746,12 @@ if model_config.use_mst and master_process:
                 # Stage 14: free cross-stream mixing
                 'channel_mix':          c.mst_channel_mix,
                 'channel_mix_site':     c.mst_channel_mix_site,
+                # Stage 15
+                'transition_every':     c.mst_transition_every,
+                'distribute_block_muon': c.mst_distribute_block_muon,
+                'trans_spectral_lr':    c.mst_trans_spectral_lr,
+                'talking_heads':        c.mst_talking_heads,
+                'wo_mode':              c.mst_wo_mode,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

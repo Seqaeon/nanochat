@@ -881,7 +881,20 @@ class BatchedMSTLayer(nn.Module):
         self.c_q_w = nn.Parameter(torch.empty(N * qkv_dim, d))
         self.c_k_w = nn.Parameter(torch.empty(N * qkv_dim, d))
         self.c_v_w = nn.Parameter(torch.empty(N * qkv_dim, d))
-        self.c_proj_w = nn.Parameter(torch.empty(N * d, qkv_dim))
+        # F5: 'dense' replaces the per-stream output projection with a full
+        # (N*d, N*qkv_dim) map over the concatenated attention outputs, which is what
+        # multi-head attention's W_O does. Costs D^2 instead of D^2/N, i.e. +20% per layer.
+        self._wo_dense = str(getattr(config, 'mst_wo_mode', 'block')) == 'dense'
+        if self._wo_dense:
+            self.c_proj_dense_w = nn.Parameter(torch.empty(N * d, N * qkv_dim))
+        else:
+            self.c_proj_w = nn.Parameter(torch.empty(N * d, qkv_dim))
+
+        # F4: talking-heads mixing along the (N * n_head) head axis, applied just before
+        # the output projection. Init to identity so it starts as an exact no-op.
+        self._talking_heads = bool(getattr(config, 'mst_talking_heads', 0))
+        if self._talking_heads:
+            self.talking_w = nn.Parameter(torch.empty(N * n_head, N * n_head))
 
         # --- Batched FFN weights: standard d → 4d → d ---
         inner = 4 * d
@@ -921,6 +934,13 @@ class BatchedMSTLayer(nn.Module):
             self.c_v_w = nn.Parameter(torch.empty(qkv_dim, d))  # shared
 
         # --- Transition weights (mode-dependent) ---
+        # F3: couple only every k-th layer, always including the last so the streams are
+        # merged before the output head. The coupling is 3D^2/N, i.e. ~20% of a layer, and
+        # our own data says it saturates: removing it entirely costs 0.039 bpb but twelve
+        # enrichments and free permutation mixing all did nothing. Non-coupling layers do
+        # not allocate the transition weights at all, so parameters and FLOPs both drop.
+        _every = max(1, int(getattr(config, 'mst_transition_every', 1)))
+        self._couples = (layer_idx % _every == 0) or (layer_idx == n_layer - 1)
         self._transition_mode = config.mst_transition_mode
         # Stage 8: Transition expressivity flags
         self._transition_nonlinear = bool(config.mst_transition_nonlinear)
@@ -931,7 +951,10 @@ class BatchedMSTLayer(nn.Module):
         tw_dim = int(d * tw_mult)  # e.g. tw_mult=4.0 for N=4 gives D-width
         self._tw_dim = tw_dim
         self._has_wide_transition = False  # may be set True in AggDist branch
-        if config.mst_transition_mode == 'aggregate_distribute':
+        if not self._couples:
+            # F3: no coupling on this layer, so allocate no transition weights.
+            self._has_wide_transition = False
+        elif config.mst_transition_mode == 'aggregate_distribute':
             if self._transition_mlp:
                 # MLP transition: concat(N×d=D) → Linear(D,d) → SiLU → Linear(d,D) → split(N×d)
                 # Bottleneck MLP: same d-dim compression as AggDist but with full cross-sub
@@ -1072,10 +1095,10 @@ class BatchedMSTLayer(nn.Module):
         else:
             c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
             c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
-        c_proj_w = self.c_proj_w.view(N, d, self.qkv_dim)
+        c_proj_w = None if self._wo_dense else self.c_proj_w.view(N, d, self.qkv_dim)
         fc_w = self.fc_w.view(N, self._inner, d)
         fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
-        distribute_w = self.distribute_w.view(N, d, d) if (self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and not self._mean_transition) else None
+        distribute_w = self.distribute_w.view(N, d, d) if (self._couples and self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and not self._mean_transition) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         # ==================== ATTENTION ====================
@@ -1149,8 +1172,22 @@ class BatchedMSTLayer(nn.Module):
 
         y = torch.stack(attn_results, dim=2)  # (B, T, N, qkv_dim)
 
+        # F4: talking-heads. Mix along the (N * n_head) head axis before the output
+        # projection, which is the one thing dense MHA does that MST removed: heads there
+        # are also computed independently, and W_O is what puts them back together.
+        if self._talking_heads:
+            H = N * self.n_head
+            yh = y.view(B, T, H, self.head_dim)
+            yh = torch.einsum('bthd,gh->btgd', yh, self.talking_w.to(dtype=yh.dtype))
+            y = yh.reshape(B, T, N, self.qkv_dim)
+
         # Batched output projection
-        attn_out = _batched_linear(y, c_proj_w)  # (B, T, N, d)
+        if self._wo_dense:
+            # F5: one (N*d, N*qkv_dim) map over the concatenated per-stream outputs
+            y_flat = y.reshape(B, T, N * self.qkv_dim)
+            attn_out = F.linear(y_flat, self.c_proj_dense_w.to(dtype=y_flat.dtype)).view(B, T, N, d)
+        else:
+            attn_out = _batched_linear(y, c_proj_w)  # (B, T, N, d)
 
         # Attention residual
         sub_states = sub_states + attn_out
@@ -1256,7 +1293,11 @@ class BatchedMSTLayer(nn.Module):
             mask_g = ~torch.eye(N, device=sim_g.device, dtype=torch.bool)
             aux_loss = aux_loss + self._contrastive_diversity_weight * sim_g.masked_select(mask_g).mean()
 
-        if self._transition_mode == 'aggregate_distribute':
+        if not self._couples:
+            # F3: this layer runs its streams fully independently. Nothing to route, so
+            # report uniform entropy for the diagnostics and leave sub_states untouched.
+            self._last_route_entropy = math.log(N)
+        elif self._transition_mode == 'aggregate_distribute':
             if self._mean_transition:
                 # ---- Stage 11-C: Parameter-free mean-add transition ----
                 sub_mean = x.mean(dim=2, keepdim=True)  # (B, T, 1, d)
@@ -1437,7 +1478,12 @@ class BatchedMSTLayer(nn.Module):
         else:
             c_k = self.c_k_w.view(N, self.qkv_dim, d)
             c_v = self.c_v_w.view(N, self.qkv_dim, d)
-        c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
+        if self._wo_dense:
+            # F5: single residual-branch matrix, so zero-init the whole thing.
+            c_proj = None
+            nn.init.zeros_(self.c_proj_dense_w)
+        else:
+            c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
         fc = self.fc_w.view(N, self._inner, d)
         fc_proj = self.fc_proj_w.view(N, d, self._inner)
         ve_gate = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
@@ -1447,12 +1493,17 @@ class BatchedMSTLayer(nn.Module):
             nn.init.uniform_(c_k, -sub_s, sub_s)
             nn.init.uniform_(c_v, -sub_s, sub_s)
 
+        # F4: identity so talking-heads starts as an exact no-op.
+        if self._talking_heads:
+            nn.init.eye_(self.talking_w)
+
         for j in range(N):
             nn.init.uniform_(c_q[j], -sub_s, sub_s)
             if not self._shared_kv_attn:
                 nn.init.uniform_(c_k[j], -sub_s, sub_s)
                 nn.init.uniform_(c_v[j], -sub_s, sub_s)
-            nn.init.zeros_(c_proj[j])
+            if c_proj is not None:
+                nn.init.zeros_(c_proj[j])
             # FFN
             nn.init.uniform_(fc[j], -sub_s, sub_s)
             nn.init.zeros_(fc_proj[j])
@@ -1596,6 +1647,13 @@ class MST(nn.Module):
 
         # Stage 14 lives in BatchedMSTLayer only; the legacy list path would silently
         # ignore it and report a number for an architecture that was never trained.
+        # Stage 15 guards. mst_transition_every was silently ignored on the batched path for
+        # its whole life because it was neither implemented there nor listed in
+        # _can_use_batched_layer. It is implemented now; these asserts stop the next flag
+        # from repeating that, since a no-op flag produces a number for an architecture
+        # that was never trained.
+        assert str(getattr(config, 'mst_wo_mode', 'block')) in ('block', 'dense'), \
+            f"mst_wo_mode must be block|dense, got {config.mst_wo_mode!r}"
         self.channel_mix = str(getattr(config, 'mst_channel_mix', 'none'))
         assert self.channel_mix in ('none', 'roll', 'shuffle'), \
             f"mst_channel_mix must be none|roll|shuffle, got {self.channel_mix!r}"
@@ -1681,6 +1739,13 @@ class MST(nn.Module):
                 assert self.channel_mix == 'none', (
                     "mst_channel_mix is implemented in BatchedMSTLayer only; this config "
                     "falls back to the legacy list path, which would ignore it silently")
+                for _flag in ('mst_distribute_block_muon', 'mst_trans_spectral_lr',
+                              'mst_talking_heads'):
+                    assert not getattr(config, _flag, 0), (
+                        f"{_flag} is implemented in BatchedMSTLayer only; this config falls "
+                        f"back to the legacy list path, which would ignore it silently")
+                assert str(getattr(config, 'mst_wo_mode', 'block')) == 'block', \
+                    "mst_wo_mode='dense' is implemented in BatchedMSTLayer only"
                 self.layers = nn.ModuleList([
                     MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
                     for i in range(n)
@@ -2484,6 +2549,13 @@ class MST(nn.Module):
         sub_lr_scale = self.config.mst_sub_lr_scale
         block_diag = bool(self.config.mst_block_diagonal_muon)
         stacked_names = {'c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w'}
+        # F1: distribute_w is (N*d, d), structurally identical to c_proj_w, but was left out
+        # of this set. Without it Muon's Newton-Schulz orthogonalizes across all N coupling
+        # blocks jointly, which is exactly the cross-contamination 1B exists to remove, and
+        # it never receives the sub-LR correction either. The coupling was the only part of
+        # the model still being optimized as if it were one dense matrix.
+        if getattr(self.config, 'mst_distribute_block_muon', 0):
+            stacked_names.add('distribute_w')
 
         # Identify stacked per-sub params by their parameter object identity
         stacked_param_ids = set()
@@ -2495,8 +2567,24 @@ class MST(nn.Module):
                         if p is not None and p.ndim == 2 and p.shape[0] % N == 0:
                             stacked_param_ids.add(id(p))
 
+        # F2: the transition's two shared matrices are the only weights in the model whose
+        # fan_out/fan_in ratio is not 1. Muon's update is spectrally normalized, so under the
+        # spectral condition agg_up (D,d) and agg_down (d,D) want learning rates differing by
+        # a factor of N; today they share one matrix_lr in the generic group below.
+        spectral_scale = {}
+        if getattr(self.config, 'mst_trans_spectral_lr', 0) and self._use_batched:
+            for layer in self.layers:
+                if not isinstance(layer, BatchedMSTLayer):
+                    continue
+                for name, scale in (('agg_up_w', N ** 0.5), ('agg_down_w', N ** -0.5)):
+                    p = getattr(layer, name, None)
+                    if p is not None and p.ndim == 2:
+                        spectral_scale[id(p)] = scale
+
         stacked_matrix_params = [p for p in matrix_params if id(p) in stacked_param_ids]
-        other_matrix_params = [p for p in matrix_params if id(p) not in stacked_param_ids]
+        other_matrix_params = [p for p in matrix_params
+                               if id(p) not in stacked_param_ids and id(p) not in spectral_scale]
+        spectral_params = [p for p in matrix_params if id(p) in spectral_scale]
 
         # Non-stacked matrix params → standard Muon
         for shape in sorted({p.shape for p in other_matrix_params}) if other_matrix_params else []:
@@ -2505,6 +2593,16 @@ class MST(nn.Module):
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
             ))
+
+        # Transition matrices at their spectrally-scaled LRs
+        for scale in sorted({spectral_scale[id(p)] for p in spectral_params}):
+            group_params = [p for p in spectral_params if spectral_scale[id(p)] == scale]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr * scale,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+        if spectral_params:
+            print0(f"[MST] F2: transition spectral LR — agg_up ×{N**0.5:.2f}, agg_down ×{N**-0.5:.2f}")
 
         # Stacked per-sub matrix params → Muon with optional LR scaling + block-diagonal
         sub_muon_lr = matrix_lr * sub_lr_scale

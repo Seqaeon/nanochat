@@ -315,6 +315,155 @@ def test_mix_rejects_bad_settings():
         build_meta(mst_channel_mix="roll", mst_channel_mix_site="bogus")
 
 
+# ── Stage 15: coupling optimization + attention cross-stream mixing ──────────
+
+def _muon_groups(model):
+    """{id(param): (lr, block_diagonal_or_None)} over the Muon groups."""
+    out = {}
+    for g in model.setup_optimizer().param_groups:
+        if g.get('kind') != 'muon':
+            continue
+        for p in g['params']:
+            out[id(p)] = (g['lr'], g.get('block_diagonal'))
+    return out
+
+
+def test_f1_distribute_w_is_excluded_by_default():
+    """The defect: distribute_w is (N*d, d) like c_proj_w but never got block-diag Muon."""
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config())
+    g = _muon_groups(model)
+    layer = model.layers[0]
+    assert layer.distribute_w.shape[0] % N_SUBS == 0, "same stacked shape as c_proj_w"
+    assert g[id(layer.distribute_w)][1] is None, "legacy: no block_diagonal"
+    assert g[id(layer.c_proj_w)][1] == N_SUBS, "but the per-stream weights do get it"
+
+
+def test_f1_puts_distribute_w_on_the_same_footing():
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config(mst_distribute_block_muon=1))
+    g = _muon_groups(model)
+    layer = model.layers[0]
+    dist_lr, dist_blk = g[id(layer.distribute_w)]
+    proj_lr, proj_blk = g[id(layer.c_proj_w)]
+    assert dist_blk == N_SUBS and dist_lr == proj_lr, \
+        f"distribute_w should match c_proj_w, got lr={dist_lr} block={dist_blk}"
+
+
+def test_f2_gives_the_transition_matrices_spectral_lrs():
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        base = MST(make_config())
+        spec = MST(make_config(mst_trans_spectral_lr=1))
+    gb, gs = _muon_groups(base), _muon_groups(spec)
+    lb, ls = base.layers[0], spec.layers[0]
+    # Legacy: both share one lr.
+    assert gb[id(lb.agg_up_w)][0] == gb[id(lb.agg_down_w)][0]
+    # F2: they differ by exactly N, agg_up above and agg_down below.
+    up, down = gs[id(ls.agg_up_w)][0], gs[id(ls.agg_down_w)][0]
+    assert up / down == pytest.approx(N_SUBS), f"expected ratio {N_SUBS}, got {up/down}"
+    assert up > gb[id(lb.agg_up_w)][0] > down
+
+
+# ── F3: couple less often ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("every,expected", [(1, [0, 1, 2, 3]), (2, [0, 2, 3]), (4, [0, 3])])
+def test_f3_selects_the_coupling_layers(every, expected):
+    m = build_meta(depth=4, mst_transition_every=every)
+    assert [i for i, l in enumerate(m.layers) if l._couples] == expected
+    assert m.layers[-1]._couples, "the last layer must always couple"
+
+
+def test_f3_drops_params_and_flops():
+    base = build_meta(depth=4)
+    every2 = build_meta(depth=4, mst_transition_every=2)
+    b, e = base.num_scaling_params(), every2.num_scaling_params()
+    assert e['transformer_matrices'] < b['transformer_matrices']
+    assert every2.estimate_flops()[0] < base.estimate_flops()[0]
+    # Non-coupling layers allocate no transition weights at all.
+    assert not hasattr(every2.layers[1], 'distribute_w')
+    assert hasattr(every2.layers[0], 'distribute_w')
+    assert every2._use_batched
+
+
+def test_f3_is_no_longer_a_silent_noop():
+    """It was ignored on the batched path for its whole life; that is the bug being fixed."""
+    base = build_meta(depth=4)
+    every2 = build_meta(depth=4, mst_transition_every=2)
+    assert base.estimate_flops()[0] != every2.estimate_flops()[0]
+
+
+# ── F4: talking heads ────────────────────────────────────────────────────────
+
+def test_f4_is_identity_at_init_and_nearly_free():
+    base = build_meta()
+    talk = build_meta(mst_talking_heads=1)
+    b, t = base.num_scaling_params(), talk.num_scaling_params()
+    extra = t['transformer_matrices'] - b['transformer_matrices']
+    H = N_SUBS * resolve_sub_heads(make_config())[0]
+    assert extra == H * H * base.config.n_layer, "one (Nh, Nh) matrix per layer"
+    assert extra / b['transformer_matrices'] < 0.01, "must be negligible"
+
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config(mst_talking_heads=1))
+        model.init_weights()
+    assert torch.equal(model.layers[0].talking_w,
+                       torch.eye(H, dtype=model.layers[0].talking_w.dtype))
+
+
+def test_f4_changes_the_computation_once_trained_away_from_identity():
+    def logits(**ov):
+        torch.manual_seed(0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            model = MST(make_config(**ov))
+            model.init_weights()
+        _wake_residual_branches(model)
+        if ov:  # perturb off identity, as a step of training would
+            with torch.no_grad():
+                g = torch.Generator().manual_seed(3)
+                for layer in model.layers:
+                    layer.talking_w.add_(torch.randn(layer.talking_w.shape, generator=g) * 0.1)
+        model.eval()
+        with torch.no_grad():
+            return model(torch.arange(SEQ).remainder(VOCAB).view(1, SEQ))
+
+    assert not torch.allclose(logits(), logits(mst_talking_heads=1), atol=1e-6)
+
+
+# ── F5: dense output projection ──────────────────────────────────────────────
+
+def test_f5_dense_wo_costs_the_predicted_amount():
+    D = 256
+    base = build_meta(D=D)
+    dense = build_meta(D=D, mst_wo_mode='dense')
+    d, L = D // N_SUBS, base.config.n_layer
+    b, x = base.num_scaling_params(), dense.num_scaling_params()
+    # block c_proj is N*d*qkv = D^2/N; dense is D^2. Delta = D^2 * (1 - 1/N) per layer.
+    assert x['transformer_matrices'] - b['transformer_matrices'] == \
+        L * (D * D - N_SUBS * d * d)
+    assert dense.estimate_flops()[0] > base.estimate_flops()[0]
+    assert dense._use_batched
+
+
+def test_f5_dense_wo_is_not_treated_as_block_structured():
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config(mst_wo_mode='dense'))
+    layer = model.layers[0]
+    assert not hasattr(layer, 'c_proj_w'), "the block-diagonal projection should be gone"
+    g = _muon_groups(model)
+    assert g[id(layer.c_proj_dense_w)][1] is None, \
+        "a dense W_O must not get block-diagonal Newton-Schulz"
+
+
+def test_f5_rejects_a_bad_mode():
+    with pytest.raises(AssertionError, match="block\\|dense"):
+        build_meta(mst_wo_mode='bogus')
+
+
 # ── all fixes together ───────────────────────────────────────────────────────
 
 def test_all_three_train_step():
@@ -323,7 +472,9 @@ def test_all_three_train_step():
     with contextlib.redirect_stdout(io.StringIO()):
         model = MST(make_config(mst_sub_head_dim=64, mst_final_norm=1, mst_per_stream_ve=1,
                                 mst_lm_head_dim=128, mst_compose_windows=1,
-                                mst_channel_mix='roll', mst_channel_mix_site='both'))
+                                mst_channel_mix='roll', mst_channel_mix_site='both',
+                                mst_distribute_block_muon=1, mst_trans_spectral_lr=1,
+                                mst_transition_every=2, mst_talking_heads=1))
         model.init_weights()
     assert model._use_batched
 
