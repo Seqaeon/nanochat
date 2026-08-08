@@ -27,7 +27,7 @@ import pytest
 import torch
 
 from nanochat.gpt import GPTConfig
-from nanochat.mst import MST, resolve_sub_heads
+from nanochat.mst import MST, mix_channels, resolve_sub_heads
 
 N_SUBS = 4
 VOCAB = 512
@@ -229,6 +229,92 @@ def test_o2_is_a_noop_without_multi_scale_windows():
     assert off.estimate_flops()[0] == on.estimate_flops()[0]
 
 
+# ── Stage 14: free cross-stream mixing ───────────────────────────────────────
+
+@pytest.mark.parametrize("mode", ["roll", "shuffle"])
+def test_mix_channels_roundtrips(mode):
+    x = torch.arange(2 * 3 * N_SUBS * 8, dtype=torch.float32).view(2, 3, N_SUBS, 8)
+    y = mix_channels(x, mode, N_SUBS, 8)
+    assert not torch.equal(x, y), "the permutation must actually move channels"
+    assert torch.equal(mix_channels(y, mode, N_SUBS, 8, inverse=True), x)
+
+
+@pytest.mark.parametrize("mode", ["roll", "shuffle"])
+def test_mix_channels_regroups_channels(mode):
+    """The property the old feature_cycle lacked.
+
+    Rolling by exactly d maps stream n to stream n+1 intact, so the *set* of channels
+    travelling together never changes and nothing mixes. A real mixer has to put
+    channels from different original streams into the same stream.
+    """
+    d = 8
+    chan = torch.arange(N_SUBS * d).view(1, 1, N_SUBS, d).float()   # channel -> its index
+    origin = lambda t: [set((v // d).long().tolist()) for v in t[0, 0]]
+
+    assert origin(chan) == [{i} for i in range(N_SUBS)], "before: each stream is pure"
+    mixed = origin(mix_channels(chan, mode, N_SUBS, d))
+    assert all(len(s) > 1 for s in mixed), f"{mode} left some stream unmixed: {mixed}"
+
+    # Contrast: feature_cycle's roll by exactly d leaves every stream pure.
+    cycled = torch.roll(chan.reshape(1, 1, N_SUBS * d), shifts=d, dims=-1).view(1, 1, N_SUBS, d)
+    assert all(len(s) == 1 for s in origin(cycled)), \
+        "roll-by-d should be a pure relabelling, which is why it never mixed"
+
+
+def test_mix_is_free():
+    base = build_meta()
+    for site in ("layer", "ffn", "both"):
+        m = build_meta(mst_channel_mix="roll", mst_channel_mix_site=site)
+        assert m.num_scaling_params() == base.num_scaling_params()
+        assert m.estimate_flops()[0] == base.estimate_flops()[0]
+        assert m._use_batched
+
+
+def _wake_residual_branches(model, seed=1):
+    """Make the layers compute something.
+
+    MST zero-inits every residual output projection (attention c_proj, FFN fc_proj,
+    the transition's agg_down), so a freshly initialized model is *exactly* the
+    identity through its layers. Any change of basis is then unobservable: a
+    permuted layer gives bit-identical output, because P^-1 . identity . P is the
+    identity. Filling these is what makes the mixing measurable at init.
+    """
+    g = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for layer in model.layers:
+            for name in ("c_proj_w", "fc_proj_w", "agg_down_w"):
+                p = getattr(layer, name, None)
+                if p is not None:
+                    p.copy_(torch.randn(p.shape, generator=g) * 0.02)
+
+
+def test_mix_changes_the_computation():
+    """Same weights, permuted partition: the outputs must differ."""
+    def logits(**ov):
+        torch.manual_seed(0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            model = MST(make_config(**ov))
+            model.init_weights()
+        _wake_residual_branches(model)
+        model.eval()
+        with torch.no_grad():
+            return model(torch.arange(SEQ).remainder(VOCAB).view(1, SEQ))
+
+    off = logits()
+    assert off.abs().max() > 1e-3, "sanity: the layers should be doing something"
+    for mode in ("roll", "shuffle"):
+        for site in ("layer", "ffn"):
+            on = logits(mst_channel_mix=mode, mst_channel_mix_site=site)
+            assert not torch.allclose(off, on, atol=1e-6), f"{mode}/{site} changed nothing"
+
+
+def test_mix_rejects_bad_settings():
+    with pytest.raises(AssertionError, match="none\\|roll\\|shuffle"):
+        build_meta(mst_channel_mix="bogus")
+    with pytest.raises(AssertionError, match="layer\\|ffn\\|both"):
+        build_meta(mst_channel_mix="roll", mst_channel_mix_site="bogus")
+
+
 # ── all fixes together ───────────────────────────────────────────────────────
 
 def test_all_three_train_step():
@@ -236,7 +322,8 @@ def test_all_three_train_step():
     torch.manual_seed(0)
     with contextlib.redirect_stdout(io.StringIO()):
         model = MST(make_config(mst_sub_head_dim=64, mst_final_norm=1, mst_per_stream_ve=1,
-                                mst_lm_head_dim=128, mst_compose_windows=1))
+                                mst_lm_head_dim=128, mst_compose_windows=1,
+                                mst_channel_mix='roll', mst_channel_mix_site='both'))
         model.init_weights()
     assert model._use_batched
 

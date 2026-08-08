@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -282,6 +282,39 @@ if has overhead; then
         # keeps O2 and drops O1, and is the one expected to win.
         run STACK_noO1 "$DEPTH" $MST_FULL \
             --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
+    fi
+fi
+
+# ---------------------------------------------------------------- mix
+# Stage 14. An MST layer is block-diagonal in the channel axis, and composing
+# block-diagonal maps under a FIXED partition stays block-diagonal, so every
+# cross-stream path has to squeeze through the rank-d coupling. That is why the
+# twelve richer couplings all failed: they were rebuilding a D x D mixing matrix
+# through a rank-d channel. Permuting the partition makes the composition itself
+# mix, at zero parameters and zero FLOPs.
+#
+# Precedent: ShuffleNet showed grouped convs plateau without channel shuffle;
+# ResNeXt keeps its 1x1 mixing convs dense; Swin alternates window offsets; Monarch
+# factorizes as block-diagonal . permutation . block-diagonal.
+#
+# NOT the same as the existing mst_feature_cycle, which rolls by exactly d and so
+# maps stream n to stream n+1 intact, changing nothing about which channels travel
+# together. That negative result does not cover this.
+#
+# 'roll' shifts by d//2 so streams keep half their channels and specialization
+# survives; 'shuffle' is maximal mixing but erases stream identity, which fights
+# the multi-scale windows. Sites: between layers, between attention and FFN, or both.
+if has mix; then
+    echo ""; echo "### MIX: free cross-stream mixing (zero params, zero FLOPs)"
+    BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+    if check_divisible "$SUB_DIM" 64; then
+        for site in layer ffn both; do
+            run "MIX_roll_${site}" "$DEPTH" $MST_FULL $BEST_SO_FAR \
+                --mst-channel-mix roll --mst-channel-mix-site "$site"
+        done
+        # Maximal mixing, run only at the best site once 'roll' has named one.
+        run MIX_shuffle_layer "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-channel-mix shuffle --mst-channel-mix-site layer
     fi
 fi
 

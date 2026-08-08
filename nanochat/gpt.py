@@ -450,6 +450,18 @@ class GPTConfig:
     mst_compose_windows: int = 0                    # O2: intersect per-sub windows with the layer window pattern
                                                     #     instead of letting the per-sub windows replace it, so the
                                                     #     widest stream is not full-context at every single layer
+    # Stage 14: free cross-stream mixing. MST is MHA with a block-diagonal output
+    # projection: composing block-diagonal layers under a FIXED partition stays
+    # block-diagonal forever, so all cross-channel flow is squeezed through the
+    # rank-d coupling. Permuting the partition makes the composition mix at zero
+    # parameter and zero FLOP cost (ShuffleNet channel shuffle; Swin shifted windows;
+    # Monarch's block-diagonal-permutation-block-diagonal factorization).
+    mst_channel_mix: str = 'none'                   # 'none' | 'roll' (shift by d//2, Swin-style, streams keep
+                                                    #   half their channels) | 'shuffle' (ShuffleNet transpose,
+                                                    #   every stream draws d/N channels from every other)
+    mst_channel_mix_site: str = 'layer'             # 'layer' (alternate the offset on odd layers)
+                                                    # | 'ffn' (permute between attention and FFN, which is where
+                                                    #   ShuffleNet puts its shuffle) | 'both'
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -635,6 +647,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_sub_head_dim", "mst_final_norm", "mst_per_stream_ve",
     # MST Stage 13: overhead cuts
     "mst_lm_head_dim", "mst_compose_windows",
+    # MST Stage 14: free cross-stream mixing
+    "mst_channel_mix", "mst_channel_mix_site",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

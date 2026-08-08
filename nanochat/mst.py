@@ -46,6 +46,41 @@ def resolve_sub_heads(config):
     return n_head, (config.mst_head_dim if config.mst_head_dim > 0 else d // n_head)
 
 
+def mix_channels(x, mode, N, d, inverse=False):
+    """Permute the flattened (N*d) channel axis of a (B, T, N, d) stream tensor.
+
+    An MST layer is block-diagonal in this axis, and composing block-diagonal maps
+    under a fixed partition stays block-diagonal, so every cross-stream path has to
+    squeeze through the rank-d coupling. Permuting the partition between layers makes
+    the composition itself mix, for zero parameters and zero FLOPs.
+
+    'roll'    cyclic shift by d//2. Each stream keeps half its channels and trades
+              the other half with a neighbour, so per-stream specialization (the
+              multi-scale windows, the token-frequency split) survives. This is
+              Swin's shifted-window trick on the channel axis.
+    'shuffle' ShuffleNet's channel shuffle: view as (N, d), transpose, flatten, so
+              every new stream draws d/N channels from every old stream. Maximal
+              mixing in one step, but stream identity does not survive it.
+
+    NOTE this is NOT the existing mst_feature_cycle, which rolls by exactly d. That
+    maps stream n to stream n+1 intact, leaving the partition of channels into groups
+    unchanged: it relabels which weights see which block, and mixes nothing.
+    """
+    if mode == 'none':
+        return x
+    B, T, _, _ = x.shape
+    if mode == 'roll':
+        s = d // 2
+        flat = x.reshape(B, T, N * d)
+        return torch.roll(flat, shifts=(-s if inverse else s), dims=-1).view(B, T, N, d)
+    if mode == 'shuffle':
+        if inverse:
+            # incoming flat index is k*N + n; undo it back to n*d + k
+            return x.reshape(B, T, d, N).transpose(2, 3).reshape(B, T, N, d)
+        return x.transpose(2, 3).reshape(B, T, N, d)
+    raise ValueError(f"unknown mst_channel_mix: {mode!r}")
+
+
 class SubTransformerAttention(nn.Module):
     """Self-attention for a single sub-transformer at dimension d.
 
@@ -867,6 +902,15 @@ class BatchedMSTLayer(nn.Module):
         self._router_entropy_weight = config.mst_router_entropy_weight
         self._contrastive_diversity_weight = config.mst_contrastive_diversity_weight
         self._shared_kv_attn = bool(config.mst_shared_kv_attn)
+        # Stage 14: free cross-stream mixing (see mix_channels)
+        self._mix_mode = str(getattr(config, 'mst_channel_mix', 'none'))
+        _site = str(getattr(config, 'mst_channel_mix_site', 'layer'))
+        # Inter-layer: alternate the partition offset, so consecutive layers are
+        # block-diagonal in different bases. Only odd layers are permuted, which is
+        # what makes the pair of layers mix rather than every layer agreeing again.
+        self._mix_layer = self._mix_mode != 'none' and _site in ('layer', 'both') and (layer_idx % 2 == 1)
+        # Intra-layer: permute between attention and FFN, two mixing points per layer.
+        self._mix_ffn = self._mix_mode != 'none' and _site in ('ffn', 'both')
         self._last_route_entropy = None  # stored for diagnostics
 
         # --- Shared K/V attention (3A): all subs share K,V weights, per-sub Q ---
@@ -1009,6 +1053,16 @@ class BatchedMSTLayer(nn.Module):
         B, T, N, d = sub_states.shape
         cos, sin = cos_sin
 
+        # Stage 14, inter-layer: run this layer in a permuted basis and undo the
+        # permutation before returning, so the residual stream, x0 blend and per-layer
+        # scalars all stay in canonical channel order.
+        if self._mix_layer:
+            sub_states = mix_channels(sub_states, self._mix_mode, N, d)
+            # A per-stream value embedding is indexed by the same channel axis, so it
+            # has to travel with the states. A shared d-wide VE is basis-free.
+            if ve is not None and ve.shape[-1] == N * d:
+                ve = mix_channels(ve.view(B, T, N, d), self._mix_mode, N, d).reshape(B, T, N * d)
+
         # Reshape stored 2D weights (N*out, in) → 3D (N, out, in) for batched ops
         c_q_w = self.c_q_w.view(N, self.qkv_dim, d)
         if self._shared_kv_attn:
@@ -1101,6 +1155,12 @@ class BatchedMSTLayer(nn.Module):
         # Attention residual
         sub_states = sub_states + attn_out
 
+        # Stage 14, intra-layer: permute between attention and FFN, which is exactly
+        # where ShuffleNet places its channel shuffle relative to the grouped ops.
+        # Undone after the FFN residual so the transition sees canonical order.
+        if self._mix_ffn:
+            sub_states = mix_channels(sub_states, self._mix_mode, N, d)
+
         # ==================== CROSS-SUB KV INJECTION (Proposal C) ====================
         if self._cross_kv_inject:
             # Per-token N×N attention across subs — softmax provides nonlinear cross-sub interaction
@@ -1141,6 +1201,9 @@ class BatchedMSTLayer(nn.Module):
         h = F.relu(h).square()                      # relu²
         ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         sub_states = sub_states + ffn_out
+
+        if self._mix_ffn:
+            sub_states = mix_channels(sub_states, self._mix_mode, N, d, inverse=True)
 
         # ==================== TRANSITION ====================
         # Pre-norm for transition
@@ -1353,6 +1416,11 @@ class BatchedMSTLayer(nn.Module):
             # Micro-attention uses residual
             sub_states = sub_states + out
 
+        # Stage 14, inter-layer: back to canonical channel order for the residual
+        # stream, the x0 blend and the next layer's per-layer scalars.
+        if self._mix_layer:
+            sub_states = mix_channels(sub_states, self._mix_mode, N, d, inverse=True)
+
         return sub_states, aux_loss
 
     @torch.no_grad()
@@ -1526,6 +1594,18 @@ class MST(nn.Module):
         self.compose_windows = bool(getattr(config, 'mst_compose_windows', 0))
         self.layer_sub_windows = self._build_layer_sub_windows(N)
 
+        # Stage 14 lives in BatchedMSTLayer only; the legacy list path would silently
+        # ignore it and report a number for an architecture that was never trained.
+        self.channel_mix = str(getattr(config, 'mst_channel_mix', 'none'))
+        assert self.channel_mix in ('none', 'roll', 'shuffle'), \
+            f"mst_channel_mix must be none|roll|shuffle, got {self.channel_mix!r}"
+        assert str(getattr(config, 'mst_channel_mix_site', 'layer')) in ('layer', 'ffn', 'both'), \
+            "mst_channel_mix_site must be layer|ffn|both"
+        if self.channel_mix == 'shuffle':
+            assert d % N == 0, (
+                f"'shuffle' needs sub_dim ({d}) divisible by n_subs ({N}) so every stream "
+                f"draws an equal share from every other; use 'roll' otherwise")
+
         # Token embedding (D-dim)
         self.wte = nn.Embedding(padded_vocab_size, D)
 
@@ -1598,6 +1678,9 @@ class MST(nn.Module):
                     for i in range(n)
                 ])
             else:
+                assert self.channel_mix == 'none', (
+                    "mst_channel_mix is implemented in BatchedMSTLayer only; this config "
+                    "falls back to the legacy list path, which would ignore it silently")
                 self.layers = nn.ModuleList([
                     MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
                     for i in range(n)

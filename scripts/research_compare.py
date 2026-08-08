@@ -398,6 +398,8 @@ def run_training_sweep(args):
         "--mst-per-stream-ve", str(getattr(args, 'mst_per_stream_ve', 0)),
         "--mst-lm-head-dim", str(getattr(args, 'mst_lm_head_dim', 0)),
         "--mst-compose-windows", str(getattr(args, 'mst_compose_windows', 0)),
+        "--mst-channel-mix", str(getattr(args, 'mst_channel_mix', 'none')),
+        "--mst-channel-mix-site", str(getattr(args, 'mst_channel_mix_site', 'layer')),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -1066,6 +1068,10 @@ if __name__ == "__main__":
                         help="O1: output-head bottleneck width (0 = n_embd, off)")
     parser.add_argument("--mst-compose-windows", type=int, default=0, choices=[0, 1],
                         help="O2: intersect per-sub windows with the layer window pattern")
+    # Stage 14: free cross-stream mixing
+    parser.add_argument("--mst-channel-mix", type=str, default='none', choices=['none', 'roll', 'shuffle'],
+                        help="permute the stream partition so block-diagonal layers compose into mixing")
+    parser.add_argument("--mst-channel-mix-site", type=str, default='layer', choices=['layer', 'ffn', 'both'])
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

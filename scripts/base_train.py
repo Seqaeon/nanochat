@@ -321,6 +321,14 @@ parser.add_argument("--mst-lm-head-dim", type=int, default=0,
 parser.add_argument("--mst-compose-windows", type=int, default=0, choices=[0, 1],
                     help="MST O2: intersect per-sub windows with the layer window pattern rather "
                          "than replacing it, so the widest stream is not full-context every layer")
+# MST Stage 14: free cross-stream mixing (zero params, zero FLOPs)
+parser.add_argument("--mst-channel-mix", type=str, default='none', choices=['none', 'roll', 'shuffle'],
+                    help="MST: permute the stream partition so composed block-diagonal layers mix. "
+                         "roll=shift by d//2 (Swin-style, keeps specialization); "
+                         "shuffle=ShuffleNet transpose (maximal mixing, loses stream identity)")
+parser.add_argument("--mst-channel-mix-site", type=str, default='layer', choices=['layer', 'ffn', 'both'],
+                    help="MST: where to permute. layer=alternate offset on odd layers; "
+                         "ffn=between attention and FFN; both")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -1037,6 +1045,9 @@ def build_model_meta(depth):
         # Stage 13: overhead cuts
         mst_lm_head_dim=getattr(args, 'mst_lm_head_dim', 0),
         mst_compose_windows=getattr(args, 'mst_compose_windows', 0),
+        # Stage 14: free cross-stream mixing
+        mst_channel_mix=getattr(args, 'mst_channel_mix', 'none'),
+        mst_channel_mix_site=getattr(args, 'mst_channel_mix_site', 'layer'),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1714,6 +1725,9 @@ if model_config.use_mst and master_process:
                 # Stage 13: overhead cuts
                 'lm_head_dim':          c.mst_lm_head_dim,
                 'compose_windows':      c.mst_compose_windows,
+                # Stage 14: free cross-stream mixing
+                'channel_mix':          c.mst_channel_mix,
+                'channel_mix_site':     c.mst_channel_mix_site,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
@@ -1727,12 +1741,16 @@ if model_config.use_mst and master_process:
         def _append_row(csv_path, row):
             """Append one result row, never misaligning against an older header.
 
+            NOTE: csv/os are imported here rather than relying on write_csv's local
+            import, which is not visible from this scope.
+
             Each MST stage adds config columns, so a CSV written by an earlier stage
             has fewer fields than `row`. Appending under the new fieldnames would put
             extra values on every line while leaving the header short, silently
             skewing every column for whoever reads it later. Instead, divert to a
             numbered sibling file when the header does not match.
             """
+            import csv, os
             fieldnames = list(row.keys())
             if os.path.exists(csv_path):
                 with open(csv_path, newline='') as f:
