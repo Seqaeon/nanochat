@@ -181,39 +181,48 @@ echo "════════════════════════�
 # The anchor. Without a same-sweep baseline the deltas are not readable, because
 # the reference 1.0510 is a single seed from a different sweep.
 # The two dense controls duplicate p32's; skip this group if you already have them.
-if has control; then
-    echo ""; echo "### CONTROL: anchors for every delta below"
-    run CTRL_mst_full   "$DEPTH" $MST_FULL
-    run CTRL_dense_hd128 "$DEPTH" --models base
-    run CTRL_dense_hd32  "$DEPTH" --models base --head-dim 32
-fi
-
+#if has control; then
+#    echo ""; echo "### CONTROL: anchors for every delta below"
+#    run CTRL_mst_full   "$DEPTH" $MST_FULL
+#    run CTRL_dense_hd128 "$DEPTH" --models base
+#    run CTRL_dense_hd32  "$DEPTH" --models base --head-dim 32
+#fi
+#
 # ---------------------------------------------------------------- combo
 # Runs before the singles on purpose: this is the go/no-go. G1 is carried at both
 # 64 and 128 because at L=8 (d=128) head_dim=128 leaves exactly one head per
 # stream, so the "wider heads" and "enough heads" effects point opposite ways and
 # a single choice would confound them.
-if has combo; then
-    echo ""; echo "### COMBO: all three fixes (the go/no-go)"
-    if check_divisible "$SUB_DIM" 64; then
-        run COMBO_g1_64_g2_g3 "$DEPTH" $MST_FULL \
-            --mst-sub-head-dim 64 --mst-final-norm 1 --mst-per-stream-ve 1
-        run COMBO_g1_64_g2    "$DEPTH" $MST_FULL \
-            --mst-sub-head-dim 64 --mst-final-norm 1
-    fi
-    if check_divisible "$SUB_DIM" 128; then
-        run COMBO_g1_128_g2_g3 "$DEPTH" $MST_FULL \
-            --mst-sub-head-dim 128 --mst-final-norm 1 --mst-per-stream-ve 1
-    fi
-fi
+#if has combo; then
+#    echo ""; echo "### COMBO: all three fixes (the go/no-go)"
+#    if check_divisible "$SUB_DIM" 64; then
+#        run COMBO_g1_64_g2_g3 "$DEPTH" $MST_FULL \
+#            --mst-sub-head-dim 64 --mst-final-norm 1 --mst-per-stream-ve 1
+#        run COMBO_g1_64_g2    "$DEPTH" $MST_FULL \
+#            --mst-sub-head-dim 64 --mst-final-norm 1
+#    fi
+#    if check_divisible "$SUB_DIM" 128; then
+#        run COMBO_g1_128_g2_g3 "$DEPTH" $MST_FULL \
+#            --mst-sub-head-dim 128 --mst-final-norm 1 --mst-per-stream-ve 1
+#    fi
+#fi
 
 # ---------------------------------------------------------------- g1
 # Head geometry alone. Expected to be the largest of the three: Table 7's dense
 # control puts d_h 32 vs 128 at 0.0168 bpb, and this is that same axis applied
 # per stream at identical parameters and FLOPs.
+#if has g1; then
+#    echo ""; echo "### G1: per-stream head_dim (32 baseline -> 64 -> 128)"
+#    for hd in 64 128; do
+#        check_divisible "$SUB_DIM" "$hd" || continue
+#        run "G1_hd${hd}" "$DEPTH" $MST_FULL --mst-sub-head-dim "$hd"
+#    done
+#fi
+#
+
 if has g1; then
     echo ""; echo "### G1: per-stream head_dim (32 baseline -> 64 -> 128)"
-    for hd in 64 128; do
+    for hd in 128; do
         check_divisible "$SUB_DIM" "$hd" || continue
         run "G1_hd${hd}" "$DEPTH" $MST_FULL --mst-sub-head-dim "$hd"
     done
@@ -230,6 +239,7 @@ if has g3; then
     echo ""; echo "### G3: per-stream value embeddings"
     run G3_per_stream_ve "$DEPTH" $MST_FULL --mst-per-stream-ve 1
 fi
+
 
 # ---------------------------------------------------------------- d16
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
