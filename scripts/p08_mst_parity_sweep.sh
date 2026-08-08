@@ -440,15 +440,15 @@ if has d16 && [ "$DEPTH" -ne 16 ]; then
     SD16=$(( MD16 / N_SUBS ))
     MST_FULL_16="$(mst_config "$SD16" "$N_SUBS")"
     SEEDS_SAVE="$SEEDS"; SEEDS=1
-    run D16_baseline "$D16" $MST_FULL_16
+#    run D16_baseline "$D16" $MST_FULL_16
     # G2 dropped after the L=8 result; the full stack carries the overhead cuts too,
     # which are worth -24.7% FLOPs at this depth against -12.9% at L=32.
-    run D16_g1_64_g3 "$D16" $MST_FULL_16 --mst-sub-head-dim 64 --mst-per-stream-ve 1
+#    run D16_g1_64_g3 "$D16" $MST_FULL_16 --mst-sub-head-dim 64 --mst-per-stream-ve 1
     # O1 dropped: it costs bpb in line with the parameter scaling law, so it is not
     # a free saving. O2 was free at L=8; whether it stays free at L=16, where long
     # context is worth more, is the main thing this arm is testing.
-    run D16_stack    "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
+#    run D16_stack    "$D16" $MST_FULL_16 \
+#        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
     # THE decisive arm. F5 bought 0.0107 bpb at L=8, but its cost grows with depth and
     # is charged twice on the training-FLOPs axis (more FLOPs per token, and a larger
     # token budget because tokens = 10.5 x scaling params). It must buy >0.0097 bpb here
