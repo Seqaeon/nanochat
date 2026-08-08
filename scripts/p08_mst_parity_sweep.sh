@@ -415,6 +415,12 @@ if has couple; then
             --mst-transition-every 2 --mst-distribute-block-muon 1
         # The expensive arm.
         run CPL_dense_wo           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-wo-mode dense
+        # Does the free stuff stack onto the winner? F5 was -0.0107 at 4.5 sigma; F4 and
+        # F1 are each under 1 sigma alone but point the same way and add up (-0.0025
+        # together), and both are exactly FLOP-free, so there is no downside to carrying
+        # them if they hold.
+        run CPL_dense_wo_stack     "$DEPTH" $MST_FULL $BEST_SO_FAR \
+            --mst-wo-mode dense --mst-talking-heads 1 --mst-distribute-block-muon 1
         # Control, reusing its completed seeds. Flags must stay byte-identical.
         run STACK_noO1             "$DEPTH" $MST_FULL $BEST_SO_FAR
     fi
@@ -443,6 +449,16 @@ if has d16 && [ "$DEPTH" -ne 16 ]; then
     # context is worth more, is the main thing this arm is testing.
     run D16_stack    "$D16" $MST_FULL_16 \
         --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
+    # THE decisive arm. F5 bought 0.0107 bpb at L=8, but its cost grows with depth and
+    # is charged twice on the training-FLOPs axis (more FLOPs per token, and a larger
+    # token budget because tokens = 10.5 x scaling params). It must buy >0.0097 bpb here
+    # and >0.0113 at L=32. Compare against D16_stack, which differs only by --mst-wo-mode.
+    #   full transfer of the L=8 gain -> 1.0008x        (a win)
+    #   the 0.26 transfer G1+G3 showed -> 0.9141x       (worse than doing nothing)
+    # One single-seed run separates those, which is why it is worth its cost.
+    run D16_dense_wo "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+        --mst-wo-mode dense
     SEEDS="$SEEDS_SAVE"
 fi
 
