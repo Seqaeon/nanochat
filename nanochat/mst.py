@@ -565,7 +565,8 @@ class MSTFinalHead(nn.Module):
     """
 
     def __init__(self, d, N, D, vocab_size, mode='aggregate_proj', diversity_weight=0.0,
-                 routing_mode='soft_weighted', routing_topk=0, final_norm=False):
+                 routing_mode='soft_weighted', routing_topk=0, final_norm=False,
+                 out_dim=0):
         super().__init__()
         self.mode = mode
         self.d = d
@@ -573,18 +574,21 @@ class MSTFinalHead(nn.Module):
         self.D = D
         self.routing_topk = routing_topk
         self.final_norm = final_norm  # G2: RMSNorm before lm_head, as dense does
+        # O1: width handed to lm_head. Defaults to D; a smaller value turns the
+        # output head into a D->out_dim->V factorization.
+        self.out_dim = out_dim if out_dim > 0 else D
 
         if mode == 'aggregate_proj':
             self.agg_router = MSTRouter(d, N, D, mode=routing_mode, diversity_weight=diversity_weight)
-            self.proj = Linear(d, D, bias=False)  # d -> D before lm_head
+            self.proj = Linear(d, self.out_dim, bias=False)  # d -> out_dim before lm_head
         elif mode == 'weighted_logits':
             self.sub_heads = nn.ModuleList([
                 Linear(d, vocab_size, bias=False) for _ in range(N)
             ])
             self.head_weights = nn.Parameter(torch.ones(N) / N)
         elif mode == 'concat_proj':
-            # Concatenate all N sub outputs (N*d), project directly to D.
-            self.proj = Linear(N * d, D, bias=False)
+            # Concatenate all N sub outputs (N*d), project directly to out_dim.
+            self.proj = Linear(N * d, self.out_dim, bias=False)
             # If topk > 0, add a selection router to pick which subs to include
             if routing_topk > 0 and routing_topk < N:
                 self.select_router = Linear(d, N, bias=False)
@@ -1517,6 +1521,11 @@ class MST(nn.Module):
         else:
             self.sub_window_sizes = None
 
+        # Per-(layer, sub) windows, the single source of truth for both the forward
+        # pass and estimate_flops.
+        self.compose_windows = bool(getattr(config, 'mst_compose_windows', 0))
+        self.layer_sub_windows = self._build_layer_sub_windows(N)
+
         # Token embedding (D-dim)
         self.wte = nn.Embedding(padded_vocab_size, D)
 
@@ -1606,6 +1615,13 @@ class MST(nn.Module):
         # does at its full width. Lookup only, so FLOPs are unchanged.
         self.final_norm = bool(getattr(config, 'mst_final_norm', 0))
         self.per_stream_ve = bool(getattr(config, 'mst_per_stream_ve', 0))
+        # O1: output-head bottleneck. The head costs D*Dh + V*Dh instead of D*D + V*D,
+        # which at Dh = D/2 halves it. MST pays more here than dense does at matched
+        # FLOPs because it runs at a larger D for the same matrix parameters.
+        self.lm_head_dim = int(getattr(config, 'mst_lm_head_dim', 0)) or D
+        assert not (self.lm_head_dim != D and config.mst_global_residual), (
+            "mst_lm_head_dim needs the final hidden width to stay D, because the "
+            "global residual stream is added to it at full width")
         ve_dim = N * d if self.per_stream_ve else d
         self.value_embeds = nn.ModuleDict({
             str(i): nn.Embedding(padded_vocab_size, ve_dim)
@@ -1622,10 +1638,11 @@ class MST(nn.Module):
             routing_mode=config.mst_routing_mode,
             routing_topk=final_topk,
             final_norm=self.final_norm,
+            out_dim=self.lm_head_dim,
         )
 
-        # Standard lm_head for aggregate_proj mode
-        self.lm_head = Linear(D, padded_vocab_size, bias=False)
+        # Standard lm_head, reading at lm_head_dim (== D unless O1 narrows it)
+        self.lm_head = Linear(self.lm_head_dim, padded_vocab_size, bias=False)
 
         # Global residual stream: D-dim broadcast channel all subs read/write
         self.use_global_residual = bool(config.mst_global_residual)
@@ -1743,6 +1760,36 @@ class MST(nn.Module):
                 if param.shape[0] % N == 0 and param.shape[0] // N > 1:
                     param.register_hook(_make_hook(N, param.shape[0], param.shape[1]))
         print0("[MST] 1A: Per-sub gradient equalization hooks registered")
+
+    @staticmethod
+    def _tighter(a, b):
+        """Narrower of two (left, right) causal windows; left < 0 means unbounded."""
+        la, lb = a[0], b[0]
+        if la < 0:
+            return b
+        if lb < 0:
+            return a
+        return (min(la, lb), 0)
+
+    def _build_layer_sub_windows(self, N):
+        """Window for every (layer, sub) pair.
+
+        Without multi-scale windows every sub inherits the layer's window, which is
+        what the dense baseline does.
+
+        With multi-scale windows the legacy behaviour is that the per-sub schedule
+        *replaces* the layer pattern, so the widest stream attends over full context
+        at every layer while dense gets full context on one layer in four. That is
+        where most of MST's attention FLOPs go, and it is not a partitioning effect,
+        just a schedule that was never composed. mst_compose_windows intersects the
+        two instead, restoring parity with the dense schedule.
+        """
+        if self.sub_window_sizes is None:
+            return [[ws] * N for ws in self.window_sizes]
+        if not self.compose_windows:
+            return [list(self.sub_window_sizes) for _ in self.window_sizes]
+        return [[self._tighter(layer_ws, sub_ws) for sub_ws in self.sub_window_sizes]
+                for layer_ws in self.window_sizes]
 
     def _compute_window_sizes(self, config):
         """Compute per-layer window sizes for sliding window attention.
@@ -1966,11 +2013,8 @@ class MST(nn.Module):
                 if str(i) in self.value_embeds:
                     ve = self.value_embeds[str(i)](idx).to(sub_states.dtype)  # (B, T, d)
 
-                # Per-sub window sizes (multi-scale or layer default)
-                sub_ws = self.sub_window_sizes if self.sub_window_sizes is not None else None
-                if sub_ws is None:
-                    # Use the layer's window size for all subs
-                    sub_ws = [self.window_sizes[i]] * N
+                # Per-sub window sizes for this layer (see _build_layer_sub_windows)
+                sub_ws = self.layer_sub_windows[i]
 
                 sub_states, aux_loss = layer(
                     sub_states, cos_sin, ve=ve,
@@ -2065,7 +2109,7 @@ class MST(nn.Module):
                 sub_ws = None
                 if self.sub_window_sizes is not None:
                     n_current = len(sub_states)
-                    sub_ws = self.sub_window_sizes[:n_current]
+                    sub_ws = self.layer_sub_windows[i][:n_current]
 
                 sub_states, aux_loss = layer(sub_states, cos_sin, sub_ves=sub_ves,
                                               window_size=self.window_sizes[i],
@@ -2177,18 +2221,11 @@ class MST(nn.Module):
         t = self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window (matching dense GPT)
         attn_flops = 0
-        for window_size in self.window_sizes:
-            if self.sub_window_sizes is not None:
-                # Multi-scale: each sub has its own window size (overrides layer window)
-                for sub_ws in self.sub_window_sizes:
-                    window = sub_ws[0]
-                    effective_seq = t if window < 0 else min(window, t)
-                    attn_flops += 12 * n_head * head_dim * effective_seq
-            else:
-                # All subs share the layer's window size
-                window = window_size[0]  # (left, right) tuple, we use left
+        for layer_windows in self.layer_sub_windows:
+            for sub_ws in layer_windows:
+                window = sub_ws[0]  # (left, right) tuple, we use left; <0 means full
                 effective_seq = t if window < 0 else min(window, t)
-                attn_flops += N * 12 * n_head * head_dim * effective_seq
+                attn_flops += 12 * n_head * head_dim * effective_seq
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
 
         # For topk_hard routing, the router selects which k sub outputs to combine,

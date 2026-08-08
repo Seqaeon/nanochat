@@ -314,6 +314,13 @@ parser.add_argument("--mst-final-norm", type=int, default=0, choices=[0, 1],
 parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
                     help="MST G3: per-stream value embedding slices from an (N*d)-wide table "
                          "instead of broadcasting one d-wide table (0=off, 1=on)")
+# MST Stage 13: overhead cuts (these DO reduce FLOPs, unlike Stage 12)
+parser.add_argument("--mst-lm-head-dim", type=int, default=0,
+                    help="MST O1: bottleneck width between the final projection and lm_head "
+                         "(0=n_embd, i.e. off). Head costs D*Dh + V*Dh instead of D*D + V*D")
+parser.add_argument("--mst-compose-windows", type=int, default=0, choices=[0, 1],
+                    help="MST O2: intersect per-sub windows with the layer window pattern rather "
+                         "than replacing it, so the widest stream is not full-context every layer")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -1027,6 +1034,9 @@ def build_model_meta(depth):
         mst_sub_head_dim=getattr(args, 'mst_sub_head_dim', 0),
         mst_final_norm=getattr(args, 'mst_final_norm', 0),
         mst_per_stream_ve=getattr(args, 'mst_per_stream_ve', 0),
+        # Stage 13: overhead cuts
+        mst_lm_head_dim=getattr(args, 'mst_lm_head_dim', 0),
+        mst_compose_windows=getattr(args, 'mst_compose_windows', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1701,6 +1711,9 @@ if model_config.use_mst and master_process:
                 'sub_head_dim':         c.mst_sub_head_dim,
                 'final_norm':           c.mst_final_norm,
                 'per_stream_ve':        c.mst_per_stream_ve,
+                # Stage 13: overhead cuts
+                'lm_head_dim':          c.mst_lm_head_dim,
+                'compose_windows':      c.mst_compose_windows,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))

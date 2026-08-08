@@ -396,6 +396,8 @@ def run_training_sweep(args):
         "--mst-sub-head-dim", str(getattr(args, 'mst_sub_head_dim', 0)),
         "--mst-final-norm", str(getattr(args, 'mst_final_norm', 0)),
         "--mst-per-stream-ve", str(getattr(args, 'mst_per_stream_ve', 0)),
+        "--mst-lm-head-dim", str(getattr(args, 'mst_lm_head_dim', 0)),
+        "--mst-compose-windows", str(getattr(args, 'mst_compose_windows', 0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -1059,6 +1061,11 @@ if __name__ == "__main__":
                         help="G2: RMSNorm before lm_head")
     parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
                         help="G3: per-stream value embedding slices")
+    # Stage 13: overhead cuts
+    parser.add_argument("--mst-lm-head-dim", type=int, default=0,
+                        help="O1: output-head bottleneck width (0 = n_embd, off)")
+    parser.add_argument("--mst-compose-windows", type=int, default=0, choices=[0, 1],
+                        help="O2: intersect per-sub windows with the layer window pattern")
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

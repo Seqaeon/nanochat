@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3"
+RUN_GROUPS="control combo g1 g2 g3 best overhead"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -220,24 +220,62 @@ echo "════════════════════════�
 #fi
 #
 
-if has g1; then
-    echo ""; echo "### G1: per-stream head_dim (32 baseline -> 64 -> 128)"
-    for hd in 128; do
-        check_divisible "$SUB_DIM" "$hd" || continue
-        run "G1_hd${hd}" "$DEPTH" $MST_FULL --mst-sub-head-dim "$hd"
-    done
-fi
-
+#if has g1; then
+#    echo ""; echo "### G1: per-stream head_dim (32 baseline -> 64 -> 128)"
+#    for hd in 128; do
+#        check_divisible "$SUB_DIM" "$hd" || continue
+#        run "G1_hd${hd}" "$DEPTH" $MST_FULL --mst-sub-head-dim "$hd"
+#    done
+#fi
+#
 # ---------------------------------------------------------------- g2
-if has g2; then
-    echo ""; echo "### G2: RMSNorm before lm_head"
-    run G2_final_norm "$DEPTH" $MST_FULL --mst-final-norm 1
+#if has g2; then
+#    echo ""; echo "### G2: RMSNorm before lm_head"
+#    run G2_final_norm "$DEPTH" $MST_FULL --mst-final-norm 1
+#fi
+#
+# ---------------------------------------------------------------- g3
+#if has g3; then
+#    echo ""; echo "### G3: per-stream value embeddings"
+#    run G3_per_stream_ve "$DEPTH" $MST_FULL --mst-per-stream-ve 1
+#fi
+#
+# ---------------------------------------------------------------- best
+# The FLOP-neutral arm the first pass missed. G2 measured +0.0021 at L=8 both
+# alone and in combination, so it is dropped; G1 and G3 were -0.0101 and -0.0092
+# and are near-additive, predicting about -0.019.
+if has best; then
+    echo ""; echo "### BEST: G1+G3, no G2"
+    if check_divisible "$SUB_DIM" 64; then
+        run BEST_g1_64_g3 "$DEPTH" $MST_FULL --mst-sub-head-dim 64 --mst-per-stream-ve 1
+    fi
 fi
 
-# ---------------------------------------------------------------- g3
-if has g3; then
-    echo ""; echo "### G3: per-stream value embeddings"
-    run G3_per_stream_ve "$DEPTH" $MST_FULL --mst-per-stream-ve 1
+# ---------------------------------------------------------------- overhead
+# Stage 13. Unlike everything above, these CUT FLOPs rather than holding them
+# fixed, which is the point: MST is at parity with dense per matrix parameter, so
+# its entire FLOPs-axis deficit is D-proportional overhead it never had to pay.
+# Measured on meta device at L=8 / L=16 / L=32: O1(D/2)+O2 is -37.9% / -24.7% /
+# -12.9% FLOPs at essentially unchanged matrix parameters.
+#
+# BOTH REMOVE CAPACITY, so bpb is the thing being risked here and the reason
+# these are measured rather than assumed. O1 factorizes the output head, which
+# risks a softmax bottleneck. O2 caps the widest stream at the layer window on
+# short layers, which costs long-range attention (though only to match what the
+# dense baseline already does under SSSL).
+if has overhead; then
+    echo ""; echo "### OVERHEAD: output head (O1) and window composition (O2)"
+    run O2_compose_windows "$DEPTH" $MST_FULL --mst-compose-windows 1
+    run O1_head_half    "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 2 ))
+    run O1_head_quarter "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 4 ))
+    run O1_half_O2      "$DEPTH" $MST_FULL \
+        --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
+    # Everything that survived, together.
+    if check_divisible "$SUB_DIM" 64; then
+        run STACK_all "$DEPTH" $MST_FULL \
+            --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
+            --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
+    fi
 fi
 
 
@@ -254,9 +292,13 @@ if has d16 && [ "$DEPTH" -ne 16 ]; then
     SD16=$(( MD16 / N_SUBS ))
     MST_FULL_16="$(mst_config "$SD16" "$N_SUBS")"
     SEEDS_SAVE="$SEEDS"; SEEDS=1
-    run D16_baseline    "$D16" $MST_FULL_16
-    run D16_g1_64_g2_g3 "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-final-norm 1 --mst-per-stream-ve 1
+    run D16_baseline "$D16" $MST_FULL_16
+    # G2 dropped after the L=8 result; the full stack carries the overhead cuts too,
+    # which are worth -24.7% FLOPs at this depth against -12.9% at L=32.
+    run D16_g1_64_g3 "$D16" $MST_FULL_16 --mst-sub-head-dim 64 --mst-per-stream-ve 1
+    run D16_stack    "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
+        --mst-lm-head-dim $(( MD16 / 2 )) --mst-compose-windows 1
     SEEDS="$SEEDS_SAVE"
 fi
 

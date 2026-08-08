@@ -366,6 +366,7 @@ while [[ $# -gt 0 ]]; do
         --mst-slice-transition|--mst-lookback-layers|--mst-bilinear-transition|\
         --mst-cross-sub-qmod|--mst-feature-cycle|--mst-mean-transition|\
         --mst-sub-head-dim|--mst-final-norm|--mst-per-stream-ve|\
+        --mst-lm-head-dim|--mst-compose-windows|\
         --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")
             shift 2

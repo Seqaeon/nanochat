@@ -441,6 +441,15 @@ class GPTConfig:
     mst_final_norm: int = 0                         # G2: RMSNorm the final projection before lm_head, as dense does
     mst_per_stream_ve: int = 0                      # G3: give each stream its own slice of an (N*d)-wide value
                                                     #     embedding instead of broadcasting one d-wide table to all
+    # Stage 13: overhead cuts. Unlike Stage 12 these DO reduce FLOPs, which is the
+    # point: MST is at parity with dense per matrix parameter, and its whole
+    # FLOPs-axis deficit is D-proportional overhead (~7% output head, ~8% attention).
+    mst_lm_head_dim: int = 0                        # O1: bottleneck width between the final projection and
+                                                    #     lm_head (0 = n_embd, i.e. off). The head then costs
+                                                    #     D*Dh + V*Dh instead of D*D + V*D.
+    mst_compose_windows: int = 0                    # O2: intersect per-sub windows with the layer window pattern
+                                                    #     instead of letting the per-sub windows replace it, so the
+                                                    #     widest stream is not full-context at every single layer
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -624,6 +633,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_cross_sub_qmod", "mst_feature_cycle", "mst_mean_transition",
     # MST Stage 12: dense-parity fixes
     "mst_sub_head_dim", "mst_final_norm", "mst_per_stream_ve",
+    # MST Stage 13: overhead cuts
+    "mst_lm_head_dim", "mst_compose_windows",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

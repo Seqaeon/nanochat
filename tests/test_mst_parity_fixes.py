@@ -1,4 +1,4 @@
-"""Smoke tests for the MST dense-parity fixes (G1/G2/G3, Stage 12).
+"""Smoke tests for the MST dense-parity fixes (G1/G2/G3) and overhead cuts (O1/O2).
 
 Each fix is meant to close a gap between MST and the dense baseline without
 changing the FLOP budget. The properties worth proving:
@@ -8,6 +8,15 @@ changing the FLOP budget. The properties worth proving:
   G2 (mst_final_norm):   the unembedding input is normalized, so its RMS is ~1.
   G3 (mst_per_stream_ve): the value-embedding table widens to N*d and each stream
       reads a different slice, instead of all streams sharing one vector.
+
+The Stage 13 cuts are the opposite: they are meant to REDUCE FLOPs while leaving
+the trunk's matrix parameters alone, because MST is at parity with dense per
+matrix parameter and its whole FLOPs deficit is D-proportional overhead.
+
+  O1 (mst_lm_head_dim):    the output head factorizes as D -> Dh -> V.
+  O2 (mst_compose_windows): per-sub windows intersect the layer window pattern
+      instead of replacing it, so the widest stream is not full-context at every
+      layer while dense gets full context on one layer in four.
 
 Run:  pytest tests/test_mst_parity_fixes.py -q
 """
@@ -22,7 +31,9 @@ from nanochat.mst import MST, resolve_sub_heads
 
 N_SUBS = 4
 VOCAB = 512
-SEQ = 128
+# Must exceed the 256-token "short" window that _compute_window_sizes hardcodes,
+# or every layer is effectively full-context and O2 has nothing to compose.
+SEQ = 512
 
 
 def make_config(depth=4, D=256, **overrides):
@@ -148,13 +159,84 @@ def test_g3_gives_streams_different_value_embeddings():
             f"stream {j} received the same VE vector as stream 0"
 
 
-# ── all three together ───────────────────────────────────────────────────────
+# ── O1: output-head bottleneck ───────────────────────────────────────────────
+
+def test_o1_factorizes_the_output_head():
+    D = 256
+    base = build_meta(D=D)
+    thin = build_meta(D=D, mst_lm_head_dim=D // 2)
+
+    assert base.lm_head.weight.shape[1] == D
+    assert thin.lm_head.weight.shape[1] == D // 2
+    assert thin.final_head.proj.weight.shape[0] == D // 2, "proj must land at the bottleneck"
+
+    b, t = base.num_scaling_params(), thin.num_scaling_params()
+    # Head cost is D*Dh + V*Dh against D*D + V*D, so halving Dh halves both pieces.
+    b_head = b['lm_head'] + D * D
+    t_head = t['lm_head'] + D * (D // 2)
+    assert t_head == b_head // 2
+
+    # Trunk untouched, FLOPs strictly down.
+    assert t['transformer_matrices'] < b['transformer_matrices']   # proj shrank
+    assert thin.estimate_flops()[0] < base.estimate_flops()[0]
+
+
+def test_o1_rejects_conflict_with_global_residual():
+    with pytest.raises(AssertionError, match="global residual"):
+        build_meta(mst_lm_head_dim=64, mst_global_residual=1)
+
+
+# ── O2: window composition ───────────────────────────────────────────────────
+
+def test_o2_legacy_replaces_the_layer_pattern():
+    """The defect being fixed: the widest stream runs full context at every layer."""
+    m = build_meta(depth=8)
+    full = [[w for w in layer if w[0] < 0 or w[0] >= m.config.sequence_len]
+            for layer in m.layer_sub_windows]
+    assert all(len(f) == 1 for f in full), \
+        "legacy: exactly one full-context stream, on every single layer"
+
+
+def test_o2_composition_narrows_windows_on_short_layers():
+    m = build_meta(depth=8, mst_compose_windows=1)
+    short_layers = [i for i, ws in enumerate(m.window_sizes)
+                    if 0 < ws[0] < m.config.sequence_len]
+    assert short_layers, "need a short layer in the pattern to test against"
+    for i in short_layers:
+        cap = m.window_sizes[i][0]
+        for w in m.layer_sub_windows[i]:
+            assert w[0] >= 0 and w[0] <= cap, \
+                f"layer {i} sub window {w} exceeds the layer cap {cap}"
+    # Long layers keep the per-sub schedule, including the full-context stream.
+    long_layers = [i for i, ws in enumerate(m.window_sizes) if i not in short_layers]
+    assert any(w[0] < 0 or w[0] >= m.config.sequence_len
+               for i in long_layers for w in m.layer_sub_windows[i])
+
+
+def test_o2_cuts_attention_flops_only():
+    base = build_meta(depth=8)
+    comp = build_meta(depth=8, mst_compose_windows=1)
+    b, c = base.num_scaling_params(), comp.num_scaling_params()
+    assert b['transformer_matrices'] == c['transformer_matrices'], "params must not move"
+    assert comp.estimate_flops()[0] < base.estimate_flops()[0]
+
+
+def test_o2_is_a_noop_without_multi_scale_windows():
+    """With one window per layer there is nothing to compose."""
+    off = build_meta(mst_multi_scale_windows=0)
+    on = build_meta(mst_multi_scale_windows=0, mst_compose_windows=1)
+    assert off.layer_sub_windows == on.layer_sub_windows
+    assert off.estimate_flops()[0] == on.estimate_flops()[0]
+
+
+# ── all fixes together ───────────────────────────────────────────────────────
 
 def test_all_three_train_step():
     """Forward, backward and a real loss with every fix on."""
     torch.manual_seed(0)
     with contextlib.redirect_stdout(io.StringIO()):
-        model = MST(make_config(mst_sub_head_dim=64, mst_final_norm=1, mst_per_stream_ve=1))
+        model = MST(make_config(mst_sub_head_dim=64, mst_final_norm=1, mst_per_stream_ve=1,
+                                mst_lm_head_dim=128, mst_compose_windows=1))
         model.init_weights()
     assert model._use_batched
 
