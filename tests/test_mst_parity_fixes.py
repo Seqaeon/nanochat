@@ -464,6 +464,55 @@ def test_f5_rejects_a_bad_mode():
         build_meta(mst_wo_mode='bogus')
 
 
+# ── CLI plumbing ─────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("script", ["scripts/base_train.py", "scripts/research_compare.py"])
+def test_no_duplicate_cli_flags(script):
+    """Two add_argument calls for one option string is an ArgumentError at import.
+
+    It kills every run in a sweep before a single step, and the sweep dry-run does not
+    catch it because that stubs research_sweep.sh and never reaches these parsers.
+    `--mst-transition-every` was declared twice this way: once as the Stage 3 flag and
+    once again when Stage 15 made it functional.
+    """
+    import ast, collections, pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    tree = ast.parse((root / script).read_text())
+    seen = collections.Counter(
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", None) == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    )
+    dupes = {flag: n for flag, n in seen.items() if n > 1}
+    assert not dupes, f"{script} declares these option strings more than once: {dupes}"
+
+
+def test_stage_15_flags_are_wired_end_to_end():
+    """Every new flag needs a config field, a CLI arg, and a passthrough, or it no-ops."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    base_train = (root / "scripts/base_train.py").read_text()
+    compare = (root / "scripts/research_compare.py").read_text()
+    sweep = (root / "scripts/research_sweep.sh").read_text()
+    cfg = make_config()
+
+    for field in ("mst_distribute_block_muon", "mst_trans_spectral_lr",
+                  "mst_talking_heads", "mst_wo_mode", "mst_transition_every"):
+        flag = "--" + field.replace("_", "-")
+        assert hasattr(cfg, field), f"{field} missing from GPTConfig"
+        assert f'add_argument("{flag}"' in base_train, f"{flag} has no base_train CLI arg"
+        assert f"{field}=getattr(args" in base_train, f"{flag} never reaches the model config"
+        assert f'"{flag}", str(' in compare, f"{flag} is not forwarded by research_compare"
+        # research_sweep.sh whitelists args and hard-exits on anything unknown.
+        assert flag + "|" in sweep or flag + ")" in sweep, f"{flag} missing from the sweep whitelist"
+
+
 # ── all fixes together ───────────────────────────────────────────────────────
 
 def test_all_three_train_step():

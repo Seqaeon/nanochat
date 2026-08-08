@@ -400,7 +400,6 @@ def run_training_sweep(args):
         "--mst-compose-windows", str(getattr(args, 'mst_compose_windows', 0)),
         "--mst-channel-mix", str(getattr(args, 'mst_channel_mix', 'none')),
         "--mst-channel-mix-site", str(getattr(args, 'mst_channel_mix_site', 'layer')),
-        "--mst-transition-every", str(getattr(args, 'mst_transition_every', 1)),
         "--mst-distribute-block-muon", str(getattr(args, 'mst_distribute_block_muon', 0)),
         "--mst-trans-spectral-lr", str(getattr(args, 'mst_trans_spectral_lr', 0)),
         "--mst-talking-heads", str(getattr(args, 'mst_talking_heads', 0)),
@@ -1077,9 +1076,9 @@ if __name__ == "__main__":
     parser.add_argument("--mst-channel-mix", type=str, default='none', choices=['none', 'roll', 'shuffle'],
                         help="permute the stream partition so block-diagonal layers compose into mixing")
     parser.add_argument("--mst-channel-mix-site", type=str, default='layer', choices=['layer', 'ffn', 'both'])
-    # Stage 15: coupling optimization + attention cross-stream mixing
-    parser.add_argument("--mst-transition-every", type=int, default=1,
-                        help="F3: couple every k-th layer (last layer always couples)")
+    # Stage 15: coupling optimization + attention cross-stream mixing.
+    # NOTE --mst-transition-every is NOT declared here: it already exists above as the
+    # Stage 3 flag. Stage 15 only made it functional on the batched path.
     parser.add_argument("--mst-distribute-block-muon", type=int, default=0, choices=[0, 1],
                         help="F1: block-diagonal Muon + sub-LR for distribute_w")
     parser.add_argument("--mst-trans-spectral-lr", type=int, default=0, choices=[0, 1],
