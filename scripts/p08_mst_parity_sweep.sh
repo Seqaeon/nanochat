@@ -271,7 +271,7 @@ if has overhead; then
 #    run O1_half_O2      "$DEPTH" $MST_FULL \
 #        --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
     # Everything that survived, together.
-#    if check_divisible "$SUB_DIM" 64; then
+    if check_divisible "$SUB_DIM" 64; then
 #        run STACK_all "$DEPTH" $MST_FULL \
 #            --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
 #            --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
