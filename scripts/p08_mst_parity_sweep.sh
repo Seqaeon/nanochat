@@ -263,28 +263,28 @@ echo "════════════════════════�
 # risks a softmax bottleneck. O2 caps the widest stream at the layer window on
 # short layers, which costs long-range attention (though only to match what the
 # dense baseline already does under SSSL).
-if has overhead; then
-    echo ""; echo "### OVERHEAD: output head (O1) and window composition (O2)"
+#if has overhead; then
+#    echo ""; echo "### OVERHEAD: output head (O1) and window composition (O2)"
 #    run O2_compose_windows "$DEPTH" $MST_FULL --mst-compose-windows 1
 #    run O1_head_half    "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 2 ))
 #    run O1_head_quarter "$DEPTH" $MST_FULL --mst-lm-head-dim $(( MODEL_DIM / 4 ))
 #    run O1_half_O2      "$DEPTH" $MST_FULL \
 #        --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
-    # Everything that survived, together.
-    if check_divisible "$SUB_DIM" 64; then
+#    # Everything that survived, together.
+#    if check_divisible "$SUB_DIM" 64; then
 #        run STACK_all "$DEPTH" $MST_FULL \
 #            --mst-sub-head-dim 64 --mst-per-stream-ve 1 \
 #            --mst-lm-head-dim $(( MODEL_DIM / 2 )) --mst-compose-windows 1
-        # O1 measured at +0.046 bpb for -27.7% FLOPs at L=8, which the matmul-param
-        # scaling law predicts almost exactly (+0.042): the output head is capacity,
-        # not overhead, so cutting it only slides along the parameter curve. O2 by
-        # contrast was +0.0001 bpb for -10.2% FLOPs, i.e. genuinely free. This arm
-        # keeps O2 and drops O1, and is the one expected to win.
+#        # O1 measured at +0.046 bpb for -27.7% FLOPs at L=8, which the matmul-param
+#        # scaling law predicts almost exactly (+0.042): the output head is capacity,
+#        # not overhead, so cutting it only slides along the parameter curve. O2 by
+#        # contrast was +0.0001 bpb for -10.2% FLOPs, i.e. genuinely free. This arm
+#        # keeps O2 and drops O1, and is the one expected to win.
 #        run STACK_noO1 "$DEPTH" $MST_FULL \
 #            --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1
-    fi
-fi
-
+#    fi
+#fi
+#
 # ---------------------------------------------------------------- mix
 # Stage 14. An MST layer is block-diagonal in the channel axis, and composing
 # block-diagonal maps under a FIXED partition stays block-diagonal, so every
