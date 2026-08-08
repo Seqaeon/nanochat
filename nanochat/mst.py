@@ -24,6 +24,28 @@ from nanochat.gpt import Linear, apply_rotary_emb, norm, GPTConfig, has_ve
 from nanochat.flash_attention import flash_attn
 
 
+def resolve_sub_heads(config):
+    """Per-stream attention geometry, as (n_head_per_sub, head_dim).
+
+    Legacy (mst_sub_head_dim == 0): each stream gets config.n_head heads, so
+    head_dim collapses to d // n_head. With the usual D = 128 * n_head and
+    d = D / N that is head_dim = 128 / N, i.e. 32 at N=4, against dense's 128.
+
+    G1 (mst_sub_head_dim > 0): pin head_dim and derive the head count from it.
+    qkv_dim = n_head * head_dim stays equal to d, so every projection keeps its
+    shape and the change is parameter- and FLOP-neutral (verified on meta device).
+    """
+    d = config.mst_sub_dim
+    sub_head_dim = int(getattr(config, 'mst_sub_head_dim', 0))
+    if sub_head_dim > 0:
+        assert d % sub_head_dim == 0, (
+            f"mst_sub_head_dim {sub_head_dim} must divide mst_sub_dim {d}; "
+            f"round n_embd up to a multiple of {config.mst_n_subs * sub_head_dim}")
+        return d // sub_head_dim, sub_head_dim
+    n_head = config.n_head
+    return n_head, (config.mst_head_dim if config.mst_head_dim > 0 else d // n_head)
+
+
 class SubTransformerAttention(nn.Module):
     """Self-attention for a single sub-transformer at dimension d.
 
@@ -543,13 +565,14 @@ class MSTFinalHead(nn.Module):
     """
 
     def __init__(self, d, N, D, vocab_size, mode='aggregate_proj', diversity_weight=0.0,
-                 routing_mode='soft_weighted', routing_topk=0):
+                 routing_mode='soft_weighted', routing_topk=0, final_norm=False):
         super().__init__()
         self.mode = mode
         self.d = d
         self.N = N
         self.D = D
         self.routing_topk = routing_topk
+        self.final_norm = final_norm  # G2: RMSNorm before lm_head, as dense does
 
         if mode == 'aggregate_proj':
             self.agg_router = MSTRouter(d, N, D, mode=routing_mode, diversity_weight=diversity_weight)
@@ -574,7 +597,7 @@ class MSTFinalHead(nn.Module):
         if self.mode == 'aggregate_proj':
             aggregated, aux_loss = self.agg_router(sub_outputs)  # (B, T, d)
             h = self.proj(aggregated)  # (B, T, D)
-            logits = lm_head(h)
+            logits = lm_head(norm(h) if self.final_norm else h)
             return logits, aux_loss
         elif self.mode == 'weighted_logits':
             weights = F.softmax(self.head_weights, dim=0)
@@ -599,7 +622,7 @@ class MSTFinalHead(nn.Module):
                                   device=concatenated.device, dtype=concatenated.dtype)
                 concatenated = torch.cat([concatenated, pad], dim=-1)
             h = self.proj(concatenated)  # (B, T, D)
-            logits = lm_head(h)
+            logits = lm_head(norm(h) if self.final_norm else h)
             return logits, torch.tensor(0.0, device=stacked.device)
 
 
@@ -618,7 +641,7 @@ class DenseSubLayer(nn.Module):
         N = config.mst_n_subs
         n_layer = config.n_layer
         # Use same head_dim as sub-transformers to reuse precomputed RoPE
-        sub_head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
+        _, sub_head_dim = resolve_sub_heads(config)
         dense_n_head = D // sub_head_dim
         self.N = N
         self.d = d
@@ -651,13 +674,12 @@ class MSTLayer(nn.Module):
         d = config.mst_sub_dim
         N = config.mst_n_subs
         D = config.n_embd
-        n_head = config.n_head
+        n_head, head_dim = resolve_sub_heads(config)
         n_layer = config.n_layer
 
         self.N = N
         self.layer_idx = layer_idx
         self.sub_dropout = config.mst_sub_dropout
-        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // n_head
         self.sub_blocks = nn.ModuleList([
             SubTransformerBlock(d, n_head, head_dim, layer_idx, n_layer,
                                 sub_layer_idx=layer_idx * N + j,
@@ -804,9 +826,8 @@ class BatchedMSTLayer(nn.Module):
         d = config.mst_sub_dim
         N = config.mst_n_subs
         D = config.n_embd
-        n_head = config.n_head
         n_layer = config.n_layer
-        head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // n_head
+        n_head, head_dim = resolve_sub_heads(config)
         qkv_dim = n_head * head_dim
 
         self.N = N
@@ -1016,10 +1037,11 @@ class BatchedMSTLayer(nn.Module):
             qmod = qmod.view(B, T, N, self.qkv_dim)
             q = q + qmod  # queries now conditioned on cross-sub features
 
-        # Value embedding: shared VE across all subs, per-sub gating
+        # Value embedding, per-sub gating. Legacy ve is (B, T, d) and broadcasts
+        # over the stream axis; G3's is (B, T, N*d) and gives each stream its own slice.
         if ve is not None and ve_gate_w is not None:
-            # ve: (B, T, d) → (B, T, 1, n_head, head_dim) for broadcasting
-            ve_heads = ve.view(B, T, 1, self.n_head, self.head_dim)
+            n_ve = N if ve.shape[-1] == N * d else 1
+            ve_heads = ve.view(B, T, n_ve, self.n_head, self.head_dim)
             # Gate: x[..., :ve_gc] → (B, T, N, ve_gc) @ ve_gate_w (N, n_head, ve_gc).T
             gate_in = x[..., :self.ve_gate_channels]  # (B, T, N, ve_gc)
             # einsum: (B,T,N,gc) × (N,H,gc) → (B,T,N,H)
@@ -1576,10 +1598,17 @@ class MST(nn.Module):
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
 
-        # Value embeddings (ResFormer-style): each sub-transformer gets its own VE
-        # Alternating layers, last layer always included (same as base GPT)
+        # Value embeddings (ResFormer-style), on alternating layers with the last
+        # always included, same as base GPT.
+        # Legacy: one d-wide table broadcast to all N streams, so every stream
+        # receives the same vector and only the per-head gates differentiate them.
+        # G3: one (N*d)-wide table, stream j reading slice j, which is what dense
+        # does at its full width. Lookup only, so FLOPs are unchanged.
+        self.final_norm = bool(getattr(config, 'mst_final_norm', 0))
+        self.per_stream_ve = bool(getattr(config, 'mst_per_stream_ve', 0))
+        ve_dim = N * d if self.per_stream_ve else d
         self.value_embeds = nn.ModuleDict({
-            str(i): nn.Embedding(padded_vocab_size, d)
+            str(i): nn.Embedding(padded_vocab_size, ve_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
 
@@ -1592,6 +1621,7 @@ class MST(nn.Module):
             diversity_weight=config.mst_diversity_weight,
             routing_mode=config.mst_routing_mode,
             routing_topk=final_topk,
+            final_norm=self.final_norm,
         )
 
         # Standard lm_head for aggregate_proj mode
@@ -1639,7 +1669,10 @@ class MST(nn.Module):
             final_d = d * N  # worst case: all merged to 1 sub
             for layer_idx, target_n in sorted(self._merge_schedule.items()):
                 pass  # just iterate to find final state
-            max_head_dim = final_d // config.n_head if config.mst_head_dim <= 0 else config.mst_head_dim
+            if int(getattr(config, 'mst_sub_head_dim', 0)) > 0:
+                max_head_dim = config.mst_sub_head_dim  # G1 pins head_dim across merge levels
+            else:
+                max_head_dim = final_d // config.n_head if config.mst_head_dim <= 0 else config.mst_head_dim
         else:
             self.merge_layers = set()
 
@@ -1648,7 +1681,7 @@ class MST(nn.Module):
         if self.progressive_merge:
             head_dim = max_head_dim
         else:
-            head_dim = config.mst_head_dim if config.mst_head_dim > 0 else d // config.n_head
+            _, head_dim = resolve_sub_heads(config)
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
@@ -1814,7 +1847,7 @@ class MST(nn.Module):
             torch.nn.init.uniform_(ve.weight, -s, s)
 
         # Rotary embeddings
-        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
+        _, head_dim = resolve_sub_heads(self.config)
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
 
@@ -1842,9 +1875,9 @@ class MST(nn.Module):
         The engine checks for this property and uses it instead of computing from config.
         MST needs n_layer * N_subs cache slots (one per sub-transformer per layer)."""
         N = self.config.mst_n_subs
-        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
+        n_head, head_dim = resolve_sub_heads(self.config)
         return {
-            "num_heads": self.config.n_head,
+            "num_heads": n_head,
             "head_dim": head_dim,
             "v_head_dim": head_dim,
             "num_layers": self.config.n_layer * N,
@@ -1861,7 +1894,7 @@ class MST(nn.Module):
 
         if T_total > self.cos.size(1):
             new_len = max(T_total, self.cos.size(1) * 2)
-            head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else self.config.mst_sub_dim // self.config.n_head
+            _, head_dim = resolve_sub_heads(self.config)
             cos, sin = self._precompute_rotary_embeddings(new_len, head_dim)
             self.register_buffer("cos", cos, persistent=False)
             self.register_buffer("sin", sin, persistent=False)
@@ -1980,6 +2013,10 @@ class MST(nn.Module):
                 global_stream = global_stream + self.global_write_projs[n_layers - 1](concatenated.to(dtype=global_stream.dtype))
                 h = h + global_stream  # blend shared stream into output
 
+            # G2: dense normalizes immediately before the unembedding; without this
+            # lm_head sees a raw linear output whose scale is unconstrained.
+            if self.final_norm:
+                h = norm(h)
             logits = self.lm_head(h)
             final_aux = x.new_zeros(())
             total_aux_loss = total_aux_loss + final_aux
@@ -2019,7 +2056,11 @@ class MST(nn.Module):
                 current_sub_dim = sub_states[0].shape[-1]
                 if str(i) in self.value_embeds and current_sub_dim == d:
                     ve_full = self.value_embeds[str(i)](idx).to(sub_states[0].dtype)
-                    sub_ves = [ve_full] * len(sub_states)
+                    if self.per_stream_ve:
+                        # (B, T, N*d) → one d-wide slice per stream
+                        sub_ves = list(ve_full.split(d, dim=-1))[:len(sub_states)]
+                    else:
+                        sub_ves = [ve_full] * len(sub_states)
 
                 sub_ws = None
                 if self.sub_window_sizes is not None:
@@ -2132,8 +2173,7 @@ class MST(nn.Module):
                            self.resid_lambdas.numel() + self.x0_lambdas.numel())
         N = self.config.mst_n_subs
         d = self.config.mst_sub_dim
-        n_head = self.config.n_head
-        head_dim = self.config.mst_head_dim if self.config.mst_head_dim > 0 else d // n_head
+        n_head, head_dim = resolve_sub_heads(self.config)
         t = self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window (matching dense GPT)
         attn_flops = 0

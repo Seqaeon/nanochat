@@ -393,6 +393,9 @@ def run_training_sweep(args):
         "--mst-cross-sub-qmod", str(getattr(args, 'mst_cross_sub_qmod', 0)),
         "--mst-feature-cycle", str(getattr(args, 'mst_feature_cycle', 0)),
         "--mst-mean-transition", str(getattr(args, 'mst_mean_transition', 0)),
+        "--mst-sub-head-dim", str(getattr(args, 'mst_sub_head_dim', 0)),
+        "--mst-final-norm", str(getattr(args, 'mst_final_norm', 0)),
+        "--mst-per-stream-ve", str(getattr(args, 'mst_per_stream_ve', 0)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -1049,6 +1052,13 @@ if __name__ == "__main__":
     parser.add_argument("--mst-cross-sub-qmod", type=int, default=0)
     parser.add_argument("--mst-feature-cycle", type=int, default=0, choices=[0, 1])
     parser.add_argument("--mst-mean-transition", type=int, default=0, choices=[0, 1])
+    # Stage 12: dense-parity fixes
+    parser.add_argument("--mst-sub-head-dim", type=int, default=0,
+                        help="G1: per-stream head_dim, heads derived so qkv_dim == sub_dim")
+    parser.add_argument("--mst-final-norm", type=int, default=0, choices=[0, 1],
+                        help="G2: RMSNorm before lm_head")
+    parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
+                        help="G3: per-stream value embedding slices")
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

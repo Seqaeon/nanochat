@@ -305,6 +305,15 @@ parser.add_argument("--mst-feature-cycle", type=int, default=0, choices=[0, 1],
                     help="MST: sub-feature cycling at transition (0=off, 1=on)")
 parser.add_argument("--mst-mean-transition", type=int, default=0, choices=[0, 1],
                     help="MST: parameter-free mean-add transition replacing AggDist (0=off, 1=on)")
+# MST Stage 12: dense-parity fixes (each FLOP-neutral)
+parser.add_argument("--mst-sub-head-dim", type=int, default=0,
+                    help="MST G1: per-stream attention head_dim; heads = sub_dim//head_dim so "
+                         "qkv_dim stays == sub_dim (0=off, legacy 32 at N=4; dense uses 128)")
+parser.add_argument("--mst-final-norm", type=int, default=0, choices=[0, 1],
+                    help="MST G2: RMSNorm the final projection before lm_head, as dense does (0=off, 1=on)")
+parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
+                    help="MST G3: per-stream value embedding slices from an (N*d)-wide table "
+                         "instead of broadcasting one d-wide table (0=off, 1=on)")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -1014,6 +1023,10 @@ def build_model_meta(depth):
         mst_cross_sub_qmod=getattr(args, 'mst_cross_sub_qmod', 0),
         mst_feature_cycle=getattr(args, 'mst_feature_cycle', 0),
         mst_mean_transition=getattr(args, 'mst_mean_transition', 0),
+        # Stage 12: dense-parity fixes
+        mst_sub_head_dim=getattr(args, 'mst_sub_head_dim', 0),
+        mst_final_norm=getattr(args, 'mst_final_norm', 0),
+        mst_per_stream_ve=getattr(args, 'mst_per_stream_ve', 0),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1684,26 +1697,51 @@ if model_config.use_mst and master_process:
                 'feature_cycle':        c.mst_feature_cycle,
                 'mean_transition':      c.mst_mean_transition,
                 'global_residual':      c.mst_global_residual,
+                # Stage 12: dense-parity fixes
+                'sub_head_dim':         c.mst_sub_head_dim,
+                'final_norm':           c.mst_final_norm,
+                'per_stream_ve':        c.mst_per_stream_ve,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
-            write_header = not os.path.exists(csv_path)
-            with open(csv_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-                if write_header:
-                    writer.writeheader()
-                writer.writerow(row)
-            print0(f"[MST] Results appended → {csv_path}")
+            self._append_row(csv_path, row)
             # Also write to cwd so results survive regardless of checkpoint persistence
             cwd_csv = os.path.join(os.getcwd(), 'mst_results.csv')
             if os.path.abspath(cwd_csv) != os.path.abspath(csv_path):
-                cwd_header = not os.path.exists(cwd_csv)
-                with open(cwd_csv, 'a', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-                    if cwd_header:
-                        writer.writeheader()
-                    writer.writerow(row)
-                print0(f"[MST] Results also appended → {cwd_csv}")
+                self._append_row(cwd_csv, row)
+
+    @staticmethod
+    def _append_row(csv_path, row):
+        """Append one result row, never misaligning against an older header.
+
+        Each MST stage adds config columns, so a CSV written by an earlier stage
+        has fewer fields than `row`. Appending under the new fieldnames would put
+        extra values on every line while leaving the header short, silently
+        skewing every column for whoever reads it later. Instead, divert to a
+        numbered sibling file when the header does not match.
+        """
+        fieldnames = list(row.keys())
+        if os.path.exists(csv_path):
+            with open(csv_path, newline='') as f:
+                existing = next(csv.reader(f), None)
+            if existing != fieldnames:
+                stem, ext = os.path.splitext(csv_path)
+                n = 2
+                while os.path.exists(f"{stem}_v{n}{ext}"):
+                    with open(f"{stem}_v{n}{ext}", newline='') as f:
+                        if next(csv.reader(f), None) == fieldnames:
+                            break
+                    n += 1
+                print0(f"[MST] {os.path.basename(csv_path)} has an older column set; "
+                       f"writing to {os.path.basename(stem)}_v{n}{ext} instead")
+                csv_path = f"{stem}_v{n}{ext}"
+        write_header = not os.path.exists(csv_path)
+        with open(csv_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+        print0(f"[MST] Results appended → {csv_path}")
 
     _mst_tracker = _MSTTracker(model_config, checkpoint_dir)
     _mst_diag_log = os.path.join(checkpoint_dir, 'mst_diagnostics.jsonl')

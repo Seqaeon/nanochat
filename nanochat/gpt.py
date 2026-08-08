@@ -433,6 +433,14 @@ class GPTConfig:
     mst_cross_sub_qmod: int = 0                     # Low-rank cross-sub query modulation rank (0=off, e.g. 16)
     mst_feature_cycle: int = 0                      # Sub-feature cycling at transition (0=off, 1=on)
     mst_mean_transition: int = 0                    # Parameter-free mean-add transition replacing AggDist (0=off, 1=on)
+    # Stage 12: dense-parity fixes (each FLOP-neutral; see LEARNINGS.md 2026-08-08)
+    mst_sub_head_dim: int = 0                       # G1: per-stream attention head_dim, heads derived as d//head_dim
+                                                    #     so qkv_dim stays == d (0=off: n_head heads of d//n_head).
+                                                    #     Dense runs head_dim=128; MST's implicit 32 costs quality
+                                                    #     and flash-attn efficiency at identical params and FLOPs.
+    mst_final_norm: int = 0                         # G2: RMSNorm the final projection before lm_head, as dense does
+    mst_per_stream_ve: int = 0                      # G3: give each stream its own slice of an (N*d)-wide value
+                                                    #     embedding instead of broadcasting one d-wide table to all
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -614,6 +622,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_slice_transition", "mst_lookback_layers", "mst_bilinear_transition",
     # MST Stage 11: Attention bottleneck + structural improvements
     "mst_cross_sub_qmod", "mst_feature_cycle", "mst_mean_transition",
+    # MST Stage 12: dense-parity fixes
+    "mst_sub_head_dim", "mst_final_norm", "mst_per_stream_ve",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# ============================================================================
+# P08: dense-parity fixes for MST (Stage 12, G1/G2/G3).
+#
+# WHY THIS SWEEP EXISTS
+#   The paper's Pareto claim was measured against a dense arm taken from the
+#   nanochat leaderboard rather than from our own runs. Our dense is uniformly
+#   0.0376 bpb better, and refitting flips the result: dense wins on FLOPs/token
+#   (0.86x) and training FLOPs (0.80x). See LEARNINGS.md, 2026-08-08.
+#
+#   At matched FLOPs the two arms also carry matched matrix parameters
+#   (MST L=32: 511.8M @ 4.008e9; dense L=22: 523.4M @ 3.694e9), which is forced,
+#   since FLOPs/token ~ 2 x matrix params either way. So the only question left is
+#   whether block-diagonal-plus-coupling beats unstructured dense at equal params
+#   and equal FLOPs. Today it loses by 0.0096 bpb. We need ~0.03 bpb back.
+#
+#   These three fixes are each FLOP-neutral, verified on meta device
+#   (tests/test_mst_parity_fixes.py):
+#     G1  --mst-sub-head-dim   per-stream head_dim, heads derived so qkv_dim == d.
+#                              MST's implicit head_dim is 32; dense uses 128.
+#                              Table 7's own control prices d_h 32 vs 128 at
+#                              +0.0168 bpb, and d_h=32 is also the 2.13x kernel
+#                              penalty in Section 7.
+#     G2  --mst-final-norm     RMSNorm before lm_head, which dense does and MST
+#                              never did: lm_head was fed a raw linear output.
+#     G3  --mst-per-stream-ve  each stream reads its own slice of an (N*d)-wide
+#                              value-embedding table, instead of all N streams
+#                              receiving the same d-wide vector.
+#
+# ORDERING IS DELIBERATE, as in p32. The combined arm runs FIRST. If every fix
+# together does not beat the baseline, the decomposition is not worth 3 GPU-hours
+# and you want that answer in ~15 minutes. The singles only earn their cost once
+# the combination shows signal.
+#
+# COST NOTE ON G3. It widens the VE tables 4x: at L=8 that is 16.8M -> 67M of
+# lookup, at L=32 it is 268M -> 1.07B. FLOPs do not move, but total parameters
+# and optimizer memory do. Since MST's remaining total-params "win" was only ever
+# the VE table size, that axis is being traded away knowingly.
+#
+#   bash scripts/p08_mst_parity_sweep.sh                 # L=8, 3 seeds, all groups
+#   bash scripts/p08_mst_parity_sweep.sh --seeds 1       # fast first pass
+#   bash scripts/p08_mst_parity_sweep.sh --group combo   # one group
+#   bash scripts/p08_mst_parity_sweep.sh --group d16     # confirm at L=16
+#   bash scripts/p08_mst_parity_sweep.sh --force         # ignore completion state
+#
+# Reference points to beat (single seed, current ladder):
+#   MST full recipe   L=8  1.0510    L=16  0.8810
+#   dense d_h=128     L=8  0.9592 +- 0.0002
+#   dense d_h=32      L=8  0.9760 +- 0.0003
+# ============================================================================
+set -o pipefail
+
+FORCE=0
+RUN_GROUPS="control combo g1 g2 g3"
+SEEDS=1
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force)  FORCE=1; shift ;;
+        --group)  RUN_GROUPS="$2"; shift 2 ;;
+        --seeds)  SEEDS="$2"; shift 2 ;;
+        *) echo "unknown arg: $1"; exit 1 ;;
+    esac
+done
+
+DEPTH="${DEPTH:-8}"
+N_SUBS="${N_SUBS:-4}"
+ASPECT_RATIO="${ASPECT_RATIO:-64}"
+MODEL_DIM=$(( ((DEPTH * ASPECT_RATIO + 127) / 128) * 128 ))
+SUB_DIM=$(( MODEL_DIM / N_SUBS ))
+
+# G1 needs sub_dim divisible by the target head_dim. At the depths this sweep
+# uses that is automatic (L=8 -> d=128, L=16 -> d=256), but most of the ladder is
+# not: with D rounded to 128, only L in {8,16,20,24,32} admit head_dim 64 and
+# {8,16,24,32} admit 128. Rounding D to 256 instead makes 64 legal at every
+# depth, at the cost of moving D at L=9/18/22/26. Decide that before the ladder.
+check_divisible() {                       # check_divisible <sub_dim> <head_dim>
+    if (( $1 % $2 != 0 )); then
+        echo "⚠  skipping head_dim=$2: sub_dim $1 is not divisible by it"
+        return 1
+    fi
+    return 0
+}
+
+OUT_BASE="${OUT_BASE:-out/p08_mst_parity}"
+LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p08_d${DEPTH}.log}"
+STATE="${OUT_BASE}/p08_state_d${DEPTH}.json"
+mkdir -p "$OUT_BASE"
+[ "$FORCE" -eq 1 ] && rm -f "$STATE"
+[ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
+
+echo "════════════════════════════════════════════════════════════"
+echo "  P08 MST dense-parity fixes (G1/G2/G3)"
+echo "  depth ${DEPTH}   D=${MODEL_DIM}   N=${N_SUBS}   d=${SUB_DIM}"
+echo "  seeds ${SEEDS}   groups: ${RUN_GROUPS}"
+echo "  out ${OUT_BASE}"
+echo "════════════════════════════════════════════════════════════"
+
+done_already() {
+    [ "$FORCE" -eq 1 ] && return 1
+    python3 -c "
+import json,sys
+sys.exit(0 if '$1' in json.load(open('$STATE')).get('completed',{}) else 1)" 2>/dev/null
+}
+mark_done() {
+    python3 -c "
+import json,datetime
+s=json.load(open('$STATE'))
+s.setdefault('completed',{})['$1']=datetime.datetime.now().isoformat()
+json.dump(s,open('$STATE','w'),indent=2)"
+}
+
+# Identical to p32's COMMON so the numbers are comparable to Table 7 directly.
+COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
+  --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
+  --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
+  --sequence-len 2048 --target-param-data-ratio 10.5 \
+  --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
+  --research-dim -1 --target-tokens -1 --target-active-params 0 \
+  --save-every 200 --eval-every -1"
+[ -n "${MAX_SHARDS:-}" ] && COMMON="$COMMON --max-shards $MAX_SHARDS"
+
+# mst_config() emits the partition flags for a given depth's dimensions.
+mst_config() {                            # mst_config <sub_dim> <n_subs>
+    echo "--use-mst 1 --models base --mst-n-subs $2 --mst-sub-dim $1 \
+      --mst-head-dim 0 --mst-input-mode learned_proj \
+      --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+      --mst-transition-mode aggregate_distribute \
+      --mst-final-mode concat_proj --mst-final-topk 0 \
+      --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+      --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+      --mst-transition-width-mult $2.0 --mst-sub-lr-scale 2.0 \
+      --mst-multi-scale-windows 1"
+}
+
+# The paper's proposed model at this depth: the arm every delta is measured from.
+MST_FULL="$(mst_config "$SUB_DIM" "$N_SUBS")"
+
+# Unlike p32, seeds are passed explicitly so the arms are reproducible. Note that
+# --seed controls weight init only, not dataloader order, so the spread across
+# seeds here is init variance (p32 measured that at sigma <= 0.0003 bpb at L=8),
+# not full run-to-run variance.
+run() {                                   # run <tag> <depth> <flags...>
+    local tag="$1"; shift
+    local depth="$1"; shift
+    for s in $(seq 1 "$SEEDS"); do
+        local t="${tag}_s${s}"
+        if done_already "$t"; then echo "⏭  $t"; continue; fi
+        echo ""
+        echo "━━━ $t  (depth $depth) ━━━"
+        local dir="${OUT_BASE}/${t}"
+        [ "$FORCE" -eq 1 ] && rm -rf "$dir"
+        if bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
+               "$@" "$depth" 2>&1 | tee -a "$LOGFILE"; then
+            mark_done "$t"; echo "✅  $t"
+        else
+            echo "❌  $t failed; will retry on the next invocation"
+        fi
+    done
+}
+
+has() { echo " $RUN_GROUPS " | grep -q " $1 "; }
+
+# ---------------------------------------------------------------- control
+# The anchor. Without a same-sweep baseline the deltas are not readable, because
+# the reference 1.0510 is a single seed from a different sweep.
+# The two dense controls duplicate p32's; skip this group if you already have them.
+if has control; then
+    echo ""; echo "### CONTROL: anchors for every delta below"
+    run CTRL_mst_full   "$DEPTH" $MST_FULL
+    run CTRL_dense_hd128 "$DEPTH" --models base
+    run CTRL_dense_hd32  "$DEPTH" --models base --head-dim 32
+fi
+
+# ---------------------------------------------------------------- combo
+# Runs before the singles on purpose: this is the go/no-go. G1 is carried at both
+# 64 and 128 because at L=8 (d=128) head_dim=128 leaves exactly one head per
+# stream, so the "wider heads" and "enough heads" effects point opposite ways and
+# a single choice would confound them.
+if has combo; then
+    echo ""; echo "### COMBO: all three fixes (the go/no-go)"
+    if check_divisible "$SUB_DIM" 64; then
+        run COMBO_g1_64_g2_g3 "$DEPTH" $MST_FULL \
+            --mst-sub-head-dim 64 --mst-final-norm 1 --mst-per-stream-ve 1
+        run COMBO_g1_64_g2    "$DEPTH" $MST_FULL \
+            --mst-sub-head-dim 64 --mst-final-norm 1
+    fi
+    if check_divisible "$SUB_DIM" 128; then
+        run COMBO_g1_128_g2_g3 "$DEPTH" $MST_FULL \
+            --mst-sub-head-dim 128 --mst-final-norm 1 --mst-per-stream-ve 1
+    fi
+fi
+
+# ---------------------------------------------------------------- g1
+# Head geometry alone. Expected to be the largest of the three: Table 7's dense
+# control puts d_h 32 vs 128 at 0.0168 bpb, and this is that same axis applied
+# per stream at identical parameters and FLOPs.
+if has g1; then
+    echo ""; echo "### G1: per-stream head_dim (32 baseline -> 64 -> 128)"
+    for hd in 64 128; do
+        check_divisible "$SUB_DIM" "$hd" || continue
+        run "G1_hd${hd}" "$DEPTH" $MST_FULL --mst-sub-head-dim "$hd"
+    done
+fi
+
+# ---------------------------------------------------------------- g2
+if has g2; then
+    echo ""; echo "### G2: RMSNorm before lm_head"
+    run G2_final_norm "$DEPTH" $MST_FULL --mst-final-norm 1
+fi
+
+# ---------------------------------------------------------------- g3
+if has g3; then
+    echo ""; echo "### G3: per-stream value embeddings"
+    run G3_per_stream_ve "$DEPTH" $MST_FULL --mst-per-stream-ve 1
+fi
+
+# ---------------------------------------------------------------- d16
+# Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
+# only after L=8 names a winner, and only for that winner plus its baseline, so
+# the transfer argument of Table 6 covers these fixes too.
+if has d16; then
+    echo ""; echo "### D16: transfer check for the L=8 winner"
+    D16=16
+    MD16=$(( ((D16 * ASPECT_RATIO + 127) / 128) * 128 ))
+    SD16=$(( MD16 / N_SUBS ))
+    MST_FULL_16="$(mst_config "$SD16" "$N_SUBS")"
+    SEEDS_SAVE="$SEEDS"; SEEDS=1
+    run D16_baseline    "$D16" $MST_FULL_16
+    run D16_g1_64_g2_g3 "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-final-norm 1 --mst-per-stream-ve 1
+    SEEDS="$SEEDS_SAVE"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  P08 complete for depth ${DEPTH}"
+echo "  results: ${OUT_BASE}/mst_results*.csv   log: ${LOGFILE}"
+echo ""
+echo "  Read it as: every delta is against CTRL_mst_full in this same sweep."
+echo "  The bar is ~0.03 bpb of total improvement, which is what turns the"
+echo "  corrected FLOPs multiplier from 0.86x into roughly 1.15x."
+echo "════════════════════════════════════════════════════════════"
