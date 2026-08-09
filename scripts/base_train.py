@@ -2427,7 +2427,18 @@ while True:
                 sim_str = ', '.join(f'{v:.3f}' for v in sim_vals) if sim_vals else 'n/a'
                 ent_str = ', '.join(f'{v:.3f}' for v in ent_vals) if ent_vals else 'n/a'
                 grad_str = ', '.join(f'{v:.3f}' for v in grad_vals) if grad_vals else 'n/a'
-                print0(f"  [MST diag] sub_sim=[{sim_str}] | route_ent=[{ent_str}] | grad_norm=[{grad_str}]")
+                # Stage 16: route_ent above is the TRANSITION router and says nothing about
+                # conditional stream execution. Without this line a collapsed stream gate is
+                # invisible in the console, and bpb alone cannot detect it: the most
+                # collapsed config measured the LOWEST training loss.
+                # stream_load_min is the least-used stream's share of its k/N ideal, so
+                # 1.0 is balanced and 0.0 means that stream is never selected and its FFN
+                # is frozen at initialization.
+                load_keys = [k for k in mst_diag if k.startswith('stream_load_min_')]
+                load_str = ', '.join(f'{mst_diag[k]:.2f}' for k in sorted(load_keys))
+                stream_part = f" | stream_load_min=[{load_str}]" if load_keys else ""
+                print0(f"  [MST diag] sub_sim=[{sim_str}] | route_ent=[{ent_str}] | "
+                       f"grad_norm=[{grad_str}]{stream_part}")
             except Exception as e:
                 print0(f"  [MST diag] ERROR: {e}")
     synchronize()

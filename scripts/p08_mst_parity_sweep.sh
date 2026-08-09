@@ -475,13 +475,13 @@ if has sparse; then
         # So the aux term is necessary after all; it was the formulation that was wrong.
         # Note the no-aux arm had the LOWEST training loss while being the most collapsed,
         # which is exactly why the load diagnostic has to be read alongside bpb.
-        run SP2_k2         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0
+#        run SP2_k2         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0
         run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
-        run SP2_k3         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-noise 1.0
-        # Isolate the two mechanisms.
-        run SP2_k2_nonoise "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 0.0
-        run SP2_k2_noaux   "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0 \
-            --mst-stream-router-aux 0
+#        run SP2_k3         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-noise 1.0
+#        # Isolate the two mechanisms.
+#        run SP2_k2_nonoise "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 0.0
+#        run SP2_k2_noaux   "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0 \
+#            --mst-stream-router-aux 0
         # Control, reusing its completed seeds. Flags must stay byte-identical.
 #        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
     fi
@@ -500,26 +500,26 @@ fi
 # estimate_flops and any bpb gain reads as pure Pareto movement. A reviewer will object,
 # correctly. Record the step wall-clock (the tok/sec column in the log) alongside bpb: the
 # claim is "MST can afford this preconditioner and dense cannot", not "this is free".
-if has shampoo; then
-    echo ""; echo "### SHAMPOO: block-diagonal preconditioning (Stage 17)"
-    SEEDS_SAVE="$SEEDS"; SEEDS=1
-    if check_divisible "$SUB_DIM" 64; then
-        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        # The first shampoo pass was invalid: the update was normalized to ||g||_F rather
-        # than to Muon's semi-orthogonal ~sqrt(min(m,n)), so the effective LR was ~3e4 too
-        # small and all three cadences landed within 0.004 bpb of each other at +0.07 vs
-        # control. Fixed in optim.py (shampoo_step) and pinned by
-        # tests/test_shampoo.py::test_update_norm_matches_muons_convention_at_any_gradient_scale.
-        # These tags are v2 so the invalid results are not silently reused.
-        run SH2_every10 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 10
-        run SH2_every1  "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 1
-        run SH2_every50 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 50
-        # Control, reusing its completed seeds. Flags must stay byte-identical.
-        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
-    fi
-    SEEDS="$SEEDS_SAVE"
-fi
-
+#if has shampoo; then
+#    echo ""; echo "### SHAMPOO: block-diagonal preconditioning (Stage 17)"
+#    SEEDS_SAVE="$SEEDS"; SEEDS=1
+#    if check_divisible "$SUB_DIM" 64; then
+#        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+#        # The first shampoo pass was invalid: the update was normalized to ||g||_F rather
+#        # than to Muon's semi-orthogonal ~sqrt(min(m,n)), so the effective LR was ~3e4 too
+#        # small and all three cadences landed within 0.004 bpb of each other at +0.07 vs
+#        # control. Fixed in optim.py (shampoo_step) and pinned by
+#        # tests/test_shampoo.py::test_update_norm_matches_muons_convention_at_any_gradient_scale.
+#        # These tags are v2 so the invalid results are not silently reused.
+#        run SH2_every10 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 10
+#        run SH2_every1  "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 1
+#        run SH2_every50 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 50
+#        # Control, reusing its completed seeds. Flags must stay byte-identical.
+#        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
+#    fi
+#    SEEDS="$SEEDS_SAVE"
+#fi
+#
 # ---------------------------------------------------------------- d16
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
 # only after L=8 names a winner, and only for that winner plus its baseline, so
