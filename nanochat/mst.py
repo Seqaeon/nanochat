@@ -904,6 +904,13 @@ class BatchedMSTLayer(nn.Module):
             f"mst_stream_topk must be in [0, {N}], got {self._stream_topk}"
         self._stream_router_aux = float(getattr(config, 'mst_stream_router_aux', 0.01))
         self._stream_router_noise = float(getattr(config, 'mst_stream_router_noise', 0.0))
+        self._stream_dispatch = bool(getattr(config, 'mst_stream_dispatch', 0))
+        self._stream_capacity_factor = float(getattr(config, 'mst_stream_capacity_factor', 1.0))
+        self._last_stream_drop = 0.0
+        # Read from config, not self: _cross_sub_gate_rank is assigned further down __init__.
+        assert not (self._stream_dispatch and int(getattr(config, 'mst_cross_sub_gate', 0)) > 0), \
+            "mst_stream_dispatch is incompatible with mst_cross_sub_gate: the gate is built "\
+            "from the dense concatenated state, which the dispatched path never materializes"
         self._stream_gate_attn = bool(getattr(config, 'mst_stream_gate_attn', 0))
         self._stream_sparse = 0 < self._stream_topk < N
         if self._stream_sparse:
@@ -1131,6 +1138,58 @@ class BatchedMSTLayer(nn.Module):
             self._last_stream_load = mask.mean(dim=(0, 1)).detach()
         return w, aux
 
+    def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w):
+        """Phase B: run the FFN on K < T tokens per stream, and actually skip the rest.
+
+        Phase A multiplies the FFN output by a 0/1 gate, which prices the quality cost of
+        sparsity but does no less work. This gathers each stream's selected tokens into a
+        fixed-capacity buffer, runs the SAME single batched matmul on (B, K, N, d), and
+        scatters the result back. Shapes are static, so torch.compile is unaffected.
+
+        CAUSALITY. Expert-choice routing (each stream takes its own top-K tokens) is the
+        usual way to get exact load balance, and it is non-causal: a token's fate would
+        depend on scores of tokens after it. This keeps token-choice selection, which is
+        causal, and resolves capacity in POSITION ORDER -- whether token t fits in stream
+        j depends only on how many earlier tokens chose j. Overflow is dropped, which is
+        standard Switch behaviour and is what capacity_factor trades against.
+
+        With no overflow this is numerically identical to the masked path; the tests pin
+        that. Overflow is reported as _last_stream_drop.
+
+        One real cost: an unselected stream no longer computes an output, so the router
+        loses the `what if I had picked this one` gradient that compute-then-mask gave it
+        for free. Exploration noise carries the whole burden here.
+        """
+        B, T, N, d = x.shape
+        k = self._stream_topk
+        K = max(1, min(T, int(math.ceil(T * k / N * self._stream_capacity_factor))))
+
+        mask = (stream_w.detach() > 0).to(x.dtype)                     # (B, T, N)
+        # Rank selected tokens by position: earliest selected gets the largest key, so
+        # topk(K) keeps the first K in sequence order. Unselected score 0, below any
+        # selected token, so they are only picked when a stream is under-subscribed.
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        key = mask.transpose(1, 2) * (T - pos)                         # (B, N, T)
+        top_val, top_idx = key.topk(K, dim=-1)                         # (B, N, K)
+        top_idx, order = top_idx.sort(dim=-1)                          # restore token order
+        keep = top_val.gather(-1, order) > 0                           # (B, N, K) genuinely selected
+
+        idx = top_idx.unsqueeze(-1).expand(-1, -1, -1, d)              # (B, N, K, d)
+        xg = x.permute(0, 2, 1, 3).gather(2, idx)                      # (B, N, K, d)
+
+        h = _batched_linear(xg.permute(0, 2, 1, 3), fc_w)              # (B, K, N, 4d)
+        h = F.relu(h).square()
+        og = _batched_linear(h, fc_proj_w).permute(0, 2, 1, 3)         # (B, N, K, d)
+        og = og * keep.unsqueeze(-1).to(og.dtype)
+
+        out = torch.zeros(B, N, T, d, dtype=og.dtype, device=og.device)
+        out.scatter_(2, idx, og)
+        with torch.no_grad():
+            selected = mask.sum()
+            self._last_stream_drop = float(
+                1.0 - keep.sum() / selected.clamp_min(1)) if selected > 0 else 0.0
+        return out.permute(0, 2, 1, 3)                                 # (B, T, N, d)
+
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
                 kv_cache=None, total_sub_layers=1):
         """
@@ -1310,17 +1369,22 @@ class BatchedMSTLayer(nn.Module):
             gate = torch.sigmoid(F.linear(gate_h, self.csgate_up_w.to(dtype=gate_h.dtype)))    # (B, T, N*4d)
             gate = gate.view(B, T, N, self._inner)  # (B, T, N, 4d)
 
-        h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
-
-        # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
-        if self._cross_sub_gate_rank > 0:
-            h = h * gate
-
-        h = F.relu(h).square()                      # relu²
-        ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         # Stage 16: the FFN is 2.0 of the 4.5 D^2 layer, so this is where the saving is.
-        # Phase A multiplies by a 0/1 gate (compute-then-mask) to price the quality cost;
-        # Phase B replaces it with fixed-capacity gather/scatter so compute is truly skipped.
+        # Phase A masks (prices the quality cost, does no less work); Phase B gathers so
+        # compute is genuinely skipped. The up-projection lives inside each branch on
+        # purpose: computing it densely and then dispatching would throw away exactly the
+        # work we are trying not to do.
+        if stream_w is not None and self._stream_dispatch:
+            ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w)
+        else:
+            h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
+            # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
+            if self._cross_sub_gate_rank > 0:
+                h = h * gate
+            h = F.relu(h).square()                      # relu²
+            ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
+        # The gate multiplies the output either way: it is what carries the router's
+        # straight-through gradient into the loss.
         if stream_w is not None:
             ffn_out = stream_w.unsqueeze(-1) * ffn_out
         sub_states = sub_states + ffn_out

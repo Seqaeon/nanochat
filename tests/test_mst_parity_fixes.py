@@ -641,6 +641,99 @@ def test_s16_changes_the_computation():
     assert not torch.allclose(logits(), logits(topk=2), atol=1e-6)
 
 
+# ── Stage 16 Phase B: real gather/scatter dispatch ───────────────────────────
+
+def _dispatch_pair(cap, k=2, depth=2, noise=0.0):
+    """Two models with identical weights and routers, one masked and one dispatched."""
+    out = []
+    for dispatch in (0, 1):
+        torch.manual_seed(0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = MST(make_config(depth=depth, D=256, mst_stream_topk=k,
+                                mst_stream_router_noise=noise,
+                                mst_stream_dispatch=dispatch,
+                                mst_stream_capacity_factor=cap))
+            m.init_weights()
+        _wake_residual_branches(m)
+        with torch.no_grad():
+            g = torch.Generator().manual_seed(5)
+            for layer in m.layers:
+                layer.stream_router_w.copy_(
+                    torch.randn(layer.stream_router_w.shape, generator=g) * 0.3)
+        m.eval()
+        out.append(m)
+    return out
+
+
+@pytest.mark.parametrize("cap", [1.5, 2.0])
+def test_phase_b_matches_masking_when_nothing_overflows(cap):
+    """Dispatch must be an optimization, not a different model.
+
+    With capacity headroom every selected token is kept, so gather/FFN/scatter has to
+    reproduce the masked path exactly. Any drift here means the indexing is wrong.
+    """
+    masked, dispatched = _dispatch_pair(cap)
+    idx = torch.arange(256).remainder(VOCAB).view(1, 256)
+    with torch.no_grad():
+        ref, out = masked(idx), dispatched(idx)
+    assert max(l._last_stream_drop for l in dispatched.layers) == 0.0
+    assert torch.equal(ref, out), f"dispatch diverged from masking at capacity {cap}"
+
+
+def test_phase_b_drops_on_overflow_and_reports_it():
+    """At capacity 1.0 routing imbalance must overflow, and that must be visible."""
+    masked, dispatched = _dispatch_pair(1.0)
+    idx = torch.arange(256).remainder(VOCAB).view(1, 256)
+    with torch.no_grad():
+        ref, out = masked(idx), dispatched(idx)
+    drop = max(l._last_stream_drop for l in dispatched.layers)
+    assert drop > 0, "perfectly balanced routing at cap=1.0 would be suspicious"
+    assert not torch.equal(ref, out), "dropped tokens must actually change the output"
+
+
+def test_phase_b_selection_is_causal():
+    """Capacity is resolved in POSITION order, so token t cannot be evicted by token t+1.
+
+    This is why the dispatch keeps token-choice routing. Expert-choice, where each stream
+    takes its own top-K tokens, gives exact load balance but is non-causal and would leak
+    future information into an autoregressive model.
+    """
+    _, m = _dispatch_pair(1.0)
+    layer = m.layers[0]
+    d = m.config.mst_sub_dim
+    torch.manual_seed(11)
+    x = torch.randn(1, 64, N_SUBS, d)
+    fc, fcp = layer.fc_w.view(N_SUBS, -1, d), layer.fc_proj_w.view(N_SUBS, d, -1)
+
+    with torch.no_grad():
+        w, _ = layer._stream_gate(x)
+        a = layer._ffn_dispatched(x, w, fc, fcp)
+        x2 = x.clone()
+        x2[:, 32:] = torch.randn_like(x2[:, 32:])       # perturb only the future
+        w2, _ = layer._stream_gate(x2)
+        b = layer._ffn_dispatched(x2, w2, fc, fcp)
+    assert torch.equal(w[:, :32], w2[:, :32]), "routing for early tokens changed"
+    assert torch.equal(a[:, :32], b[:, :32]), \
+        "a later token displaced an earlier one from its stream: capacity is not causal"
+
+
+def test_phase_b_keeps_every_stream_trainable():
+    """Dispatch removes the router's 'what if I picked this' gradient, so check the FFNs."""
+    _, m = _dispatch_pair(1.0, noise=1.0)
+    m.train()
+    idx = torch.arange(256).remainder(VOCAB).view(1, 256)
+    m(idx, targets=torch.randint(0, VOCAB, (1, 256))).backward()
+    layer = m.layers[0]
+    per_stream = layer.fc_w.grad.reshape(N_SUBS, -1).abs().sum(-1)
+    assert (per_stream > 0).all(), f"a stream's FFN got no gradient: {per_stream.tolist()}"
+    assert layer.stream_router_w.grad.abs().sum() > 0
+
+
+def test_phase_b_rejects_incompatible_cross_sub_gate():
+    with pytest.raises(AssertionError, match="mst_cross_sub_gate"):
+        build_meta(mst_stream_topk=2, mst_stream_dispatch=1, mst_cross_sub_gate=32)
+
+
 # ── CLI plumbing ─────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("script", ["scripts/base_train.py", "scripts/research_compare.py"])
@@ -682,7 +775,8 @@ def test_stage_15_flags_are_wired_end_to_end():
     for field in ("mst_distribute_block_muon", "mst_trans_spectral_lr",
                   "mst_talking_heads", "mst_wo_mode", "mst_transition_every",
                   "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
-                  "mst_stream_router_noise",
+                  "mst_stream_router_noise", "mst_stream_dispatch",
+                  "mst_stream_capacity_factor",
                   "mst_shampoo", "mst_precond_every", "mst_shampoo_beta"):
         flag = "--" + field.replace("_", "-")
         assert hasattr(cfg, field), f"{field} missing from GPTConfig"
