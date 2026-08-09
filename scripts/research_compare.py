@@ -404,6 +404,12 @@ def run_training_sweep(args):
         "--mst-trans-spectral-lr", str(getattr(args, 'mst_trans_spectral_lr', 0)),
         "--mst-talking-heads", str(getattr(args, 'mst_talking_heads', 0)),
         "--mst-wo-mode", str(getattr(args, 'mst_wo_mode', 'block')),
+        "--mst-stream-topk", str(getattr(args, 'mst_stream_topk', 0)),
+        "--mst-stream-router-aux", str(getattr(args, 'mst_stream_router_aux', 0.01)),
+        "--mst-stream-gate-attn", str(getattr(args, 'mst_stream_gate_attn', 0)),
+        "--mst-shampoo", str(getattr(args, 'mst_shampoo', 0)),
+        "--mst-precond-every", str(getattr(args, 'mst_precond_every', 10)),
+        "--mst-shampoo-beta", str(getattr(args, 'mst_shampoo_beta', 0.95)),
         # EET: Early Exit Transformer
         "--use-eet", str(getattr(args, 'use_eet', 0)),
         "--eet-frozen-kv", str(getattr(args, 'eet_frozen_kv', 1)),
@@ -1087,6 +1093,19 @@ if __name__ == "__main__":
                         help="F4: cross-stream talking-heads mixing before c_proj")
     parser.add_argument("--mst-wo-mode", type=str, default='block', choices=['block', 'dense'],
                         help="F5: attention output projection, block or dense")
+    # Stage 16: conditional stream execution
+    parser.add_argument("--mst-stream-topk", type=int, default=0,
+                        help="activate k of N streams per token (0=dense)")
+    parser.add_argument("--mst-stream-router-aux", type=float, default=0.01,
+                        help="load-balancing weight for the stream router")
+    parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1],
+                        help="also gate attention QKV, not just the FFN")
+    # Stage 17: block-diagonal Shampoo
+    parser.add_argument("--mst-shampoo", type=int, default=0, choices=[0, 1],
+                        help="block-diagonal Shampoo on the stacked per-stream weights")
+    parser.add_argument("--mst-precond-every", type=int, default=10,
+                        help="steps between Shampoo inverse-root refreshes")
+    parser.add_argument("--mst-shampoo-beta", type=float, default=0.95)
     # EET: Early Exit Transformer
     parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer")
     parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: frozen KV injection (1) or masked attention (0)")

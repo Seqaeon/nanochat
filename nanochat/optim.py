@@ -145,6 +145,93 @@ def muon_step_fused(
     mask = (g * stacked_params) >= 0
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
+@torch.no_grad()
+def _inverse_fourth_root(M: Tensor, eps: float, fallback: Tensor) -> Tensor:
+    """(M + ridge)^(-1/4) for a batch of symmetric PSD matrices, computed in fp32.
+
+    Three things this has to survive, all of which bit during development:
+
+    1. **The ridge must be relative, not absolute.** After one step L is `(1-beta) G G^T`,
+       which is rank 1 with a trace of whatever the gradient scale happens to be. An
+       absolute 1e-8 ridge leaves it numerically singular and eigh fails to converge.
+       The ridge is scaled to the mean diagonal instead.
+    2. **The eigenvalues need a relative floor.** Rank-deficient factors otherwise produce
+       enormous inverse roots along their null space.
+    3. **eigh can genuinely fail, not just flake.** The CPU retry follows
+       scripts/conditioning_headroom.py:158-160, but if that fails too the matrix really is
+       degenerate, so keep the previous preconditioner rather than crashing training.
+    """
+    M32 = M.float()
+    n = M32.size(-1)
+    scale = M32.diagonal(dim1=-2, dim2=-1).mean(-1).clamp_min(1e-30)      # (Kb,)
+    eye = torch.eye(n, device=M32.device, dtype=M32.dtype)
+    A = M32 + (eps * scale).view(-1, 1, 1) * eye
+    try:
+        evals, evecs = torch.linalg.eigh(A)
+    except Exception:
+        try:
+            evals, evecs = torch.linalg.eigh(A.cpu())
+            evals, evecs = evals.to(M32.device), evecs.to(M32.device)
+        except Exception:
+            return fallback
+    if not (torch.isfinite(evals).all() and torch.isfinite(evecs).all()):
+        return fallback
+    floor = evals.amax(dim=-1, keepdim=True).clamp_min(1e-30) * 1e-6
+    inv_root = evals.clamp_min(floor).pow(-0.25)
+    return (evecs * inv_root.unsqueeze(-2)) @ evecs.mT
+
+
+@torch.no_grad()
+def shampoo_step(
+    stacked_grads: Tensor,          # (Kb, out, in)  gradients, already block-reshaped
+    stacked_params: Tensor,         # (Kb, out, in)
+    momentum_buffer: Tensor,        # (Kb, out, in)
+    L: Tensor,                      # (Kb, out, out)  left  preconditioner statistic, fp32
+    R: Tensor,                      # (Kb, in, in)    right preconditioner statistic, fp32
+    QL: Tensor,                     # (Kb, out, out)  L^(-1/4), refreshed on a cadence
+    QR: Tensor,                     # (Kb, in, in)    R^(-1/4)
+    momentum_t: Tensor, lr_t: Tensor, wd_t: Tensor,
+    beta: float, eps: float, refresh: bool,
+) -> None:
+    """Block-diagonal Shampoo.
+
+    This is the whole point of the architecture claim: preconditioning a dense D x D
+    weight costs O(D^3), but MST's weights are N blocks of d x d, so exact block
+    preconditioning costs N*(D/N)^3 = D^3/N^2 -- 16x cheaper at N=4. K-FAC and Shampoo
+    both *approximate* block-diagonality; MST makes it exact by construction, so at equal
+    optimizer cost it can afford a strictly stronger preconditioner than dense can.
+
+    Momentum and the cautious weight-decay update mirror muon_step_fused so the two kinds
+    stay comparable; only the orthogonalization is replaced by QL @ G @ QR.
+    """
+    # Nesterov momentum, same as Muon
+    momentum = momentum_t.to(stacked_grads.dtype)
+    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
+    g = stacked_grads.lerp_(momentum_buffer, momentum)
+
+    # Accumulate the Kronecker factors in fp32
+    g32 = g.float()
+    L.mul_(beta).add_(g32 @ g32.mT, alpha=1 - beta)
+    R.mul_(beta).add_(g32.mT @ g32, alpha=1 - beta)
+    if refresh:
+        QL.copy_(_inverse_fourth_root(L, eps, QL))
+        QR.copy_(_inverse_fourth_root(R, eps, QR))
+
+    p = (QL @ g32) @ QR
+    # Match Muon's update scale: it emits a spectrally-normalized direction, so rescale
+    # the preconditioned gradient to the same Frobenius norm. Without this the LR would
+    # mean something different for shampoo groups than for muon ones.
+    p = p * (g32.norm(dim=(-2, -1), keepdim=True)
+             / p.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12))
+    p = p.to(stacked_params.dtype)
+
+    # Cautious weight decay + parameter update, identical to muon_step_fused
+    lr = lr_t.to(p.dtype)
+    wd = wd_t.to(p.dtype)
+    mask = (p * stacked_params) >= 0
+    stacked_params.sub_(lr * p + lr * wd * stacked_params * mask)
+
+
 # -----------------------------------------------------------------------------
 # Single GPU version of the MuonAdamW optimizer.
 # Used mostly for reference, debugging and testing.
@@ -372,6 +459,84 @@ class MuonAdamW(torch.optim.Optimizer):
             else:
                 torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
+    def _shampoo_state(self, group: dict):
+        """Group-level Shampoo state, block-reshaped exactly as _step_muon does.
+
+        Returns (params, stacked_grads, stacked_params, state, shape). The block-diagonal
+        reshape is the load-bearing part: `(num_params, N*out, in)` becomes
+        `(num_params*N, out, in)`, so L is (Kb, out, out) rather than one (N*out, N*out).
+        That is where the N^2 saving comes from.
+        """
+        params = group['params']
+        p0 = params[0]
+        shape = p0.shape
+        n_blocks = group.get('block_diagonal', 0)
+        num_params = len(params)
+        device, dtype = p0.device, p0.dtype
+
+        if n_blocks > 0:
+            assert shape[0] % n_blocks == 0, \
+                f"block_diagonal={n_blocks} but shape[0]={shape[0]}"
+            block_shape = (shape[0] // n_blocks, shape[1])
+            kb = num_params * n_blocks
+        else:
+            block_shape = tuple(shape)
+            kb = num_params
+
+        stacked_grads = torch.stack(
+            [(pp.grad if pp.grad is not None else torch.zeros_like(pp)) for pp in params]
+        ).reshape(kb, *block_shape)
+        stacked_params = torch.stack(params).reshape(kb, *block_shape)
+
+        state = self.state[p0]
+        if "L" not in state:
+            out_d, in_d = block_shape
+            state["momentum_buffer"] = torch.zeros(kb, *block_shape, dtype=dtype, device=device)
+            # fp32 on purpose: these are accumulated second-moment statistics and an
+            # inverse fourth root of them. See the load_state_dict override below, which
+            # exists because torch would otherwise downcast them to the param dtype.
+            state["L"] = torch.zeros(kb, out_d, out_d, dtype=torch.float32, device=device)
+            state["R"] = torch.zeros(kb, in_d, in_d, dtype=torch.float32, device=device)
+            state["QL"] = torch.eye(out_d, dtype=torch.float32, device=device).expand(kb, out_d, out_d).clone()
+            state["QR"] = torch.eye(in_d, dtype=torch.float32, device=device).expand(kb, in_d, in_d).clone()
+            state["step"] = 0
+        return params, stacked_grads, stacked_params, state, shape
+
+    def _step_shampoo(self, group: dict) -> None:
+        params, stacked_grads, stacked_params, state, shape = self._shampoo_state(group)
+        every = max(1, int(group.get('precond_every', 10)))
+        # step starts at 0 so the first call always refreshes, which matters because
+        # base_train runs a throwaway warmup step to force lazy state allocation.
+        refresh = (state["step"] % every == 0)
+        state["step"] += 1
+
+        self._muon_momentum_t.fill_(group["momentum"])
+        self._muon_lr_t.fill_(group["lr"] * max(1.0, stacked_params.size(-2) / stacked_params.size(-1)) ** 0.5)
+        self._muon_wd_t.fill_(group["weight_decay"])
+
+        shampoo_step(
+            stacked_grads, stacked_params, state["momentum_buffer"],
+            state["L"], state["R"], state["QL"], state["QR"],
+            self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t,
+            float(group.get('shampoo_beta', 0.95)), float(group.get('shampoo_eps', 1e-6)),
+            refresh,
+        )
+        updated = stacked_params.reshape(len(params), *shape)
+        torch._foreach_copy_(params, list(updated.unbind(0)))
+
+    def load_state_dict(self, state_dict):
+        """Preserve fp32 Shampoo statistics across a resume.
+
+        torch.optim.Optimizer.load_state_dict casts floating-point state to the owning
+        parameter's dtype, so fp32 L/R/QL/QR attached to a bf16 weight would silently be
+        downcast to bf16 and the inverse fourth root would be garbage on resume.
+        """
+        super().load_state_dict(state_dict)
+        for st in self.state.values():
+            for key in ("L", "R", "QL", "QR"):
+                if key in st and st[key].dtype != torch.float32:
+                    st[key] = st[key].float()
+
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
@@ -382,6 +547,8 @@ class MuonAdamW(torch.optim.Optimizer):
                 active_group = dict(group)
                 active_group['params'] = active_params
                 self._step_adamw(active_group)
+            elif group['kind'] == 'shampoo':
+                self._step_shampoo(group)
             elif group['kind'] == 'muon':
                 # Muon needs consistent param lists since state shape is tied to group size
                 self._step_muon(group)
@@ -664,6 +831,85 @@ class DistMuonAdamW(torch.optim.Optimizer):
         gather_list.append(dict(future=future, stacked_params=stacked_params, params=params,
                                 _original_3d_shape=original_3d_shape))
 
+    def _compute_shampoo(self, group: dict, info: dict, gather_list: list, rank: int) -> None:
+        """Rank-local block-diagonal Shampoo, mirroring _compute_muon.
+
+        Gradient communication is identical to Muon, so _reduce_muon is reused verbatim
+        for the reduce phase; only the update math differs. State is chunk-shaped and
+        rank-local, exactly like Muon's, which is why optimizer checkpoints are per-rank.
+        """
+        info["future"].wait()
+        params = info["params"]
+        grad_chunk = info["grad_chunk"]
+        chunk_size = info["chunk_size"]
+        shape = info["_shape_2d"]
+        original_3d_shape = info.get("_original_3d_shape")
+        n_blocks = group.get('block_diagonal', 0)
+
+        p0 = params[0]
+        device, dtype = p0.device, p0.dtype
+        start_idx = rank * chunk_size
+        num_owned = max(0, min(chunk_size, len(params) - start_idx))
+
+        if n_blocks > 0:
+            assert shape[0] % n_blocks == 0
+            block_shape = (shape[0] // n_blocks, shape[1])
+        else:
+            n_blocks, block_shape = 1, tuple(shape)
+        kb = chunk_size * n_blocks
+
+        state = self.state[p0]
+        if "L" not in state:
+            out_d, in_d = block_shape
+            state["momentum_buffer"] = torch.zeros(kb, *block_shape, dtype=dtype, device=device)
+            state["L"] = torch.zeros(kb, out_d, out_d, dtype=torch.float32, device=device)
+            state["R"] = torch.zeros(kb, in_d, in_d, dtype=torch.float32, device=device)
+            state["QL"] = torch.eye(out_d, dtype=torch.float32, device=device).expand(kb, out_d, out_d).clone()
+            state["QR"] = torch.eye(in_d, dtype=torch.float32, device=device).expand(kb, in_d, in_d).clone()
+            state["step"] = 0
+
+        every = max(1, int(group.get('precond_every', 10)))
+        refresh = (state["step"] % every == 0)
+        state["step"] += 1
+
+        updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+        if num_owned > 0:
+            owned = [params[start_idx + i] for i in range(num_owned)]
+            if original_3d_shape is not None:
+                stacked_owned = torch.stack([pp.data.reshape(shape) for pp in owned])
+            else:
+                stacked_owned = torch.stack(owned)
+            nb = num_owned * n_blocks
+            owned_grads = grad_chunk[:num_owned].reshape(nb, *block_shape)
+            owned_blocked = stacked_owned.reshape(nb, *block_shape)
+
+            self._muon_momentum_t.fill_(group["momentum"])
+            self._muon_lr_t.fill_(group["lr"] * max(1.0, block_shape[0] / block_shape[1]) ** 0.5)
+            self._muon_wd_t.fill_(group["weight_decay"])
+            shampoo_step(
+                owned_grads, owned_blocked, state["momentum_buffer"][:nb],
+                state["L"][:nb], state["R"][:nb], state["QL"][:nb], state["QR"][:nb],
+                self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t,
+                float(group.get('shampoo_beta', 0.95)), float(group.get('shampoo_eps', 1e-6)),
+                refresh,
+            )
+            updated_params[:num_owned].copy_(owned_blocked.reshape(num_owned, *shape))
+        if num_owned < chunk_size:
+            updated_params[num_owned:].zero_()
+
+        stacked_params = info["stacked_grads"]
+        future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
+        gather_list.append(dict(future=future, stacked_params=stacked_params, params=params,
+                                _original_3d_shape=original_3d_shape))
+
+    def load_state_dict(self, state_dict):
+        """Preserve fp32 Shampoo statistics across a resume. See MuonAdamW.load_state_dict."""
+        super().load_state_dict(state_dict)
+        for st in self.state.values():
+            for key in ("L", "R", "QL", "QR"):
+                if key in st and st[key].dtype != torch.float32:
+                    st[key] = st[key].float()
+
     def _finish_gathers(self, gather_list: list) -> None:
         """Wait for all gathers and copy Muon params back."""
         for info in gather_list:
@@ -695,8 +941,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 active_group['params'] = active_params
                 active_groups.append(active_group)
                 reduce_infos.append(self._reduce_adamw(active_group, world_size))
-            elif group['kind'] == 'muon':
-                # Muon needs consistent param lists since state shape is tied to group size
+            elif group['kind'] in ('muon', 'shampoo'):
+                # Muon needs consistent param lists since state shape is tied to group size.
+                # Shampoo shares the reduce phase exactly: the gradient reduce-scatter is
+                # identical, only the update math differs.
                 active_groups.append(group)
                 reduce_infos.append(self._reduce_muon(group, world_size))
             else:
@@ -707,6 +955,8 @@ class DistMuonAdamW(torch.optim.Optimizer):
         for group, info in zip(active_groups, reduce_infos):
             if group['kind'] == 'adamw':
                 self._compute_adamw(group, info, gather_list, rank, world_size)
+            elif group['kind'] == 'shampoo':
+                self._compute_shampoo(group, info, gather_list, rank)
             elif group['kind'] == 'muon':
                 self._compute_muon(group, info, gather_list, rank)
             else:

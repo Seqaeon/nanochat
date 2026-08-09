@@ -896,6 +896,19 @@ class BatchedMSTLayer(nn.Module):
         if self._talking_heads:
             self.talking_w = nn.Parameter(torch.empty(N * n_head, N * n_head))
 
+        # Stage 16: conditional stream execution. One router per layer scoring the N
+        # streams from the token's own concatenated state, so it is strictly causal.
+        # Same shape as the existing _transition_gated gate_w, i.e. (N, N*d).
+        self._stream_topk = int(getattr(config, 'mst_stream_topk', 0))
+        assert 0 <= self._stream_topk <= N, \
+            f"mst_stream_topk must be in [0, {N}], got {self._stream_topk}"
+        self._stream_router_aux = float(getattr(config, 'mst_stream_router_aux', 0.01))
+        self._stream_gate_attn = bool(getattr(config, 'mst_stream_gate_attn', 0))
+        self._stream_sparse = 0 < self._stream_topk < N
+        if self._stream_sparse:
+            self.stream_router_w = nn.Parameter(torch.empty(N, N * d))
+        self._last_stream_load = None  # diagnostics
+
         # --- Batched FFN weights: standard d → 4d → d ---
         inner = 4 * d
         self._inner = inner
@@ -1060,6 +1073,45 @@ class BatchedMSTLayer(nn.Module):
         # C: Mean transition — parameter-free mean-add replaces AggDist
         self._mean_transition = bool(config.mst_mean_transition)
 
+    def _stream_gate(self, sub_states):
+        """Stage 16: pick k of N streams for each token. Returns (w, aux_loss).
+
+        `w` is (B, T, N), exactly 0 or 1 in value so the forward pass is genuinely the
+        sparse model, but carrying gradient through a straight-through estimator so the
+        router receives task signal. eet.py:1994-2006 records what happens without that:
+        top-k is non-differentiable, the router only hears the efficiency term, and it
+        collapses.
+
+        The gate is a per-stream sigmoid rather than a renormalized softmax on purpose.
+        Switch-style renormalization makes the selected weights sum to 1, which would
+        scale each stream's contribution to ~1/k and confound sparsity with a magnitude
+        change; a sigmoid leaves selected streams at full strength.
+
+        Routing reads only the token's own concatenated state, so it is causal.
+        """
+        B, T, N, d = sub_states.shape
+        x = norm(sub_states).reshape(B, T, N * d)
+        logits = F.linear(x, self.stream_router_w.to(dtype=x.dtype))   # (B, T, N)
+        probs = torch.sigmoid(logits)
+
+        topk_idx = logits.topk(self._stream_topk, dim=-1).indices
+        mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
+        # Parenthesized so the zero is formed first: `mask + probs - probs.detach()` would
+        # evaluate as `(mask + probs) - probs` and lose a ULP, giving 0.99999994 instead of
+        # a gate that is exactly 0 or 1.
+        w = mask.detach() + (probs - probs.detach())                   # value = mask, grad = d probs
+
+        aux = sub_states.new_zeros(())
+        if self.training and self._stream_router_aux > 0.0:
+            # Switch-style: penalize the correlation between how often a stream is picked
+            # and how confident the router is in it. Minimized when load is uniform.
+            probs_mean = probs.mean(dim=(0, 1))                        # (N,)
+            load = mask.mean(dim=(0, 1))                               # (N,)
+            aux = self._stream_router_aux * N * (load * probs_mean).sum()
+        with torch.no_grad():
+            self._last_stream_load = mask.mean(dim=(0, 1)).detach()
+        return w, aux
+
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
                 kv_cache=None, total_sub_layers=1):
         """
@@ -1085,6 +1137,12 @@ class BatchedMSTLayer(nn.Module):
             # has to travel with the states. A shared d-wide VE is basis-free.
             if ve is not None and ve.shape[-1] == N * d:
                 ve = mix_channels(ve.view(B, T, N, d), self._mix_mode, N, d).reshape(B, T, N * d)
+
+        # Stage 16: one routing decision per (token, layer), shared by the attention and
+        # FFN gates so a token uses a consistent set of streams within the layer.
+        stream_w, stream_aux = (None, None)
+        if self._stream_sparse:
+            stream_w, stream_aux = self._stream_gate(sub_states)
 
         # Reshape stored 2D weights (N*out, in) → 3D (N, out, in) for batched ops
         c_q_w = self.c_q_w.view(N, self.qkv_dim, d)
@@ -1189,7 +1247,11 @@ class BatchedMSTLayer(nn.Module):
         else:
             attn_out = _batched_linear(y, c_proj_w)  # (B, T, N, d)
 
-        # Attention residual
+        # Attention residual (Stage 16 optionally gates it; off by default because a
+        # skipped token stops being a key/value for that stream, which changes attention
+        # semantics per stream -- eet.py's _forward_a3d avoids exactly this)
+        if stream_w is not None and self._stream_gate_attn:
+            attn_out = stream_w.unsqueeze(-1) * attn_out
         sub_states = sub_states + attn_out
 
         # Stage 14, intra-layer: permute between attention and FFN, which is exactly
@@ -1237,6 +1299,11 @@ class BatchedMSTLayer(nn.Module):
 
         h = F.relu(h).square()                      # relu²
         ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
+        # Stage 16: the FFN is 2.0 of the 4.5 D^2 layer, so this is where the saving is.
+        # Phase A multiplies by a 0/1 gate (compute-then-mask) to price the quality cost;
+        # Phase B replaces it with fixed-capacity gather/scatter so compute is truly skipped.
+        if stream_w is not None:
+            ffn_out = stream_w.unsqueeze(-1) * ffn_out
         sub_states = sub_states + ffn_out
 
         if self._mix_ffn:
@@ -1246,6 +1313,8 @@ class BatchedMSTLayer(nn.Module):
         # Pre-norm for transition
         x = norm(sub_states)  # (B, T, N, d)
         aux_loss = sub_states.new_zeros(())
+        if stream_aux is not None:
+            aux_loss = aux_loss + stream_aux
 
         # Stage 10-B: DenseFormer lookback — store and blend multi-layer pre-transition states
         if self._lookback_layers > 0:
@@ -1497,6 +1566,11 @@ class BatchedMSTLayer(nn.Module):
         if self._talking_heads:
             nn.init.eye_(self.talking_w)
 
+        # Stage 16: zero-init the stream router, so every stream starts at sigmoid(0)=0.5
+        # and top-k is decided by symmetry-broken gradients rather than by init noise.
+        if self._stream_sparse:
+            nn.init.zeros_(self.stream_router_w)
+
         for j in range(N):
             nn.init.uniform_(c_q[j], -sub_s, sub_s)
             if not self._shared_kv_attn:
@@ -1740,7 +1814,7 @@ class MST(nn.Module):
                     "mst_channel_mix is implemented in BatchedMSTLayer only; this config "
                     "falls back to the legacy list path, which would ignore it silently")
                 for _flag in ('mst_distribute_block_muon', 'mst_trans_spectral_lr',
-                              'mst_talking_heads'):
+                              'mst_talking_heads', 'mst_stream_topk', 'mst_stream_gate_attn'):
                     assert not getattr(config, _flag, 0), (
                         f"{_flag} is implemented in BatchedMSTLayer only; this config falls "
                         f"back to the legacy list path, which would ignore it silently")
@@ -2376,23 +2450,21 @@ class MST(nn.Module):
                 attn_flops += 12 * n_head * head_dim * effective_seq
         total_flops = 6 * (nparams - nparams_exclude) + attn_flops
 
-        # For topk_hard routing, the router selects which k sub outputs to combine,
-        # but ALL N subs still execute their full attention + FFN. So active_flops == total_flops.
-        # Only active_params is discounted to reflect effective capacity (matching gpt.py's
-        # approach of never discounting attention/compute FLOPs for routing).
-        routing_mode = self.config.mst_routing_mode
-        if routing_mode == 'topk_hard':
-            k = self.config.mst_routing_topk
-            active_fraction = k / N
-        else:
-            active_fraction = 1.0  # soft_weighted / sequence_path: all subs active
+        # `mst_routing_mode='topk_hard'` used to discount active_params here. That was
+        # wrong on the batched path: MSTRouter is only reachable from the legacy
+        # MSTLayer/MSTFinalHead, so a batched model reported a sparsity it did not have.
+        # Only genuinely-gated compute is discounted now.
+        legacy_topk = (not self._use_batched) and self.config.mst_routing_mode == 'topk_hard'
+        active_fraction = (self.config.mst_routing_topk / N) if legacy_topk else 1.0
 
         # Params belonging to per-sub modules: scale by active_fraction for active_params only.
         # Shared params (wte, lm_head, value_embeds, input_layer, final_head) are always active.
         sub_params = 0
         for layer in self.layers:
             if isinstance(layer, BatchedMSTLayer):
-                # Batched layer: attention + FFN + VE gate weights are per-sub
+                # Batched layer: attention + FFN + VE gate weights are per-sub.
+                # c_proj_dense_w (F5) is deliberately absent: it is a single D x D matrix
+                # over all streams, so it is shared, not per-sub. talking_w likewise.
                 for name in ('c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w', 'fc_w', 'fc_proj_w', 've_gate_w'):
                     p = getattr(layer, name, None)
                     if p is not None:
@@ -2401,9 +2473,33 @@ class MST(nn.Module):
                 sub_params += sum(p.numel() for p in layer.sub_blocks.parameters())
         shared_params = nparams - sub_params
         active_params = int(shared_params + sub_params * active_fraction)
-
-        # All subs execute regardless of routing — active_flops == total_flops.
         active_flops = total_flops
+
+        # Stage 16: conditional stream execution genuinely skips compute, so it is the one
+        # thing here that lowers active_flops. Same shape as GPT.estimate_flops'
+        # inactive_expert_params accounting for StandardMoE_MLP (gpt.py:10427-10440).
+        inactive_params = 0
+        inactive_attn_flops = 0
+        for layer in self.layers:
+            if not (isinstance(layer, BatchedMSTLayer) and layer._stream_sparse):
+                continue
+            frac = 1.0 - layer._stream_topk / N
+            gated = ['fc_w', 'fc_proj_w']
+            if layer._stream_gate_attn:
+                gated += ['c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w']
+            for name in gated:
+                p = getattr(layer, name, None)
+                if p is not None:
+                    inactive_params += int(p.numel() * frac)
+            if layer._stream_gate_attn:
+                # The QK/AV term scales with the streams that actually run.
+                for sub_ws in self.layer_sub_windows[layer.layer_idx]:
+                    window = sub_ws[0]
+                    eff = t if window < 0 else min(window, t)
+                    inactive_attn_flops += int(12 * n_head * head_dim * eff * frac)
+        if inactive_params or inactive_attn_flops:
+            active_flops = total_flops - 6 * inactive_params - inactive_attn_flops
+            active_params = active_params - inactive_params
 
         return total_flops, active_flops, active_params
 
@@ -2604,17 +2700,30 @@ class MST(nn.Module):
         if spectral_params:
             print0(f"[MST] F2: transition spectral LR — agg_up ×{N**0.5:.2f}, agg_down ×{N**-0.5:.2f}")
 
-        # Stacked per-sub matrix params → Muon with optional LR scaling + block-diagonal
+        # Stacked per-sub matrix params → Muon with optional LR scaling + block-diagonal.
+        # Stage 17: --mst-shampoo routes them to block-diagonal Shampoo instead. This is the
+        # architecture claim expressed as an optimizer: preconditioning a dense D x D weight
+        # is O(D^3), but these are N blocks of d x d, so exact block preconditioning is
+        # D^3/N^2 -- 16x cheaper at N=4. Dense cannot buy the same preconditioner at this cost.
+        use_shampoo = bool(getattr(self.config, 'mst_shampoo', 0))
         sub_muon_lr = matrix_lr * sub_lr_scale
         for shape in sorted({p.shape for p in stacked_matrix_params}) if stacked_matrix_params else []:
             group_params = [p for p in stacked_matrix_params if p.shape == shape]
             group_dict = dict(
-                kind='muon', params=group_params, lr=sub_muon_lr,
+                kind='shampoo' if use_shampoo else 'muon',
+                params=group_params, lr=sub_muon_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
             )
             if block_diag:
                 group_dict['block_diagonal'] = N  # number of blocks
+            if use_shampoo:
+                group_dict['precond_every'] = int(getattr(self.config, 'mst_precond_every', 10))
+                group_dict['shampoo_beta'] = float(getattr(self.config, 'mst_shampoo_beta', 0.95))
+                group_dict['shampoo_eps'] = 1e-6
             param_groups.append(group_dict)
+        if use_shampoo:
+            print0(f"[MST] Stage 17: block-diagonal Shampoo on {len(stacked_matrix_params)} "
+                   f"stacked weights, refresh every {getattr(self.config, 'mst_precond_every', 10)} steps")
 
         if sub_lr_scale != 1.0:
             print0(f"[MST] Per-sub Muon LR scaled by {sub_lr_scale:.2f}× → {sub_muon_lr:.6f}")

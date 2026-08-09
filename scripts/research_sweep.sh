@@ -370,6 +370,8 @@ while [[ $# -gt 0 ]]; do
         --mst-channel-mix|--mst-channel-mix-site|\
         --mst-distribute-block-muon|--mst-trans-spectral-lr|\
         --mst-talking-heads|--mst-wo-mode|\
+        --mst-stream-topk|--mst-stream-router-aux|--mst-stream-gate-attn|\
+        --mst-shampoo|--mst-precond-every|--mst-shampoo-beta|\
         --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")
             shift 2

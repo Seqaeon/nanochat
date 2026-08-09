@@ -476,6 +476,28 @@ class GPTConfig:
                                                     #     because W_O mixes them; MST blocks W_O too. ~1K params.
     mst_wo_mode: str = 'block'                      # F5: 'block' (per-stream c_proj) | 'dense' (full D x D over
                                                     #     the concatenated attention outputs, i.e. MHA's W_O)
+    # Stage 16: conditional stream execution. Everything above buys quality by adding
+    # parameters, which is capped by the parameter scaling law -- the same law dense
+    # obeys, so it cannot beat dense. Sparsity is a different axis: make the model
+    # sparse-active so active FLOPs fall below total. MST is the natural host because
+    # its streams are already independent modules with their own attention AND FFN,
+    # i.e. mixture-of-experts where the expert is a whole transformer block.
+    mst_stream_topk: int = 0                        # k of N streams active per token (0 = dense, today's model).
+                                                    #   FFN gating at N=4: k=2 is ~19% of total FLOPs, k=1 ~28%.
+    mst_stream_router_aux: float = 0.01             # Switch-style load-balancing weight. A prior attempt
+                                                    #   (free_for_all + topk1) collapsed to uniform routing on
+                                                    #   replicate seeds, so this is not optional decoration.
+    mst_stream_gate_attn: int = 0                   # also gate attention QKV, not just the FFN. Bigger saving
+                                                    #   (~26% at k=2) but a skipped token stops being a key/value
+                                                    #   for that stream, which changes attention semantics.
+    # Stage 17: block-diagonal Shampoo. Preconditioning a dense D x D weight costs O(D^3);
+    # MST's are N blocks of d x d, so exact block preconditioning is D^3/N^2, 16x cheaper
+    # at N=4. K-FAC and Shampoo both approximate block-diagonality; MST makes it exact by
+    # construction, so at equal optimizer cost it affords a stronger preconditioner than
+    # dense can. This is a training-efficiency claim, not a FLOPs/token one.
+    mst_shampoo: int = 0                            # route the stacked per-stream weights to kind='shampoo'
+    mst_precond_every: int = 10                     # steps between inverse-fourth-root refreshes
+    mst_shampoo_beta: float = 0.95                  # EMA decay for the L/R Kronecker factors
     # ── EET: Early Exit Transformer ──
     use_eet: bool = False                          # master switch for EET mode
     eet_frozen_kv: bool = True                     # True=Option B (frozen KV injection), False=Option A (masked attention)
@@ -666,6 +688,10 @@ RESEARCH_ALLOWED_KEYS = {
     # MST Stage 15: coupling optimization + attention cross-stream mixing
     "mst_distribute_block_muon", "mst_trans_spectral_lr",
     "mst_talking_heads", "mst_wo_mode",
+    # MST Stage 16: conditional stream execution
+    "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
+    # MST Stage 17: block-diagonal Shampoo
+    "mst_shampoo", "mst_precond_every", "mst_shampoo_beta",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",

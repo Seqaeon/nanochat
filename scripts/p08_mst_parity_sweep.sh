@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -343,29 +343,29 @@ echo "════════════════════════�
 #
 # Two seeds, because MIX_roll_ffn landed at 1.6 sigma, which is unmeasured rather
 # than null. The reference arms are included and will only run their missing seed.
-if has mixiso; then
-    echo ""; echo "### MIXISO: mixing without the window confound (uniform windows)"
-    SEEDS_SAVE="$SEEDS"; SEEDS=2
-    if check_divisible "$SUB_DIM" 64; then
-        # Uniform windows: msw off (a later flag wins), so compose-windows is a no-op
-        # and every stream inherits the SSSL layer window. Costs more attention FLOPs
-        # than the multi-scale schedule, which is fine: the comparison is within this
-        # setting, and all three arms below carry identical FLOPs.
-        UNIFORM="$MST_FULL --mst-multi-scale-windows 0 \
-                 --mst-sub-head-dim 64 --mst-per-stream-ve 1"
-        run MIXISO_uni_none      "$DEPTH" $UNIFORM
-        run MIXISO_uni_roll_ffn  "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site ffn
-        run MIXISO_uni_roll_layer "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site layer
-
-        # Second seed for the two arms the first pass could not resolve, reusing the
-        # completed s1 runs. Same flags as the originals or the comparison is void.
-        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
-        run STACK_noO1   "$DEPTH" $MST_FULL $BEST_SO_FAR
-        run MIX_roll_ffn "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-channel-mix roll --mst-channel-mix-site ffn
-    fi
-    SEEDS="$SEEDS_SAVE"
-fi
+#if has mixiso; then
+#    echo ""; echo "### MIXISO: mixing without the window confound (uniform windows)"
+#    SEEDS_SAVE="$SEEDS"; SEEDS=2
+#    if check_divisible "$SUB_DIM" 64; then
+#        # Uniform windows: msw off (a later flag wins), so compose-windows is a no-op
+#        # and every stream inherits the SSSL layer window. Costs more attention FLOPs
+#        # than the multi-scale schedule, which is fine: the comparison is within this
+#        # setting, and all three arms below carry identical FLOPs.
+#        UNIFORM="$MST_FULL --mst-multi-scale-windows 0 \
+#                 --mst-sub-head-dim 64 --mst-per-stream-ve 1"
+#        run MIXISO_uni_none      "$DEPTH" $UNIFORM
+#        run MIXISO_uni_roll_ffn  "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site ffn
+#        run MIXISO_uni_roll_layer "$DEPTH" $UNIFORM --mst-channel-mix roll --mst-channel-mix-site layer
+#
+#        # Second seed for the two arms the first pass could not resolve, reusing the
+#        # completed s1 runs. Same flags as the originals or the comparison is void.
+#        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+#        run STACK_noO1   "$DEPTH" $MST_FULL $BEST_SO_FAR
+#        run MIX_roll_ffn "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-channel-mix roll --mst-channel-mix-site ffn
+#    fi
+#    SEEDS="$SEEDS_SAVE"
+#fi
 
 
 # ---------------------------------------------------------------- couple
@@ -394,35 +394,98 @@ fi
 # floor at 2 seeds is 0.0037 bpb. F5 must buy >0.0058 bpb at L=8 to pay for its FLOPs.
 # F3's saving is depth-dependent (-2.1% FLOPs at L=8 but -7.6% at L=32), so judge it at L=8
 # on whether it COSTS bpb, not on the L=8 FLOP payoff.
-if has couple; then
-    echo ""; echo "### COUPLE: Stage 15 coupling optimization + attention mixing"
-    SEEDS_SAVE="$SEEDS"; SEEDS=2
+#if has couple; then
+#    echo ""; echo "### COUPLE: Stage 15 coupling optimization + attention mixing"
+#    SEEDS_SAVE="$SEEDS"; SEEDS=2
+#    if check_divisible "$SUB_DIM" 64; then
+#        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
+#        # Free and possibly explanatory, so these run first.
+#        run CPL_distmuon           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-distribute-block-muon 1
+#        run CPL_talking            "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-talking-heads 1
+#        run CPL_spectral           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-trans-spectral-lr 1
+#        run CPL_distmuon_spectral  "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-distribute-block-muon 1 --mst-trans-spectral-lr 1
+#        run CPL_talking_distmuon   "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-talking-heads 1 --mst-distribute-block-muon 1
+#        # Cost cuts.
+#        run CPL_every2             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 2
+#        run CPL_every4             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 4
+#        # If F1 fixes how the coupling is trained, coupling less often may cost less.
+#        run CPL_every2_distmuon    "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-transition-every 2 --mst-distribute-block-muon 1
+#        # The expensive arm.
+#        run CPL_dense_wo           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-wo-mode dense
+#        # Does the free stuff stack onto the winner? F5 was -0.0107 at 4.5 sigma; F4 and
+#        # F1 are each under 1 sigma alone but point the same way and add up (-0.0025
+#        # together), and both are exactly FLOP-free, so there is no downside to carrying
+#        # them if they hold.
+#        run CPL_dense_wo_stack     "$DEPTH" $MST_FULL $BEST_SO_FAR \
+#            --mst-wo-mode dense --mst-talking-heads 1 --mst-distribute-block-muon 1
+#        # Control, reusing its completed seeds. Flags must stay byte-identical.
+#        run STACK_noO1             "$DEPTH" $MST_FULL $BEST_SO_FAR
+#    fi
+#    SEEDS="$SEEDS_SAVE"
+#fi
+
+# ---------------------------------------------------------------- sparse
+# Stage 16: conditional stream execution. Everything up to here bought quality by adding
+# parameters, which is capped by the parameter scaling law -- the same law dense obeys, so
+# it cannot beat dense. (Dense W_O beat that law by only +0.0030 bpb.) Sparsity is a
+# different axis: k of N streams per token, so active FLOPs fall below total.
+#
+# Phase A is compute-then-mask. It does not make the model faster; it prices what k-of-N
+# sparsity COSTS in bpb, which is the whole research question. The gather/scatter dispatch
+# that realises the saving is only worth building if this comes back cheap.
+#
+# Measured active-FLOP savings on the current best arm (FFN gating):
+#            L=16      L=32
+#   k=3     -6.9%     -9.3%
+#   k=2    -13.8%    -18.6%
+#   k=1    -20.8%    -28.0%
+# Multipliers at L=16 IF bpb held: k=3 1.10x, k=2 1.19x, k=1 1.30x, against 1.028x today.
+# Quality budget to break even at L=16: 0.013 bpb at k=2, 0.020 at k=1. The 2-sigma floor
+# is 0.0048, so all of these are comfortably measurable.
+#
+# SP_k2_noaux exists because the prior routing attempt (free_for_all + topk1) collapsed to
+# uniform on replicate seeds (router_entropy = log(8), load_balance = 1.0). If the aux loss
+# is what prevents that, this arm should be visibly worse or unstable across its two seeds.
+if has sparse; then
+    echo ""; echo "### SPARSE: conditional stream execution (Stage 16, Phase A)"
+    SEEDS_SAVE="$SEEDS"; SEEDS=1
     if check_divisible "$SUB_DIM" 64; then
-        BEST_SO_FAR="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1"
-        # Free and possibly explanatory, so these run first.
-        run CPL_distmuon           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-distribute-block-muon 1
-        run CPL_talking            "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-talking-heads 1
-        run CPL_spectral           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-trans-spectral-lr 1
-        run CPL_distmuon_spectral  "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-distribute-block-muon 1 --mst-trans-spectral-lr 1
-        run CPL_talking_distmuon   "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-talking-heads 1 --mst-distribute-block-muon 1
-        # Cost cuts.
-        run CPL_every2             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 2
-        run CPL_every4             "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-transition-every 4
-        # If F1 fixes how the coupling is trained, coupling less often may cost less.
-        run CPL_every2_distmuon    "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-transition-every 2 --mst-distribute-block-muon 1
-        # The expensive arm.
-        run CPL_dense_wo           "$DEPTH" $MST_FULL $BEST_SO_FAR --mst-wo-mode dense
-        # Does the free stuff stack onto the winner? F5 was -0.0107 at 4.5 sigma; F4 and
-        # F1 are each under 1 sigma alone but point the same way and add up (-0.0025
-        # together), and both are exactly FLOP-free, so there is no downside to carrying
-        # them if they hold.
-        run CPL_dense_wo_stack     "$DEPTH" $MST_FULL $BEST_SO_FAR \
-            --mst-wo-mode dense --mst-talking-heads 1 --mst-distribute-block-muon 1
+        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+        run SP_k2       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2
+        run SP_k1       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1
+        run SP_k3       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3
+        run SP_k2_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-aux 0
         # Control, reusing its completed seeds. Flags must stay byte-identical.
-        run STACK_noO1             "$DEPTH" $MST_FULL $BEST_SO_FAR
+        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
+    fi
+    SEEDS="$SEEDS_SAVE"
+fi
+
+# ---------------------------------------------------------------- shampoo
+# Stage 17: block-diagonal Shampoo. This is the architecture claim expressed as an
+# optimizer. Preconditioning a dense D x D weight costs O(D^3); MST's stacked per-stream
+# weights are N blocks of d x d, so exact block preconditioning is D^3/N^2 -- 16x cheaper
+# at N=4, verified in tests/test_shampoo.py. K-FAC and Shampoo both *approximate*
+# block-diagonality; MST makes it exact by construction, so at equal optimizer cost MST
+# affords a preconditioner dense cannot.
+#
+# HOW TO SCORE THIS HONESTLY. Shampoo does not change the model, so it is free in
+# estimate_flops and any bpb gain reads as pure Pareto movement. A reviewer will object,
+# correctly. Record the step wall-clock (the tok/sec column in the log) alongside bpb: the
+# claim is "MST can afford this preconditioner and dense cannot", not "this is free".
+if has shampoo; then
+    echo ""; echo "### SHAMPOO: block-diagonal preconditioning (Stage 17)"
+    SEEDS_SAVE="$SEEDS"; SEEDS=1
+    if check_divisible "$SUB_DIM" 64; then
+        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+        run SH_every10 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 10
+        run SH_every1  "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 1
+        run SH_every50 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 50
+        # Control, reusing its completed seeds. Flags must stay byte-identical.
+        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
     fi
     SEEDS="$SEEDS_SAVE"
 fi

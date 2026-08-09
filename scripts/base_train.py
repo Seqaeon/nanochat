@@ -342,6 +342,23 @@ parser.add_argument("--mst-talking-heads", type=int, default=0, choices=[0, 1],
 parser.add_argument("--mst-wo-mode", type=str, default='block', choices=['block', 'dense'],
                     help="MST F5: attention output projection. block=per-stream (default), "
                          "dense=full D x D over concatenated outputs (+20% layer params)")
+# MST Stage 16: conditional stream execution
+parser.add_argument("--mst-stream-topk", type=int, default=0,
+                    help="MST: activate k of N streams per token (0=dense). Gates the FFN, so "
+                         "k=2 of 4 is ~19%% of total FLOPs and k=1 ~28%%")
+parser.add_argument("--mst-stream-router-aux", type=float, default=0.01,
+                    help="MST: Switch-style load-balancing weight for the stream router")
+parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1],
+                    help="MST: also gate attention QKV, not just the FFN (bigger saving, but a "
+                         "skipped token stops being a key/value for that stream)")
+# MST Stage 17: block-diagonal Shampoo
+parser.add_argument("--mst-shampoo", type=int, default=0, choices=[0, 1],
+                    help="MST: block-diagonal Shampoo on the stacked per-stream weights. Exact "
+                         "block preconditioning costs D^3/N^2, 16x less than a dense D x D")
+parser.add_argument("--mst-precond-every", type=int, default=10,
+                    help="MST: steps between Shampoo inverse-fourth-root refreshes")
+parser.add_argument("--mst-shampoo-beta", type=float, default=0.95,
+                    help="MST: EMA decay for the Shampoo L/R factors")
 # ── EET: Early Exit Transformer ──
 parser.add_argument("--use-eet", type=int, default=0, choices=[0, 1], help="EET: enable Early Exit Transformer mode")
 parser.add_argument("--eet-frozen-kv", type=int, default=1, choices=[0, 1], help="EET: 1=frozen KV injection (Option B), 0=masked attention (Option A)")
@@ -1066,6 +1083,14 @@ def build_model_meta(depth):
         mst_trans_spectral_lr=getattr(args, 'mst_trans_spectral_lr', 0),
         mst_talking_heads=getattr(args, 'mst_talking_heads', 0),
         mst_wo_mode=getattr(args, 'mst_wo_mode', 'block'),
+        # Stage 16: conditional stream execution
+        mst_stream_topk=getattr(args, 'mst_stream_topk', 0),
+        mst_stream_router_aux=getattr(args, 'mst_stream_router_aux', 0.01),
+        mst_stream_gate_attn=getattr(args, 'mst_stream_gate_attn', 0),
+        # Stage 17: block-diagonal Shampoo
+        mst_shampoo=getattr(args, 'mst_shampoo', 0),
+        mst_precond_every=getattr(args, 'mst_precond_every', 10),
+        mst_shampoo_beta=getattr(args, 'mst_shampoo_beta', 0.95),
         # EET: Early Exit Transformer
         use_eet=bool(getattr(args, 'use_eet', 0)),
         eet_frozen_kv=bool(getattr(args, 'eet_frozen_kv', 1)),
@@ -1752,6 +1777,13 @@ if model_config.use_mst and master_process:
                 'trans_spectral_lr':    c.mst_trans_spectral_lr,
                 'talking_heads':        c.mst_talking_heads,
                 'wo_mode':              c.mst_wo_mode,
+                # Stage 16
+                'stream_topk':          c.mst_stream_topk,
+                'stream_router_aux':    c.mst_stream_router_aux,
+                'stream_gate_attn':     c.mst_stream_gate_attn,
+                # Stage 17
+                'shampoo':              c.mst_shampoo,
+                'precond_every':        c.mst_precond_every,
             }
             # Write to checkpoint parent dir (original location)
             csv_path = os.path.normpath(os.path.join(self.run_dir, '..', 'mst_results.csv'))
@@ -2267,7 +2299,7 @@ while True:
     muon_weight_decay = get_weight_decay(step)
     for group in optimizer.param_groups:
         group["lr"] = group["initial_lr"] * lrm
-        if group['kind'] == 'muon':
+        if group['kind'] in ('muon', 'shampoo'):
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
     if scaler is not None:

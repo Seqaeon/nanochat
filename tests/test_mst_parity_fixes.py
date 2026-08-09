@@ -464,6 +464,117 @@ def test_f5_rejects_a_bad_mode():
         build_meta(mst_wo_mode='bogus')
 
 
+# ── Stage 16: conditional stream execution ───────────────────────────────────
+
+def _gated_layer(topk, **ov):
+    """A layer whose router has been perturbed off its zero init, so top-k is meaningful."""
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config(mst_stream_topk=topk, **ov))
+        model.init_weights()
+    _wake_residual_branches(model)
+    with torch.no_grad():
+        for layer in model.layers:
+            layer.stream_router_w.normal_(0, 0.5)
+    return model
+
+
+@pytest.mark.parametrize("k", [1, 2, 3])
+def test_s16_gate_selects_exactly_k_streams_and_is_hard(k):
+    """The forward value must be genuinely 0/1, or we are measuring a soft blend."""
+    model = _gated_layer(k)
+    layer = model.layers[0]
+    with torch.no_grad():
+        w, _ = layer._stream_gate(torch.randn(2, 8, N_SUBS, model.config.mst_sub_dim))
+    assert set(w.flatten().tolist()) <= {0.0, 1.0}, "gate must be exactly 0 or 1"
+    assert torch.equal(w.sum(-1), torch.full(w.shape[:-1], float(k))), \
+        f"every token must activate exactly {k} streams"
+
+
+def test_s16_router_receives_gradient_through_the_hard_gate():
+    """Without the STE the router only hears the aux loss and collapses (eet.py:1994)."""
+    model = _gated_layer(2)
+    layer = model.layers[0]
+    layer.stream_router_w.grad = None
+    w, _ = layer._stream_gate(torch.randn(2, 8, N_SUBS, model.config.mst_sub_dim))
+    w.sum().backward()
+    assert layer.stream_router_w.grad is not None
+    assert layer.stream_router_w.grad.abs().sum() > 0, "STE is not passing gradient"
+
+
+def test_s16_routing_is_causal():
+    """A token's stream choice must not depend on later tokens."""
+    model = _gated_layer(2)
+    layer = model.layers[0]
+    with torch.no_grad():
+        a = torch.randn(1, 6, N_SUBS, model.config.mst_sub_dim)
+        b = a.clone()
+        b[:, 3:] = torch.randn_like(b[:, 3:])      # perturb only the future
+        wa, _ = layer._stream_gate(a)
+        wb, _ = layer._stream_gate(b)
+    assert torch.equal(wa[:, :3], wb[:, :3]), "gate for early tokens changed with later ones"
+
+
+@pytest.mark.parametrize("k,expected", [(3, 0.75), (2, 0.50), (1, 0.25)])
+def test_s16_active_flops_track_the_gated_fraction(k, expected):
+    """The whole claim is on active FLOPs, so the accounting has to be right."""
+    base = build_meta()
+    sparse = build_meta(mst_stream_topk=k)
+    tot, act, act_p = sparse.estimate_flops()
+    b_tot, b_act, _ = base.estimate_flops()
+
+    assert b_act == b_tot, "dense MST must not claim any sparsity"
+    assert act < tot, "gated MST must discount active FLOPs"
+    # FFN-only gating: the saving is 6 * (1-k/N) * (fc_w + fc_proj_w)
+    ffn = sum(l.fc_w.numel() + l.fc_proj_w.numel() for l in sparse.layers)
+    assert tot - act == 6 * int(ffn * (1 - k / N_SUBS) / len(sparse.layers)) * len(sparse.layers) \
+        or abs((tot - act) - 6 * ffn * (1 - k / N_SUBS)) / (tot - act) < 0.01
+    assert act_p < sparse.num_scaling_params()['total']
+
+
+def test_s16_attention_gating_discounts_attention_flops_too():
+    ffn_only = build_meta(mst_stream_topk=2)
+    with_attn = build_meta(mst_stream_topk=2, mst_stream_gate_attn=1)
+    assert with_attn.estimate_flops()[1] < ffn_only.estimate_flops()[1], \
+        "gating attention should discount the QK term as well as the projections"
+
+
+def test_s16_is_off_by_default_and_costs_nothing():
+    base = build_meta()
+    assert not base.layers[0]._stream_sparse
+    assert not hasattr(base.layers[0], 'stream_router_w')
+    # topk == N is dense, not sparse: no router, no discount.
+    full = build_meta(mst_stream_topk=N_SUBS)
+    assert not full.layers[0]._stream_sparse
+    assert full.estimate_flops()[1] == full.estimate_flops()[0]
+
+
+def test_s16_router_is_negligible_and_rejects_bad_k():
+    base = build_meta()
+    sparse = build_meta(mst_stream_topk=2)
+    extra = (sparse.num_scaling_params()['transformer_matrices']
+             - base.num_scaling_params()['transformer_matrices'])
+    assert extra == N_SUBS * (N_SUBS * base.config.mst_sub_dim) * base.config.n_layer
+    assert extra / base.num_scaling_params()['transformer_matrices'] < 0.02
+    with pytest.raises(AssertionError, match="mst_stream_topk"):
+        build_meta(mst_stream_topk=N_SUBS + 1)
+
+
+def test_s16_changes_the_computation():
+    def logits(**ov):
+        model = _gated_layer(ov.pop('topk')) if 'topk' in ov else None
+        if model is None:
+            torch.manual_seed(0)
+            with contextlib.redirect_stdout(io.StringIO()):
+                model = MST(make_config(**ov))
+                model.init_weights()
+            _wake_residual_branches(model)
+        model.eval()
+        with torch.no_grad():
+            return model(torch.arange(SEQ).remainder(VOCAB).view(1, SEQ))
+    assert not torch.allclose(logits(), logits(topk=2), atol=1e-6)
+
+
 # ── CLI plumbing ─────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("script", ["scripts/base_train.py", "scripts/research_compare.py"])
@@ -503,7 +614,9 @@ def test_stage_15_flags_are_wired_end_to_end():
     cfg = make_config()
 
     for field in ("mst_distribute_block_muon", "mst_trans_spectral_lr",
-                  "mst_talking_heads", "mst_wo_mode", "mst_transition_every"):
+                  "mst_talking_heads", "mst_wo_mode", "mst_transition_every",
+                  "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
+                  "mst_shampoo", "mst_precond_every", "mst_shampoo_beta"):
         flag = "--" + field.replace("_", "-")
         assert hasattr(cfg, field), f"{field} missing from GPTConfig"
         assert f'add_argument("{flag}"' in base_train, f"{flag} has no base_train CLI arg"
