@@ -598,6 +598,28 @@ def test_s16_active_flops_track_the_gated_fraction(k, expected):
     assert act_p < sparse.num_scaling_params()['total']
 
 
+def test_s18_monarch_halves_the_sparsity_saving():
+    """Monarch makes fc_w unskippable, so the FFN saving must drop to exactly half.
+
+    Stream j's down-projection reads hidden units from every stream's up-projection, so
+    a sparse kernel cannot skip fc_w and only fc_proj_w can be dropped. Gating both
+    reported MON_shuffle_k1 at 0.797x when the honest figure is 0.752x, i.e. worse than
+    doing nothing at all. Monarch is only asserted against stream_dispatch, so this
+    combination is reachable and the accounting has to be right rather than assumed away.
+    """
+    k1 = build_meta(mst_stream_topk=1)
+    mk1 = build_meta(mst_stream_topk=1, mst_ffn_monarch='shuffle')
+    mon = build_meta(mst_ffn_monarch='shuffle')
+
+    t_k1, a_k1, _ = k1.estimate_flops()
+    t_m, a_m, _ = mk1.estimate_flops()
+    t_o, a_o, _ = mon.estimate_flops()
+
+    assert a_o == t_o, "Monarch alone is a permutation and must claim no saving"
+    assert (1 - a_m / t_m) == pytest.approx((1 - a_k1 / t_k1) / 2, rel=1e-3), \
+        "Monarch must halve the sparsity saving, not leave it untouched"
+
+
 def test_s16_attention_gating_discounts_attention_flops_too():
     ffn_only = build_meta(mst_stream_topk=2)
     with_attn = build_meta(mst_stream_topk=2, mst_stream_gate_attn=1)

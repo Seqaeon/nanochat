@@ -2607,7 +2607,14 @@ class MST(nn.Module):
             if not (isinstance(layer, BatchedMSTLayer) and layer._stream_sparse):
                 continue
             frac = 1.0 - layer._stream_topk / N
-            gated = ['fc_w', 'fc_proj_w']
+            # Stage 18: under a Monarch permutation the up-projection is NOT skippable.
+            # Stream j's down-projection reads hidden units produced by every stream's
+            # fc_w, so a real sparse kernel has to compute all of them and only fc_proj_w
+            # can be dropped, halving the FFN saving. Gating both here reported
+            # MON_shuffle_k1 at 0.797x when the honest figure is 0.752x, i.e. worse than
+            # doing nothing. This combination is legal (only stream_dispatch is asserted
+            # against), so the accounting has to handle it rather than assume it away.
+            gated = ['fc_proj_w'] if layer._ffn_monarch != 'none' else ['fc_w', 'fc_proj_w']
             if layer._stream_gate_attn:
                 gated += ['c_q_w', 'c_k_w', 'c_v_w', 'c_proj_w']
             for name in gated:

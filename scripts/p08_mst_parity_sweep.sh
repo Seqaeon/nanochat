@@ -604,6 +604,40 @@ if has d16; then
     SEEDS="$SEEDS_SAVE"
 fi
 
+# ---------------------------------------------------------------- d32
+# THE paper-deciding run. The iso-quality multiplier for the k=1 sparse arm is
+# 0.804x at L=8 and 1.194x at L=16: it crosses 1.0 somewhere between them and grows
+# 1.49x across one doubling. Whether that is a trend or a two-point coincidence is the
+# single highest-information thing left to measure, because the whole claim is that
+# MST's advantage GROWS with scale rather than being a small-model artifact. Two points
+# cannot distinguish a trend from a line through noise; three can.
+#
+# Deliberately NOT passing --mst-stream-dispatch, so the curve stays apples-to-apples
+# with d8 and d16 (both ran the masked Phase A path, dispatch defaults to 0). This costs
+# nothing scientifically: estimate_flops() already discounts active_flops for stream
+# sparsity on the masked path, so the bpb-vs-FLOPs point is the real one. Dispatch turns
+# that FLOPs saving into wall-clock and is an engineering question, not part of the claim.
+#
+# Opt-in and single seed, like d16. An L=32 run is roughly 40x an L=16 one, so this is
+# two arms and no exploration: the winner and the control it has to beat.
+if has d32; then
+    echo ""; echo "### D32: does the Pareto multiplier keep growing with scale?"
+    D32=32
+    MD32=$(( ((D32 * ASPECT_RATIO + 127) / 128) * 128 ))
+    SD32=$(( MD32 / N_SUBS ))
+    MST_FULL_32="$(mst_config "$SD32" "$N_SUBS")"
+    SEEDS_SAVE="$SEEDS"; SEEDS=1
+    if check_divisible "$SD32" 64; then
+        BEST32="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+        # Control: the best non-sparse config, so the sparse delta is isolated at this depth.
+#        run D32_dense_wo "$D32" $MST_FULL_32 $BEST32
+        # The arm the paper rests on.
+        run D32_sp2_k1   "$D32" $MST_FULL_32 $BEST32 \
+            --mst-stream-topk 1 --mst-stream-router-noise 1.0
+    fi
+    SEEDS="$SEEDS_SAVE"
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  P08 complete for depth ${DEPTH}"
