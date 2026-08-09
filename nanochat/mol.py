@@ -495,7 +495,7 @@ class MoL(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2,
                         matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95),
                         scalar_lr=0.5, disable_mu_p=False, mu_p_scale_override=-1.0,
-                        **kwargs):
+                        gate_lr_scale=0.3, **_unused):
         """Deliberately identical in structure to MST.setup_optimizer.
 
         MoL's own recipe is AdamW at 3e-4 cosine (their §4.2), but the head-to-head
@@ -564,7 +564,10 @@ class MoL(nn.Module):
             ))
         param_groups = [g for g in param_groups if len(g['params']) > 0]
         cls = DistMuonAdamW if world_size > 1 else MuonAdamW
-        return cls(param_groups, **kwargs)
+        # No **kwargs forwarding. base_train passes architecture-specific extras such
+        # as gate_lr_scale (RemixedLinear) that MuonAdamW does not accept; MST absorbs
+        # them in its signature the same way and never forwards them.
+        return cls(param_groups)
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
