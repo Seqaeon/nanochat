@@ -201,7 +201,6 @@ class SplitStage(nn.Module):
         self.dispatch = bool(getattr(config, 'mol_dispatch', 1))
         self.capacity_factor = float(getattr(config, 'mol_capacity_factor', 1.0))
         self._last_load = None      # (n_routed,) fraction of tokens per routed block
-        self._last_aux = None
         self._last_drop = None
 
     def _route(self, x):
@@ -221,9 +220,8 @@ class SplitStage(nn.Module):
         # importance loss: CV^2 of the per-block summed routing weight.
         importance = probs.sum(dim=(0, 1))
         cv2 = importance.var(unbiased=False) / importance.mean().pow(2).clamp_min(1e-12)
-        self._last_aux = self.aux_weight * cv2
         self._last_load = mask.mean(dim=(0, 1)).detach()
-        return weights.to(x.dtype), mask.to(torch.bool)
+        return weights.to(x.dtype), mask.to(torch.bool), self.aux_weight * cv2
 
     def _capacity(self, T):
         """Per-block token capacity, their §2.3 fixed-size dispatch buffer."""
@@ -257,8 +255,13 @@ class SplitStage(nn.Module):
         order = top_idx.argsort(dim=-1)
         top_idx = top_idx.gather(-1, order)              # ascending position
         keep = top_val.gather(-1, order) > 0             # padding slots are dropped
-        self._last_drop = float((m.sum(-1).clamp(max=K).sum() /
-                                 m.sum().clamp_min(1)).detach()) if m.sum() > 0 else 1.0
+        # Kept as a tensor and never compared or cast here: `float(...)` and `m.sum() > 0`
+        # both force a device sync, which torch.compile reports as a graph break and
+        # which would land in the middle of the routed-block loop. compute_diagnostics()
+        # does the conversion, outside the compiled region.
+        if not torch.compiler.is_compiling():
+            self._last_drop = (m.sum(-1).clamp(max=K).sum()
+                               / m.sum().clamp_min(1.0)).detach()
 
         cos, sin = cos_sin
         hd = cos.shape[-1]
@@ -285,10 +288,9 @@ class SplitStage(nn.Module):
             out = out + self.blocks[j](x, ve, cos_sin, window_size, kv_cache)
 
         if self.n_routed == 0:
-            self._last_aux = x.new_zeros(())
-            return out
+            return out, x.new_zeros(())
 
-        weights, mask = self._route(x)
+        weights, mask, aux = self._route(x)
         if self.dispatch:
             acc = self._routed_dispatched(x, ve, cos_sin, kv_cache, weights, mask)
         else:
@@ -299,7 +301,7 @@ class SplitStage(nn.Module):
                 y = self.blocks[self.n_shared + i](
                     x, ve, cos_sin, window_size, kv_cache, token_active=mask[..., i])
                 acc = acc + weights[..., i:i + 1] * y
-        return out + acc / self.topk
+        return out + acc / self.topk, aux
 
 
 class MoL(nn.Module):
@@ -435,9 +437,8 @@ class MoL(nn.Module):
             ve = self.value_embeds[str(i)](idx).to(COMPUTE_DTYPE) \
                 if str(i) in self.value_embeds else None
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            x = stage(x, ve, cos_sin, self.window_sizes[i], kv_cache)
-            if stage._last_aux is not None:
-                aux = aux + stage._last_aux
+            x, stage_aux = stage(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            aux = aux + stage_aux
         self._last_aux_loss = aux.detach()
 
         x = norm(x)
@@ -547,6 +548,9 @@ class MoL(nn.Module):
             out[f'mol_entropy_L{i}'] = float(-(p * p.clamp_min(1e-9).log()).sum())
         if self._last_aux_loss is not None:
             out['mol_aux'] = float(self._last_aux_loss)
+        drops = [s._last_drop for s in self.stages if s._last_drop is not None]
+        if drops:
+            out['mol_keep_frac'] = float(min(d.min() for d in drops))
         return out
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2,
@@ -624,7 +628,13 @@ class MoL(nn.Module):
         # No **kwargs forwarding. base_train passes architecture-specific extras such
         # as gate_lr_scale (RemixedLinear) that MuonAdamW does not accept; MST absorbs
         # them in its signature the same way and never forwards them.
-        return cls(param_groups)
+        optimizer = cls(param_groups)
+        # base_train's LR schedule reads group['initial_lr'] (base_train.py:1938, 2354),
+        # so every architecture has to stamp it; MST does the same at the end of its
+        # setup_optimizer.
+        for group in optimizer.param_groups:
+            group['initial_lr'] = group['lr']
+        return optimizer
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):

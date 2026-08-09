@@ -620,30 +620,54 @@ if has d16; then
     # and it threw away MST's genuine advantage there (plain VE sits at d = D/4 where
     # dense's sits at D, so MST's is 4x cheaper than dense's until G3 undoes that).
     #
-    # Three arms, each differing from D16_dense_wo by the VE treatment alone:
-    #   D16_ve_plain     drop G3.            -201M params,  +0.000% FLOPs
-    #   D16_ve_map       full d x d map.     -199M params,  +1.735% FLOPs
-    #   D16_ve_map_r32   identity + rank-32. -201M params,  +0.434% FLOPs
+    # ══ MEASURED ON TOP OF SP2_k1, NOT D16_dense_wo. ══
+    # Not merely for consistency with the headline config. G3 gives each stream its own
+    # value-embedding vector, which is a STREAM-DIFFERENTIATION signal, and conditional
+    # execution is precisely the mechanism that pays for differentiation: the Monarch
+    # result showed routing and cross-stream mixing actively trade off (mixing helped
+    # -0.00085 alone but cost +0.00082 on top of sparsity). So G3 may well be worth MORE
+    # under k=1 routing than without it, and the -0.0092 -> -0.0024 decay that motivates
+    # dropping it was measured on the NON-sparse config. Ablating it against a config we
+    # no longer ship would answer a question we are not asking.
+    # Note --mst-stream-gate-attn is off, so attention (where VE is injected) runs for
+    # every stream even at k=1; sparsity gates the FFN. The two are not trivially
+    # independent, which is the whole reason to measure rather than assume.
+    #
+    # Four arms, differing only in VE treatment, all carrying --mst-stream-topk 1:
+    #   D16_sp2_k1        the control, byte-identical flags to the SP2_k1 arm
+    #   D16_k1_ve_plain   drop G3.            -201M params,  +0.000% FLOPs
+    #   D16_k1_ve_map     full d x d map.     -199M params,  +1.735% FLOPs
+    #   D16_k1_ve_map_r32 identity + rank-32. -201M params,  +0.434% FLOPs
+    #
+    # The control is re-run in-sweep rather than compared against the existing d16
+    # SP2_k1 number, because reading deltas against a differently-sourced baseline is the
+    # exact error that invalidated this project's original Pareto claim (LEARNINGS.md,
+    # 2026-08-08). If you are confident the existing SP2_k1 d16 run used identical flags,
+    # comment it out and save one L=16 run.
     #
     # The map keeps ONE d-wide table and gives each stream its own learned view of it,
     # which is strictly less expressive than G3 (all N vectors are linear images of one
     # shared vector rather than N independent lookups). Whether that is enough is the
     # question. Both map forms are identity at init, so they start exactly at
-    # D16_ve_plain and can only differ by what they learn.
+    # D16_k1_ve_plain and can only differ by what they learn.
     #
     # HOW TO READ IT. A FLOPs increase has to pay for itself: with the dense exponent
     # -0.1004, +1.735% needs ~0.0015 bpb and +0.434% needs ~0.0004 bpb just to break
     # even on the Pareto curve. So rank-32 is the arm most likely to be a real win, and
     # the full map is close to needing all of G3's benefit back to justify itself.
-    # If D16_ve_plain is within 0.0048 of D16_dense_wo, G3 is noise at this scale and
-    # the simplest answer is to drop it everywhere and take the 201M.
-    run D16_ve_plain   "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense
-    run D16_ve_map     "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+    # If D16_k1_ve_plain is within 0.0048 of D16_sp2_k1, G3 is noise even under routing
+    # and the simplest answer is to drop it everywhere and bank the 201M.
+    K1="--mst-stream-topk 1 --mst-stream-router-noise 1.0"
+    run D16_sp2_k1        "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+        --mst-wo-mode dense $K1
+    run D16_k1_ve_plain   "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense $K1
+    run D16_k1_ve_map     "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense $K1 \
         --mst-ve-map 1
-    run D16_ve_map_r32 "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+    run D16_k1_ve_map_r32 "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense $K1 \
         --mst-ve-map 1 --mst-ve-map-rank 32
     SEEDS="$SEEDS_SAVE"
 fi

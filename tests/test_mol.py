@@ -142,7 +142,8 @@ def test_eq2_selects_topk_and_weights_by_softmax_score():
     m.init_weights()
     stage = m.stages[0]
     x = torch.randn(2, 6, m.config.n_embd)
-    weights, mask = stage._route(x)
+    weights, mask, aux = stage._route(x)
+    assert torch.isfinite(aux), "the CV^2 term must be returned, not stashed on the module"
 
     assert mask.sum(-1).unique().tolist() == [2], "exactly k blocks active per token"
     assert torch.equal(weights > 0, mask), "weights must be zero off the top-k"
