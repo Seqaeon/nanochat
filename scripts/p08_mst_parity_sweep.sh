@@ -607,9 +607,9 @@ if has d16; then
     #   full transfer of the L=8 gain -> 1.0008x        (a win)
     #   the 0.26 transfer G1+G3 showed -> 0.9141x       (worse than doing nothing)
     # One single-seed run separates those, which is why it is worth its cost.
-    run D16_dense_wo "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
-        --mst-wo-mode dense
+#    run D16_dense_wo "$D16" $MST_FULL_16 \
+#        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+#        --mst-wo-mode dense
 
     # ── Is G3 still worth its parameters at L=16? ──
     # G3 (--mst-per-stream-ve) widens the value-embedding table to N*d: +201M params at
@@ -658,9 +658,9 @@ if has d16; then
     # If D16_k1_ve_plain is within 0.0048 of D16_sp2_k1, G3 is noise even under routing
     # and the simplest answer is to drop it everywhere and bank the 201M.
     K1="--mst-stream-topk 1 --mst-stream-router-noise 1.0"
-    run D16_sp2_k1        "$D16" $MST_FULL_16 \
-        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
-        --mst-wo-mode dense $K1
+#    run D16_sp2_k1        "$D16" $MST_FULL_16 \
+#        --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+#        --mst-wo-mode dense $K1
     run D16_k1_ve_plain   "$D16" $MST_FULL_16 \
         --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense $K1
     run D16_k1_ve_map     "$D16" $MST_FULL_16 \
