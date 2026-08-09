@@ -610,6 +610,41 @@ if has d16; then
     run D16_dense_wo "$D16" $MST_FULL_16 \
         --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
         --mst-wo-mode dense
+
+    # ── Is G3 still worth its parameters at L=16? ──
+    # G3 (--mst-per-stream-ve) widens the value-embedding table to N*d: +201M params at
+    # L=16 and +805M at L=32, for a gain measured at -0.0092 bpb at L=8 that decayed
+    # 0.26x by L=16, i.e. to ~-0.0024, under the 0.0048 two-sigma floor. It is a lookup,
+    # so it costs zero FLOPs, which is why it survived this long: on the FLOPs-vs-bpb
+    # axis it is free quality. On the total-params axis it is 44% of the model at L=32,
+    # and it threw away MST's genuine advantage there (plain VE sits at d = D/4 where
+    # dense's sits at D, so MST's is 4x cheaper than dense's until G3 undoes that).
+    #
+    # Three arms, each differing from D16_dense_wo by the VE treatment alone:
+    #   D16_ve_plain     drop G3.            -201M params,  +0.000% FLOPs
+    #   D16_ve_map       full d x d map.     -199M params,  +1.735% FLOPs
+    #   D16_ve_map_r32   identity + rank-32. -201M params,  +0.434% FLOPs
+    #
+    # The map keeps ONE d-wide table and gives each stream its own learned view of it,
+    # which is strictly less expressive than G3 (all N vectors are linear images of one
+    # shared vector rather than N independent lookups). Whether that is enough is the
+    # question. Both map forms are identity at init, so they start exactly at
+    # D16_ve_plain and can only differ by what they learn.
+    #
+    # HOW TO READ IT. A FLOPs increase has to pay for itself: with the dense exponent
+    # -0.1004, +1.735% needs ~0.0015 bpb and +0.434% needs ~0.0004 bpb just to break
+    # even on the Pareto curve. So rank-32 is the arm most likely to be a real win, and
+    # the full map is close to needing all of G3's benefit back to justify itself.
+    # If D16_ve_plain is within 0.0048 of D16_dense_wo, G3 is noise at this scale and
+    # the simplest answer is to drop it everywhere and take the 201M.
+    run D16_ve_plain   "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense
+    run D16_ve_map     "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+        --mst-ve-map 1
+    run D16_ve_map_r32 "$D16" $MST_FULL_16 \
+        --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+        --mst-ve-map 1 --mst-ve-map-rank 32
     SEEDS="$SEEDS_SAVE"
 fi
 

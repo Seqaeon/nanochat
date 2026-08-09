@@ -1967,11 +1967,47 @@ class MST(nn.Module):
         assert not (self.lm_head_dim != D and config.mst_global_residual), (
             "mst_lm_head_dim needs the final hidden width to stay D, because the "
             "global residual stream is added to it at full width")
+        # G3-cheap (`mst_ve_map`): keep ONE d-wide table and give each stream its own
+        # learned d x d map of it. G3 proper widens the table to N*d, which is 4x the
+        # vocab-sized lookup: 50M extra params at L=8, 201M at L=16, 805M at L=32, for a
+        # gain measured at -0.0092 bpb at L=8 that decayed 0.26x by L=16, i.e. under the
+        # 0.0048 two-sigma floor. The map costs N*d^2 per VE layer instead, which is
+        # ~0.5% of that, and unlike the table it is a matmul, so it DOES cost FLOPs and
+        # is counted as such (the params are not named 'value_embed', so estimate_flops
+        # charges them at 6x automatically).
+        self.ve_map = bool(getattr(config, 'mst_ve_map', 0))
+        assert not (self.ve_map and self.per_stream_ve), (
+            "mst_ve_map and mst_per_stream_ve are two ways to give each stream its own "
+            "value embedding; pick one")
         ve_dim = N * d if self.per_stream_ve else d
         self.value_embeds = nn.ModuleDict({
             str(i): nn.Embedding(padded_vocab_size, ve_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
+        # Stored (N*d, d) to match MST's stacked-weight convention (cf. distribute_w),
+        # so Muon sees a 2D tensor and the shape-bucketing in setup_optimizer works.
+        # rank 0 = full d x d map per stream, N*d^2 params and 6*N*d^2 FLOPs per VE
+        # layer per token. That FLOP cost is NOT negligible at depth: measured +0.90% of
+        # total FLOPs at L=8, +1.74% at L=16, +2.34% at L=32, and a 1.74% rise needs
+        # ~0.0015 bpb just to break even on the Pareto curve. rank r > 0 replaces it with
+        # identity + V_n U_n, which is 2*N*r*d params and scales the FLOP cost by 2r/d,
+        # so r = d/8 costs a quarter as much.
+        self.ve_map_rank = int(getattr(config, 'mst_ve_map_rank', 0) or 0)
+        _ve_layers = [i for i in range(config.n_layer) if has_ve(i, config.n_layer)]
+        if not self.ve_map:
+            self.ve_map_w = self.ve_map_u = self.ve_map_v = None
+        elif self.ve_map_rank <= 0:
+            self.ve_map_w = nn.ParameterDict({
+                str(i): nn.Parameter(torch.empty(N * d, d)) for i in _ve_layers})
+            self.ve_map_u = self.ve_map_v = None
+        else:
+            r = self.ve_map_rank
+            assert r < d, f"mst_ve_map_rank ({r}) must be < mst_sub_dim ({d}) to be cheaper"
+            self.ve_map_w = None
+            self.ve_map_u = nn.ParameterDict({
+                str(i): nn.Parameter(torch.empty(N * r, d)) for i in _ve_layers})
+            self.ve_map_v = nn.ParameterDict({
+                str(i): nn.Parameter(torch.empty(N * d, r)) for i in _ve_layers})
 
         # Axis 2: Output routing (used by final head if aggregate_proj)
         # Axis 5: Final output
@@ -2235,6 +2271,21 @@ class MST(nn.Module):
         self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection
 
         # Value embeddings (init like c_v: uniform with same std as base GPT)
+        if self.ve_map_w is not None:
+            # Identity init: at step 0 every stream sees the same vector, exactly the
+            # plain-VE baseline, and the maps learn to differentiate from there.
+            _d = self.config.mst_sub_dim
+            _N = self.config.mst_n_subs
+            for w in self.ve_map_w.values():
+                w.data.copy_(torch.eye(_d, device=w.device, dtype=w.dtype).repeat(_N, 1))
+        if getattr(self, 've_map_v', None) is not None:
+            # identity + V U with V zero-init, so the low-rank form is also exactly the
+            # plain-VE baseline at step 0.
+            _r = self.ve_map_rank
+            for u in self.ve_map_u.values():
+                torch.nn.init.uniform_(u, -_r ** -0.5, _r ** -0.5)
+            for v in self.ve_map_v.values():
+                torch.nn.init.zeros_(v)
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
 
@@ -2278,6 +2329,24 @@ class MST(nn.Module):
     @property
     def max_seq_len(self):
         return self.config.sequence_len
+
+    def _apply_ve_map(self, ve, key, B, T, N, d):
+        """(B,T,d) -> (B,T,N*d): give each stream its own view of one shared VE vector.
+
+        The output layout is exactly what G3's N*d-wide table produces, so every
+        consumer downstream is unchanged (BatchedMSTLayer keys off ve.shape[-1] == N*d).
+        """
+        if self.ve_map_w is not None:
+            w = self.ve_map_w[key].view(N, d, d).to(ve.dtype)
+            out = torch.einsum('bti,noi->btno', ve, w)
+        else:
+            r = self.ve_map_rank
+            u = self.ve_map_u[key].view(N, r, d).to(ve.dtype)
+            v = self.ve_map_v[key].view(N, d, r).to(ve.dtype)
+            # identity + low-rank correction, so rank 0 and rank r agree at init
+            out = ve.unsqueeze(2) + torch.einsum('btnr,nor->btno',
+                                                 torch.einsum('bti,nri->btnr', ve, u), v)
+        return out.reshape(B, T, N * d)
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
@@ -2357,6 +2426,8 @@ class MST(nn.Module):
                 ve = None
                 if str(i) in self.value_embeds:
                     ve = self.value_embeds[str(i)](idx).to(sub_states.dtype)  # (B, T, d)
+                    if self.ve_map:
+                        ve = self._apply_ve_map(ve, str(i), B, T, N, d)
 
                 # Per-sub window sizes for this layer (see _build_layer_sub_windows)
                 sub_ws = self.layer_sub_windows[i]
@@ -2445,7 +2516,9 @@ class MST(nn.Module):
                 current_sub_dim = sub_states[0].shape[-1]
                 if str(i) in self.value_embeds and current_sub_dim == d:
                     ve_full = self.value_embeds[str(i)](idx).to(sub_states[0].dtype)
-                    if self.per_stream_ve:
+                    if self.ve_map:
+                        ve_full = self._apply_ve_map(ve_full, str(i), B, T, N, d)
+                    if self.per_stream_ve or self.ve_map:
                         # (B, T, N*d) → one d-wide slice per stream
                         sub_ves = list(ve_full.split(d, dim=-1))[:len(sub_states)]
                     else:
@@ -2543,7 +2616,15 @@ class MST(nn.Module):
         input_layer = sum(p.numel() for p in self.input_layer.parameters())
         final_head = sum(p.numel() for p in self.final_head.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        transformer_matrices = layers + input_layer + final_head
+        # ve_map_w lives on the model rather than inside self.layers, so it has to be
+        # added by hand. It is a matmul, not a lookup, so it belongs in
+        # transformer_matrices (which also sets the token budget) and NOT in
+        # value_embeds. estimate_flops already charges it, via sum(self.parameters()).
+        ve_map = sum(p.numel() for m in (getattr(self, 've_map_w', None),
+                                         getattr(self, 've_map_u', None),
+                                         getattr(self, 've_map_v', None))
+                     if m is not None for p in m.parameters())
+        transformer_matrices = layers + input_layer + final_head + ve_map
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         return {
             'wte': wte, 'wpe': 0, 'value_embeds': value_embeds,

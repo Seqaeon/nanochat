@@ -324,6 +324,8 @@ parser.add_argument("--mst-sub-head-dim", type=int, default=0,
                          "qkv_dim stays == sub_dim (0=off, legacy 32 at N=4; dense uses 128)")
 parser.add_argument("--mst-final-norm", type=int, default=0, choices=[0, 1],
                     help="MST G2: RMSNorm the final projection before lm_head, as dense does (0=off, 1=on)")
+parser.add_argument("--mst-ve-map", type=int, default=0, help="MST: G3-cheap — shared d-wide VE table + per-stream dxd map")
+parser.add_argument("--mst-ve-map-rank", type=int, default=0, help="MST: 0=full dxd VE map; r>0=identity+rank-r (cheaper in FLOPs)")
 parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
                     help="MST G3: per-stream value embedding slices from an (N*d)-wide table "
                          "instead of broadcasting one d-wide table (0=off, 1=on)")
@@ -1110,6 +1112,8 @@ def build_model_meta(depth):
         mst_sub_head_dim=getattr(args, 'mst_sub_head_dim', 0),
         mst_final_norm=getattr(args, 'mst_final_norm', 0),
         mst_per_stream_ve=getattr(args, 'mst_per_stream_ve', 0),
+        mst_ve_map=getattr(args, 'mst_ve_map', 0),
+        mst_ve_map_rank=getattr(args, 'mst_ve_map_rank', 0),
         # Stage 13: overhead cuts
         mst_lm_head_dim=getattr(args, 'mst_lm_head_dim', 0),
         mst_compose_windows=getattr(args, 'mst_compose_windows', 0),

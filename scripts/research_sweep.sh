@@ -367,7 +367,7 @@ while [[ $# -gt 0 ]]; do
         --mst-cross-sub-gate|--mst-hyper-connect|--mst-cross-kv-inject|\
         --mst-slice-transition|--mst-lookback-layers|--mst-bilinear-transition|\
         --mst-cross-sub-qmod|--mst-feature-cycle|--mst-mean-transition|\
-        --mst-sub-head-dim|--mst-final-norm|--mst-per-stream-ve|\
+        --mst-sub-head-dim|--mst-final-norm|--mst-ve-map|--mst-ve-map-rank|--mst-per-stream-ve|\
         --mst-lm-head-dim|--mst-compose-windows|\
         --mst-channel-mix|--mst-channel-mix-site|\
         --mst-distribute-block-muon|--mst-trans-spectral-lr|\

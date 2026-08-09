@@ -455,6 +455,8 @@ class GPTConfig:
                                                     #     and flash-attn efficiency at identical params and FLOPs.
     mst_final_norm: int = 0                         # G2: RMSNorm the final projection before lm_head, as dense does
     mst_per_stream_ve: int = 0                      # G3: give each stream its own slice of an (N*d)-wide value
+    mst_ve_map: int = 0                         # G3-cheap: shared d-wide VE table + per-stream d x d map
+    mst_ve_map_rank: int = 0                    # 0 = full d x d map; r>0 = identity + rank-r correction
                                                     #     embedding instead of broadcasting one d-wide table to all
     # Stage 13: overhead cuts. Unlike Stage 12 these DO reduce FLOPs, which is the
     # point: MST is at parity with dense per matrix parameter, and its whole
@@ -723,6 +725,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_cross_sub_qmod", "mst_feature_cycle", "mst_mean_transition",
     # MST Stage 12: dense-parity fixes
     "mst_sub_head_dim", "mst_final_norm", "mst_per_stream_ve",
+    "mst_ve_map", "mst_ve_map_rank",
     # MST Stage 13: overhead cuts
     "mst_lm_head_dim", "mst_compose_windows",
     # MST Stage 14: free cross-stream mixing

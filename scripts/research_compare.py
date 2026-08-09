@@ -409,6 +409,8 @@ def run_training_sweep(args):
         "--mst-sub-head-dim", str(getattr(args, 'mst_sub_head_dim', 0)),
         "--mst-final-norm", str(getattr(args, 'mst_final_norm', 0)),
         "--mst-per-stream-ve", str(getattr(args, 'mst_per_stream_ve', 0)),
+        "--mst-ve-map", str(getattr(args, 'mst_ve_map', 0)),
+        "--mst-ve-map-rank", str(getattr(args, 'mst_ve_map_rank', 0)),
         "--mst-lm-head-dim", str(getattr(args, 'mst_lm_head_dim', 0)),
         "--mst-compose-windows", str(getattr(args, 'mst_compose_windows', 0)),
         "--mst-channel-mix", str(getattr(args, 'mst_channel_mix', 'none')),
@@ -1101,6 +1103,8 @@ if __name__ == "__main__":
                         help="G1: per-stream head_dim, heads derived so qkv_dim == sub_dim")
     parser.add_argument("--mst-final-norm", type=int, default=0, choices=[0, 1],
                         help="G2: RMSNorm before lm_head")
+    parser.add_argument("--mst-ve-map", type=int, default=0, help="MST: G3-cheap VE map")
+    parser.add_argument("--mst-ve-map-rank", type=int, default=0, help="MST: rank of the VE map (0=full)")
     parser.add_argument("--mst-per-stream-ve", type=int, default=0, choices=[0, 1],
                         help="G3: per-stream value embedding slices")
     # Stage 13: overhead cuts

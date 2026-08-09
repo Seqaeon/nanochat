@@ -924,3 +924,69 @@ def test_all_three_train_step():
     for name, p in model.named_parameters():
         if p.requires_grad and p.grad is not None:
             assert torch.isfinite(p.grad).all(), f"non-finite grad in {name}"
+
+
+# ---------------------------------------------------------------- G3-cheap: VE map
+
+@pytest.mark.parametrize("rank", [0, 32])
+def test_ve_map_is_identity_at_init(rank):
+    """Both map forms must start EXACTLY at the plain-VE baseline.
+
+    Full rank is eye-initialised, low rank is identity + V U with V zero. Without this
+    the arm would not be a clean ablation of plain VE, it would be a different model.
+    """
+    torch.manual_seed(0)
+    plain = MST(make_config(mst_sub_head_dim=64, mst_compose_windows=1,
+                            mst_wo_mode='dense'))
+    plain.init_weights()
+    torch.manual_seed(0)
+    mapped = MST(make_config(mst_sub_head_dim=64, mst_compose_windows=1,
+                             mst_wo_mode='dense', mst_ve_map=1, mst_ve_map_rank=rank))
+    mapped.init_weights()
+    plain.eval(); mapped.eval()
+    idx = torch.randint(0, make_config().vocab_size, (2, 32))
+    with torch.no_grad():
+        assert torch.equal(plain(idx), mapped(idx))
+
+
+def test_ve_map_gives_each_stream_a_distinct_vector():
+    """The whole point: one shared table, N different per-stream views of it."""
+    m = MST(make_config(mst_sub_head_dim=64, mst_compose_windows=1,
+                        mst_wo_mode='dense', mst_ve_map=1))
+    m.init_weights()
+    N, d = m.config.mst_n_subs, m.config.mst_sub_dim
+    key = next(iter(m.value_embeds.keys()))
+    with torch.no_grad():
+        torch.nn.init.normal_(m.ve_map_w[key], std=0.02)   # wake it from identity
+        ve = torch.randn(1, 3, d)
+        out = m._apply_ve_map(ve, key, 1, 3, N, d).view(1, 3, N, d)
+    for j in range(1, N):
+        assert not torch.allclose(out[..., 0, :], out[..., j, :]), \
+            f"stream {j} got the same VE vector as stream 0"
+
+
+def test_ve_map_is_counted_in_params_and_flops():
+    """It is a matmul, not a lookup, so it must be charged on both axes.
+
+    num_scaling_params enumerates explicitly (layers + input + final) rather than
+    subtracting, so a model-level parameter is invisible to it unless added by hand.
+    That also sets the token budget, so an uncounted map would train on free data.
+    """
+    plain = build_meta(mst_sub_head_dim=64, mst_compose_windows=1, mst_wo_mode='dense')
+    mapped = build_meta(mst_sub_head_dim=64, mst_compose_windows=1, mst_wo_mode='dense',
+                        mst_ve_map=1)
+    cp, cm = plain.num_scaling_params(), mapped.num_scaling_params()
+    extra = sum(p.numel() for n, p in mapped.named_parameters() if 've_map' in n)
+    assert extra > 0
+    assert cm['total'] - cp['total'] == extra
+    assert cm['transformer_matrices'] - cp['transformer_matrices'] == extra, \
+        "the VE map belongs in transformer_matrices; it sets the token budget"
+    assert cm['value_embeds'] == cp['value_embeds'], "it is not a lookup"
+    assert mapped.estimate_flops()[0] - plain.estimate_flops()[0] == 6 * extra
+
+
+def test_ve_map_rejects_conflicting_and_useless_settings():
+    with pytest.raises(AssertionError, match="pick one"):
+        build_meta(mst_ve_map=1, mst_per_stream_ve=1)
+    with pytest.raises(AssertionError, match="must be <"):
+        build_meta(mst_ve_map=1, mst_ve_map_rank=999)
