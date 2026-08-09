@@ -125,6 +125,39 @@ def test_survives_a_degenerate_first_step():
     assert torch.isfinite(opt.state[params[0]]["QL"]).all()
 
 
+@pytest.mark.parametrize("grad_scale", [1e-4, 1.0, 1e3])
+def test_update_norm_matches_muons_convention_at_any_gradient_scale(grad_scale):
+    """The bug that made the first shampoo sweep useless.
+
+    Polar Express emits an approximately semi-orthogonal matrix, so Muon's update norm is
+    ~sqrt(min(m,n)) no matter the gradient scale, and the LR is tuned for that. Shampoo
+    originally normalized to ||g||_F, which is not scale-free: on a real MST layer
+    ||g||_F was 2.6e-4 against Muon's 8.07, so the effective LR was ~3e4 too small. It
+    surfaced as a uniform +0.07 bpb with near-identical results across a 50x range of
+    refresh cadences, which is the signature of a step size, not a preconditioner.
+
+    The toy convergence tests above did NOT catch it, because there ||g|| happened to sit
+    near sqrt(min(m,n)). Hence this test pins the ratio directly.
+    """
+    params, opt = make("shampoo", precond_every=1)
+    before = [p.detach().clone() for p in params]
+    for p in params:
+        p.grad = torch.randn_like(p) * grad_scale
+    opt.step()
+
+    lr = opt.param_groups[0]["lr"]
+    # _step_shampoo applies Muon's spectral LR correction max(1, out/in)**0.5 on top,
+    # so the per-block update norm is sqrt(min(m,n)) * that factor. The point of the test
+    # is that this is a constant, independent of how big the gradient was.
+    expected = float(min(OUT_B, IN_D)) ** 0.5 * max(1.0, OUT_B / IN_D) ** 0.5
+    for p, b in zip(params, before):
+        delta = (b - p.detach()).reshape(N, OUT_B, IN_D)
+        norms = delta.norm(dim=(-2, -1)) / lr
+        assert torch.allclose(norms, torch.full_like(norms, expected), rtol=0.05), \
+            f"update norm {norms.mean():.3f} should be {expected:.3f} independent of the " \
+            f"gradient scale, but the gradient was scaled by {grad_scale}"
+
+
 def test_unknown_kind_still_raises():
     """The dispatch has nine hardcoded sites; a typo must fail loudly, not silently."""
     p = torch.nn.Parameter(torch.randn(4, 4))

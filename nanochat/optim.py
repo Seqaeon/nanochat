@@ -218,11 +218,18 @@ def shampoo_step(
         QR.copy_(_inverse_fourth_root(R, eps, QR))
 
     p = (QL @ g32) @ QR
-    # Match Muon's update scale: it emits a spectrally-normalized direction, so rescale
-    # the preconditioned gradient to the same Frobenius norm. Without this the LR would
-    # mean something different for shampoo groups than for muon ones.
-    p = p * (g32.norm(dim=(-2, -1), keepdim=True)
-             / p.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12))
+    # Match Muon's update scale. Polar Express emits an approximately SEMI-ORTHOGONAL
+    # matrix, so its Frobenius norm is ~sqrt(min(m, n)) regardless of how large or small
+    # the gradient was. The learning rate, and every schedule built on it, is tuned for
+    # that convention.
+    #
+    # This originally normalized to ||g||_F instead, which is not scale-free: measured on
+    # a real MST layer, ||g||_F was 2.6e-4 against Muon's 8.07, so shampoo groups were
+    # training at an effective LR ~3e4 times too small. It showed up as a uniform +0.07
+    # bpb with near-identical results across a 50x range of refresh cadences -- the
+    # giveaway that the preconditioner was not the operative quantity.
+    target = float(min(p.shape[-2], p.shape[-1])) ** 0.5
+    p = p * (target / p.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12))
     p = p.to(stacked_params.dtype)
 
     # Cautious weight decay + parameter update, identical to muon_step_fused

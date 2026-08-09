@@ -458,6 +458,15 @@ if has sparse; then
         run SP_k1       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1
         run SP_k3       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3
         run SP_k2_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-aux 0
+        # RESULT: the aux loss was the problem, not sparsity. At k=2 it cost +0.0105 bpb
+        # (4.4 sigma), turning a net win into a net loss. In Phase A there is no capacity
+        # and no token dropping, so load balance buys nothing -- Switch needs it only
+        # because imbalance drops tokens under fixed capacity. It is a pure regularizer
+        # fighting the specialization that makes routing useful, and it only becomes
+        # necessary in Phase B. These are the arms that follow from that.
+        run SP_k1_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-aux 0
+        run SP_k3_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-aux 0
+        run SP_k2_lowaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-aux 0.001
         # Control, reusing its completed seeds. Flags must stay byte-identical.
         run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
     fi
@@ -481,9 +490,15 @@ if has shampoo; then
     SEEDS_SAVE="$SEEDS"; SEEDS=1
     if check_divisible "$SUB_DIM" 64; then
         BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        run SH_every10 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 10
-        run SH_every1  "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 1
-        run SH_every50 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 50
+        # The first shampoo pass was invalid: the update was normalized to ||g||_F rather
+        # than to Muon's semi-orthogonal ~sqrt(min(m,n)), so the effective LR was ~3e4 too
+        # small and all three cadences landed within 0.004 bpb of each other at +0.07 vs
+        # control. Fixed in optim.py (shampoo_step) and pinned by
+        # tests/test_shampoo.py::test_update_norm_matches_muons_convention_at_any_gradient_scale.
+        # These tags are v2 so the invalid results are not silently reused.
+        run SH2_every10 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 10
+        run SH2_every1  "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 1
+        run SH2_every50 "$DEPTH" $MST_FULL $BEST --mst-shampoo 1 --mst-precond-every 50
         # Control, reusing its completed seeds. Flags must stay byte-identical.
         run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
     fi
