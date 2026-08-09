@@ -454,21 +454,36 @@ if has sparse; then
     SEEDS_SAVE="$SEEDS"; SEEDS=1
     if check_divisible "$SUB_DIM" 64; then
         BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        run SP_k2       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2
-        run SP_k1       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1
-        run SP_k3       "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3
-        run SP_k2_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-aux 0
-        # RESULT: the aux loss was the problem, not sparsity. At k=2 it cost +0.0105 bpb
-        # (4.4 sigma), turning a net win into a net loss. In Phase A there is no capacity
-        # and no token dropping, so load balance buys nothing -- Switch needs it only
-        # because imbalance drops tokens under fixed capacity. It is a pure regularizer
-        # fighting the specialization that makes routing useful, and it only becomes
-        # necessary in Phase B. These are the arms that follow from that.
-        run SP_k1_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-aux 0
-        run SP_k3_noaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-aux 0
-        run SP_k2_lowaux "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-aux 0.001
+        # ALL the SP_* results are invalid and these are retagged v2. The router they
+        # measured had three defects, found by wiring stream_load into compute_diagnostics
+        # (route_entropy_* is the TRANSITION router and says nothing about the gate):
+        #
+        #   1. Zero-init WAS the collapsed state. Every logit at exactly 0, topk breaking
+        #      ties by index, so the same k streams won for every token before training,
+        #      and the losers' FFNs got exactly zero gradient. Now small random init.
+        #   2. The aux loss was not well posed. Switch's N*sum(f_i*P_i) needs both factors
+        #      on the simplex; independent sigmoids have no such constraint, so it was
+        #      minimized by pushing every gate to zero. It balanced nothing and cost
+        #      +0.0105 bpb. The gate is a softmax now and the term is correct.
+        #   3. No exploration. An unselected stream gets no FFN gradient, stays at init,
+        #      stays unselected. Noisy top-k breaks that spiral.
+        #
+        # Measured over 300 steps at depth 4 (worst-layer min load / ideal, higher better):
+        #   correct aux, no noise   0.273     aux + noise 0.3   0.484
+        #   aux + noise 1.0         0.586     NO AUX + noise    0.000, 5/16 streams dead
+        #
+        # So the aux term is necessary after all; it was the formulation that was wrong.
+        # Note the no-aux arm had the LOWEST training loss while being the most collapsed,
+        # which is exactly why the load diagnostic has to be read alongside bpb.
+        run SP2_k2         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0
+        run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
+        run SP2_k3         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-noise 1.0
+        # Isolate the two mechanisms.
+        run SP2_k2_nonoise "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 0.0
+        run SP2_k2_noaux   "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0 \
+            --mst-stream-router-aux 0
         # Control, reusing its completed seeds. Flags must stay byte-identical.
-        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
+#        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
     fi
     SEEDS="$SEEDS_SAVE"
 fi

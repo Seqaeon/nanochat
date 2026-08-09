@@ -903,6 +903,7 @@ class BatchedMSTLayer(nn.Module):
         assert 0 <= self._stream_topk <= N, \
             f"mst_stream_topk must be in [0, {N}], got {self._stream_topk}"
         self._stream_router_aux = float(getattr(config, 'mst_stream_router_aux', 0.01))
+        self._stream_router_noise = float(getattr(config, 'mst_stream_router_noise', 0.0))
         self._stream_gate_attn = bool(getattr(config, 'mst_stream_gate_attn', 0))
         self._stream_sparse = 0 < self._stream_topk < N
         if self._stream_sparse:
@@ -1082,19 +1083,33 @@ class BatchedMSTLayer(nn.Module):
         top-k is non-differentiable, the router only hears the efficiency term, and it
         collapses.
 
-        The gate is a per-stream sigmoid rather than a renormalized softmax on purpose.
-        Switch-style renormalization makes the selected weights sum to 1, which would
-        scale each stream's contribution to ~1/k and confound sparsity with a magnitude
-        change; a sigmoid leaves selected streams at full strength.
+        Separating selection from magnitude is what lets this use a softmax. The VALUE of
+        the gate is the hard 0/1 mask, so a selected stream contributes at full strength
+        and sparsity is not confounded with a 1/k magnitude change. The softmax is only
+        the differentiable score behind the STE and the balancing term. An earlier version
+        used independent sigmoids to protect the magnitude, which was solving a problem
+        that the hard mask already solves, and it cost two things: no competition between
+        streams in the gradient, and a load-balancing loss that was not well posed (see
+        below).
 
         Routing reads only the token's own concatenated state, so it is causal.
         """
         B, T, N, d = sub_states.shape
+        k = self._stream_topk
         x = norm(sub_states).reshape(B, T, N * d)
         logits = F.linear(x, self.stream_router_w.to(dtype=x.dtype))   # (B, T, N)
-        probs = torch.sigmoid(logits)
 
-        topk_idx = logits.topk(self._stream_topk, dim=-1).indices
+        # Exploration. An unselected stream receives no FFN gradient, so it stays at its
+        # initialization, so it stays useless, so the router keeps not selecting it. That
+        # death spiral is what collapsed layers 1-3 to a static pair of streams. Noisy
+        # top-k (Shazeer et al.) breaks it by letting under-used streams occasionally win
+        # and pick up gradient. Training only.
+        sel_logits = logits
+        if self.training and self._stream_router_noise > 0.0:
+            sel_logits = logits + self._stream_router_noise * torch.randn_like(logits)
+
+        probs = F.softmax(logits, dim=-1)
+        topk_idx = sel_logits.topk(k, dim=-1).indices
         mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
         # Parenthesized so the zero is formed first: `mask + probs - probs.detach()` would
         # evaluate as `(mask + probs) - probs` and lose a ULP, giving 0.99999994 instead of
@@ -1103,11 +1118,15 @@ class BatchedMSTLayer(nn.Module):
 
         aux = sub_states.new_zeros(())
         if self.training and self._stream_router_aux > 0.0:
-            # Switch-style: penalize the correlation between how often a stream is picked
-            # and how confident the router is in it. Minimized when load is uniform.
-            probs_mean = probs.mean(dim=(0, 1))                        # (N,)
-            load = mask.mean(dim=(0, 1))                               # (N,)
-            aux = self._stream_router_aux * N * (load * probs_mean).sum()
+            # Switch's N * sum_i f_i * P_i, and it only means anything when BOTH factors
+            # live on the simplex: then concentrating gives N and uniform gives 1, so the
+            # minimum is uniform. The previous version used raw sigmoid probabilities with
+            # no simplex constraint, where the same expression is minimized by pushing
+            # every gate toward zero -- it balanced nothing, shrank the router's gradient,
+            # and measured as +0.0105 bpb of pure cost.
+            probs_mean = probs.mean(dim=(0, 1))                        # (N,), sums to 1
+            load_frac = mask.mean(dim=(0, 1)) / k                      # (N,), sums to 1
+            aux = self._stream_router_aux * N * (load_frac * probs_mean).sum()
         with torch.no_grad():
             self._last_stream_load = mask.mean(dim=(0, 1)).detach()
         return w, aux
@@ -1566,10 +1585,19 @@ class BatchedMSTLayer(nn.Module):
         if self._talking_heads:
             nn.init.eye_(self.talking_w)
 
-        # Stage 16: zero-init the stream router, so every stream starts at sigmoid(0)=0.5
-        # and top-k is decided by symmetry-broken gradients rather than by init noise.
+        # Stage 16: the stream router must NOT be zero-initialized.
+        #
+        # Zero init is the right default for the transition router, where it gives a
+        # uniform softmax. For a top-k gate it is the opposite of neutral: every logit is
+        # exactly 0, torch.topk breaks ties by index, and the same k streams are selected
+        # for every token. That is the collapsed state, at step 0, before any training --
+        # and the unselected streams' FFNs then receive exactly zero gradient.
+        #
+        # Small random init instead, at the model's usual 1/sqrt(fan_in), so the initial
+        # selection varies per token and every stream gets gradient from the start.
         if self._stream_sparse:
-            nn.init.zeros_(self.stream_router_w)
+            router_s = 1.0 / (self.stream_router_w.shape[-1] ** 0.5)
+            nn.init.uniform_(self.stream_router_w, -router_s, router_s)
 
         for j in range(N):
             nn.init.uniform_(c_q[j], -sub_s, sub_s)
@@ -2548,6 +2576,23 @@ class MST(nn.Module):
                 # Batched layers store route entropy directly from forward pass
                 if hasattr(layer, '_last_route_entropy') and layer._last_route_entropy is not None:
                     diag[f'route_entropy_L{i}'] = float(layer._last_route_entropy)
+                # Stage 16: the stream gate is a DIFFERENT router from the transition one
+                # above. route_entropy_* describes the AggDist coupling and says nothing
+                # about whether conditional stream execution collapsed, which is the thing
+                # that actually matters when the load-balancing term is off.
+                load = getattr(layer, '_last_stream_load', None)
+                if load is not None:
+                    load = load.float()
+                    for j in range(load.numel()):
+                        diag[f'stream_load_L{i}_S{j}'] = float(load[j])
+                    # Fraction of the k/N ideal that the least-used stream receives.
+                    # 1.0 = perfectly balanced, 0.0 = that stream is never selected.
+                    ideal = layer._stream_topk / N
+                    diag[f'stream_load_min_L{i}'] = float(load.min() / ideal)
+                    diag[f'stream_load_max_L{i}'] = float(load.max() / ideal)
+                    # Entropy of the selection distribution, against log(N) for uniform.
+                    p = (load / load.sum().clamp_min(1e-9)).clamp_min(1e-9)
+                    diag[f'stream_entropy_L{i}'] = float(-(p * p.log()).sum())
                 continue
             trans = getattr(layer, 'transition', None)
             if trans is None:

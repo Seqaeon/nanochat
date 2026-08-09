@@ -348,6 +348,9 @@ parser.add_argument("--mst-stream-topk", type=int, default=0,
                          "k=2 of 4 is ~19%% of total FLOPs and k=1 ~28%%")
 parser.add_argument("--mst-stream-router-aux", type=float, default=0.01,
                     help="MST: Switch-style load-balancing weight for the stream router")
+parser.add_argument("--mst-stream-router-noise", type=float, default=0.0,
+                    help="MST: noisy top-k exploration std on the router logits (training only). "
+                         "Breaks the unselected-stream death spiral")
 parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1],
                     help="MST: also gate attention QKV, not just the FFN (bigger saving, but a "
                          "skipped token stops being a key/value for that stream)")
@@ -1086,6 +1089,7 @@ def build_model_meta(depth):
         # Stage 16: conditional stream execution
         mst_stream_topk=getattr(args, 'mst_stream_topk', 0),
         mst_stream_router_aux=getattr(args, 'mst_stream_router_aux', 0.01),
+        mst_stream_router_noise=getattr(args, 'mst_stream_router_noise', 0.0),
         mst_stream_gate_attn=getattr(args, 'mst_stream_gate_attn', 0),
         # Stage 17: block-diagonal Shampoo
         mst_shampoo=getattr(args, 'mst_shampoo', 0),
@@ -1780,6 +1784,7 @@ if model_config.use_mst and master_process:
                 # Stage 16
                 'stream_topk':          c.mst_stream_topk,
                 'stream_router_aux':    c.mst_stream_router_aux,
+                'stream_router_noise':  c.mst_stream_router_noise,
                 'stream_gate_attn':     c.mst_stream_gate_attn,
                 # Stage 17
                 'shampoo':              c.mst_shampoo,

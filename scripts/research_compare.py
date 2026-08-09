@@ -406,6 +406,7 @@ def run_training_sweep(args):
         "--mst-wo-mode", str(getattr(args, 'mst_wo_mode', 'block')),
         "--mst-stream-topk", str(getattr(args, 'mst_stream_topk', 0)),
         "--mst-stream-router-aux", str(getattr(args, 'mst_stream_router_aux', 0.01)),
+        "--mst-stream-router-noise", str(getattr(args, 'mst_stream_router_noise', 0.0)),
         "--mst-stream-gate-attn", str(getattr(args, 'mst_stream_gate_attn', 0)),
         "--mst-shampoo", str(getattr(args, 'mst_shampoo', 0)),
         "--mst-precond-every", str(getattr(args, 'mst_precond_every', 10)),
@@ -1098,6 +1099,8 @@ if __name__ == "__main__":
                         help="activate k of N streams per token (0=dense)")
     parser.add_argument("--mst-stream-router-aux", type=float, default=0.01,
                         help="load-balancing weight for the stream router")
+    parser.add_argument("--mst-stream-router-noise", type=float, default=0.0,
+                        help="noisy top-k exploration std on the router logits")
     parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1],
                         help="also gate attention QKV, not just the FFN")
     # Stage 17: block-diagonal Shampoo

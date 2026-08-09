@@ -487,6 +487,10 @@ class GPTConfig:
     mst_stream_router_aux: float = 0.01             # Switch-style load-balancing weight. A prior attempt
                                                     #   (free_for_all + topk1) collapsed to uniform routing on
                                                     #   replicate seeds, so this is not optional decoration.
+    mst_stream_router_noise: float = 0.0            # noisy top-k exploration (Shazeer et al.), training only.
+                                                    #   Without it an unselected stream gets no FFN gradient, so
+                                                    #   it stays at init, so it stays unselected: the death
+                                                    #   spiral that collapsed layers 1-3 to a static pair.
     mst_stream_gate_attn: int = 0                   # also gate attention QKV, not just the FFN. Bigger saving
                                                     #   (~26% at k=2) but a skipped token stops being a key/value
                                                     #   for that stream, which changes attention semantics.
@@ -690,6 +694,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_talking_heads", "mst_wo_mode",
     # MST Stage 16: conditional stream execution
     "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
+    "mst_stream_router_noise",
     # MST Stage 17: block-diagonal Shampoo
     "mst_shampoo", "mst_precond_every", "mst_shampoo_beta",
     # EET: Early Exit Transformer

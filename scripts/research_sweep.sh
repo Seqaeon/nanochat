@@ -371,6 +371,7 @@ while [[ $# -gt 0 ]]; do
         --mst-distribute-block-muon|--mst-trans-spectral-lr|\
         --mst-talking-heads|--mst-wo-mode|\
         --mst-stream-topk|--mst-stream-router-aux|--mst-stream-gate-attn|\
+        --mst-stream-router-noise|\
         --mst-shampoo|--mst-precond-every|--mst-shampoo-beta|\
         --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")

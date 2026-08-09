@@ -491,6 +491,72 @@ def test_s16_gate_selects_exactly_k_streams_and_is_hard(k):
         f"every token must activate exactly {k} streams"
 
 
+def test_s16_init_is_not_already_collapsed():
+    """Zero-init IS the collapsed state for a top-k gate, which is how it shipped first.
+
+    With every logit at exactly 0, torch.topk breaks ties by index, so the same k streams
+    win for every token before any training happens -- and the losers' FFNs then get
+    exactly zero gradient, so they can never earn their way back in.
+    """
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = MST(make_config(mst_stream_topk=2))
+        model.init_weights()
+    with torch.no_grad():
+        w, _ = model.layers[0]._stream_gate(
+            torch.randn(2, 64, N_SUBS, model.config.mst_sub_dim))
+    load = w.mean(dim=(0, 1))
+    assert (load > 0.05).all(), \
+        f"some stream is never selected at init, so its FFN can never train: {load.tolist()}"
+
+
+def test_s16_aux_loss_is_minimized_at_uniform_load():
+    """The property the first version lacked.
+
+    Switch's N*sum(f_i*P_i) only means anything when both factors are on the simplex:
+    then uniform gives 1 and full concentration gives N. With independent sigmoids there
+    is no simplex, and the same expression is minimized by driving every gate to zero --
+    it balances nothing and shrinks the router's gradient.
+    """
+    model = _gated_layer(2)
+    layer = model.layers[0]
+    d = model.config.mst_sub_dim
+
+    torch.manual_seed(3)
+    balanced = torch.randn(4, 256, N_SUBS, d)
+    with torch.no_grad():
+        # Force a collapsed router by making one stream's logits dominate every token.
+        layer.stream_router_w.zero_()
+        layer.stream_router_w[0] = 50.0
+        layer.stream_router_w[1] = 25.0
+    _, aux_collapsed = layer._stream_gate(balanced)
+    with torch.no_grad():
+        layer.stream_router_w.zero_()          # uniform softmax over streams
+    _, aux_uniform = layer._stream_gate(balanced)
+
+    assert aux_collapsed > aux_uniform, \
+        f"aux must penalize collapse: collapsed={aux_collapsed:.5f} uniform={aux_uniform:.5f}"
+
+
+def test_s16_router_noise_explores_in_training_only():
+    """Noisy top-k is what breaks the unselected-stream death spiral."""
+    model = _gated_layer(2, mst_stream_router_noise=1.0)
+    layer = model.layers[0]
+    x = torch.randn(2, 64, N_SUBS, model.config.mst_sub_dim)
+
+    layer.train()
+    with torch.no_grad():
+        a, _ = layer._stream_gate(x)
+        b, _ = layer._stream_gate(x)
+    assert not torch.equal(a, b), "noise should make training-time selection stochastic"
+
+    layer.eval()
+    with torch.no_grad():
+        c, _ = layer._stream_gate(x)
+        e, _ = layer._stream_gate(x)
+    assert torch.equal(c, e), "evaluation must be deterministic"
+
+
 def test_s16_router_receives_gradient_through_the_hard_gate():
     """Without the STE the router only hears the aux loss and collapses (eet.py:1994)."""
     model = _gated_layer(2)
@@ -616,6 +682,7 @@ def test_stage_15_flags_are_wired_end_to_end():
     for field in ("mst_distribute_block_muon", "mst_trans_spectral_lr",
                   "mst_talking_heads", "mst_wo_mode", "mst_transition_every",
                   "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
+                  "mst_stream_router_noise",
                   "mst_shampoo", "mst_precond_every", "mst_shampoo_beta"):
         flag = "--" + field.replace("_", "-")
         assert hasattr(cfg, field), f"{field} missing from GPTConfig"
