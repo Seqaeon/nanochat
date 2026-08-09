@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo monarch"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -520,6 +520,48 @@ fi
 #    SEEDS="$SEEDS_SAVE"
 #fi
 #
+# ---------------------------------------------------------------- monarch
+# Stage 18. The FFN is already two thirds of a Monarch factorization: fc_w (per-stream
+# d->4d) then fc_proj_w (per-stream 4d->d) is block-diagonal . permutation . block-diagonal
+# with the permutation set to IDENTITY. Permuting the N*4d hidden axis between them makes
+# it a real Monarch matrix, so each stream's down-projection reads hidden units produced by
+# other streams' up-projections. Zero parameters, zero FLOPs, so any gain is pure Pareto.
+#
+# This is a DIFFERENT placement from the Stage 14 null result, which permuted the stream
+# axis BETWEEN layers as a change of basis and undid it. This permutes the hidden axis
+# INSIDE one FFN and never inverts, which is what makes the FFN itself Monarch rather than
+# a composition of two independently block-diagonal maps.
+#
+# 'shuffle' is the true transpose (every stream draws 4d/N units from every other);
+# 'roll' only trades with one neighbour. Measured structurally in the tests.
+#
+# CALIBRATION. The equal-depth gap to dense at L=16 is 0.0714 bpb, which is 6.6x the total
+# of every architectural win so far -- this will not close it. Realistic prize is
+# 0.005-0.015. The one measured structured-matrix result in this repo is negative
+# (Kronecker 18C: +0.12 loss, "too constrained to represent dense W").
+#
+# MON_shuffle_k1 IS NOT DEPLOYABLE. Monarch needs every stream's up-projection to exist,
+# and conditional stream execution's whole saving is not computing them, so the two are
+# alternatives rather than a stack: --mst-stream-dispatch is asserted incompatible, and
+# masked sparsity only halves the saving. That arm exists solely to check whether the two
+# mechanisms fight, since routing pays when streams are differentiated and mixing makes
+# them interchangeable. Score the winner against the k=1 sparse arm (1.194x at L=16),
+# not just against the control.
+if has monarch; then
+    echo ""; echo "### MONARCH: hidden-axis permutation inside the FFN (Stage 18)"
+    SEEDS_SAVE="$SEEDS"; SEEDS=2
+    if check_divisible "$SUB_DIM" 64; then
+        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+        run MON_shuffle    "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle
+        run MON_roll       "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch roll
+        run MON_shuffle_k1 "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle \
+            --mst-stream-topk 1 --mst-stream-router-noise 1.0
+        # Control, reusing its completed seeds. Flags must stay byte-identical.
+        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
+    fi
+    SEEDS="$SEEDS_SAVE"
+fi
+
 # ---------------------------------------------------------------- d16
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
 # only after L=8 names a winner, and only for that winner plus its baseline, so

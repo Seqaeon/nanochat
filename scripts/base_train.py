@@ -360,6 +360,11 @@ parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1
                     help="MST: also gate attention QKV, not just the FFN (bigger saving, but a "
                          "skipped token stops being a key/value for that stream)")
 # MST Stage 17: block-diagonal Shampoo
+# MST Stage 18: Monarch-structured FFN
+parser.add_argument("--mst-ffn-monarch", type=str, default='none', choices=['none', 'shuffle', 'roll'],
+                    help="MST: permute the FFN hidden axis between the two block-diagonal factors, "
+                         "making the FFN a genuine Monarch matrix. Free. Incompatible with "
+                         "--mst-stream-dispatch (Monarch needs every stream's up-projection)")
 parser.add_argument("--mst-shampoo", type=int, default=0, choices=[0, 1],
                     help="MST: block-diagonal Shampoo on the stacked per-stream weights. Exact "
                          "block preconditioning costs D^3/N^2, 16x less than a dense D x D")
@@ -1099,6 +1104,7 @@ def build_model_meta(depth):
         mst_stream_capacity_factor=getattr(args, 'mst_stream_capacity_factor', 1.0),
         mst_stream_gate_attn=getattr(args, 'mst_stream_gate_attn', 0),
         # Stage 17: block-diagonal Shampoo
+        mst_ffn_monarch=getattr(args, 'mst_ffn_monarch', 'none'),
         mst_shampoo=getattr(args, 'mst_shampoo', 0),
         mst_precond_every=getattr(args, 'mst_precond_every', 10),
         mst_shampoo_beta=getattr(args, 'mst_shampoo_beta', 0.95),
@@ -1796,6 +1802,7 @@ if model_config.use_mst and master_process:
                 'stream_capacity_factor': c.mst_stream_capacity_factor,
                 'stream_gate_attn':     c.mst_stream_gate_attn,
                 # Stage 17
+                'ffn_monarch':          c.mst_ffn_monarch,
                 'shampoo':              c.mst_shampoo,
                 'precond_every':        c.mst_precond_every,
             }

@@ -734,6 +734,97 @@ def test_phase_b_rejects_incompatible_cross_sub_gate():
         build_meta(mst_stream_topk=2, mst_stream_dispatch=1, mst_cross_sub_gate=32)
 
 
+# ── Stage 18: Monarch-structured FFN ─────────────────────────────────────────
+
+def _monarch_model(mode, **ov):
+    torch.manual_seed(0)                      # reset per model, or two builds diverge
+    with contextlib.redirect_stdout(io.StringIO()):
+        m = MST(make_config(mst_ffn_monarch=mode, **ov))
+        m.init_weights()
+    return m
+
+
+@pytest.mark.parametrize("mode,expect_full", [("shuffle", True), ("roll", False)])
+def test_monarch_makes_the_ffn_mix_across_streams(mode, expect_full):
+    """The whole point: stream j's down-projection must read other streams' hidden units.
+
+    Without the permutation, fc_w and fc_proj_w are two independently block-diagonal maps
+    and stream j only ever sees its own 4d hidden units -- a Monarch factorization with P
+    set to identity.
+    """
+    inner = 4 * (256 // N_SUBS)
+    h = torch.arange(N_SUBS * inner).view(1, 1, N_SUBS, inner).float()
+    mixed = mix_channels(h, mode, N_SUBS, inner)
+    origins = [set((v // inner).long().tolist()) for v in mixed[0, 0]]
+
+    assert all(len(o) > 1 for o in origins), \
+        f"{mode} left a stream reading only its own up-projection: {origins}"
+    if expect_full:
+        assert all(len(o) == N_SUBS for o in origins), \
+            "shuffle is the Monarch transpose: every stream should draw from every other"
+    else:
+        assert all(len(o) == 2 for o in origins), \
+            "roll trades with one neighbour only"
+
+
+def test_monarch_permutation_commutes_with_the_nonlinearity():
+    """relu^2 is elementwise, so the permutation may sit on either side of it.
+
+    Worth pinning: it means the placement in forward is a readability choice, not a
+    semantic one, and a future refactor that moves it cannot silently change the model.
+    """
+    inner = 4 * (256 // N_SUBS)
+    torch.manual_seed(0)
+    z = torch.randn(2, 8, N_SUBS, inner)
+    after = mix_channels(torch.relu(z).square(), 'shuffle', N_SUBS, inner)
+    before = torch.relu(mix_channels(z, 'shuffle', N_SUBS, inner)).square()
+    assert torch.equal(after, before)
+
+
+@pytest.mark.parametrize("mode", ["shuffle", "roll"])
+def test_monarch_is_free(mode):
+    base = build_meta()
+    mon = build_meta(mst_ffn_monarch=mode)
+    assert mon.num_scaling_params() == base.num_scaling_params()
+    assert mon.estimate_flops()[0] == base.estimate_flops()[0]
+    assert mon._use_batched
+
+
+@pytest.mark.parametrize("mode", ["shuffle", "roll"])
+def test_monarch_changes_the_computation(mode):
+    """Must wake the residual branches first.
+
+    fc_proj_w is zero-initialized, so at init the FFN output is exactly zero whatever the
+    hidden units are, and this test passes vacuously without _wake_residual_branches --
+    verified: the two models are bit-identical at init and differ once woken.
+    """
+    idx = torch.arange(SEQ).remainder(VOCAB).view(1, SEQ)
+    off, on = _monarch_model('none'), _monarch_model(mode)
+    with torch.no_grad():
+        assert torch.equal(off(idx), on(idx)), \
+            "sanity: at init the zero-init FFN branch should make these identical"
+    for m in (off, on):
+        _wake_residual_branches(m)
+    with torch.no_grad():
+        assert not torch.allclose(off(idx), on(idx), atol=1e-6)
+
+
+def test_monarch_rejects_bad_mode_and_dispatch():
+    with pytest.raises(AssertionError, match="none\\|shuffle\\|roll"):
+        build_meta(mst_ffn_monarch='bogus')
+    # Monarch needs every stream's up-projection; the dispatch exists not to compute them.
+    # And in the dispatched path a buffer slot holds a different token per stream, so
+    # permuting across streams would mix hidden units from different tokens.
+    with pytest.raises(AssertionError, match="mst_stream_dispatch"):
+        build_meta(mst_ffn_monarch='shuffle', mst_stream_topk=1, mst_stream_dispatch=1)
+
+
+def test_monarch_composes_with_masked_sparsity():
+    """Masked sparsity is allowed (all up-projections still run), unlike the dispatch."""
+    m = build_meta(mst_ffn_monarch='shuffle', mst_stream_topk=1)
+    assert m._use_batched and m.layers[0]._ffn_monarch == 'shuffle'
+
+
 # ── CLI plumbing ─────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("script", ["scripts/base_train.py", "scripts/research_compare.py"])
@@ -777,7 +868,8 @@ def test_stage_15_flags_are_wired_end_to_end():
                   "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
                   "mst_stream_router_noise", "mst_stream_dispatch",
                   "mst_stream_capacity_factor",
-                  "mst_shampoo", "mst_precond_every", "mst_shampoo_beta"):
+                  "mst_shampoo", "mst_precond_every", "mst_shampoo_beta",
+                  "mst_ffn_monarch"):
         flag = "--" + field.replace("_", "-")
         assert hasattr(cfg, field), f"{field} missing from GPTConfig"
         assert f'add_argument("{flag}"' in base_train, f"{flag} has no base_train CLI arg"

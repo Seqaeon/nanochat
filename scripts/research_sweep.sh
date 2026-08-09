@@ -373,6 +373,7 @@ while [[ $# -gt 0 ]]; do
         --mst-stream-topk|--mst-stream-router-aux|--mst-stream-gate-attn|\
         --mst-stream-router-noise|--mst-stream-dispatch|--mst-stream-capacity-factor|\
         --mst-shampoo|--mst-precond-every|--mst-shampoo-beta|\
+        --mst-ffn-monarch|\
         --mst-global-residual)
             EXTRA_ARGS+=("$1" "$2")
             shift 2

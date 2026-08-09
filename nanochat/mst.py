@@ -904,6 +904,18 @@ class BatchedMSTLayer(nn.Module):
             f"mst_stream_topk must be in [0, {N}], got {self._stream_topk}"
         self._stream_router_aux = float(getattr(config, 'mst_stream_router_aux', 0.01))
         self._stream_router_noise = float(getattr(config, 'mst_stream_router_noise', 0.0))
+        # Stage 18: Monarch-structured FFN. A permutation on the hidden axis between the
+        # two block-diagonal factors, so the FFN becomes B2 . P . B1 rather than a pair of
+        # independently block-diagonal maps.
+        self._ffn_monarch = str(getattr(config, 'mst_ffn_monarch', 'none'))
+        assert self._ffn_monarch in ('none', 'shuffle', 'roll'), \
+            f"mst_ffn_monarch must be none|shuffle|roll, got {self._ffn_monarch!r}"
+        if self._ffn_monarch == 'shuffle':
+            # NOTE the requirement here is inner % N, NOT the stream-axis d % N that
+            # mix_channels' other caller asserts. It is strictly weaker, so reusing that
+            # assert would reject valid configs.
+            assert (4 * d) % N == 0, \
+                f"mst_ffn_monarch='shuffle' needs inner ({4*d}) divisible by n_subs ({N})"
         self._stream_dispatch = bool(getattr(config, 'mst_stream_dispatch', 0))
         self._stream_capacity_factor = float(getattr(config, 'mst_stream_capacity_factor', 1.0))
         self._last_stream_drop = 0.0
@@ -911,6 +923,14 @@ class BatchedMSTLayer(nn.Module):
         assert not (self._stream_dispatch and int(getattr(config, 'mst_cross_sub_gate', 0)) > 0), \
             "mst_stream_dispatch is incompatible with mst_cross_sub_gate: the gate is built "\
             "from the dense concatenated state, which the dispatched path never materializes"
+        assert not (self._stream_dispatch and self._ffn_monarch != 'none'), \
+            "mst_ffn_monarch is incompatible with mst_stream_dispatch. Monarch needs every "\
+            "stream's up-projection to exist, and the dispatch's whole point is not computing "\
+            "them. Worse, in the dispatched path axis 1 is the capacity buffer index, not the "\
+            "token index, so buffer slot k holds a DIFFERENT token per stream: permuting across "\
+            "streams there would mix hidden units belonging to different tokens. Masked "\
+            "sparsity (dispatch off) is fine but only halves the saving, since the "\
+            "up-projections all still have to run."
         self._stream_gate_attn = bool(getattr(config, 'mst_stream_gate_attn', 0))
         self._stream_sparse = 0 < self._stream_topk < N
         if self._stream_sparse:
@@ -1382,6 +1402,15 @@ class BatchedMSTLayer(nn.Module):
             if self._cross_sub_gate_rank > 0:
                 h = h * gate
             h = F.relu(h).square()                      # relu²
+            # Stage 18: the Monarch permutation. fc_w and fc_proj_w are already the two
+            # block-diagonal factors; this is the P between them that the FFN was missing,
+            # so stream j's down-projection reads hidden units from every stream's
+            # up-projection. Applied ONCE and never inverted -- unlike the Stage 14 stream-
+            # axis permutation, which is a change of basis and must be undone before the
+            # residual. fc_proj_w already writes back in canonical stream order.
+            # It commutes exactly with relu² (elementwise), so this side is arbitrary.
+            if self._ffn_monarch != 'none':
+                h = mix_channels(h, self._ffn_monarch, N, self._inner)
             ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         # The gate multiplies the output either way: it is what carries the router's
         # straight-through gradient into the loss.
@@ -1912,6 +1941,8 @@ class MST(nn.Module):
                         f"back to the legacy list path, which would ignore it silently")
                 assert str(getattr(config, 'mst_wo_mode', 'block')) == 'block', \
                     "mst_wo_mode='dense' is implemented in BatchedMSTLayer only"
+                assert str(getattr(config, 'mst_ffn_monarch', 'none')) == 'none', \
+                    "mst_ffn_monarch is implemented in BatchedMSTLayer only"
                 self.layers = nn.ModuleList([
                     MSTLayer(config, layer_idx=i, diversity_weight=dw if i in div_layers else 0.0)
                     for i in range(n)

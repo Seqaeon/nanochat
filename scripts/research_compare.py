@@ -410,6 +410,7 @@ def run_training_sweep(args):
         "--mst-stream-dispatch", str(getattr(args, 'mst_stream_dispatch', 0)),
         "--mst-stream-capacity-factor", str(getattr(args, 'mst_stream_capacity_factor', 1.0)),
         "--mst-stream-gate-attn", str(getattr(args, 'mst_stream_gate_attn', 0)),
+        "--mst-ffn-monarch", str(getattr(args, 'mst_ffn_monarch', 'none')),
         "--mst-shampoo", str(getattr(args, 'mst_shampoo', 0)),
         "--mst-precond-every", str(getattr(args, 'mst_precond_every', 10)),
         "--mst-shampoo-beta", str(getattr(args, 'mst_shampoo_beta', 0.95)),
@@ -1109,6 +1110,9 @@ if __name__ == "__main__":
     parser.add_argument("--mst-stream-gate-attn", type=int, default=0, choices=[0, 1],
                         help="also gate attention QKV, not just the FFN")
     # Stage 17: block-diagonal Shampoo
+    parser.add_argument("--mst-ffn-monarch", type=str, default='none',
+                        choices=['none', 'shuffle', 'roll'],
+                        help="permute the FFN hidden axis between the two block-diagonal factors")
     parser.add_argument("--mst-shampoo", type=int, default=0, choices=[0, 1],
                         help="block-diagonal Shampoo on the stacked per-stream weights")
     parser.add_argument("--mst-precond-every", type=int, default=10,

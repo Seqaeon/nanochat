@@ -505,6 +505,19 @@ class GPTConfig:
     # at N=4. K-FAC and Shampoo both approximate block-diagonality; MST makes it exact by
     # construction, so at equal optimizer cost it affords a stronger preconditioner than
     # dense can. This is a training-efficiency claim, not a FLOPs/token one.
+    # Stage 18: Monarch-structured FFN. The FFN is already two thirds of a Monarch
+    # factorization -- fc_w (per-stream d->4d) then fc_proj_w (per-stream 4d->d) is
+    # block-diagonal . permutation . block-diagonal with the permutation set to IDENTITY.
+    # Permuting the N*4d hidden axis between them makes it a genuine Monarch matrix, so
+    # each stream's down-projection reads hidden units produced by other streams' up-
+    # projections. Zero parameters, negligible FLOPs.
+    #
+    # NOTE this cannot be combined with conditional stream execution's dispatch: Monarch
+    # needs every stream's up-projection to exist, and sparsity's whole saving is not
+    # computing them. They are alternatives, not a stack.
+    mst_ffn_monarch: str = 'none'                   # 'none' | 'shuffle' (ShuffleNet/Monarch transpose,
+                                                    #   every stream draws 4d/N units from every other)
+                                                    #   | 'roll' (shift by inner//2, neighbour trade only)
     mst_shampoo: int = 0                            # route the stacked per-stream weights to kind='shampoo'
     mst_precond_every: int = 10                     # steps between inverse-fourth-root refreshes
     mst_shampoo_beta: float = 0.95                  # EMA decay for the L/R Kronecker factors
@@ -703,6 +716,8 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_stream_router_noise", "mst_stream_dispatch", "mst_stream_capacity_factor",
     # MST Stage 17: block-diagonal Shampoo
     "mst_shampoo", "mst_precond_every", "mst_shampoo_beta",
+    # MST Stage 18: Monarch-structured FFN
+    "mst_ffn_monarch",
     # EET: Early Exit Transformer
     "use_eet", "eet_frozen_kv", "eet_router_type", "eet_router_hidden",
     "eet_freq_prior_alpha", "eet_pos_prior_beta", "eet_domain_prior",
