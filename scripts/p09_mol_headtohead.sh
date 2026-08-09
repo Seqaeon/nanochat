@@ -101,7 +101,7 @@ mst_config() {                            # mst_config <sub_dim> <n_subs>
 mol_config() {                            # mol_config <n_blocks> <n_shared> <topk> <thin_dim>
     echo "--use-mol 1 --models base --mol-n-blocks $1 --mol-n-shared $2 \
       --mol-topk $3 --mol-thin-dim $4 --mol-head-dim 64 --mol-ffn-mult 4.0 \
-      --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 0"
+      --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1"
 }
 
 run() {                                   # run <tag> <depth> <flags...>

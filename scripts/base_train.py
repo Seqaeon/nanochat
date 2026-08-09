@@ -218,7 +218,7 @@ parser.add_argument("--mol-head-dim", type=int, default=64, help="MoL: head dim,
 parser.add_argument("--mol-ffn-mult", type=float, default=4.0, help="MoL: d_ff,thin = mult * d_thin")
 parser.add_argument("--mol-router-aux", type=float, default=0.05, help="MoL: CV^2 load-balance weight (their alpha)")
 parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention (softmax; deltanet is phase 2)")
-parser.add_argument("--mol-dispatch", type=int, default=0, choices=[0, 1], help="MoL: 0=masked, 1=gather/scatter")
+parser.add_argument("--mol-dispatch", type=int, default=1, choices=[0, 1], help="MoL: 1=gather/scatter (default), 0=masked reference")
 parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: per-block capacity when dispatching")
 parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier (fairness ablation; their recipe has none)")
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")

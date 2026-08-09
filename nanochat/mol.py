@@ -198,8 +198,11 @@ class SplitStage(nn.Module):
         self.router = Linear(config.n_embd, self.n_routed, bias=False) \
             if self.n_routed > 0 else None
         self.aux_weight = float(config.mol_router_aux)
+        self.dispatch = bool(getattr(config, 'mol_dispatch', 1))
+        self.capacity_factor = float(getattr(config, 'mol_capacity_factor', 1.0))
         self._last_load = None      # (n_routed,) fraction of tokens per routed block
         self._last_aux = None
+        self._last_drop = None
 
     def _route(self, x):
         """Softmax scores, top-k mask, and the CV^2 balance loss.
@@ -222,6 +225,59 @@ class SplitStage(nn.Module):
         self._last_load = mask.mean(dim=(0, 1)).detach()
         return weights.to(x.dtype), mask.to(torch.bool)
 
+    def _capacity(self, T):
+        """Per-block token capacity, their §2.3 fixed-size dispatch buffer."""
+        return max(1, min(T, int(math.ceil(T * self.topk / self.n_routed
+                                           * self.capacity_factor))))
+
+    def _routed_dispatched(self, x, ve, cos_sin, kv_cache, weights, mask):
+        """§2.3 sparse dispatch: gather each block's tokens, run, scatter back.
+
+        This is the DEFAULT path, and not only for speed. The masked alternative
+        builds a (B, 1, T, T) attention mask per routed block, which at T=2048 with
+        14 blocks over 8 layers is 112 masked SDPA calls per forward, each
+        materialising ~134MB. It is unrunnable at real sequence lengths and it made
+        torch.compile hang on the 120-block graph.
+
+        Gathering in POSITION ORDER is what makes plain causal attention over the
+        compact buffer exactly equal to restricted attention over the full sequence:
+        token t attends to earlier tokens that also chose this block, and to nothing
+        else. No mask is needed at all. Selection takes the first K tokens that chose
+        the block rather than the K highest-scoring, which keeps it causal (the same
+        reason MST's _ffn_dispatched orders by position).
+        """
+        B, T, D = x.shape
+        K = self._capacity(T)
+        dev = x.device
+
+        # (B, n_routed, T) -> earlier positions win the topk, so selection is causal.
+        m = mask.permute(0, 2, 1).to(torch.float32)
+        pos = torch.arange(T, device=dev, dtype=torch.float32)
+        top_val, top_idx = (m * (T - pos)).topk(K, dim=-1)
+        order = top_idx.argsort(dim=-1)
+        top_idx = top_idx.gather(-1, order)              # ascending position
+        keep = top_val.gather(-1, order) > 0             # padding slots are dropped
+        self._last_drop = float((m.sum(-1).clamp(max=K).sum() /
+                                 m.sum().clamp_min(1)).detach()) if m.sum() > 0 else 1.0
+
+        cos, sin = cos_sin
+        hd = cos.shape[-1]
+        acc = torch.zeros_like(x)
+        for i in range(self.n_routed):
+            idx = top_idx[:, i]                                        # (B, K)
+            gx = idx.unsqueeze(-1).expand(-1, -1, D)
+            xi = x.gather(1, gx)                                       # (B, K, D)
+            # Rotary must use the ORIGINAL positions, not the compact ones.
+            gr = idx.view(B, K, 1, 1).expand(-1, -1, 1, hd)
+            cs = (cos.expand(B, -1, -1, -1).gather(1, gr),
+                  sin.expand(B, -1, -1, -1).gather(1, gr))
+            vi = None if ve is None else ve.gather(
+                1, idx.unsqueeze(-1).expand(-1, -1, ve.shape[-1]))
+            yi = self.blocks[self.n_shared + i](xi, vi, cs, (-1, 0), kv_cache)
+            wi = weights[..., i].gather(1, idx) * keep[:, i].to(weights.dtype)
+            acc.scatter_add_(1, gx, yi * wi.unsqueeze(-1))
+        return acc
+
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         out = x
         # Shared blocks: always active, every token, unrestricted attention.
@@ -233,15 +289,16 @@ class SplitStage(nn.Module):
             return out
 
         weights, mask = self._route(x)
-        acc = torch.zeros_like(x)
-        for i in range(self.n_routed):
-            blk = self.blocks[self.n_shared + i]
-            active = mask[..., i]                       # (B, T) bool
-            # Restricted attention: this block's tokens attend only to tokens also
-            # routed to this block, causally. gpt.CausalSelfAttention implements
-            # exactly that when given token_active.
-            y = blk(x, ve, cos_sin, window_size, kv_cache, token_active=active)
-            acc = acc + weights[..., i:i + 1] * y
+        if self.dispatch:
+            acc = self._routed_dispatched(x, ve, cos_sin, kv_cache, weights, mask)
+        else:
+            acc = torch.zeros_like(x)
+            for i in range(self.n_routed):
+                # Reference path. Correct but quadratic in T and mask-heavy; kept so
+                # the dispatched path has something to be checked against.
+                y = self.blocks[self.n_shared + i](
+                    x, ve, cos_sin, window_size, kv_cache, token_active=mask[..., i])
+                acc = acc + weights[..., i:i + 1] * y
         return out + acc / self.topk
 
 

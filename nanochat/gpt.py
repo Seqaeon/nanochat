@@ -384,7 +384,7 @@ class GPTConfig:
     mol_ffn_mult: float = 4.0                  # d_ff,thin = mult * d_thin
     mol_router_aux: float = 0.05               # CV² load-balance weight (their α)
     mol_routed_attn: str = 'softmax'           # 'softmax'; 'deltanet' is phase 2
-    mol_dispatch: int = 0                      # 0=masked, 1=gather/scatter
+    mol_dispatch: int = 1                      # 1=gather/scatter (default), 0=masked reference
     mol_capacity_factor: float = 1.0           # per-block capacity when dispatching
     mol_block_lr_scale: float = 1.0            # per-thin-block LR multiplier (their recipe has none)
     # ── MST: Modular Sub-Transformer Architecture ──

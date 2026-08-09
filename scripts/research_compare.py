@@ -350,7 +350,7 @@ def run_training_sweep(args):
         "--mol-ffn-mult", str(getattr(args, 'mol_ffn_mult', 4.0)),
         "--mol-router-aux", str(getattr(args, 'mol_router_aux', 0.05)),
         "--mol-routed-attn", str(getattr(args, 'mol_routed_attn', 'softmax')),
-        "--mol-dispatch", str(getattr(args, 'mol_dispatch', 0)),
+        "--mol-dispatch", str(getattr(args, 'mol_dispatch', 1)),
         "--mol-capacity-factor", str(getattr(args, 'mol_capacity_factor', 1.0)),
         "--mol-block-lr-scale", str(getattr(args, 'mol_block_lr_scale', 1.0)),
         # MST: Modular Sub-Transformer
@@ -1035,7 +1035,7 @@ if __name__ == "__main__":
     parser.add_argument("--mol-ffn-mult", type=float, default=4.0, help="MoL: d_ff,thin = mult * d_thin")
     parser.add_argument("--mol-router-aux", type=float, default=0.05, help="MoL: CV^2 balance weight")
     parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention")
-    parser.add_argument("--mol-dispatch", type=int, default=0, choices=[0, 1], help="MoL: 0=masked, 1=gather/scatter")
+    parser.add_argument("--mol-dispatch", type=int, default=1, choices=[0, 1], help="MoL: 1=gather/scatter (default), 0=masked reference")
     parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: dispatch capacity factor")
     parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier")
     # MST: Modular Sub-Transformer
