@@ -340,6 +340,19 @@ def run_training_sweep(args):
         # Phase 30: LayerNorm ablation
         "--remix-disable-ln-basis", str(getattr(args, 'remix_disable_ln_basis', 0)),
         "--dense-intermediate-ln", str(getattr(args, 'dense_intermediate_ln', 0)),
+        # MoL: Mixture of Layers baseline (arXiv:2605.09516)
+        "--use-mol", str(getattr(args, 'use_mol', 0)),
+        "--mol-n-blocks", str(getattr(args, 'mol_n_blocks', 5)),
+        "--mol-n-shared", str(getattr(args, 'mol_n_shared', 1)),
+        "--mol-topk", str(getattr(args, 'mol_topk', 3)),
+        "--mol-thin-dim", str(getattr(args, 'mol_thin_dim', 256)),
+        "--mol-head-dim", str(getattr(args, 'mol_head_dim', 64)),
+        "--mol-ffn-mult", str(getattr(args, 'mol_ffn_mult', 4.0)),
+        "--mol-router-aux", str(getattr(args, 'mol_router_aux', 0.05)),
+        "--mol-routed-attn", str(getattr(args, 'mol_routed_attn', 'softmax')),
+        "--mol-dispatch", str(getattr(args, 'mol_dispatch', 0)),
+        "--mol-capacity-factor", str(getattr(args, 'mol_capacity_factor', 1.0)),
+        "--mol-block-lr-scale", str(getattr(args, 'mol_block_lr_scale', 1.0)),
         # MST: Modular Sub-Transformer
         "--use-mst", str(getattr(args, 'use_mst', 0)),
         "--mst-n-subs", str(getattr(args, 'mst_n_subs', 8)),
@@ -1012,6 +1025,19 @@ if __name__ == "__main__":
     # Phase 30: LayerNorm ablation
     parser.add_argument("--remix-disable-ln-basis", type=int, default=0, choices=[0, 1], help="30B: disable intermediate LN in RemixedLinear")
     parser.add_argument("--dense-intermediate-ln", type=int, default=0, choices=[0, 1], help="30A: add intermediate LN to dense projections")
+    # MoL: Mixture of Layers baseline (arXiv:2605.09516)
+    parser.add_argument("--use-mol", type=int, default=0, choices=[0, 1], help="MoL: enable Mixture-of-Layers baseline")
+    parser.add_argument("--mol-n-blocks", type=int, default=5, help="MoL: N thin blocks per split stage")
+    parser.add_argument("--mol-n-shared", type=int, default=1, help="MoL: S always-active blocks")
+    parser.add_argument("--mol-topk", type=int, default=3, help="MoL: k routed blocks per token")
+    parser.add_argument("--mol-thin-dim", type=int, default=256, help="MoL: d_thin")
+    parser.add_argument("--mol-head-dim", type=int, default=64, help="MoL: head dim, pinned across widths")
+    parser.add_argument("--mol-ffn-mult", type=float, default=4.0, help="MoL: d_ff,thin = mult * d_thin")
+    parser.add_argument("--mol-router-aux", type=float, default=0.05, help="MoL: CV^2 balance weight")
+    parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention")
+    parser.add_argument("--mol-dispatch", type=int, default=0, choices=[0, 1], help="MoL: 0=masked, 1=gather/scatter")
+    parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: dispatch capacity factor")
+    parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier")
     # MST: Modular Sub-Transformer
     parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
     parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers")

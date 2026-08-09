@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo monarch"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo monarch mol"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -110,7 +110,7 @@ json.dump(s,open('$STATE','w'),indent=2)"
 COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
-  --sequence-len 2048 --target-param-data-ratio 10.5 \
+  --sequence-len ${SEQ_LEN:-2048} --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
   --research-dim -1 --target-tokens -1 --target-active-params 0 \
   --save-every 200 --eval-every -1"
@@ -127,6 +127,15 @@ mst_config() {                            # mst_config <sub_dim> <n_subs>
       --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
       --mst-transition-width-mult $2.0 --mst-sub-lr-scale 2.0 \
       --mst-multi-scale-windows 1"
+}
+
+# mol_config() emits the MoL baseline's flags (arXiv:2605.09516). Their notation is
+# S+KofN, so mol_config 15 1 3 <d> is their headline 1+3of15: one always-active shared
+# block plus top-3 of 14 routed, four active blocks per token.
+mol_config() {                            # mol_config <n_blocks> <n_shared> <topk> <thin_dim>
+    echo "--use-mol 1 --models base --mol-n-blocks $1 --mol-n-shared $2 \
+      --mol-topk $3 --mol-thin-dim $4 --mol-head-dim 64 --mol-ffn-mult 4.0 \
+      --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 0"
 }
 
 # Unlike p32, seeds are passed explicitly so the arms are reproducible. Note that
@@ -181,12 +190,12 @@ echo "════════════════════════�
 # The anchor. Without a same-sweep baseline the deltas are not readable, because
 # the reference 1.0510 is a single seed from a different sweep.
 # The two dense controls duplicate p32's; skip this group if you already have them.
-if has control; then
-    echo ""; echo "### CONTROL: anchors for every delta below"
+#if has control; then
+#    echo ""; echo "### CONTROL: anchors for every delta below"
 #    run CTRL_mst_full   "$DEPTH" $MST_FULL
-    run CTRL_dense_hd128 "$DEPTH" --models base
+#    run CTRL_dense_hd128 "$DEPTH" --models base
 #    run CTRL_dense_hd32  "$DEPTH" --models base --head-dim 32
-fi
+#fi
 
 # ---------------------------------------------------------------- combo
 # Runs before the singles on purpose: this is the go/no-go. G1 is carried at both
@@ -449,45 +458,45 @@ fi
 # SP_k2_noaux exists because the prior routing attempt (free_for_all + topk1) collapsed to
 # uniform on replicate seeds (router_entropy = log(8), load_balance = 1.0). If the aux loss
 # is what prevents that, this arm should be visibly worse or unstable across its two seeds.
-if has sparse; then
-    echo ""; echo "### SPARSE: conditional stream execution (Stage 16, Phase A)"
-    SEEDS_SAVE="$SEEDS"; SEEDS=1
-    if check_divisible "$SUB_DIM" 64; then
-        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        # ALL the SP_* results are invalid and these are retagged v2. The router they
-        # measured had three defects, found by wiring stream_load into compute_diagnostics
-        # (route_entropy_* is the TRANSITION router and says nothing about the gate):
-        #
-        #   1. Zero-init WAS the collapsed state. Every logit at exactly 0, topk breaking
-        #      ties by index, so the same k streams won for every token before training,
-        #      and the losers' FFNs got exactly zero gradient. Now small random init.
-        #   2. The aux loss was not well posed. Switch's N*sum(f_i*P_i) needs both factors
-        #      on the simplex; independent sigmoids have no such constraint, so it was
-        #      minimized by pushing every gate to zero. It balanced nothing and cost
-        #      +0.0105 bpb. The gate is a softmax now and the term is correct.
-        #   3. No exploration. An unselected stream gets no FFN gradient, stays at init,
-        #      stays unselected. Noisy top-k breaks that spiral.
-        #
-        # Measured over 300 steps at depth 4 (worst-layer min load / ideal, higher better):
-        #   correct aux, no noise   0.273     aux + noise 0.3   0.484
-        #   aux + noise 1.0         0.586     NO AUX + noise    0.000, 5/16 streams dead
-        #
-        # So the aux term is necessary after all; it was the formulation that was wrong.
-        # Note the no-aux arm had the LOWEST training loss while being the most collapsed,
-        # which is exactly why the load diagnostic has to be read alongside bpb.
+#if has sparse; then
+#    echo ""; echo "### SPARSE: conditional stream execution (Stage 16, Phase A)"
+#    SEEDS_SAVE="$SEEDS"; SEEDS=1
+#    if check_divisible "$SUB_DIM" 64; then
+#        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+#        # ALL the SP_* results are invalid and these are retagged v2. The router they
+#        # measured had three defects, found by wiring stream_load into compute_diagnostics
+#        # (route_entropy_* is the TRANSITION router and says nothing about the gate):
+#        #
+#        #   1. Zero-init WAS the collapsed state. Every logit at exactly 0, topk breaking
+#        #      ties by index, so the same k streams won for every token before training,
+#        #      and the losers' FFNs got exactly zero gradient. Now small random init.
+#        #   2. The aux loss was not well posed. Switch's N*sum(f_i*P_i) needs both factors
+#        #      on the simplex; independent sigmoids have no such constraint, so it was
+#        #      minimized by pushing every gate to zero. It balanced nothing and cost
+#        #      +0.0105 bpb. The gate is a softmax now and the term is correct.
+#        #   3. No exploration. An unselected stream gets no FFN gradient, stays at init,
+#        #      stays unselected. Noisy top-k breaks that spiral.
+#        #
+#        # Measured over 300 steps at depth 4 (worst-layer min load / ideal, higher better):
+#        #   correct aux, no noise   0.273     aux + noise 0.3   0.484
+#        #   aux + noise 1.0         0.586     NO AUX + noise    0.000, 5/16 streams dead
+#        #
+#        # So the aux term is necessary after all; it was the formulation that was wrong.
+#        # Note the no-aux arm had the LOWEST training loss while being the most collapsed,
+#        # which is exactly why the load diagnostic has to be read alongside bpb.
 #        run SP2_k2         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0
-        run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
+#        run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
 #        run SP2_k3         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-noise 1.0
 #        # Isolate the two mechanisms.
 #        run SP2_k2_nonoise "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 0.0
 #        run SP2_k2_noaux   "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0 \
 #            --mst-stream-router-aux 0
-        # Control, reusing its completed seeds. Flags must stay byte-identical.
+#        # Control, reusing its completed seeds. Flags must stay byte-identical.
 #        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
-    fi
-    SEEDS="$SEEDS_SAVE"
-fi
-
+#    fi
+#    SEEDS="$SEEDS_SAVE"
+#fi
+#
 # ---------------------------------------------------------------- shampoo
 # Stage 17: block-diagonal Shampoo. This is the architecture claim expressed as an
 # optimizer. Preconditioning a dense D x D weight costs O(D^3); MST's stacked per-stream
@@ -547,20 +556,20 @@ fi
 # mechanisms fight, since routing pays when streams are differentiated and mixing makes
 # them interchangeable. Score the winner against the k=1 sparse arm (1.194x at L=16),
 # not just against the control.
-if has monarch; then
-    echo ""; echo "### MONARCH: hidden-axis permutation inside the FFN (Stage 18)"
-    SEEDS_SAVE="$SEEDS"; SEEDS=2
-    if check_divisible "$SUB_DIM" 64; then
-        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        run MON_shuffle    "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle
-        run MON_roll       "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch roll
-        run MON_shuffle_k1 "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle \
-            --mst-stream-topk 1 --mst-stream-router-noise 1.0
-        # Control, reusing its completed seeds. Flags must stay byte-identical.
-        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
-    fi
-    SEEDS="$SEEDS_SAVE"
-fi
+#if has monarch; then
+#    echo ""; echo "### MONARCH: hidden-axis permutation inside the FFN (Stage 18)"
+#    SEEDS_SAVE="$SEEDS"; SEEDS=2
+#    if check_divisible "$SUB_DIM" 64; then
+#        BEST="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+#        run MON_shuffle    "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle
+#        run MON_roll       "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch roll
+#        run MON_shuffle_k1 "$DEPTH" $MST_FULL $BEST --mst-ffn-monarch shuffle \
+#            --mst-stream-topk 1 --mst-stream-router-noise 1.0
+#        # Control, reusing its completed seeds. Flags must stay byte-identical.
+#        run CPL_dense_wo "$DEPTH" $MST_FULL $BEST
+#    fi
+#    SEEDS="$SEEDS_SAVE"
+#fi
 
 # ---------------------------------------------------------------- d16
 # Opt-in, and single seed: an L=16 grid costs roughly 40x an L=8 one. Run this
@@ -635,6 +644,118 @@ if has d32; then
         run D32_sp2_k1   "$D32" $MST_FULL_32 $BEST32 \
             --mst-stream-topk 1 --mst-stream-router-noise 1.0
     fi
+    SEEDS="$SEEDS_SAVE"
+fi
+
+# ---------------------------------------------------------------- mol
+# MoL's topology at the depth being swept, which is where it is actually affordable.
+# d_thin is set to SUB_DIM = MODEL_DIM/4, so MoL's own design rule from their Appendix I
+# (K_active x d_expert ~ d_model) is satisfied automatically at every depth, and the
+# active width matches MST's N=4 streams exactly.
+#
+# ══ THE TOKEN BUDGET IS DELIBERATELY NOT ADJUSTED FOR MoL. ══
+# Every arm here gets 10.5 x (transformer_matrices + lm_head), the same rule dense and
+# MST get, with --target-active-params 0. MoL draws a bigger budget than MST only
+# because it genuinely has ~3.7x more transformer matrices. base_train.py:1509 offers
+# --target-active-params 1, which would discount its 14 inactive blocks and cut MoL's
+# budget ~3.2x, and we do NOT use it, for three reasons:
+#   1. Their Appendix J pre-registers the objection: at 20B tokens MoL saw "only 9.6
+#      tokens/param, well below Chinchilla-optimal (~20x)", and names undertraining as a
+#      candidate cause of their own iso-total gap. Starving them further walks into it.
+#   2. It is not symmetric in effect: MoL loses 3.2x, MST_sp2_k1 only 1.3x, dense none.
+#   3. The Pareto axis already prices it. A larger token budget IS larger training FLOPs,
+#      and the claim is bpb-vs-FLOPs. Cutting tokens as well as charging the FLOPs would
+#      count the same penalty twice.
+# MoL is free to spend more compute; it just has to buy proportionate bpb.
+#
+# MoL's compute disadvantage COMPOUNDS with scale (training FLOPs vs MST_sp2_k1 at the
+# same geometry): 1.89x at L=8, 3.44x at L=16, 4.95x at L=24. So L=8 is the conservative
+# place to test this, not a concession: if MST wins here it wins by more at 1.3B.
+if has mol; then
+    echo ""; echo "### MOL: their topology at this depth, against MST's best"
+    if check_divisible "$SUB_DIM" 64; then
+        # Their headline topology: 1 shared softmax + top-3 of 14 routed = 4 active.
+        run MOL_1plus3of15 "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM")
+        # Their Table 1 configuration: K=5 top-3, no shared block, dense FFN thin blocks.
+        run MOL_3of5       "$DEPTH" $(mol_config 5 0 3 "$SUB_DIM")
+        # All-active, to separate "narrow blocks" from "routing between them". Their
+        # Table 1 prices selective activation at 0.99 PPL over uniform composition.
+        run MOL_allactive  "$DEPTH" $(mol_config 4 4 1 "$SUB_DIM")
+    fi
+fi
+
+# ---------------------------------------------------------------- m13
+# MoL at ITS OWN headline geometry, with MST beside it. Their §4.2 1.3B setting:
+# d_model=2048, 24 layers, d_thin=512, 15 blocks (1 shared softmax + 14 routed,
+# top-3 = 4 active per token), d_ff,thin=2048. Published as 2.08B total / 0.61B
+# active on FineWeb-Edu 20B tokens, 102 hours on 4xH200.
+#
+# The geometry is pinned with --model-dim regardless of the swept depth, like d16
+# and d32, because 24 layers at d_model=2048 does not satisfy p08's aspect-ratio
+# rule (24*64 = 1536, not 2048).
+#
+# ══ COST. READ THIS BEFORE LAUNCHING. ══
+# Sized from estimate_flops() at this geometry (active training FLOPs):
+#     M13_mol      8.77e19   21.2B tokens
+#     M13_mst      2.34e19    6.3B tokens
+#     M13_mst_k1   1.77e19    6.3B tokens
+#     M13_dense    1.19e20   14.1B tokens   (commented out, see below)
+# The three enabled arms total ~1.3e20, which is order 100-300 GPU-hours on
+# H100/H200-class hardware. The dense arm alone would nearly double that, and it is
+# NOT needed: the Pareto multiplier is computed by inverting the dense power-law fit
+# (6.711 x^-0.1004), which is how every other number in this project was scored.
+# Uncomment it only if a reviewer demands a same-sweep dense anchor at this scale.
+#
+# IF THAT IS TOO EXPENSIVE, USE `--group mol`, NOT A SMALLER TOKEN BUDGET. The same
+# topology at L=8 costs 1/40th of this and is the conservative test rather than a
+# weaker one, because MoL's compute disadvantage grows with scale (1.89x at L=8,
+# 3.44x at L=16, 4.95x here). Cutting MoL's tokens instead would rig the comparison;
+# see the `mol` group header for why.
+#
+# RUN ORDER MATTERS. The MST arms are ~4x cheaper than MoL and are the ones our
+# claim rests on, so they come first: if they fail or the router collapses at this
+# width, that is worth knowing before spending the MoL budget.
+#
+# ══ THESE ARE NOT COMPARABLE TO THEIR PUBLISHED TABLE 5. ══
+# Deliberately, and it must be said in the paper. Our vocab is 65536 against their
+# 50257, our lm_head is untied where theirs is tied, we carry value-embedding tables
+# they do not, the data is ours not FineWeb-Edu, and the token budget is per-arm
+# compute-optimal (10.5 x scaling params) rather than a fixed 20B for everyone. So
+# our MoL prints ~2.56B total / ~1.18B active, not 2.08B / 0.61B. The comparison
+# here is internal and controlled: MoL against MST under identical conditions.
+# tests/test_mol.py is what pins fidelity to their published numbers, not this group.
+#
+# Set SEQ_LEN=4096 to match their T; the default 2048 keeps these on the same axis
+# as the rest of p08. Their routed-block attention advantage grows with T, so 2048
+# is the conservative choice for us and the unfavourable one for them.
+#
+# ALREADY KNOWN WITHOUT TRAINING, from estimate_flops() at this exact geometry:
+# MoL costs 1.487e10 FLOPs/token against MST's 3.736e9 (4.0x), and 4.13e9 against
+# 2.83e9 even after crediting MoL's routing and charging MST nothing for its own
+# (1.46x). On training FLOPs MoL is 4.95x MST_k1. This group asks whether that
+# 5x compute gap is bought back in bpb, which is the only way MoL wins.
+if has m13; then
+    echo ""; echo "### M13: MoL at its published 1.3B geometry, against MST"
+    L13=24
+    D13=2048
+    DTHIN13=512
+    GEOM13="--model-dim $D13 --head-dim 128"
+    MST13="$(mst_config "$DTHIN13" 4)"
+    BEST13="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+    SEEDS_SAVE="$SEEDS"; SEEDS=1
+    # Cheapest first, and the arm the paper rests on.
+    run M13_mst_k1 "$L13" $GEOM13 $MST13 $BEST13 \
+        --mst-stream-topk 1 --mst-stream-router-noise 1.0
+    # Non-sparse MST, so the sparse delta is isolated at this scale too.
+    run M13_mst    "$L13" $GEOM13 $MST13 $BEST13
+    # Their headline topology, softmax in the routed blocks rather than Gated
+    # DeltaNet (see OPEN_QUESTIONS.md Q1: their §5.3 dense-DeltaNet control matches
+    # dense softmax within 0.01 PPL, but their Table 2 prices DeltaNet at 0.85 PPL
+    # inside MoL, so this is their architecture and not their best number).
+    run M13_mol    "$L13" $GEOM13 $(mol_config 15 1 3 "$DTHIN13")
+    # Same-sweep dense anchor. Nearly doubles the group's cost; the fitted dense
+    # curve makes it optional. Uncomment only if you need it in-sweep.
+#    run M13_dense  "$L13" $GEOM13 --models base
     SEEDS="$SEEDS_SAVE"
 fi
 

@@ -372,6 +372,21 @@ class GPTConfig:
     # Phase 30: LayerNorm ablation
     remix_disable_ln_basis: int = 0           # 30B: 1=replace intermediate LayerNorm in RemixedLinear with Identity
     dense_intermediate_ln: int = 0            # 30A: 1=add intermediate LayerNorm to dense linear projections
+    # ── MoL: Mixture of Layers (Ternovtsii & Bilak 2026, arXiv:2605.09516) ──
+    # Reimplemented as a baseline for MST; see nanochat/mol.py. Their notation is
+    # S+KofN: mol_n_shared + mol_topk of mol_n_blocks.
+    use_mol: bool = False                      # master switch for MoL mode
+    mol_n_blocks: int = 5                      # N = thin blocks per split stage
+    mol_n_shared: int = 1                      # S = always-active blocks (full attention)
+    mol_topk: int = 3                          # k = routed blocks selected per token
+    mol_thin_dim: int = 256                    # d_thin
+    mol_head_dim: int = 64                     # pinned across all block widths (their §2.2)
+    mol_ffn_mult: float = 4.0                  # d_ff,thin = mult * d_thin
+    mol_router_aux: float = 0.05               # CV² load-balance weight (their α)
+    mol_routed_attn: str = 'softmax'           # 'softmax'; 'deltanet' is phase 2
+    mol_dispatch: int = 0                      # 0=masked, 1=gather/scatter
+    mol_capacity_factor: float = 1.0           # per-block capacity when dispatching
+    mol_block_lr_scale: float = 1.0            # per-thin-block LR multiplier (their recipe has none)
     # ── MST: Modular Sub-Transformer Architecture ──
     use_mst: bool = False                      # master switch for MST mode
     mst_n_subs: int = 8                        # N = number of sub-transformers per layer
@@ -682,6 +697,10 @@ RESEARCH_ALLOWED_KEYS = {
     "cond_router_rank", "cond_router_act", "cond_live_init", "cond_chunk_size",
     "cond_mult_impl", "cond_mult_scale",
     "cond_attn_projs", "cond_layer_frac",
+    # MoL: Mixture of Layers (baseline, arXiv:2605.09516)
+    "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
+    "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
+    "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",

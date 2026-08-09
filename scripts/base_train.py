@@ -208,6 +208,19 @@ parser.add_argument("--remix-template-block-diag", type=int, default=0, choices=
 parser.add_argument("--remix-template-lr-scale", type=float, default=1.0, help="29: LR multiplier for template_bank Muon group (e.g. 2.0 for 2× LR, MST-inspired)")
 parser.add_argument("--p29-grad-equalize", type=int, default=0, choices=[0, 1], help="29: per-template gradient equalization to prevent template collapse (MST-inspired)")
 # ── MST: Modular Sub-Transformer ──
+# MoL baseline (Ternovtsii & Bilak 2026, arXiv:2605.09516). Their notation is S+KofN.
+parser.add_argument("--use-mol", type=int, default=0, choices=[0, 1], help="MoL: enable Mixture-of-Layers baseline")
+parser.add_argument("--mol-n-blocks", type=int, default=5, help="MoL: N thin blocks per split stage")
+parser.add_argument("--mol-n-shared", type=int, default=1, help="MoL: S always-active blocks (full attention)")
+parser.add_argument("--mol-topk", type=int, default=3, help="MoL: k routed blocks selected per token")
+parser.add_argument("--mol-thin-dim", type=int, default=256, help="MoL: d_thin")
+parser.add_argument("--mol-head-dim", type=int, default=64, help="MoL: head dim, pinned across block widths")
+parser.add_argument("--mol-ffn-mult", type=float, default=4.0, help="MoL: d_ff,thin = mult * d_thin")
+parser.add_argument("--mol-router-aux", type=float, default=0.05, help="MoL: CV^2 load-balance weight (their alpha)")
+parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention (softmax; deltanet is phase 2)")
+parser.add_argument("--mol-dispatch", type=int, default=0, choices=[0, 1], help="MoL: 0=masked, 1=gather/scatter")
+parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: per-block capacity when dispatching")
+parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier (fairness ablation; their recipe has none)")
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
 parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension d per sub-transformer")
@@ -1029,6 +1042,18 @@ def build_model_meta(depth):
         p29_template_lr_scale=getattr(args, 'remix_template_lr_scale', 1.0),
         p29_grad_equalize=getattr(args, 'p29_grad_equalize', 0),
         # MST: Modular Sub-Transformer
+        use_mol=bool(getattr(args, 'use_mol', 0)),
+        mol_n_blocks=getattr(args, 'mol_n_blocks', 5),
+        mol_n_shared=getattr(args, 'mol_n_shared', 1),
+        mol_topk=getattr(args, 'mol_topk', 3),
+        mol_thin_dim=getattr(args, 'mol_thin_dim', 256),
+        mol_head_dim=getattr(args, 'mol_head_dim', 64),
+        mol_ffn_mult=getattr(args, 'mol_ffn_mult', 4.0),
+        mol_router_aux=getattr(args, 'mol_router_aux', 0.05),
+        mol_routed_attn=getattr(args, 'mol_routed_attn', 'softmax'),
+        mol_dispatch=getattr(args, 'mol_dispatch', 0),
+        mol_capacity_factor=getattr(args, 'mol_capacity_factor', 1.0),
+        mol_block_lr_scale=getattr(args, 'mol_block_lr_scale', 1.0),
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
         mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
@@ -1181,6 +1206,9 @@ def build_model_meta(depth):
         if config.use_eet:
             from nanochat.eet import EarlyExitGPT
             model_meta = EarlyExitGPT(config)
+        elif config.use_mol:
+            from nanochat.mol import MoL
+            model_meta = MoL(config)
         elif config.use_mst:
             from nanochat.mst import MST
             model_meta = MST(config)
