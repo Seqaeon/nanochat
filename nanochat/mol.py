@@ -56,33 +56,48 @@ _SHADOW_OVERRIDDEN = frozenset({
 })
 
 
-def _block_config_knobs():
-    """Every config field Block, CausalSelfAttention and MLP branch on.
+# Flags that on their own change what module Block/CausalSelfAttention/MLP builds,
+# mapped to the value at which they are OFF.
+#
+# Checked against the OFF value, NOT against the GPTConfig default. base_train sets
+# some fields to sentinels that differ from the dataclass default while meaning
+# "inactive" (`p23_std_moe_topk=-1` is the one that took down a whole sweep), so a
+# default-comparison guard false-positives on a perfectly ordinary run.
+_BLOCK_GATES = {
+    'dense_intermediate_ln': 0,
+    'p18_dynamic_activation': 0, 'p18_layer_drop': 0.0, 'p18_mixture_norm': 0,
+    'p18_per_channel_scale': 0,
+    'p19_attn_logit_bias': 0, 'p19_head_importance': 0, 'p19_residual_gate': 0,
+    'p19_spectral_reparam': 0, 'p19_ve_bias': 0, 'p19_weight_noise': 0.0,
+    'p20_adwi': 0, 'p20_dgcr_branches': 0, 'p20_hrcs_scale': 0,
+    'p20_lrcfb_branches': 0, 'p20_lswr_scale': 0, 'p20_mone_experts': 0,
+    'p20_ncea_branches': 0,
+    'p21_per_attn': 0, 'p21_per_experts': 0,
+    'p22_attn_moe_route': 'none',
+    'p23_std_moe_experts': 0,
+    'p34_ffn_last_depth': 1, 'p34_ffn_no_ffn_replacement': 'none',
+    'p34_ffn_schedule': '',
+    'p36_swiglu_ffn': 0,
+}
 
-    Derived by inspection of gpt.py rather than hardcoded, so that a research flag
-    added to Block later cannot quietly leak into MoL's thin blocks. Kept as an
-    explicit tuple because gpt.py is 10k lines and re-parsing it at import time
-    would be worse; test_mol.py::test_shadow_guard_covers_every_block_knob
-    re-derives it from source and fails if this list drifts.
-    """
-    return (
-        'dense_intermediate_ln',
-        'p18_dynamic_activation', 'p18_layer_drop', 'p18_mixture_norm',
-        'p18_per_channel_scale',
-        'p19_attn_logit_bias', 'p19_head_importance', 'p19_residual_gate',
-        'p19_spectral_reparam', 'p19_ve_bias', 'p19_weight_noise',
-        'p20_adwi', 'p20_dgcr_aux_weight', 'p20_dgcr_branches', 'p20_hrcs_scale',
-        'p20_lrcfb_branches', 'p20_lrcfb_learned', 'p20_lrcfb_narrow',
-        'p20_lrcfb_topk', 'p20_lswr_planes', 'p20_lswr_scale', 'p20_mone_experts',
-        'p20_mone_frozen', 'p20_mone_narrow', 'p20_mone_topk', 'p20_ncea_branches',
-        'p20_ncea_eps',
-        'p21_per_attn', 'p21_per_experts', 'p21_per_learned', 'p21_per_topk',
-        'p22_attn_moe_route',
-        'p23_quantile_route', 'p23_std_moe_aux_weight', 'p23_std_moe_experts',
-        'p23_std_moe_topk',
-        'p34_ffn_last_depth', 'p34_ffn_no_ffn_replacement', 'p34_ffn_schedule',
-        'p36_swiglu_ffn',
-    )
+# Read only inside a branch that one of the gates above has already opened, so their
+# value cannot affect a thin block while every gate is off. Listed explicitly rather
+# than ignored, so that test_mol.py's coverage check can prove every knob gpt.Block
+# reads is either gated or a gate.
+_BLOCK_GATED_PARAMS = frozenset({
+    'p20_dgcr_aux_weight',
+    'p20_lrcfb_learned', 'p20_lrcfb_narrow', 'p20_lrcfb_topk',
+    'p20_lswr_planes',
+    'p20_mone_frozen', 'p20_mone_narrow', 'p20_mone_topk',
+    'p20_ncea_eps',
+    'p21_per_learned', 'p21_per_topk',
+    'p23_quantile_route', 'p23_std_moe_aux_weight', 'p23_std_moe_topk',
+})
+
+
+def _block_config_knobs():
+    """Every config field Block, CausalSelfAttention and MLP branch on."""
+    return tuple(sorted(set(_BLOCK_GATES) | _BLOCK_GATED_PARAMS))
 
 
 def make_thin_config(config):
@@ -103,20 +118,22 @@ def make_thin_config(config):
         f"MoL pins d_head across all block widths")
     n_head = d_thin // head_dim
 
-    defaults = GPTConfig()
     bad = []
-    for name in _block_config_knobs():
-        if name in _SHADOW_OVERRIDDEN:
+    for name, off in _BLOCK_GATES.items():
+        if name in _SHADOW_OVERRIDDEN or not hasattr(config, name):
             continue
-        if not hasattr(defaults, name):
-            continue
-        if getattr(config, name) != getattr(defaults, name):
-            bad.append(f"{name}={getattr(config, name)!r} (default {getattr(defaults, name)!r})")
+        got = getattr(config, name)
+        if isinstance(off, str):
+            enabled = str(got).strip() != off
+        else:
+            enabled = bool(got) and got != off
+        if enabled:
+            bad.append(f"{name}={got!r} (off={off!r})")
     assert not bad, (
         "MoL builds its thin blocks from gpt.Block via a shadow config, which "
-        "inherits every research flag. These are not at their defaults, so a thin "
-        "block would no longer match the dense baseline and the comparison would "
-        "be meaningless: " + ", ".join(bad))
+        "inherits every research flag. These are ENABLED, so a thin block would no "
+        "longer match the dense baseline and the comparison would be meaningless: "
+        + ", ".join(bad))
 
     return replace(
         config,

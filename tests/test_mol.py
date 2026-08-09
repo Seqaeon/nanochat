@@ -13,7 +13,8 @@ import torch.nn as nn
 
 from nanochat.gpt import GPTConfig
 from nanochat.gpt import norm as mol_norm
-from nanochat.mol import MoL, ThinBlock, _block_config_knobs, make_thin_config
+from nanochat.mol import (MoL, ThinBlock, _BLOCK_GATES, _block_config_knobs,
+                         make_thin_config)
 
 
 def make_config(**ov):
@@ -272,8 +273,47 @@ def test_shadow_guard_covers_every_block_knob():
     geometry = {'n_embd', 'n_head', 'n_kv_head', 'n_layer'}
     missing = (found - geometry) - set(_block_config_knobs())
     assert not missing, (
-        f"gpt.Block reads config fields the MoL shadow guard does not check: {sorted(missing)}. "
-        f"Add them to _block_config_knobs() in nanochat/mol.py")
+        f"gpt.Block reads config fields the MoL shadow guard does not classify: "
+        f"{sorted(missing)}. Add each to _BLOCK_GATES (with its off value) or to "
+        f"_BLOCK_GATED_PARAMS in nanochat/mol.py")
+
+
+def test_guard_passes_for_base_train_argparse_defaults():
+    """The guard must not fire on an ordinary run. It shipped broken and did.
+
+    base_train sets some fields to sentinels that differ from the GPTConfig default
+    while meaning "inactive". `p23_std_moe_topk` defaults to -1 there against 1 in
+    the dataclass, and the original guard compared against dataclass defaults, so
+    every MoL arm of the sweep died at model construction on a flag that cannot
+    affect a thin block at all (it is inert unless p23_std_moe_experts > 0).
+
+    Driven off base_train's real parser defaults for EVERY knob gpt.Block reads,
+    gates and gated params alike, so any future sentinel is caught here rather than
+    on a GPU.
+    """
+    import ast
+    tree = ast.parse(open('scripts/base_train.py').read())
+    defaults = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and getattr(node.func, 'attr', '') == 'add_argument'):
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        name = node.args[0].value
+        if not isinstance(name, str) or not name.startswith('--'):
+            continue
+        for kw in node.keywords:
+            if kw.arg == 'default':
+                try:
+                    defaults[name[2:].replace('-', '_')] = ast.literal_eval(kw.value)
+                except ValueError:
+                    pass
+
+    knobs = {k: v for k, v in defaults.items()
+             if k in _block_config_knobs() and hasattr(GPTConfig(), k)}
+    assert 'p23_std_moe_topk' in knobs, "the regression this test exists for is not covered"
+    m = build_meta(**knobs)          # must not raise
+    assert m.d_thin == 128
 
 
 def test_head_dim_is_pinned_across_widths():
