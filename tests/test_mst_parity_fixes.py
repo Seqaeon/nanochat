@@ -990,3 +990,42 @@ def test_ve_map_rejects_conflicting_and_useless_settings():
         build_meta(mst_ve_map=1, mst_per_stream_ve=1)
     with pytest.raises(AssertionError, match="must be <"):
         build_meta(mst_ve_map=1, mst_ve_map_rank=999)
+
+
+# ── MoL's S+KofN topology for MST ────────────────────────────────────────────
+
+def test_stream_shared_keeps_the_first_S_always_active():
+    """MoL's 1+3of15: S always-active streams, top-k over the remaining N-S.
+
+    MST has no attention-coverage problem to fix here (it never gates attention),
+    so a shared stream is pure always-on capacity, not a repair. The arm exists to
+    measure whether that is worth anything.
+    """
+    torch.manual_seed(0)
+    N, k, S = 8, 2, 1
+    with contextlib.redirect_stdout(io.StringIO()):
+        m = MST(make_config(D=512, mst_n_subs=N, mst_sub_dim=512 // N,
+                            mst_sub_head_dim=64, mst_wo_mode='dense',
+                            mst_compose_windows=1, mst_stream_topk=k,
+                            mst_stream_shared=S, mst_stream_router_noise=1.0))
+        m.init_weights()
+    m.train()
+    w, _ = m.layers[0]._stream_gate(torch.randn(2, 8, N, 512 // N))
+    act = (w > 0).float()
+    assert act.sum(-1).unique().tolist() == [float(S + k)]
+    assert act[..., :S].min() == 1.0, "shared streams must always be on"
+    assert act[..., S:].sum(-1).unique().tolist() == [float(k)], \
+        "top-k must run over the routed pool only"
+    assert set(w.unique().tolist()) <= {0.0, 1.0}, "the gate value stays hard 0/1"
+
+
+def test_stream_shared_rejects_impossible_splits():
+    with pytest.raises(AssertionError, match="mst_stream_shared"):
+        build_meta(mst_n_subs=N_SUBS, mst_stream_shared=N_SUBS)
+    with pytest.raises(AssertionError, match="routed pool"):
+        build_meta(mst_n_subs=N_SUBS, mst_stream_shared=2, mst_stream_topk=3)
+
+
+def test_stream_shared_is_off_by_default():
+    m = build_meta(mst_stream_topk=2)
+    assert m.layers[0]._stream_shared == 0

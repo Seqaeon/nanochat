@@ -501,6 +501,7 @@ class GPTConfig:
     # its streams are already independent modules with their own attention AND FFN,
     # i.e. mixture-of-experts where the expert is a whole transformer block.
     mst_stream_topk: int = 0                        # k of N streams active per token (0 = dense, today's model).
+    mst_stream_shared: int = 0                 # S always-active streams; top-k runs over the remaining N-S
                                                     #   FFN gating at N=4: k=2 is ~19% of total FLOPs, k=1 ~28%.
     mst_stream_router_aux: float = 0.01             # Switch-style load-balancing weight. A prior attempt
                                                     #   (free_for_all + topk1) collapsed to uniform routing on
@@ -736,6 +737,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_talking_heads", "mst_wo_mode",
     # MST Stage 16: conditional stream execution
     "mst_stream_topk", "mst_stream_router_aux", "mst_stream_gate_attn",
+    "mst_stream_shared",
     "mst_stream_router_noise", "mst_stream_dispatch", "mst_stream_capacity_factor",
     # MST Stage 17: block-diagonal Shampoo
     "mst_shampoo", "mst_precond_every", "mst_shampoo_beta",

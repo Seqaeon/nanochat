@@ -372,7 +372,7 @@ while [[ $# -gt 0 ]]; do
         --mst-channel-mix|--mst-channel-mix-site|\
         --mst-distribute-block-muon|--mst-trans-spectral-lr|\
         --mst-talking-heads|--mst-wo-mode|\
-        --mst-stream-topk|--mst-stream-router-aux|--mst-stream-gate-attn|\
+        --mst-stream-topk|--mst-stream-shared|--mst-stream-router-aux|--mst-stream-gate-attn|\
         --mst-stream-router-noise|--mst-stream-dispatch|--mst-stream-capacity-factor|\
         --mst-shampoo|--mst-precond-every|--mst-shampoo-beta|\
         --mst-ffn-monarch|\

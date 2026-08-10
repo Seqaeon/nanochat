@@ -359,6 +359,7 @@ parser.add_argument("--mst-wo-mode", type=str, default='block', choices=['block'
                     help="MST F5: attention output projection. block=per-stream (default), "
                          "dense=full D x D over concatenated outputs (+20% layer params)")
 # MST Stage 16: conditional stream execution
+parser.add_argument("--mst-stream-shared", type=int, default=0, help="MST: S always-active streams; top-k runs over the remaining N-S (MoL S+KofN topology)")
 parser.add_argument("--mst-stream-topk", type=int, default=0,
                     help="MST: activate k of N streams per token (0=dense). Gates the FFN, so "
                          "k=2 of 4 is ~19%% of total FLOPs and k=1 ~28%%")
@@ -1129,6 +1130,7 @@ def build_model_meta(depth):
         mst_wo_mode=getattr(args, 'mst_wo_mode', 'block'),
         # Stage 16: conditional stream execution
         mst_stream_topk=getattr(args, 'mst_stream_topk', 0),
+        mst_stream_shared=getattr(args, 'mst_stream_shared', 0),
         mst_stream_router_aux=getattr(args, 'mst_stream_router_aux', 0.01),
         mst_stream_router_noise=getattr(args, 'mst_stream_router_noise', 0.0),
         mst_stream_dispatch=getattr(args, 'mst_stream_dispatch', 0),

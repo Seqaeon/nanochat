@@ -421,6 +421,7 @@ def run_training_sweep(args):
         "--mst-talking-heads", str(getattr(args, 'mst_talking_heads', 0)),
         "--mst-wo-mode", str(getattr(args, 'mst_wo_mode', 'block')),
         "--mst-stream-topk", str(getattr(args, 'mst_stream_topk', 0)),
+        "--mst-stream-shared", str(getattr(args, 'mst_stream_shared', 0)),
         "--mst-stream-router-aux", str(getattr(args, 'mst_stream_router_aux', 0.01)),
         "--mst-stream-router-noise", str(getattr(args, 'mst_stream_router_noise', 0.0)),
         "--mst-stream-dispatch", str(getattr(args, 'mst_stream_dispatch', 0)),
@@ -1130,6 +1131,7 @@ if __name__ == "__main__":
     parser.add_argument("--mst-wo-mode", type=str, default='block', choices=['block', 'dense'],
                         help="F5: attention output projection, block or dense")
     # Stage 16: conditional stream execution
+    parser.add_argument("--mst-stream-shared", type=int, default=0, help="MST: S always-active streams")
     parser.add_argument("--mst-stream-topk", type=int, default=0,
                         help="activate k of N streams per token (0=dense)")
     parser.add_argument("--mst-stream-router-aux", type=float, default=0.01,

@@ -902,6 +902,12 @@ class BatchedMSTLayer(nn.Module):
         self._stream_topk = int(getattr(config, 'mst_stream_topk', 0))
         assert 0 <= self._stream_topk <= N, \
             f"mst_stream_topk must be in [0, {N}], got {self._stream_topk}"
+        self._stream_shared = int(getattr(config, 'mst_stream_shared', 0))
+        assert 0 <= self._stream_shared < N, \
+            f"mst_stream_shared must be in [0, {N}), got {self._stream_shared}"
+        assert self._stream_topk <= N - self._stream_shared, \
+            (f"mst_stream_topk ({self._stream_topk}) must fit the routed pool "
+             f"N - S = {N - self._stream_shared}")
         self._stream_router_aux = float(getattr(config, 'mst_stream_router_aux', 0.01))
         self._stream_router_noise = float(getattr(config, 'mst_stream_router_noise', 0.0))
         # Stage 18: Monarch-structured FFN. A permutation on the hidden axis between the
@@ -1136,8 +1142,20 @@ class BatchedMSTLayer(nn.Module):
             sel_logits = logits + self._stream_router_noise * torch.randn_like(logits)
 
         probs = F.softmax(logits, dim=-1)
-        topk_idx = sel_logits.topk(k, dim=-1).indices
-        mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
+        S = self._stream_shared
+        if S > 0:
+            # MoL's S+KofN topology: the first S streams are always active and the
+            # top-k runs over the remaining N-S only, so they are not router candidates.
+            # MST has no attention-coverage problem to solve here (it never gates
+            # attention), so a shared stream is always-on capacity rather than a fix;
+            # whether that is worth anything is exactly what the arm measures.
+            routed = sel_logits[..., S:]
+            topk_idx = routed.topk(k, dim=-1).indices + S
+            mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
+            mask[..., :S] = 1.0
+        else:
+            topk_idx = sel_logits.topk(k, dim=-1).indices
+            mask = torch.zeros_like(logits).scatter_(-1, topk_idx, 1.0)
         # Parenthesized so the zero is formed first: `mask + probs - probs.detach()` would
         # evaluate as `(mask + probs) - probs` and lose a ULP, giving 0.99999994 instead of
         # a gate that is exactly 0 or 1.
