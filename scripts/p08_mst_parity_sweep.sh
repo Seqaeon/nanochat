@@ -743,7 +743,7 @@ if has mol; then
 #        # The cost is not symmetric and that is a real architectural consequence, not
 #        # unfairness: MST's per-stream table is N*d = D wide, MoL's per-block table is
 #        # n_blocks * d_thin = 3.75x D, and it takes MoL from 89.7M to 324.6M at L=8.
-#        run MOL_1plus3of15_ve "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") --mol-per-block-ve 1
+        run MOL_1plus3of15_ve "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") --mol-per-block-ve 1
 
         # ── MST at MoL's topology ──
         # MST's streams PARTITION the residual, so N*d = D and N is bounded by D. That
@@ -773,33 +773,33 @@ if has mol; then
         # This is also the granularity question, on which the literature disagrees with
         # itself: DeepSeekMoE says finer is better, MoL's own Appendix I says the opposite
         # ("K=2 and K=3 tie, K=4 trails, opposite to MoE granularity findings").
-        best_for() {                      # best_for <head_dim>
-            echo "--mst-sub-head-dim $1 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
-        }
-        pick_hd() {                       # pick_hd <sub_dim> -> largest of 64/32/16 dividing it
-            for h in 64 32 16; do
-                if [ $(( $1 % h )) -eq 0 ] && [ "$1" -ge "$h" ]; then echo "$h"; return; fi
-            done
-            echo 0
-        }
-        for MULT in 2 4; do
-            FN=$(( N_SUBS * MULT ))
-            if [ $(( MODEL_DIM % FN )) -ne 0 ]; then
-                echo "⚠  skipping N=${FN}: ${MODEL_DIM} not divisible by it"; continue
-            fi
-            FD=$(( MODEL_DIM / FN ))
-            FHD=$(pick_hd "$FD")
-            if [ "$FHD" -eq 0 ]; then
-                echo "⚠  skipping N=${FN}: sub_dim ${FD} admits no head_dim >= 16"; continue
-            fi
-            FK=$(( FN / 4 ))              # hold the active fraction k/N at 1/4
-            run "MST_n${FN}_k${FK}" "$DEPTH" $(mst_config "$FD" "$FN") $(best_for "$FHD") \
-                --mst-stream-topk "$FK" --mst-stream-router-noise 1.0
-            run "MST_n${FN}_1plus$(( FK - 1 ))of$(( FN - 1 ))" "$DEPTH" \
-                $(mst_config "$FD" "$FN") $(best_for "$FHD") \
-                --mst-stream-topk $(( FK - 1 )) --mst-stream-shared 1 \
-                --mst-stream-router-noise 1.0
-        done
+#        best_for() {                      # best_for <head_dim>
+#            echo "--mst-sub-head-dim $1 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+#        }
+#        pick_hd() {                       # pick_hd <sub_dim> -> largest of 64/32/16 dividing it
+#            for h in 64 32 16; do
+#                if [ $(( $1 % h )) -eq 0 ] && [ "$1" -ge "$h" ]; then echo "$h"; return; fi
+#            done
+#            echo 0
+#        }
+#        for MULT in 2 4; do
+#            FN=$(( N_SUBS * MULT ))
+#            if [ $(( MODEL_DIM % FN )) -ne 0 ]; then
+#                echo "⚠  skipping N=${FN}: ${MODEL_DIM} not divisible by it"; continue
+#            fi
+#            FD=$(( MODEL_DIM / FN ))
+#            FHD=$(pick_hd "$FD")
+#            if [ "$FHD" -eq 0 ]; then
+#                echo "⚠  skipping N=${FN}: sub_dim ${FD} admits no head_dim >= 16"; continue
+#            fi
+#            FK=$(( FN / 4 ))              # hold the active fraction k/N at 1/4
+#            run "MST_n${FN}_k${FK}" "$DEPTH" $(mst_config "$FD" "$FN") $(best_for "$FHD") \
+#                --mst-stream-topk "$FK" --mst-stream-router-noise 1.0
+#            run "MST_n${FN}_1plus$(( FK - 1 ))of$(( FN - 1 ))" "$DEPTH" \
+#                $(mst_config "$FD" "$FN") $(best_for "$FHD") \
+#                --mst-stream-topk $(( FK - 1 )) --mst-stream-shared 1 \
+#                --mst-stream-router-noise 1.0
+#        done
         # Their Table 1 configuration: K=5 top-3, no shared block, dense FFN thin blocks.
 #        run MOL_3of5       "$DEPTH" $(mol_config 5 0 3 "$SUB_DIM")
 #        # All-active, to separate "narrow blocks" from "routing between them". Their
