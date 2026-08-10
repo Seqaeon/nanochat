@@ -353,6 +353,7 @@ def run_training_sweep(args):
         "--mol-dispatch", str(getattr(args, 'mol_dispatch', 1)),
         "--mol-capacity-factor", str(getattr(args, 'mol_capacity_factor', 1.0)),
         "--mol-block-lr-scale", str(getattr(args, 'mol_block_lr_scale', 1.0)),
+        "--mol-per-block-ve", str(getattr(args, 'mol_per_block_ve', 0)),
         # MST: Modular Sub-Transformer
         "--use-mst", str(getattr(args, 'use_mst', 0)),
         "--mst-n-subs", str(getattr(args, 'mst_n_subs', 8)),
@@ -1039,6 +1040,7 @@ if __name__ == "__main__":
     parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention")
     parser.add_argument("--mol-dispatch", type=int, default=1, choices=[0, 1], help="MoL: 1=gather/scatter (default), 0=masked reference")
     parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: dispatch capacity factor")
+    parser.add_argument("--mol-per-block-ve", type=int, default=0, choices=[0,1], help="MoL: per-block VE slices")
     parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier")
     # MST: Modular Sub-Transformer
     parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")

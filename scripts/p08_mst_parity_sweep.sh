@@ -735,6 +735,14 @@ if has mol; then
     if check_divisible "$SUB_DIM" 64; then
         # Their headline topology: 1 shared softmax + top-3 of 14 routed = 4 active.
         run MOL_1plus3of15 "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM")
+        # Same, with the G3 EQUIVALENT: each thin block reads its own value-embedding
+        # slice instead of all 15 sharing one vector. Without this MoL is handicapped by
+        # exactly the component we measured to be worth 0.0059 bpb to MST at L=16, so
+        # both arms are run and MoL's better one is what gets reported.
+        # The cost is not symmetric and that is a real architectural consequence, not
+        # unfairness: MST's per-stream table is N*d = D wide, MoL's per-block table is
+        # n_blocks * d_thin = 3.75x D, and it takes MoL from 89.7M to 324.6M at L=8.
+        run MOL_1plus3of15_ve "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") --mol-per-block-ve 1
         # Their Table 1 configuration: K=5 top-3, no shared block, dense FFN thin blocks.
         run MOL_3of5       "$DEPTH" $(mol_config 5 0 3 "$SUB_DIM")
         # All-active, to separate "narrow blocks" from "routing between them". Their

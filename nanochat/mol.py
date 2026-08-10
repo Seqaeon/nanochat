@@ -192,12 +192,20 @@ class SplitStage(nn.Module):
         self.blocks = nn.ModuleList([
             ThinBlock(config, thin_config, layer_idx) for _ in range(self.n_blocks)
         ])
+        # Block is constructed with the STAGE index because resolve_ffn_schedule indexes
+        # a list of length n_layer with it. But CausalSelfAttention reuses layer_idx as
+        # its KV-cache slot, so leaving it would make all n_blocks blocks of a stage
+        # alias the same cache. Retarget the slot only.
+        for j, tb in enumerate(self.blocks):
+            tb.block.attn.layer_idx = layer_idx * self.n_blocks + j
         # Router covers the routed blocks only. Their S+KofN notation is explicit
         # that 1+3of15 "selects 3 from 14 routed blocks", so the shared block is
         # not a router candidate.
         self.router = Linear(config.n_embd, self.n_routed, bias=False) \
             if self.n_routed > 0 else None
         self.aux_weight = float(config.mol_router_aux)
+        self.per_block_ve = bool(getattr(config, 'mol_per_block_ve', 0))
+        self.d_thin = int(config.mol_thin_dim)
         self.dispatch = bool(getattr(config, 'mol_dispatch', 1))
         self.capacity_factor = float(getattr(config, 'mol_capacity_factor', 1.0))
         self._last_load = None      # (n_routed,) fraction of tokens per routed block
@@ -265,27 +273,48 @@ class SplitStage(nn.Module):
 
         cos, sin = cos_sin
         hd = cos.shape[-1]
+        # Rotary must use the ORIGINAL positions, not the compact ones. Gathered ONCE
+        # for every routed block rather than inside the loop: the previous form was
+        # cos.expand(B,...).gather(...) per block, which materialised a (B,K,1,hd)
+        # tensor 2*n_routed times per layer (224 kernels per forward at 1+3of15 x L=8).
+        cos_g = cos[0, :, 0, :][top_idx]          # (B, n_routed, K, hd)
+        sin_g = sin[0, :, 0, :][top_idx]
         acc = torch.zeros_like(x)
+        bidx = torch.arange(B, device=dev).unsqueeze(1)                # (B, 1)
         for i in range(self.n_routed):
             idx = top_idx[:, i]                                        # (B, K)
             gx = idx.unsqueeze(-1).expand(-1, -1, D)
             xi = x.gather(1, gx)                                       # (B, K, D)
-            # Rotary must use the ORIGINAL positions, not the compact ones.
-            gr = idx.view(B, K, 1, 1).expand(-1, -1, 1, hd)
-            cs = (cos.expand(B, -1, -1, -1).gather(1, gr),
-                  sin.expand(B, -1, -1, -1).gather(1, gr))
-            vi = None if ve is None else ve.gather(
-                1, idx.unsqueeze(-1).expand(-1, -1, ve.shape[-1]))
+            cs = (cos_g[:, i].unsqueeze(2), sin_g[:, i].unsqueeze(2))
+            ve_i = self._ve_for(ve, self.n_shared + i)
+            vi = None if ve_i is None else ve_i.gather(
+                1, idx.unsqueeze(-1).expand(-1, -1, ve_i.shape[-1])).contiguous()
             yi = self.blocks[self.n_shared + i](xi, vi, cs, (-1, 0), kv_cache)
             wi = weights[..., i].gather(1, idx) * keep[:, i].to(weights.dtype)
-            acc.scatter_add_(1, gx, yi * wi.unsqueeze(-1))
+            # index_put_ with a (B,K) index beats scatter_add_ with a (B,K,D) one by
+            # ~1.4x measured; scatter is the dominant cost of the dispatch path.
+            # Equivalent here because topk returns distinct indices within a block, and
+            # duplicated padding slots are zeroed by `keep` so they accumulate zero.
+            acc.index_put_((bidx, idx), yi * wi.unsqueeze(-1), accumulate=True)
         return acc
+
+    def _ve_for(self, ve, j):
+        """Block j's slice of the value-embedding table.
+
+        With mol_per_block_ve the table is (n_blocks * d_thin) wide and each block
+        reads its own slice, so every block sees a different vector. Without it the
+        table is d_thin wide and every block sees the same one.
+        """
+        if ve is None or not self.per_block_ve:
+            return ve
+        return ve[..., j * self.d_thin:(j + 1) * self.d_thin]
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         out = x
         # Shared blocks: always active, every token, unrestricted attention.
         for j in range(self.n_shared):
-            out = out + self.blocks[j](x, ve, cos_sin, window_size, kv_cache)
+            out = out + self.blocks[j](x, self._ve_for(ve, j), cos_sin, window_size,
+                                       kv_cache)
 
         if self.n_routed == 0:
             return out, x.new_zeros(())
@@ -299,7 +328,8 @@ class SplitStage(nn.Module):
                 # Reference path. Correct but quadratic in T and mask-heavy; kept so
                 # the dispatched path has something to be checked against.
                 y = self.blocks[self.n_shared + i](
-                    x, ve, cos_sin, window_size, kv_cache, token_active=mask[..., i])
+                    x, self._ve_for(ve, self.n_shared + i), cos_sin, window_size,
+                    kv_cache, token_active=mask[..., i])
                 acc = acc + weights[..., i:i + 1] * y
         return out + acc / self.topk, aux
 
@@ -317,6 +347,7 @@ class MoL(nn.Module):
 
         thin_config = make_thin_config(config)
         self.thin_config = thin_config
+        self.n_blocks = int(config.mol_n_blocks)
         self.d_thin = thin_config.n_embd
         self.thin_n_head = thin_config.n_head
         self.head_dim = self.d_thin // thin_config.n_head
@@ -332,8 +363,26 @@ class MoL(nn.Module):
 
         # Value embeddings at the thin width, so a thin block's attention can read
         # them exactly as the dense block does at full width.
+        # Value embeddings. MoL's paper has none (it is a nanochat/modded-nanogpt
+        # component), but our dense baseline and MST both carry them, so MoL must be
+        # able to use them or the comparison is rigged against it.
+        #
+        # mol_per_block_ve=0: one d_thin-wide table, every block reads the same vector
+        #   and differentiates only through its own gate. This is the MST-*plain*
+        #   equivalent.
+        # mol_per_block_ve=1: an (n_blocks * d_thin)-wide table, block j reads slice j.
+        #   This is the G3 equivalent, and G3 is worth 0.0059 bpb to MST at L=16, so
+        #   without this option MoL is handicapped by exactly the component we just
+        #   measured to matter.
+        #
+        # The two are NOT equal in cost, and that asymmetry is a real architectural
+        # consequence rather than unfairness: MST's per-stream table is N*d = D wide,
+        # while MoL's per-block table is n_blocks * d_thin, which at 1+3of15 is 3.75x D.
+        # Run both and report MoL's better arm.
+        self.per_block_ve = bool(getattr(config, 'mol_per_block_ve', 0))
+        ve_dim = self.n_blocks * self.d_thin if self.per_block_ve else self.d_thin
         self.value_embeds = nn.ModuleDict({
-            str(i): nn.Embedding(padded_vocab_size, self.d_thin)
+            str(i): nn.Embedding(padded_vocab_size, ve_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
         self.lm_head = Linear(D, padded_vocab_size, bias=False)
@@ -405,11 +454,26 @@ class MoL(nn.Module):
     def transformer(self):
         return nn.ModuleDict({"h": self.stages, "wte": self.wte})
 
+    # Generation with a KV cache is NOT implemented for MoL, and it is not a small
+    # gap. Routed blocks use restricted attention, so each block's cache must hold
+    # only the tokens routed to that block, at their original positions, and a new
+    # token joins some blocks' caches and not others. Letting every block attend over
+    # the full cache would run a different model from the trained one and silently
+    # produce wrong samples, which is worse than not sampling. base_train checks this
+    # flag and skips its periodic sample step.
+    supports_kv_cache_generation = False
+
+    @property
     def kv_cache_config(self):
+        """KVCache constructor kwargs. Consumed as **model.kv_cache_config, so this
+        has to be a property, and the key names are KVCache's, not GPTConfig's.
+
+        One cache slot per thin block per stage, mirroring MST's n_layer * N_subs."""
         return {
-            "n_layer": self.config.n_layer,
-            "n_kv_head": self.thin_n_head,
+            "num_heads": self.thin_n_head,
             "head_dim": self.head_dim,
+            "v_head_dim": self.head_dim,
+            "num_layers": self.config.n_layer * self.n_blocks,
         }
 
     @property

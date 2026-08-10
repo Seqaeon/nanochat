@@ -351,7 +351,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --use-mol|--mol-n-blocks|--mol-n-shared|--mol-topk|--mol-thin-dim|--mol-head-dim|\
-        --mol-ffn-mult|--mol-router-aux|--mol-routed-attn|--mol-dispatch|--mol-capacity-factor|--mol-block-lr-scale|\
+        --mol-ffn-mult|--mol-router-aux|--mol-routed-attn|--mol-dispatch|--mol-capacity-factor|--mol-block-lr-scale|--mol-per-block-ve|\
         --use-mst|--mst-n-subs|--mst-sub-dim|--mst-head-dim|--mst-input-mode|--mst-rotated-slice-learned|\
         --mst-routing-mode|--mst-routing-topk|--mst-routing-aux-weight|--mst-diversity-weight|\
         --mst-ffn-mode|--mst-transition-mode|--mst-final-mode|--mst-final-topk|\

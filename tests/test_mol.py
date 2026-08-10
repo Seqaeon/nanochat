@@ -401,3 +401,59 @@ def test_diagnostics_report_router_load():
     diag = m.compute_diagnostics()
     assert 'mol_load_min_L0' in diag and 'mol_entropy_L0' in diag
     assert 0.0 <= diag['mol_load_min_L0'] <= 2.0
+
+
+def test_per_block_ve_gives_each_block_its_own_vector():
+    """The G3 equivalent for MoL: without it MoL is handicapped by a component
+    measured to be worth 0.0059 bpb to MST, so the comparison would be rigged."""
+    shared = MoL(make_config(mol_per_block_ve=0))
+    per_blk = MoL(make_config(mol_per_block_ve=1))
+    for m in (shared, per_blk):
+        m.init_weights()
+    key = next(iter(shared.value_embeds))
+    ids = torch.randint(0, 1024, (1, 4))
+
+    ve_s = shared.value_embeds[key](ids)
+    st_s = shared.stages[0]
+    assert torch.equal(st_s._ve_for(ve_s, 0), st_s._ve_for(ve_s, 1)), \
+        "without the flag every block must see the same vector"
+
+    ve_p = per_blk.value_embeds[key](ids)
+    st_p = per_blk.stages[0]
+    a, b = st_p._ve_for(ve_p, 0), st_p._ve_for(ve_p, 1)
+    assert a.shape[-1] == per_blk.d_thin and not torch.allclose(a, b), \
+        "with the flag each block must read a distinct d_thin slice"
+
+
+def test_per_block_ve_widens_only_the_table_not_the_flops():
+    """VE is a lookup, so the G3-equivalent must cost parameters and zero FLOPs."""
+    a = build_meta(mol_per_block_ve=0)
+    b = build_meta(mol_per_block_ve=1)
+    ve_a = sum(p.numel() for n, p in a.named_parameters() if 'value_embed' in n)
+    ve_b = sum(p.numel() for n, p in b.named_parameters() if 'value_embed' in n)
+    assert ve_b == a.n_blocks * ve_a
+    assert b.estimate_flops()[0] == a.estimate_flops()[0]
+    assert b.estimate_flops()[1] == a.estimate_flops()[1]
+
+
+def test_kv_cache_config_is_a_property_with_kvcache_keys():
+    """It is consumed as **model.kv_cache_config, so a method silently type-errors,
+    and the key names are KVCache's constructor kwargs, not GPTConfig field names.
+    Both were wrong and the run died 80% of the way in at the sampling step."""
+    import inspect
+    from nanochat.engine import KVCache
+    m = build_meta()
+    cfg = m.kv_cache_config
+    assert isinstance(cfg, dict), "must be a @property returning a mapping"
+    accepted = set(inspect.signature(KVCache.__init__).parameters) - {'self'}
+    assert set(cfg) <= accepted, f"KVCache rejects {set(cfg) - accepted}"
+    assert cfg['num_layers'] == m.config.n_layer * m.n_blocks
+
+
+def test_every_thin_block_gets_its_own_kv_cache_slot():
+    """CausalSelfAttention reuses layer_idx as its cache slot. Constructing all
+    n_blocks blocks of a stage with the stage index would alias them onto one slot."""
+    m = build_meta()
+    slots = [tb.block.attn.layer_idx for st in m.stages for tb in st.blocks]
+    assert len(slots) == len(set(slots)) == m.config.n_layer * m.n_blocks
+    assert min(slots) == 0 and max(slots) == m.config.n_layer * m.n_blocks - 1

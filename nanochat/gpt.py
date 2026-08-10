@@ -387,6 +387,7 @@ class GPTConfig:
     mol_dispatch: int = 1                      # 1=gather/scatter (default), 0=masked reference
     mol_capacity_factor: float = 1.0           # per-block capacity when dispatching
     mol_block_lr_scale: float = 1.0            # per-thin-block LR multiplier (their recipe has none)
+    mol_per_block_ve: int = 0                  # G3-equivalent: each thin block reads its own VE slice
     # ── MST: Modular Sub-Transformer Architecture ──
     use_mst: bool = False                      # master switch for MST mode
     mst_n_subs: int = 8                        # N = number of sub-transformers per layer
@@ -702,7 +703,7 @@ RESEARCH_ALLOWED_KEYS = {
     # MoL: Mixture of Layers (baseline, arXiv:2605.09516)
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
-    "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale",
+    "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
     # MST: Modular Sub-Transformer
     "use_mst", "mst_n_subs", "mst_sub_dim", "mst_head_dim",
     "mst_input_mode", "mst_rotated_slice_learned",

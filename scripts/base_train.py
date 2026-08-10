@@ -220,6 +220,7 @@ parser.add_argument("--mol-router-aux", type=float, default=0.05, help="MoL: CV^
 parser.add_argument("--mol-routed-attn", type=str, default="softmax", help="MoL: routed-block attention (softmax; deltanet is phase 2)")
 parser.add_argument("--mol-dispatch", type=int, default=1, choices=[0, 1], help="MoL: 1=gather/scatter (default), 0=masked reference")
 parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: per-block capacity when dispatching")
+parser.add_argument("--mol-per-block-ve", type=int, default=0, choices=[0,1], help="MoL: each thin block reads its own VE slice (G3 equivalent)")
 parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier (fairness ablation; their recipe has none)")
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
@@ -1056,6 +1057,7 @@ def build_model_meta(depth):
         mol_dispatch=getattr(args, 'mol_dispatch', 0),
         mol_capacity_factor=getattr(args, 'mol_capacity_factor', 1.0),
         mol_block_lr_scale=getattr(args, 'mol_block_lr_scale', 1.0),
+        mol_per_block_ve=getattr(args, 'mol_per_block_ve', 0),
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
         mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
@@ -2005,7 +2007,10 @@ while True:
 
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
-    if args.sample_every > 0 and master_process and (last_step or (step > 0 and step % args.sample_every == 0)):
+    _can_sample = getattr(orig_model, 'supports_kv_cache_generation', True)
+    if args.sample_every > 0 and master_process and not _can_sample and (last_step or (step > 0 and step % args.sample_every == 0)):
+        print0("[sample] skipped: this architecture does not implement KV-cache generation")
+    if args.sample_every > 0 and master_process and _can_sample and (last_step or (step > 0 and step % args.sample_every == 0)):
         model.eval()
         prompts = [
             "The capital of France is",
