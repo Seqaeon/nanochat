@@ -154,6 +154,9 @@ if has gate; then
     echo ""; echo "### GATE: order-1, minimal code. Measured rank must equal B."
     run GATE_order1_Bmin "$DEPTH" --models base --use-code-head 1 \
         --sch-order 1 --sch-code-mode binary $PROBE
+
+    run GATE_order2_Bmin "$DEPTH" --models base --use-code-head 1 \
+        --sch-order 2 --sch-code-mode binary $PROBE
 fi
 
 # ---------------------------------------------------------------- dense
