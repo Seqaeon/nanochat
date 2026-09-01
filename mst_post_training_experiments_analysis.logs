@@ -1,51 +1,189 @@
+running: a1, a2, a3, a4, a5   arms: mst, dense
+
 [A1] fused-attention throughput vs head_dim
-  head_dim= 32 n_head=64    0.400 ms   171.9 TFLOP/s
-  head_dim= 64 n_head=32    0.242 ms   283.9 TFLOP/s
-  head_dim=128 n_head=16    0.188 ms   365.7 TFLOP/s
+  head_dim= 32 n_head=64    0.389 ms   176.8 TFLOP/s
+  head_dim= 64 n_head=32    0.237 ms   289.4 TFLOP/s
+  head_dim=128 n_head=16    0.187 ms   367.7 TFLOP/s
+
+=== depth 8  D=512 d=128 ===
+[A2] MST kernel breakdown
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  total device time 64.9 ms over 267 kernels
+       28.90 ms   44.5%  ## Call CompiledFxGraph fpakvwv7nuvngoe67mlpbvfqnsi7hujy4o6l5td4u6qm57
+       16.75 ms   25.8%  ## Call CompiledFxGraph fiaacul2qhps2iugqnzitfq2jhxl7l7ng4qllk2ccyd7nv
+        2.20 ms    3.4%  aten::mm
+        1.31 ms    2.0%  aten::bmm
+        0.74 ms    1.1%  flash_attn_3::bwd
+        0.63 ms    1.0%  nvjet_tst_256x128_64x4_1x2_h_bz_coopA_NNT
+        0.48 ms    0.7%  flash_attn_3::fwd
+        0.47 ms    0.7%  triton_red_fused__log_softmax__log_softmax_backward_data__to_copy__uns
+        0.47 ms    0.7%  triton_red_fused__log_softmax__log_softmax_backward_data__to_copy__uns
+        0.46 ms    0.7%  triton_red_fused__log_softmax__to_copy__unsafe_view_div_mul_prepare_so
+        0.46 ms    0.7%  triton_red_fused__log_softmax__to_copy__unsafe_view_div_mul_prepare_so
+        0.43 ms    0.7%  nvjet_tst_320x128_64x3_1x2_h_bz_coopB_TNT
+[A3/A6] train step, memory, MFU
+  mst      34.50 ms/step    41.6 TFLOP/s  MFU 4.2%  peak 2.48 GB
+  dense    11.60 ms/step   202.1 TFLOP/s  MFU 20.4%  peak 2.36 GB
+  speedup (dense/mst): 0.34x
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  2048       6.90 ms      296711 tok/s   (median 7.43, +8%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  4096       6.86 ms      597464 tok/s   (median 7.00, +2%)
+  mst   T=  8192       7.45 ms     1099453 tok/s   (median 8.11, +9%)
+  mst   T= 16384       8.58 ms     1908867 tok/s   (median 9.10, +6%)
+  mst   T= 32768      13.99 ms     2342837 tok/s   (median 14.12, +1%)
+  dense T=  2048       2.84 ms      719999 tok/s   (median 3.18, +12%)
+  dense T=  4096       3.04 ms     1345315 tok/s   (median 3.16, +4%)
+  dense T=  8192       3.63 ms     2254116 tok/s   (median 3.94, +8%)
+  dense T= 16384       6.13 ms     2671119 tok/s   (median 6.16, +0%)
+  dense T= 32768      12.68 ms     2584468 tok/s   (median 12.73, +0%)
+[A5] decode
+  mst   ctx=   256   13.089 ms/token
+  mst   ctx=  1024   13.066 ms/token
+  mst   ctx=  4096   13.129 ms/token
+  mst   ctx=  8192   13.117 ms/token
+  mst   ctx= 16384   13.049 ms/token
+  dense ctx=   256    5.555 ms/token
+  dense ctx=  1024    5.977 ms/token
+  dense ctx=  4096    5.800 ms/token
+  dense ctx=  8192    6.274 ms/token
+  dense ctx= 16384    6.185 ms/token
+
+=== depth 16  D=1024 d=256 ===
+[A2] MST kernel breakdown
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  total device time 117.2 ms over 311 kernels
+       28.09 ms   24.0%  ## Call CompiledFxGraph f37t23b72xpnzcp3pgovyachbhvnbmo3clj6tbotax4crj
+       28.02 ms   23.9%  ## Call CompiledFxGraph fzsplhu6kpjsx3sq3ym3rprpsxmqs4opqtxbkg652kuen7
+        6.10 ms    5.2%  aten::mm
+        5.77 ms    4.9%  aten::bmm
+        2.48 ms    2.1%  flash_attn_3::bwd
+        1.83 ms    1.6%  nvjet_tst_256x128_64x4_1x2_h_bz_coopA_TNT
+        1.83 ms    1.6%  nvjet_tst_256x128_64x4_1x2_h_bz_coopA_NNT
+        1.79 ms    1.5%  nvjet_tst_128x64_64x8_1x2_h_bz_NTT
+        1.54 ms    1.3%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+        1.40 ms    1.2%  flash_attn_3::fwd
+        1.27 ms    1.1%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+        1.15 ms    1.0%  triton_poi_fused_mul_permute_pow_relu_threshold_backward_view_13
+[A3/A6] train step, memory, MFU
+  mst      50.55 ms/step   117.6 TFLOP/s  MFU 11.9%  peak 8.02 GB
+  dense    36.90 ms/step   343.6 TFLOP/s  MFU 34.7%  peak 7.91 GB
+  speedup (dense/mst): 0.73x
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  2048      13.50 ms      151713 tok/s   (median 15.53, +15%)
+  mst   T=  4096      14.80 ms      276800 tok/s   (median 16.76, +13%)
+  mst   T=  8192      15.51 ms      528109 tok/s   (median 17.10, +10%)
+  mst   T= 16384      22.63 ms      723944 tok/s   (median 22.86, +1%)
+  mst   T= 32768      42.05 ms      779178 tok/s   (median 42.41, +1%)
+  dense T=  2048       5.40 ms      378922 tok/s   (median 5.83, +8%)
+  dense T=  4096       6.24 ms      656528 tok/s   (median 6.56, +5%)
+  dense T=  8192      10.60 ms      773173 tok/s   (median 10.64, +0%)
+  dense T= 16384      20.94 ms      782284 tok/s   (median 21.08, +1%)
+  dense T= 32768      46.14 ms      710228 tok/s   (median 47.16, +2%)
+[A5] decode
+  mst   ctx=   256   26.629 ms/token
+  mst   ctx=  1024   26.608 ms/token
+  mst   ctx=  4096   26.242 ms/token
+  mst   ctx=  8192   29.769 ms/token
+  mst   ctx= 16384   26.257 ms/token
+  dense ctx=   256   10.803 ms/token
+  dense ctx=  1024   10.681 ms/token
+  dense ctx=  4096   10.743 ms/token
+  dense ctx=  8192   10.761 ms/token
+  dense ctx= 16384   10.821 ms/token
 
 === depth 24  D=1536 d=384 ===
 [A2] MST kernel breakdown
-  total device time 1255.0 ms over 347 kernels
-      275.30 ms   21.9%  ## Call CompiledFxGraph fyulekknttu5nc6lbedttemjvd5kbiulk4exyqxpkn66x3
-      146.87 ms   11.7%  ## Call CompiledFxGraph ftuuccuqisuxr6w3kysnzyurtzyrapjkiz3kokws6lkmod
-      104.36 ms    8.3%  aten::bmm
-       74.35 ms    5.9%  flash_attn_3::bwd
-       54.34 ms    4.3%  aten::mm
-       47.72 ms    3.8%  nvjet_tst_192x192_64x3_2x1_v_bz_coopB_NNN
-       39.72 ms    3.2%  nvjet_tst_192x192_64x4_2x1_v_bz_coopB_TNN
-       34.71 ms    2.8%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
-       31.11 ms    2.5%  flash_attn_3::fwd
-       28.59 ms    2.3%  triton_per_fused__fused_rms_norm_backward__to_copy_add_mul_neg_slice_s
-       28.59 ms    2.3%  triton_per_fused__fused_rms_norm_backward__to_copy_add_mul_neg_slice_s
-       25.87 ms    2.1%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  total device time 206.2 ms over 365 kernels
+       41.33 ms   20.0%  ## Call CompiledFxGraph futdw7tgv3ural6hpbdbxk53cmzi4qswx5e7u22bbktxki
+       36.84 ms   17.9%  ## Call CompiledFxGraph ftp2ypcid47qvgk27e7vsymofkbedk7mogvfwcp4uqioyk
+       13.22 ms    6.4%  aten::bmm
+       13.20 ms    6.4%  aten::mm
+        5.37 ms    2.6%  flash_attn_3::bwd
+        4.31 ms    2.1%  nvjet_tst_256x128_64x4_1x2_h_bz_coopA_NNT
+        3.83 ms    1.9%  nvjet_tst_256x128_64x4_1x2_h_bz_coopA_TNT
+        3.37 ms    1.6%  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAt
+        2.85 ms    1.4%  nvjet_tst_192x96_64x5_1x2_h_bz_NTT
+        2.51 ms    1.2%  nvjet_tst_128x256_64x4_1x2_h_bz_coopA_NNN
+        2.50 ms    1.2%  triton_poi_fused_mul_permute_pow_relu_threshold_backward_view_12
+        2.50 ms    1.2%  triton_poi_fused_mul_permute_pow_relu_threshold_backward_view_12
 [A3/A6] train step, memory, MFU
-  mst     420.82 ms/step   296.7 TFLOP/s  MFU 30.0%  peak 115.25 GB
-  dense   512.03 ms/step   600.3 TFLOP/s  MFU 60.7%  peak 106.65 GB
-  speedup (dense/mst): 1.22x
-[A4] prefill
-  mst   T=  2048      19.79 ms      103505 tok/s
-  mst   T=  4096      19.68 ms      208109 tok/s
-  mst   T=  8192      26.95 ms      304003 tok/s
-  mst   T= 16384      57.01 ms      287372 tok/s
-  mst   T= 32768     148.10 ms      221261 tok/s
-  dense T=  2048      28.58 ms       71651 tok/s
-  dense T=  4096      49.72 ms       82378 tok/s
-  dense T=  8192      46.17 ms      177448 tok/s
-  dense T= 16384      52.53 ms      311894 tok/s
-  dense T= 32768     119.15 ms      275016 tok/s
+  mst      76.09 ms/step   214.4 TFLOP/s  MFU 21.7%  peak 17.56 GB
+  dense    77.21 ms/step   497.7 TFLOP/s  MFU 50.3%  peak 18.11 GB
+  speedup (dense/mst): 1.01x
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
 
-
+  warnings.warn(
+  mst   T=  2048      19.43 ms      105381 tok/s   (median 20.58, +6%)
+  mst   T=  4096      19.95 ms      205317 tok/s   (median 21.06, +6%)
+  mst   T=  8192      26.13 ms      313465 tok/s   (median 26.31, +1%)
+  mst   T= 16384      46.91 ms      349271 tok/s   (median 47.29, +1%)
+  mst   T= 32768      91.88 ms      356644 tok/s   (median 92.17, +0%)
+  dense T=  2048      16.59 ms      123465 tok/s   (median 26.64, +61%)  <-- unstable
+  dense T=  4096      19.25 ms      212797 tok/s   (median 27.00, +40%)  <-- unstable
+  dense T=  8192      27.22 ms      300990 tok/s   (median 29.49, +8%)
+  dense T= 16384      54.50 ms      300629 tok/s   (median 55.38, +2%)
+  dense T= 32768     119.19 ms      274927 tok/s   (median 119.86, +1%)
 [A5] decode
-  mst   ctx=   256   58.738 ms/token
-  mst   ctx=  1024   59.303 ms/token
-  mst   ctx=  4096   59.038 ms/token
-  mst   ctx=  8192   58.135 ms/token
-  mst   ctx= 16384   59.360 ms/token
-  dense ctx=   256   22.963 ms/token
-  dense ctx=  1024   22.724 ms/token
-  dense ctx=  4096   22.681 ms/token
-  dense ctx=  8192   22.750 ms/token
-  dense ctx= 16384   23.012 ms/token
+  mst   ctx=   256   43.948 ms/token
+  mst   ctx=  1024   39.570 ms/token
+  mst   ctx=  4096   38.666 ms/token
+  mst   ctx=  8192   38.499 ms/token
+  mst   ctx= 16384   38.809 ms/token
+  dense ctx=   256   17.671 ms/token
+  dense ctx=  1024   16.084 ms/token
+  dense ctx=  4096   17.031 ms/token
+  dense ctx=  8192   17.933 ms/token
+  dense ctx= 16384   15.976 ms/token
+
+wrote scratch/paper_bench.json
+
+
+
 
 
 | Metric | MST | dense | Comparison |

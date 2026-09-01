@@ -55,7 +55,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo monarch mol"
+RUN_GROUPS="control combo g1 g2 g3 best overhead mix couple sparse shampoo monarch mol dispatch"
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -704,6 +704,64 @@ if has d32; then
             --mst-stream-topk 1 --mst-stream-router-noise 1.0
     fi
     SEEDS="$SEEDS_SAVE"
+fi
+
+# ---------------------------------------------------------------- dispatch
+# Does Phase B (real gather/scatter) cost bpb, and is it worth turning on?
+#
+# ══ RUN THE WALL-CLOCK CHECK FIRST. It needs no training. ══
+# Add --mst-stream-dispatch 1 to the MST arm of the A1-A5 benchmark at depth 24 and
+# compare ms/step against the masked 76.09. If dispatch does not beat that, this whole
+# group is moot: it can only cost quality, never gain it.
+#
+# Why it might now pay when it did not before. Dispatch gathers K = ceil(T*k/N*cf)
+# tokens per stream, so the FFN's M shrinks by roughly N/k. At d=128 the block-diagonal
+# GEMMs were already starved (0.309 of dense throughput) and shrinking M made them
+# worse. At d=384 they run at 0.712, so there is headroom to spend. The FFN is 8D^2/N of
+# the ~3.75 D^2 per-layer matmul work, about 53%, so k=1-of-4 dispatch skips roughly 40%
+# of the layer's GEMM work.
+#
+# ══ WHY THIS NEEDS ITS OWN QUALITY MEASUREMENT, AND WHY NOISE IS NOT OPTIONAL ══
+# Compute-then-mask hands the router a counterfactual gradient for streams it did NOT
+# pick: stream_w = mask.detach() + (probs - probs.detach()), so d(loss)/d(w[j]) is
+# <grad_ffn_out[j], ffn_out_raw[j]>, and ffn_out_raw[j] exists for every stream because
+# the masked path computed it. Dispatch leaves ffn_out[j] at the scatter buffer's zero,
+# so that dot product is identically zero.
+#
+# Measured on a 2-layer model with aux and noise both off (LEARNINGS 2026-09-01):
+#   masked      selected 5.203e-03   unselected 1.947e-02   (1536/1536 slots nonzero)
+#   dispatched  selected 5.218e-03   unselected 0.000e+00   (0/1536)
+# 79% of the router's task gradient comes from streams it did not select. Dispatch
+# removes all of it. Exploration noise is then the ONLY thing connecting an unselected
+# stream to the loss, so the failure mode to watch is router collapse, not slow
+# convergence: check stream_load_min_L* in the diagnostics, not just bpb.
+#
+# Capacity factor is a quality knob AND a cost knob, and estimate_flops does not know
+# it. The reported active_flops discount is 1 - topk/N regardless of cf, which is the
+# right number for the paper's claim (the ideal sparse cost, as MoE papers report active
+# FLOPs ignoring capacity slack) but understates what cf>1 actually executes by a factor
+# of cf. So read bpb from here and ms/step from the benchmark; do not mix them.
+if has dispatch; then
+    echo ""; echo "### DISPATCH: does Phase B cost bpb, and does noise hold the router up?"
+    BESTD="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
+    K1D="--mst-stream-topk 1 --mst-stream-router-noise 1.0"
+    # The masked control. Uncomment only if this depth has no SP2_k1 run already; the
+    # existing one is the reference and re-running it buys nothing.
+#    run DSP_masked      "$DEPTH" $MST_FULL $BESTD $K1D
+    # cf=1.25 is 25% headroom over the k/N ideal. Expect some drop; _last_stream_drop
+    # reports it and base_train logs it.
+    run DSP_cf125       "$DEPTH" $MST_FULL $BESTD $K1D \
+        --mst-stream-dispatch 1 --mst-stream-capacity-factor 1.25
+    # cf=2.0 buys near-zero drop at 2x the ideal executed FFN work. If cf=2.0 matches
+    # masked bpb and cf=1.25 does not, the cost is dropped tokens; if neither matches,
+    # the cost is the lost router gradient and more noise is the lever, not capacity.
+    run DSP_cf200       "$DEPTH" $MST_FULL $BESTD $K1D \
+        --mst-stream-dispatch 1 --mst-stream-capacity-factor 2.0
+    # Separates the two failure modes above: same capacity as cf125, double the
+    # exploration. Only informative if cf125 lost bpb.
+    run DSP_cf125_noise2 "$DEPTH" $MST_FULL $BESTD \
+        --mst-stream-topk 1 --mst-stream-router-noise 2.0 \
+        --mst-stream-dispatch 1 --mst-stream-capacity-factor 1.25
 fi
 
 # ---------------------------------------------------------------- mol
