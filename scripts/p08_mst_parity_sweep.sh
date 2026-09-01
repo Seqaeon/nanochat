@@ -126,7 +126,7 @@ mst_config() {                            # mst_config <sub_dim> <n_subs>
       --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
       --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
       --mst-transition-width-mult $2.0 --mst-sub-lr-scale 2.0 \
-      --mst-multi-scale-windows 1"
+      --mst-multi-scale-windows 0"
 }
 
 # mol_config() emits the MoL baseline's flags (arXiv:2605.09516). Their notation is
