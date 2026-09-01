@@ -235,13 +235,17 @@ function renderCrosshairTooltip(chart, cfg, x, px, py) {
   cfg.tip.innerHTML = html;
   cfg.tip.style.display = 'block';
 
-  const wrapRect = cfg.wrapper.getBoundingClientRect();
-  const tw = cfg.tip.offsetWidth, th = cfg.tip.offsetHeight;
-  let left = px + 16, top = py - th / 2;
-  if (left + tw > wrapRect.width) left = px - tw - 16;
-  if (left < 0) left = 4;
-  if (top < 0) top = 4;
-  if (top + th > wrapRect.height) top = wrapRect.height - th - 4;
+  const area = chart.chartArea;
+  const tw = cfg.tip.offsetWidth;
+  const midX = (area.left + area.right) / 2;
+  let left;
+  if (px > midX) {
+    left = area.left + 10;
+  } else {
+    left = Math.max(area.left + 10, area.right - tw - 10);
+  }
+  const top = area.top + 10;
+
   cfg.tip.style.left = left + 'px';
   cfg.tip.style.top = top + 'px';
 }

@@ -697,6 +697,41 @@ parser.add_argument("--model-tag", type=str, default=None, help="override model 
 parser.add_argument("--p34-ffn-mult", type=float, default=4.0, help="34: FFN hidden width as a multiple of n_embd (4.0 = standard dense FFN shape, 1.0 = D->D->D)")
 parser.add_argument("--p34-ffn-single", type=int, default=0, choices=[0, 1], help="34: replace the FFN with a single RemixedLinear D->D (no hidden layer, no relu^2)")
 parser.add_argument("--p34-dense-attn", type=int, default=0, choices=[0, 1], help="34: keep attention dense so only the FFN is RemixedLinear")
+# SCH: Structured Code Output Heads (see nanochat/code_head.py and
+# structured-code-output-heads-plan.md). The head is logit(w|h) = phi_k(c(w))^T g(h)
+# with a frozen binary code c(w) and its monomial expansion up to order k.
+parser.add_argument("--use-code-head", type=int, default=0, choices=[0, 1], help="SCH: replace the dense softmax head with a structured code head")
+parser.add_argument("--sch-head-type", type=str, default="code", choices=["code", "hsoftmax"], help="SCH: 'code' = monomial code head; 'hsoftmax' = Huffman hierarchical softmax baseline")
+parser.add_argument("--sch-bits", type=int, default=0, help="SCH: code length B (0 = ceil(log2 V), the minimal/degenerate code)")
+parser.add_argument("--sch-order", type=int, default=2, help="SCH: highest monomial interaction order k (1 = Oda et al. independent bits, B = exact softmax)")
+parser.add_argument("--sch-max-m", type=int, default=0, help="SCH: cap on the expansion width M (0 = uncapped); also sets M directly for non-monomial phi modes")
+parser.add_argument("--sch-phi-mode", type=str, default="monomial", choices=["monomial", "random_binary", "onehot", "learned", "gaussian"], help="SCH: what fills Phi. 'random_binary' isolates structure from binariness; 'learned' is the matched-capacity dense-W-at-width-M control; 'onehot' is VQ-Logits")
+parser.add_argument("--sch-code-mode", type=str, default="binary", choices=["binary", "random", "ecc", "frequency", "file"], help="SCH: code assignment arm")
+parser.add_argument("--sch-code-path", type=str, default="", help="SCH: .pt holding a (V, B) uint8 code matrix (semantic codes from scripts/code_assign.py)")
+parser.add_argument("--sch-code-ecc-bits", type=int, default=0, help="SCH: parity bits appended to the base code; sweeps the ECC-vs-semantic tension on one axis")
+parser.add_argument("--sch-code-seed", type=int, default=1234, help="SCH: seed for code assignment and monomial subsampling")
+parser.add_argument("--sch-phi-density", type=float, default=0.0, help="SCH: row density for phi-mode=random_binary (0 = match the monomial arm's density)")
+parser.add_argument("--sch-phi-dtype", type=str, default="bf16", choices=["bf16", "fp32"], help="SCH: storage dtype of the frozen Phi. Use fp32 for the Phase 0 rank gate: bf16 rounding puts a noise floor ~1e-3 of the top singular value, which reads as spurious rank")
+parser.add_argument("--sch-phi-normalize", type=int, default=1, choices=[0, 1], help="SCH: rescale Phi to unit mean row norm (pure reparameterisation, needed for stability at order 3+)")
+parser.add_argument("--sch-phi-center", type=int, default=0, choices=[0, 1], help="SCH: mean-centre Phi columns (ablation)")
+parser.add_argument("--sch-g-type", type=str, default="linear", choices=["linear", "mlp"], help="SCH: g. A LINEAR g caps logit rank at min(M, d), which makes orders 3 and 4 rank-identical at d=512 and fakes ladder saturation. Run mlp for the ladder sweep")
+parser.add_argument("--sch-g-hidden", type=int, default=0, help="SCH: hidden width of the MLP g (0 = n_embd)")
+parser.add_argument("--sch-g-layers", type=int, default=2, help="SCH: depth of the MLP g")
+parser.add_argument("--sch-g-out-std", type=float, default=0.001, help="SCH: init std of g's final layer (matches lm_head's)")
+parser.add_argument("--sch-mixture", type=int, default=1, help="SCH: m code heads mixed by log-sum-exp; m>1 escapes the rank bound entirely (Phase 2 mitigation 1)")
+parser.add_argument("--sch-residual-rank", type=int, default=0, help="SCH: dense residual hybrid rank r; buys r rank for rV params (Phase 2 mitigation 3)")
+parser.add_argument("--sch-logit-act", type=str, default="none", choices=["none", "sigsoftmax", "monotonic"], help="SCH: pointwise nonlinearity on code logits (Phase 2 mitigation 2)")
+parser.add_argument("--sch-bias", type=int, default=0, choices=[0, 1], help="SCH: learned per-token bias. V params and +1 rank, but it BREAKS zero-shot vocabulary extension (a new token has no bias)")
+parser.add_argument("--sch-input-mode", type=str, default="table", choices=["table", "linear", "expanded", "nonlinear", "tied"], help="SCH Phase 3: input-side arm. 'linear' is expected to collapse at exactly rank B and is run for that reason")
+parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: hidden width for --sch-input-mode nonlinear (0 = 4 * n_embd)")
+# Held-out vocabulary: the headline capability experiment. Instrument from day one.
+parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
+parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
+parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: never hold out ids below this (byte fallbacks and special tokens)")
+parser.add_argument("--sch-holdout-mode", type=str, default="target", choices=["target", "full"], help="SCH: 'target' masks held-out ids as prediction targets only (isolates the output head, the claim under test); 'full' also rewrites them in the inputs, so the model never sees them at all")
+parser.add_argument("--sch-decile-metrics", type=int, default=1, choices=[0, 1], help="SCH: report validation bpb per token-frequency decile at the end of training (the money plot)")
+parser.add_argument("--sch-rank-probe", type=int, default=0, help="SCH: contexts to use for the end-of-training logit-rank SVD (0 = skip; 50000 is the Phase 0 setting)")
+parser.add_argument("--sch-eval-steps", type=int, default=100, help="SCH: validation batches used by the end-of-training diagnostics")
 parser.add_argument("--seed", type=int, default=-1, help="RNG seed for weight init and data-order-independent randomness (-1 = unseeded, the historical default). Needed for seed-variance runs; note the dataloader order is not seeded by this.")
 parser.add_argument("--early-stop-tokens", type=int, default=-1, help="terminate training after this many tokens without affecting the LR schedule (-1 = disabled)")
 parser.add_argument("--step-loss-file", type=str, default="", help="optional JSONL file to write per-step training loss for external sweep plotting")
@@ -1206,6 +1241,31 @@ def build_model_meta(depth):
         eet_depth_grad_scale=bool(int(getattr(args, 'eet_depth_grad_scale', 0))),
         eet_detach_aux_from_backbone=bool(int(getattr(args, 'eet_detach_aux_from_backbone', 0))),
         eet_detach_exit_from_backbone=bool(int(getattr(args, 'eet_detach_exit_from_backbone', 0))),
+        # SCH: Structured Code Output Heads
+        use_code_head=bool(int(getattr(args, 'use_code_head', 0))),
+        sch_head_type=getattr(args, 'sch_head_type', 'code'),
+        sch_bits=int(getattr(args, 'sch_bits', 0)),
+        sch_order=int(getattr(args, 'sch_order', 2)),
+        sch_max_m=int(getattr(args, 'sch_max_m', 0)),
+        sch_phi_mode=getattr(args, 'sch_phi_mode', 'monomial'),
+        sch_code_mode=getattr(args, 'sch_code_mode', 'binary'),
+        sch_code_path=getattr(args, 'sch_code_path', ''),
+        sch_code_ecc_bits=int(getattr(args, 'sch_code_ecc_bits', 0)),
+        sch_code_seed=int(getattr(args, 'sch_code_seed', 1234)),
+        sch_phi_density=float(getattr(args, 'sch_phi_density', 0.0)),
+        sch_phi_dtype=getattr(args, 'sch_phi_dtype', 'bf16'),
+        sch_phi_normalize=int(getattr(args, 'sch_phi_normalize', 1)),
+        sch_phi_center=int(getattr(args, 'sch_phi_center', 0)),
+        sch_g_type=getattr(args, 'sch_g_type', 'linear'),
+        sch_g_hidden=int(getattr(args, 'sch_g_hidden', 0)),
+        sch_g_layers=int(getattr(args, 'sch_g_layers', 2)),
+        sch_g_out_std=float(getattr(args, 'sch_g_out_std', 0.001)),
+        sch_mixture=int(getattr(args, 'sch_mixture', 1)),
+        sch_residual_rank=int(getattr(args, 'sch_residual_rank', 0)),
+        sch_logit_act=getattr(args, 'sch_logit_act', 'none'),
+        sch_bias=int(getattr(args, 'sch_bias', 0)),
+        sch_input_mode=getattr(args, 'sch_input_mode', 'table'),
+        sch_input_hidden=int(getattr(args, 'sch_input_hidden', 0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
@@ -1410,9 +1470,18 @@ if args.fp8:
     # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
     import torch.nn as nn
 
+    # SCH: the code head runs its matmuls through F.linear with an explicit weight
+    # cast rather than through the child module's forward, so swapping those
+    # nn.Linear children for Float8Linear would report a conversion that never
+    # executes. Its dominant cost is the frozen Phi product, which is not an
+    # nn.Linear and cannot be converted at all. Leave the head out of the count.
+    _sch_head_active = bool(int(getattr(args, 'use_code_head', 0)))
+
     # Filter: dims must be divisible by 16 (FP8 hardware requirement) large enough
     def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
         if not isinstance(mod, nn.Linear):
+            return False
+        if _sch_head_active and (fqn.startswith('lm_head') or fqn.startswith('transformer.wte')):
             return False
         if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
             return False
@@ -1616,7 +1685,51 @@ build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
     data_dir=args.data_dir,
     max_shards=args.max_shards,
 )
+# ── SCH: held-out vocabulary ─────────────────────────────────────────────────
+# The flagship claim is zero-shot vocabulary extension: add a token after
+# training, compute its code from its semantics, and the model assigns it a
+# calibrated probability immediately, because the per-bit and per-monomial
+# parameters are already trained.  A softmax must fit a fresh row from scratch.
+#
+# To measure that we remove N token ids from TRAINING and score them at
+# validation time.  Two modes, and the difference matters in the write-up:
+#   target  the ids are masked as prediction targets only.  The head therefore
+#           gets no gradient for producing them, which is exactly the claim
+#           under test, while their input embeddings still train.
+#   full    the ids are also rewritten in the inputs, so the model never sees
+#           them at all.  A stronger control, but it perturbs the context
+#           distribution, so quote both if you use it.
+sch_holdout_ids = None
+sch_holdout_mask = None
+if args.sch_holdout_tokens > 0:
+    _g = torch.Generator().manual_seed(args.sch_holdout_seed)
+    _lo = min(args.sch_holdout_min_id, vocab_size - 1)
+    _pool = torch.arange(_lo, vocab_size)
+    assert args.sch_holdout_tokens < _pool.numel(), (
+        f"--sch-holdout-tokens {args.sch_holdout_tokens} exceeds the {_pool.numel()} "
+        f"eligible ids in [{_lo}, {vocab_size})")
+    sch_holdout_ids = _pool[torch.randperm(_pool.numel(), generator=_g)[:args.sch_holdout_tokens]].sort().values
+    sch_holdout_mask = torch.zeros(vocab_size, dtype=torch.bool, device=device)
+    sch_holdout_mask[sch_holdout_ids.to(device)] = True
+    print0(f"[SCH] holding out {args.sch_holdout_tokens:,} of {vocab_size:,} token ids "
+           f"({100.0 * args.sch_holdout_tokens / vocab_size:.2f}%) from training, "
+           f"mode={args.sch_holdout_mode}, seed={args.sch_holdout_seed}")
+    if master_process:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        torch.save(sch_holdout_ids, os.path.join(checkpoint_dir, 'sch_holdout_ids.pt'))
+
+def sch_apply_holdout(x, y):
+    """Strip held-out ids from a TRAINING batch.  Validation batches are left
+    untouched: their perplexity on those ids is the metric."""
+    if sch_holdout_mask is None:
+        return x, y
+    y = torch.where(sch_holdout_mask[y.clamp_min(0)] & (y >= 0), torch.full_like(y, -1), y)
+    if args.sch_holdout_mode == 'full':
+        x = torch.where(sch_holdout_mask[x], torch.zeros_like(x), x)
+    return x, y
+
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+x, y = sch_apply_holdout(x, y)
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -2318,6 +2431,7 @@ while True:
         else:
             loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        x, y = sch_apply_holdout(x, y)
     # Capture MST per-sub grad norms BEFORE optimizer step / zero_grad clears them
     if _mst_diag_this_step:
         _cached_sub_grad_norms = {}
@@ -2773,6 +2887,39 @@ if _mst_tracker is not None:
         num_params=num_params,
         sp=sp,
     )
+
+# ── SCH: end-of-training diagnostics ─────────────────────────────────────────
+# Every metric in section 6 of the plan, written once per run to sch_results.csv
+# so a sweep is a table rather than a log-scraping exercise.
+if (bool(int(getattr(args, 'use_code_head', 0))) or args.sch_holdout_tokens > 0
+        or args.sch_decile_metrics or args.sch_rank_probe) and master_process:
+    try:
+        from nanochat.code_metrics import run_all_diagnostics, write_sch_row
+        _sch = run_all_diagnostics(
+            orig_model,
+            build_val_loader=build_val_loader,
+            token_bytes=token_bytes,
+            vocab_size=vocab_size,
+            steps=args.sch_eval_steps,
+            decile=bool(args.sch_decile_metrics),
+            rank_contexts=int(args.sch_rank_probe),
+            holdout_ids=sch_holdout_ids,
+            tokenizer_dir=args.tokenizer_dir,
+            device=device,
+        )
+        write_sch_row(
+            run_dir=checkpoint_dir,
+            args=args, config=model_config, metrics=_sch,
+            val_bpb=val_bpb, min_val_bpb=min_val_bpb,
+            num_flops_per_token=num_flops_per_token,
+            num_params=num_params, total_tokens=total_tokens,
+            total_training_time=total_training_time,
+            scaling_params=orig_model.num_scaling_params(),
+        )
+    except Exception as e:
+        import traceback
+        print0(f"[SCH] diagnostics failed (training results are unaffected): {e}")
+        traceback.print_exc()
 
 # Log to report
 from nanochat.report import get_report

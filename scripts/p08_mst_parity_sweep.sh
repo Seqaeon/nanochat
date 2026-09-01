@@ -485,7 +485,7 @@ if has sparse; then
         # Note the no-aux arm had the LOWEST training loss while being the most collapsed,
         # which is exactly why the load diagnostic has to be read alongside bpb.
 #        run SP2_k2         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 1.0
-        run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
+#        run SP2_k1         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 1 --mst-stream-router-noise 1.0
 #        run SP2_k3         "$DEPTH" $MST_FULL $BEST --mst-stream-topk 3 --mst-stream-router-noise 1.0
 #        # Isolate the two mechanisms.
 #        run SP2_k2_nonoise "$DEPTH" $MST_FULL $BEST --mst-stream-topk 2 --mst-stream-router-noise 0.0
@@ -735,7 +735,7 @@ if has mol; then
     BEST_K1_BASE="--mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 --mst-wo-mode dense"
     if check_divisible "$SUB_DIM" 64; then
         # Their headline topology: 1 shared softmax + top-3 of 14 routed = 4 active.
-        run MOL_1plus3of15 "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM")
+#        run MOL_1plus3of15 "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") 
 #        # Same, with the G3 EQUIVALENT: each thin block reads its own value-embedding
 #        # slice instead of all 15 sharing one vector. Without this MoL is handicapped by
 #        # exactly the component we measured to be worth 0.0059 bpb to MST at L=16, so
@@ -743,7 +743,7 @@ if has mol; then
 #        # The cost is not symmetric and that is a real architectural consequence, not
 #        # unfairness: MST's per-stream table is N*d = D wide, MoL's per-block table is
 #        # n_blocks * d_thin = 3.75x D, and it takes MoL from 89.7M to 324.6M at L=8.
-#        run MOL_1plus3of15_ve "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") --mol-per-block-ve 1
+        run MOL_1plus3of15_ve "$DEPTH" $(mol_config 15 1 3 "$SUB_DIM") --mol-per-block-ve 1
 
         # ── MST at MoL's topology ──
         # MST's streams PARTITION the residual, so N*d = D and N is bounded by D. That

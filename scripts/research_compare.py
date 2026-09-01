@@ -496,6 +496,38 @@ def run_training_sweep(args):
         "--eet-depth-grad-scale", str(getattr(args, 'eet_depth_grad_scale', 0)),
         "--eet-detach-aux-from-backbone", str(getattr(args, 'eet_detach_aux_from_backbone', 0)),
         "--eet-detach-exit-from-backbone", str(getattr(args, 'eet_detach_exit_from_backbone', 0)),
+        # SCH: Structured Code Output Heads
+        "--use-code-head", str(getattr(args, 'use_code_head', 0)),
+        "--sch-head-type", str(getattr(args, 'sch_head_type', 'code')),
+        "--sch-bits", str(getattr(args, 'sch_bits', 0)),
+        "--sch-order", str(getattr(args, 'sch_order', 2)),
+        "--sch-max-m", str(getattr(args, 'sch_max_m', 0)),
+        "--sch-phi-mode", str(getattr(args, 'sch_phi_mode', 'monomial')),
+        "--sch-code-mode", str(getattr(args, 'sch_code_mode', 'binary')),
+        "--sch-code-path", str(getattr(args, 'sch_code_path', '')),
+        "--sch-code-ecc-bits", str(getattr(args, 'sch_code_ecc_bits', 0)),
+        "--sch-code-seed", str(getattr(args, 'sch_code_seed', 1234)),
+        "--sch-phi-density", str(getattr(args, 'sch_phi_density', 0.0)),
+        "--sch-phi-dtype", str(getattr(args, 'sch_phi_dtype', 'bf16')),
+        "--sch-phi-normalize", str(getattr(args, 'sch_phi_normalize', 1)),
+        "--sch-phi-center", str(getattr(args, 'sch_phi_center', 0)),
+        "--sch-g-type", str(getattr(args, 'sch_g_type', 'linear')),
+        "--sch-g-hidden", str(getattr(args, 'sch_g_hidden', 0)),
+        "--sch-g-layers", str(getattr(args, 'sch_g_layers', 2)),
+        "--sch-g-out-std", str(getattr(args, 'sch_g_out_std', 0.001)),
+        "--sch-mixture", str(getattr(args, 'sch_mixture', 1)),
+        "--sch-residual-rank", str(getattr(args, 'sch_residual_rank', 0)),
+        "--sch-logit-act", str(getattr(args, 'sch_logit_act', 'none')),
+        "--sch-bias", str(getattr(args, 'sch_bias', 0)),
+        "--sch-input-mode", str(getattr(args, 'sch_input_mode', 'table')),
+        "--sch-input-hidden", str(getattr(args, 'sch_input_hidden', 0)),
+        "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
+        "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
+        "--sch-holdout-min-id", str(getattr(args, 'sch_holdout_min_id', 256)),
+        "--sch-holdout-mode", str(getattr(args, 'sch_holdout_mode', 'target')),
+        "--sch-decile-metrics", str(getattr(args, 'sch_decile_metrics', 1)),
+        "--sch-rank-probe", str(getattr(args, 'sch_rank_probe', 0)),
+        "--sch-eval-steps", str(getattr(args, 'sch_eval_steps', 100)),
     ]
     if args.compile:
         common_args.append("--compile")
@@ -1216,6 +1248,37 @@ if __name__ == "__main__":
     parser.add_argument("--eet-depth-lr-scale", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-depth-grad-scale", type=int, default=0, choices=[0, 1])
     parser.add_argument("--eet-detach-aux-from-backbone", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--use-code-head", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-head-type", type=str, default='code', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-bits", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-order", type=int, default=2, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-max-m", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-mode", type=str, default='monomial', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-code-mode", type=str, default='binary', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-code-path", type=str, default='', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-code-ecc-bits", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-code-seed", type=int, default=1234, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-density", type=float, default=0.0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-dtype", type=str, default='bf16', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-normalize", type=int, default=1, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-center", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-g-type", type=str, default='linear', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-g-hidden", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-g-layers", type=int, default=2, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-g-out-std", type=float, default=0.001, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-mixture", type=int, default=1, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-residual-rank", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-logit-act", type=str, default='none', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-bias", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-input-mode", type=str, default='table', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-holdout-mode", type=str, default='target', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-decile-metrics", type=int, default=1, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-rank-probe", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-eval-steps", type=int, default=100, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--eet-detach-exit-from-backbone", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()

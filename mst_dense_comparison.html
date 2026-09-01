@@ -113,20 +113,35 @@ const MST_VARIANTS = [
   //{id:'aggdist_d9_after', label:'AggDist d9 after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
 
 
+  {id:'MoL_d8_ve', label:'MoL d8 With VE', total: 324595472, active: 295756816, flops: 1.897680e8, bpp: 0.983328, total_training_flops: 1.118800e17 ,color:'#7F77DD' }, 
+  {id:'MoL_d16_ve', label:'MoL d16 With VE', total: 449035296, active: 218337312, flops: 8.094035e8, bpp: 0.806196, total_training_flops: 2.960551e18 ,color:'#7F77DD' }, 
+
+
+
+  {id:'MoL_d8', label:'MoL d8', total: 89714448, active: 60875792, flops: 1.897680e8, bpp: 0.990762, total_training_flops: 1.118800e17 ,color:'#D4537E' }, 
+  {id:'MoL_d16', label:'MoL d16', total: 449035296, active: 218337312, flops: 8.094035e8, bpp: 0.816196, total_training_flops: 2.960551e18 ,color:'#D4537E' }, 
+
+ // {id:'aggdist_d8_after_b', label:'AggDist d8 after B', total: 110646288, active: 107500560, flops: 1.562204e8, bpp: 1.031984, total_training_flops: 4.385985e16, color:'#FFFF00' }, 
   {id:'aggdist_d16_after_b', label:'AggDist d16 after B', total: 413224992, active: 388059168, flops: 5.745500e8, bpp: 0.870216, total_training_flops: 6.709891e17 ,color:'#FFFF00' }, 
- 
+  {id:'aggdist_d20_after_b', label:'AggDist d20 after B', total: 654183720, active: 605031720, flops: 9.527846e8, bpp: 0.833805, total_training_flops: 1.928699e18 ,color:'#FFFF00' }, 
+  {id:'aggdist_d24_after_b', label:'AggDist d24 after B', total: 964359216, active: 879424560, flops: 1.481481e9, bpp: 0.786897, total_training_flops: 4.822672e18 ,color:'#FFFF00' }, 
 
 
-  {id:'aggdist_d16_after', label:'AggDist d16 after',   total: 413159456, active: 413159456, flops: 7.251517e8, bpp:0.863005, total_training_flops: 8.462993e17 ,color:'#FFFF00' }, 
+
+
+ // {id:'aggdist_d16_after', label:'AggDist d16 after',   total: 413159456, active: 413159456, flops: 7.251517e8, bpp:0.863005, total_training_flops: 8.462993e17 ,color:'#FFFF00' }, 
+
+
+
 
  // {id:'aggdist_d16_after', label:'AggDist d16 after',   total:199254048, active:199254048, flops:7.299564e8, bpp:0.8809506833787342, total_training_flops: 7.554643e17 ,color:'#FFFF00' }, 
-  {id:'aggdist_d18_after', label:'AggDist d18 after',   total:252696996, active:252696996, flops:9.676454e8, bpp:0.8543873681360961, total_training_flops: 1.320820e18 ,color:'#FFFF00' }, 
-  {id:'aggdist_d20_after', label:'AggDist d20 after',   total:314938920, active:314938920, flops:1.225098e9, bpp:0.8349361881196933, total_training_flops: 2.162639e18 ,color:'#FFFF00' }, 
-  {id:'aggdist_d22_after', label:'AggDist d22 after',   total:386717100, active:386717100, flops:1.559036e9, bpp:0.8103885398034462, total_training_flops: 3.497995e18 ,color:'#FFFF00' }, 
-  {id:'aggdist_d24_after', label:'AggDist d24 after',   total:468768816, active:468768816, flops:1.916080e9, bpp:0.7945917533262377, total_training_flops: 5.380519e18 ,color:'#FFFF00' }, 
-  {id:'aggdist_d26_after', label:'AggDist d26 after',   total:561831348, active:561831348, flops:2.363962e9, bpp:0.7804194264485729, total_training_flops: 8.193032e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d18_after', label:'AggDist d18 after',   total:252696996, active:252696996, flops:9.676454e8, bpp:0.8543873681360961, total_training_flops: 1.320820e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d20_after', label:'AggDist d20 after',   total:314938920, active:314938920, flops:1.225098e9, bpp:0.8349361881196933, total_training_flops: 2.162639e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d22_after', label:'AggDist d22 after',   total:386717100, active:386717100, flops:1.559036e9, bpp:0.8103885398034462, total_training_flops: 3.497995e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d24_after', label:'AggDist d24 after',   total:468768816, active:468768816, flops:1.916080e9, bpp:0.7945917533262377, total_training_flops: 5.380519e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d26_after', label:'AggDist d26 after',   total:561831348, active:561831348, flops:2.363962e9, bpp:0.7804194264485729, total_training_flops: 8.193032e18 ,color:'#FFFF00' }, 
  // {id:'aggdist_d28_after', label:'AggDist d28 after',   total:666641976, active:666641976, flops:2.838291e9, bpp:0.7945917533262377, total_training_flops: 1.199171e+19 ,color:'#FFFF00' }, 
-  {id:'aggdist_d32_after', label:'AggDist d32 after',   total:914456640, active:914456640, flops:4.027122e9, bpp:0.7433940812663586, total_training_flops: 2.447819e19 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d32_after', label:'AggDist d32 after',   total:914456640, active:914456640, flops:4.027122e9, bpp:0.7433940812663586, total_training_flops: 2.447819e19 ,color:'#FFFF00' }, 
 
  // {id:'aggdist_d8', label:'AggDist d8',   total:57677840, active:57677840, flops:1.781391e8, bpp:1.079775, total_training_flops: 4.511037e16 ,color:'#3CAEA3' }, 
   //{ id:'aggdist_d10', label:'AggDist d10',   total:82298260, active:82298260, flops:2.628595e8, bpp:1.020320, total_training_flops: 9.688331e16 , color:'#3CAEA3' }, 
@@ -244,13 +259,17 @@ function renderCrosshairTooltip(chart, cfg, x, px, py) {
   cfg.tip.innerHTML = html;
   cfg.tip.style.display = 'block';
 
-  const wrapRect = cfg.wrapper.getBoundingClientRect();
-  const tw = cfg.tip.offsetWidth, th = cfg.tip.offsetHeight;
-  let left = px + 16, top = py - th / 2;
-  if (left + tw > wrapRect.width) left = px - tw - 16;
-  if (left < 0) left = 4;
-  if (top < 0) top = 4;
-  if (top + th > wrapRect.height) top = wrapRect.height - th - 4;
+  const area = chart.chartArea;
+  const tw = cfg.tip.offsetWidth;
+  const midX = (area.left + area.right) / 2;
+  let left;
+  if (px > midX) {
+    left = area.left + 10;
+  } else {
+    left = Math.max(area.left + 10, area.right - tw - 10);
+  }
+  const top = area.top + 10;
+
   cfg.tip.style.left = left + 'px';
   cfg.tip.style.top = top + 'px';
 }

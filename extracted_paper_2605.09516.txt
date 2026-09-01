@@ -1,0 +1,688 @@
+--- PAGE 1 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer
+Compute
+A Preprint
+Ivan Ternovtsii
+ ∗
+Department of Software Systems, Uzhhorod National University
+Narodna sq. 3, Uzhhorod, Ukraine, 88000
+HengeBytes
+ivan.ternovtsii@uzhnu.edu.ua
+Yurii Bilak
+Department of Software Systems, Uzhhorod National University
+Narodna sq. 3, Uzhhorod, Ukraine, 88000
+May 2026
+Abstract
+StandardMixture-of-Experts(MoE)transformersroutetokenstoexpertsubnetworkswithin
+each layer, but the layer structure itself remains monolithic. We introduceMixture of Lay-
+ers(MoL), which replaces full-width transformer blocks (dmodel) withKparallelthin blocks
+at reduced dimensionality (dthin≪dmodel), connected via learned down/up projections and
+composed via top-kblock routing. Scaling sparse block routing to many blocks creates an
+attention coverage problem, as each block sees fewer tokens. We address this by introducing
+hybrid attention, which pairs one shared softmax block for global context with Gated
+DeltaNet [Yang et al., 2024] linear attention in routed blocks.
+On WikiText-103 at 85M params, MoL with dense FFN thin blocks reaches PPL30.95±0.11
+(3 seeds), surpassing the rank-1 expressiveness ceiling of traditional MoE by 2.98. Adding
+hybrid attention (1+3of15, 198M total, 77M active) reaches PPL29.99±0.08with up to
+4.9×forward-pass speedup from sparse dispatch. On Cosmopedia v2 (15B tokens), MoL
+overtakes dense baselines past 35% of training and finishes at PPL 6.49 vs 6.65; a dense
+DeltaNet control at 6.64 indicates the gain is not driven by the attention swap alone.
+Scaling to FineWeb-Edu 20B tokens atdmodel=2048,MoLHybrid 1+3of15 (2.08B total /
+0.61B active) reaches PPL 18.04 in a single-seed run; this is 0.49 PPL better than an iso-
+activeDenseSoftmax0.7Bbaseline(18.53)but3.01PPLworsethaniso-totalDenseSoftmax
+1.3B (15.03), and takes 1.91–2.29×longer to train than each dense baseline due to gradient-
+checkpointing pressure on the routed-DeltaNet kernel. Zero-shot transfer on an 8-task lm-
+eval-harness suite placesMoLbetween the two dense baselines as capacity predicts, with a
+clean win on WinoGrande over Dense Softmax 1.3B (54.4 vs 51.6). In single-GPU prefill,
+MoLHybrid crosses Dense Softmax 1.3B atT≈5−6K on the RTX 3090. On datacenter
+GPUs (A100, H100 SXM, H200), the crossover occurs betweenT=64K andT=128K. At
+∗This research was conducted as part of PhD studies at the Department of Software Systems, Faculty of Infor-
+mation Technologies, Uzhhorod National University. HengeBytes generously provided computational resources. We
+thank the Department of Software Systems for academic support and the HengeBytes team for maintaining the com-
+putational infrastructure. This paper reports 13 controlled experiments totaling approximately 1,700 GPU-hours,
+of which∼800 GPU-hours are 1.3B-scale runs on4×H200 NVL. Corresponding author: Ivan Ternovtsii (e-mail:
+ivan.ternovtsii@uzhnu.edu.ua).
+arXiv:2605.09516v1  [cs.LG]  10 May 2026
+--- PAGE 2 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+T=128K,MoLrangesfromnear-parity(0.98×onH100SXM)to1.20×onA100; atT=256K
+it reaches1.42×−1.54×on H100 SXM and H200. The four measured points do not support
+a simple bandwidth- or compute-linear scaling, and we do not claim a hardware scaling
+law. At 1.3B,MoLtrades training efficiency and total-parameter capacity for an iso-active
+perplexity and downstream-transfer lead, plus a long-context prefill advantage that activates
+at much shorter context on the 3090 than on the three datacenter GPUs in our setup.
+1 Introduction
+Scaling language models traditionally means stacking more sequential transformer blocks, which increases
+depth, memoryfootprint, andlatencyinlockstep. Mixture-of-Experts(MoE)transformers[Fedusetal.,2022,
+Lepikhin et al., 2021, Shazeer et al., 2017, Zoph et al., 2022] address parameter scaling by routing tokens
+to expert subnetworks, but the layer structure remains monolithic; every position runs a single full-width
+transformer block.
+In a companion paper [Ternovtsii and Bilak, 2026], we found that routing topology is quality-neutral across
+structurally different MoE variants. If topology is not the primary driver of performance, what is? Prior
+work points to per-expert expressiveness: 65,536 rank-1 experts cannot replicate 256 rank-256 experts despite
+matched parameters (PPL 47.51 vs 12.55; see Appendix A).
+We investigate whether layer structure itself can be decomposed, presenting four contributions:
+1.Mixture of Layers (MoL).MoLreplaces full-width transformer blocks withKparallel thin blocks at
+dthin=256, connected via learned down/up projections. With dense FFNs, MoL achieves PPL30.95±0.11
+(3 seeds, 85M params) on WikiText-103,2.98better than the full-width MoE baseline, surpassing the
+rank-1 expressiveness ceiling (Section 2).
+2.Hybrid attention for sparse routing.Scaling to more blocks degrades attention quality as each
+block sees fewer tokens. To address this, one shared softmax block (global coverage) is paired with
+Gated DeltaNet [Yang et al., 2024] routed blocks (O(T)linear attention on sparse subsets). DeltaNet
+outperforms softmax by 0.85 PPL after controlling for parameters in the thin-block regime (dthin=256),
+an advantage that vanishes atdthin=dmodel (Section 3).
+3.Sparsedispatchwithwall-clockspeedup.Sparsedispatch(gather/scatter)yieldsupto4.9×forward-
+pass speedup at high sparsity. DeltaNet 1+3of15 (198M total, 77M active, 3 seeds) achieves PPL29.99±
+0.08, activating only 27% of blocks per token (Section 2.3).
+4.Regime-dependent scaling.MoL’s advantage is data-regime dependent: it loses to dense on WikiText-
+103 (103M tokens, multi-epoch) but wins on Cosmopedia v2 (15B tokens, single epoch), with a0.85PPL
+swing across datasets. A dense DeltaNet control matches dense softmax to within 0.01 PPL, indicating
+MoL’s gain is not driven by the attention swap (Section 5.3). At 1.3B-scale on FineWeb-Edu 20B tokens
+(single seed each),MoLHybrid (2.08B total / 0.61B active, PPL 18.04) sits between iso-active Dense
+Softmax 0.7B (18.53) and iso-total Dense Softmax 1.3B (15.03): 0.49 PPL ahead at iso-active, 3.01 PPL
+behind at iso-total, with a 1.91–2.29×training-time tax that does not extend to inference (Section 5.5).
+Unlike sequential hybrid designs that alternate attention types across layers [Glorioso et al., 2024, Qwen
+Team, 2025],MoLmaintains full attention coverage at every layer through the shared block while confining
+linear attention to sparse routed subsets.
+2 The MoL Architecture
+2.1 Thin Block Wrapper
+MoLreplaces selected full-width transformer blocks withsplit stages, each containingKindependent thin
+blocks. Eachthinblockconsistsofadown-projection, astandardtransformerblockatreduceddimensionality,
+and an up-projection.
+ThinBlock(x) =W up·
+(
+Blockdthin(Wdown·x)−Wdown·x
+)
+(1)
+whereW down∈Rdthin×dmodel,W up∈Rdmodel×dthin, and Blockdthin is a complete transformer block (RMSNorm
+→multi-head attention→RMSNorm→FFN) operating at dimensionalitydthin. The subtraction strips
+the inner residual, so ThinBlock outputs only the delta computed by the block.
+2
+--- PAGE 3 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+2.2 Split Stage with Block Routing
+A split stage runsKthin blocks, selectskvia a learned router, and averages their outputs:
+SplitStage(x) =x+ 1
+k
+∑
+i∈top-k(K)
+wi·ThinBlocki(x)(2)
+wherew i are softmax-normalized routing scores and top-kselects thekhighest-scoring blocks. The outer
+residualx+...ensures gradient flow even if thin blocks produce small updates. Selective block activation
+outperforms uniform composition by0.99±0.10PPL (3 seeds,∼9×pooled seed stdσpooled=0.12).
+Load balancing.We use a coefficient-of-variation (CV2) loss on per-block routing weights, weighted by
+α=0.05, following standard MoE practice. This prevents block collapse without requiring auxiliary tokens
+or capacity constraints.
+RoPE compatibility.All configurations maintaindhead=64:d model=1024uses 16 heads,d thin=256uses 4
+heads. Precomputed RoPE embeddings are shared across all block widths.
+2.3 Sparse Dispatch
+With block-level routing, each thin block processes only its routed tokens. We implementsparse dispatch,
+whichgathersonly routed tokens per block, runs on compact tensors, andscattersresults back. This
+eliminates wasted compute on non-routed tokens.
+Correctness.Sparse dispatch produces numerically identical outputs to dense restricted attention (max
+logit diff5.7×10−6on GPU,2.4×10−7on CPU).
+Speedup.Forward-pass speedup scales with sparsity, reaching1.53×at 57% active (top-4-of-7),2.85×at
+20% (top-2-of-10), and4.34×at 10% (top-2-of-20). Withtorch.compile: up to4.94×.
+Projection overhead.Projection cost (W down,W up) sets a floor ondthin: atd thin=256projections con-
+sume 40% of wrapper parameters, rising to 57% atdthin=128and 73% atd thin=64. Empiricallyd thin=256
+outperformsd thin=128by1.62PPL at iso-parameters (∼85M), so width outweighs count.
+3 Hybrid Attention
+3.1 The Attention Coverage Problem
+Scaling to more blocks with sparse dispatch creates an attention coverage problem. At 3-of-15, each block
+sees only 20% of the sequence (mean inter-token gap of 25.6), compared to 60% at 3-of-5 (gap of 1.8).
+Softmax-only sparse 3-of-15 achieves PPL 34.73 on WikiText-103, worse than 3-of-5 (32.04) despite using
+2.2×more parameters; more parameters cannot compensate for reduced sequence coverage.
+3.2 Architecture: Shared + Routed
+Each split stage contains:
+•Shared block(block 0): always active on all tokens, full softmax attention, providing global context
+at every layer.
+•Routed blocks(blocks 1–N−1): top-kselected by the router, sparse dispatch with Gated DeltaNet
+[Yang et al., 2024] linear attention on their token subsets.
+We denote configurations asS+KofN:Sshared blocks plus top-Krouted fromN−Scandidates, withN
+total blocks. For example,1+3of15has 1 shared softmax block and selects 3 from 14 routed DeltaNet blocks,
+activating 4 total.
+3.3 Why DeltaNet in Routed Blocks
+Gated DeltaNet is used in routed blocks; since the shared block already supplies global softmax context,
+the routed blocks do not require precise quadratic attention. Adthin scaling sweep also shows DeltaNet
+3
+--- PAGE 4 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+outperforming softmax in the constrained-width regime (dthin=256), and DeltaNet isO(T)rather than
+O(T 2), becoming faster atT≥2048.
+Decomposing the DeltaNet advantage.AtK=1(single block, no routing, all tokens visible), DeltaNet
+outperforms softmax by 2.55 PPL (36.28 vs 38.83) at matched architecture (∼43M params). An iso-
+parameter softmax control (87.5M,dff=1133, 3 seeds:32.09±0.26) reveals that DeltaNet’s extra parameters
+(gates, convolutions) account for 0.26 PPL (23%) of the 1.11 PPL gap in the 1+2of5 MoL configuration; the
+remaining 0.85 PPL (77%) is the parameter-controlled mechanism contribution,3.0×the pooled seed std
+(σpooled=0.29).
+Scale dependence.A scaling sweep acrossd thin∈{128,256,512,1024}shows the DeltaNet–softmax gap
+shrinks monotonically; the gap is2.79→2.55→1.12→ −0.10PPL. Atdthin=dmodel=1024, softmax
+marginally wins (27.60vs27.70). DeltaNet’s inductive biases (decay, delta rule) help most when attention
+capacity is constrained; the advantage vanishes when capacity is sufficient.
+4 Experimental Setup
+4.1 Datasets
+We evaluate on three datasets of increasing scale and tokens-per-parameter:WikiText-103[Merity et al.,
+2017]: 103M tokens, custom BPE 32K,T=255, multi-epoch (∼8 epochs); architecture ablations at 43–198M
+params.Cosmopedia v2[Ben Allal et al., 2024]: 15B synthetic-textbook tokens, GPT-2 vocab,T=2048,
+single-epoch; data-regime dependence at∼104M params.FineWeb-Edu[Penedo et al., 2024]: filtered web
+tokens, GPT-2 vocab, single-epoch. 80M topology sweep atT=2048(∼2.5B tokens at 38K steps, Exp 079);
+1.3B-scale runs atT=4096(20B tokens, Exp 085/087/089).
+4.2 Architectures
+80M-scale ablations(WikiText-103, Cosmopedia):d model=1024, 16 heads, 8 layers,dthin=256, 4 heads
+per thin block. Training: 50K steps (WikiText) or 114K steps (Cosmopedia), lr= 3×10−4, cosine decay,
+1000-step warmup (WikiText) / 2000-step (Cosmopedia), AdamW (β1=0.9,β2=0.95, wd= 0.01), gradient
+clipping at 1.0, effective batch size 64.
+1.3B-scale headline(FineWeb-Edu 20B tokens, 4×H200 NVL). Three architectures sharedmodel=2048,
+24 layers, GPT-2 50,257-vocab,T=4096, batch 1.0M tok/step, 20K steps, AdamW lr= 2×10−4cosine to
+0.1×, 2000-step warmup, bf16 with gradient checkpointing.Dense Softmax 1.3B(Exp 085):dff=8192,
+16 heads (dhead=128). 1.31B total.Dense Softmax 0.7B(Exp 089):d ff=2048matched to a singleMoL
+thin block, 32 heads (dhead=64matched to thin-block heads). 0.71B total.MoL Hybrid 1+3of15(Exp
+087):d thin=512, 15 thin blocks (1 shared softmax + 14 routed DeltaNet, top-3 active = 4 active per token),
+dff,thin=2048. 2.08B total / 0.61B active.
+4.3 Baselines
+•Dense Softmax: standard transformer, iso-param to MoL conditions. At 85M: PPL 30.26 (Wiki-
+Text), 6.65 (Cosmopedia). At 198M: PPL 26.89 (WikiText).
+•Dense DeltaNet: DeltaNet attention, iso-param. At 85M: PPL 30.68 (WikiText). At 104M:
+PPL 6.64 (Cosmopedia), tying dense softmax within 0.01 and confirming the attention mechanism
+does not explain MoL’s structural advantage.
+•CT-MoE baseline[Ternovtsii and Bilak, 2026]: rank-1 MoE, 84.7M params, PPL 33.93 (Wiki-
+Text).
+5 Results
+5.1 Breaking the Rank-1 Ceiling with Dense FFN Blocks
+Replacing rank-1 MoE FFNs with standard dense FFNs (dff = 4×dthin) in thin blocks exceeds the rank-1
+ceiling (Table 1). Dense FFN MoL (K=5, top-3, 85.3M params) achieves PPL30.95±0.11(3 seeds),2.98
+better than the full-width rank-1 baseline (33.93).
+4
+--- PAGE 5 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Table 1: Dense FFN thin blocks vs rank-1 MoE on WikiText-103. All atdthin=256, 50K steps.
+Config FFN Params PPL∆vs CT-MoE
+CT-MoE baseline (rank-1) MoE 84.7M 33.93 —
+MoL K=7 split_all (rank-1) MoE 85.6M 34.83+0.90
+MoL K=5 top-3 (dense)Dense 85.3M30.95±0.11−2.98
+MoL K=5 all-active (dense) Dense 85.3M31.94±0.12−1.99
+Table 2: Hybrid attention on WikiText-103. S=shared (all tokens), R=routed (sparse).†=1 seed;±=3
+seeds.
+Config Attn Active Params PPL
+Dense full-attn K=5† softmax 3/5 85.3M 30.85
+Sparse 3-of-5 softmax 3/5 85.3M32.19±0.15
+Softmax 1+2of5 iso-param softmax 1S+2R 87.5M32.09±0.26
+DeltaNet 1+2of5S:smx, R:∆1S+2R 87.5M31.24±0.31
+Softmax 1+2of15† softmax 1S+2R 190.4M 36.51
+DeltaNet 1+2of15† S:smx, R:∆1S+2R 198.2M 32.75
+DeltaNet 1+3of15S:smx, R:∆1S+3R 198.2M29.99±0.08
+Dense softmax 85M† softmax — 84.7M 30.26
+Dense softmax 198M† softmax — 198.2M 26.89
+Dense DeltaNet 85M† DeltaNet — 84.7M 30.68
+5.2 Hybrid Attention Results
+Table 2 summarizes the hybrid attention experiments on WikiText-103. DeltaNet 1+2of5 (31.24±0.31, 3
+seeds)outperformsbothiso-paramSoftmax1+2of5(32.09±0.26)andstandardSoftmax1+2of5(32.35±0.15).
+Scaling to 15 blocks, DeltaNet 1+3of15 (198.2M total, 77M active) achieves PPL29.99±0.08(3 seeds),
+activating only 27% of blocks per token.
+Dense baselines contextualize MoL quality.At iso-total-parameters (198M), a dense softmax trans-
+former reaches PPL 26.89,3.1PPL better than DeltaNet 1+3of15. This establishes the cost of sparse block
+routing. Note thatMoLactivates only 77M parameters per token (39% of total), so this gap is paid against
+a model with2.6×fewer per-token FLOPs and admits block-parallel placement across devices.
+5.3 Data-Regime Scaling: Cosmopedia 15B
+OnWikiText-103(103Mtokens,∼8epochs), MoLconsistentlyunderperformsdense: MoLK=5top-3(85.3M,
+30.95±0.11) loses by 0.69 PPL vs dense softmax (30.26). Training on Cosmopedia v2 (15B unique tokens,
+single epoch) reverses this (Table 3).
+MoL K=5 crosses the dense baseline at step 40K (35% through training) and stabilizes at−0.16PPL,
+representing a0.85 PPL swingrelative to WikiText-103. The sparse MoL variant (DeltaNet routed +
+softmax shared) tracks within 0.03 PPL (6.52 vs 6.49), retaining 81% of the MoL gain under sparse dispatch.
+Isolating the structural contribution.Dense DeltaNet (103.4M, Cosmopedia) finishes at PPL 6.64,
+within 0.01 of dense softmax (6.65). Since both dense baselines converge to the same PPL, MoL’s 0.15–
+0.16 PPL lead cannot be attributed to the linear attention choice. The advantage derives from block-level
+routing with joint attention+FFN specialization. An MoE-FFN ablation (shared attention + routed FFN
+experts, no block routing) finishes at PPL 6.89 (+0.24vs dense), confirming that FFN-only routing does not
+explain MoL’s gain.
+5.4 FineWeb-Edu 80M Ablations
+We test whether theMoLadvantage on Cosmopedia (Section 5.3) replicates on web-text by running an
+80M-scale sweep on FineWeb-Edu for 60K steps (T=2048,∼3.9B tokens, 3×local GPUs, single seed each),
+5
+--- PAGE 6 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Table 3: Cosmopedia v2 results (15B tokens, single epoch,∼104M params). MoL overtakes dense at step
+40K.
+Condition Params Final PPL vs Dense
+Dense softmax 103.4M 6.65 —
+Dense DeltaNet 103.4M 6.64−0.01
+MoL K=5 top-3104.0M6.49−0.16
+Sparse MoL 1+2of5 106.0M 6.52−0.13
+MoE-FFN 3of5∼106M 6.89+0.24
+comparing threeMoLHybrid topologies (1+3of{5, 10, 15}) against two Dense Softmax baselines bracketing
+both ends of the active-parameter spectrum (Table 4).
+Table 4: FineWeb-Edu 80M sweep at 60K steps (Exp 079). MoL conditions use shared softmax and routed
+Gated DeltaNet (dthin=256). Differences are relative to the Dense 98M baseline. Single seed each.
+Condition Total Active Val PPL @ 60K∆PPL
+Dense Softmax 152M (iso-FLOP) 152M 152M24.97−4.61
+Dense Softmax 98M (iso-active)97.7M 97.7M29.58–
+MoLHybrid 1+3of15 217M 95M26.40−3.18
+MoLHybrid 1+3of10 162M 95M 27.76−1.82
+MoLHybrid 1+3of5 106M 95M 27.96−1.62
+Atiso-activecompute(Dense98Mwithd ff=768matchedtoMoL’s∼95Mactive), allthreeMoLtopologies
+cross Dense between steps 10K–12K and finish 1.62–3.18 PPL ahead by 60K, with the gap widening through
+training.At iso-FLOP(Dense 152M,1.6×more active compute), Dense finishes 1.43 PPL ahead of best
+MoL, confirming thatMoLtrades total parameters for active-compute efficiency, the same trade as MoE
+but at the block level. AKactive sweep at fixed poolN=5(Section I) shows the result holds across different
+block counts.
+5.5 1.3B-Scale Results
+We trained three architectures on FineWeb-Edu 20B tokens to compareMoLHybrid against Dense Softmax
+baselines bracketing it on both ends of the active-parameter spectrum.
+Table 5: 1.3B-scale validation perplexity on FineWeb-Edu 20B tokens (4×H200 NVL, identical optimizer /
+token budget). Wall time is the full 20K-step run.
+Model Total Actived ff Final PPL Wall time
+Dense Softmax 1.3B (Exp 085) 1.31B 1.31B 819215.0353.3h
+Dense Softmax 0.7B (Exp 089) 0.71B 0.71B 2048 18.53 44.5h
+MoLHybrid 1+3of15 (Exp 087) 2.08B 0.61B 2048 † 18.04 102.0h
+†Per thin block; 4 active blocks per token.
+Iso-active comparison.On the closest active-parameter match,MoLHybrid (0.61B active) reaches 18.04
+PPL vs Dense Softmax 0.7B (0.71B active,dff matched to a single thin block) at 18.53, a0.49PPL gap;
+MoLcrosses Dense 0.7B at step 7K and stabilizes at∼1.03×ratio. The 1.3B comparison uses one seed per
+condition; cross-seed std on the same architecture isσ≈0.08PPL on WikiText-103 (Section G).
+Iso-total gap.Dense Softmax 1.3B finishes 3.01 PPL ahead ofMoL’s 2.08B total; the gap stabilizes at
+step 11K (Figure 1). Candidate causes (active FFN capacity, within-MoLsparsity, sub-Chinchilla token
+budget) are discussed in Section J.
+Zero-shot transfer.On an 8-task lm-eval-harness suite (7 tasks in Table 6; TruthfulQA mc1 in Section K),
+MoLwins 4 of 8 tasks against iso-active Dense 0.7B (HellaSwag +1.0, ARC-Challenge +0.6, PIQA +0.1,
+WinoGrande +5.0) and edges Dense 1.3B on WinoGrande (54.4 vs 51.6).MoLtrails Dense 1.3B on the
+6
+--- PAGE 7 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+broad-knowledge tasks (HellaSwag, ARC-Easy, PIQA) by 1.5–4.9 pts, consistent with the iso-total PPL gap,
+and trails iso-active Dense 0.7B on TruthfulQA mc1/mc2 (a documented inverse-scaling regime). All three sit
+at chance on MMLU 5-shot (∼24%), expected at 1.3B / 20B tokens; the pattern placesMoL’s downstream
+transfer at fixed active compute between the density-matched dense baselines, as capacity predicts.
+Table 6: Zero-shot accuracy (%, lm-eval-harness 0.4.7, bf16;acc_normwhere benchmark prefers it; MMLU
+5-shot, others 0-shot). Best per row in bold; MMLU rows are within noise of chance (∼25%) so we omit
+bolding there. Stderr per task is0.005–0.014.
+Task Dense 1.3B (085) Dense 0.7B (089)MoL0.61B/2.08B (087)
+MMLU (5-shot) 24.31 23.98 23.07
+HellaSwag39.7134.10 35.10
+ARC-Easy53.0748.86 48.15
+ARC-Challenge26.8825.43 26.02
+PIQA65.5663.98 64.09
+WinoGrande 51.62 49.3354.38
+TruthfulQA mc2 37.8340.8939.55
+Training cost.MoLHybrid takes1.91×Dense 1.3B’s wall time (102.0h vs 53.3h) at identical token
+budget. Two costs compound. First, gradient checkpointing is mandatory at 2.08B total params on 141GB
+H200s. Second, DeltaNet’s chunked kernel is more expensive to replay during backward than FlashAttention.
+On Cosmopedia 80M (no checkpointing), the same architecture was1.45×fasterthan Dense (Section E);
+the training tax is scale- and memory-budget-specific, not intrinsic.
+Inference inversion at long context.The training penalty inverts at inference (single-GPU, batch=1,
+prefill). On RTX 3090,MoLHybrid is1.25×−1.76×faster than Dense Softmax 1.3B atT=8−32K. On
+the three datacenter GPUs we measured (A100, H100 SXM, H200), the crossover sits betweenT=64K and
+T=128K, withMoLranging from near-parity (0.98×on H100 SXM) to1.20×on A100 atT=128K and
+1.42×−1.54×atT=256K (Section 5.6). AtT=256K,MoLHybrid 2.08B successfully completes prefill
+on A100 80GB whereas Dense Softmax 1.3B OOMs, a memory-pressure manifestation ofMoL’s smaller
+per-layer softmax KV cache. The four measured points do not support a clean bandwidth- or compute-
+linear scaling story; we report the empirical crossovers and leave a multi-architecture mechanistic model to
+future work. At 1.3B,MoLtrades a training premium and an iso-total PPL gap for an iso-active PPL and
+downstream-transfer lead, plus a long-context prefill advantage whose onset is hardware-specific.
+5.6 Inference Wall-Clock: Prefill and Decode
+We benchmark prefill and decode throughput at batch=1 on two GPU classes (bf16, post-warmup,
+FlashAttention-2 for softmax, FLA Triton kernels for DeltaNet, KV cache for both Dense andMoL): a
+memory-bandwidth-limitedRTX 3090(936 GB/s HBM, 71 TFLOPS bf16) and a compute/bandwidth-rich
+H200(4.8 TB/s HBM, 989 TFLOPS bf16). For the 3090 prefill table we add two control architectures to iso-
+late the routing contribution from the attention-type contribution: aDense DeltaNet 1.3B(iso-architecture
+to Dense Softmax with the attention swapped) and aMoLall-softmax 2.08B(same routing asMoLHybrid
+but withrouted_attn_type=softmax).
+5.6.1 Prefill: Long Context
+Empirical crossover positions across four GPUs.On RTX 3090,MoLHybrid crosses Dense Softmax
+atT≈5−6K and reaches1.76×Dense atT=32K. On the three datacenter GPUs we measured (A100 80GB,
+H100 SXM 80GB, H200 144GB), the crossover sits betweenT=64K andT=128K despite a 3×HBM-
+bandwidthspread(1.55→4.8TB/s)anda3×computespread(312→989TFLOPSbf16):MoLreaches1.20×
+Dense atT=128K on A100,≈1.0×on H100 SXM,1.05×on H200, and1.42×−1.54×Dense atT=256K
+on H100 SXM and H200 (Dense OOMs atT=256K on A100 80GB whileMoLHybrid 2.08B does not,
+isolating the memory advantage ofMoL’s smaller per-layer softmax KV cache).The four measured points
+do not support a simple monotonic scaling with HBM bandwidth or compute alone.Plausible contributing
+factorsincludedifferencesinFlashAttentionkernelefficiencyacrossarchitectures, GDDR6XvsHBMmemory
+hierarchies, L2 cache sizes, and SM-to-bandwidth ratios; we do not isolate these and we do not claim a
+closed-form scaling law. We report the empirical crossovers above as observed in our single-GPU, batch=1,
+FA-2/FLA bench. Our earlier H200 sweep stopped at 32K and led us to incorrectly conclude no crossover
+7
+--- PAGE 8 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+0 2500 5000 7500 10000 12500 15000 17500 20000
+Training step (1.05M tokens / step)
+15
+20
+30
+50
+100Validation perplexity
+FineWeb-Edu 20B tokens, 4×H200 NVL
+Dense Softmax 1.3B (Exp 085)
+MoL Hybrid 2.08B / 0.61B active
+Dense Softmax 0.7B (Exp 089)
+Figure 1: Validation perplexity (log scale) vs training step for the three 1.3B-scale runs on FineWeb-Edu
+20B tokens. Dense Softmax 1.3B (blue) leads from step 1;MoLHybrid (red) stays∼3 PPL above through
+training; Dense Softmax 0.7B (green) starts aboveMoLand crosses below at step 7K, then narrows the gap
+from−3.5PPL to−0.49PPL by step 20K. The Dense 1.3B vsMoLgap stabilizes at step 11K and does
+not close within budget.
+existed on Hopper; the 4-hardware data shows the crossover is universal in our measurements but late on
+datacenter GPUs.
+Decomposing the 3090 speedup.The per-token latency reduction on 3090 atT=32K (Dense Softmax
+92.5µs→MoLHybrid52.5µs) decomposes into a routing-structure contribution of31.6µs (79%, Dense
+Softmax→MoLall-softmax: smaller per-blockd ff and 14 narrow routed-attention windows of∼T/4.67
+tokens vs one giantT×T) and a DeltaNet-on-routed contribution of8.4µs (21%,MoLall-softmax→MoL
+Hybrid:O(T)linear attention on the routed pathway). Dense DeltaNet 1.3B reaches1.90×Dense Softmax
+atT=32K on 3090 (theO(T)vsO(T 2)effect alone). Both decomposition runs are 3090-only; an H200
+decomposition would require re-running the controls and is left for future work.
+Implementation.The numbers above use the production inference path
+attention_mode="batched_sparse", which fuses theN=14routed FLA calls into one
+chunk_gated_delta_rulecall withN×Hheads and stacks per-block linear projections viabmm. The naive
+(sparse) path is2.8×slower than batched on 3090 atT=256batch=1, and2.77×slower on H200 atT=4K
+(consistent across hardware). Numerical equivalence is preserved: validation perplexity on the Exp 087
+trained checkpoint shifts only−0.11%(18.48→18.46, within bf16 noise).
+Decode(3090KV-cache).On3090withKVcacheenabled, DenseSoftmaxdecodelatencygrowslinearly
+at∼3 ms per 4K context (6.2 ms/tok @256→26.5 ms/tok @24K,4.3×), whileMoLstays flat at∼60–
+65 ms across the same range, dominated by a per-token dispatch floor of∼2,160 Python op launches; the
+asymptotic flat-vs-linear property holds but the floor makesMoLslower than Dense in absolute terms across
+all measured contexts. Detailed decode tables and the H200 decode follow-up are deferred to Section H.
+Caveats.The Dense DeltaNet 1.3B prefill control uses random weights (Exp 086 was planned but not
+trained, so we attribute wall-clock without claiming joint quality+speed); atT≤2K batch=1 on 3090,
+Dense Softmax still wins by up to0.78×on prefill.
+5.7 Limitations
+Four limitations scope our claims.(1)1.3B uses single-seed runs; cross-seedσ≈0.08PPL on 80M WikiText-
+103 (Section G) does not bound scale variance.(2)MoL’s 1.91–2.29×training cost at 1.3B reflects gradient-
+checkpointing pressure on the routed-DeltaNet kernel; at 80M Cosmopedia (no checkpointing) the same ar-
+8
+--- PAGE 9 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Table 7: Prefill throughput (tokens/s, batch=1, single GPU; 5-run mean per cell after warmup, run-to-run
+variance<2%at fixedTon each GPU).MoLHybrid value is the faster ofbatched_sparseandsparseat
+eachT(both shown where measured; see protocol note).Best per row in boldmarks the crossover between
+Dense andMoLHybrid. The four measured GPUs do not show a clean monotonic shift in crossover position
+with HBM bandwidth or compute; we present empirical positions only.
+SeqLen Dense Softmax 1.3B Dense DeltaNet 1.3B † MoLall-softmax 2.08B† MoLHybrid 2.08B
+RTX 3090 (consumer; 936 GB/s HBM, 71 TFLOPS bf16)
+4,09618,04117,962 20,591 16,005
+32,768 10,808 20,502 16,42419,062
+A100 SXM4 80GB (1.55 TB/s HBM, 312 TFLOPS bf16)
+4,09643,585— — 9,998
+32,76828,472— — 16,650
+65,53619,495— — 15,968
+131,072 11,779 — —14,115(sparse)
+H100 SXM 80GB (3.35 TB/s HBM, 989 TFLOPS bf16)
+4,09698,476— — 16,459
+32,76871,925— — 33,579
+65,53651,731— — 33,559
+131,07231,299— — 30,819 (sparse,≈0.98×Dense)
+262,144 17,495 — —24,841(sparse)
+H200 (4.8 TB/s HBM, 989 TFLOPS bf16)
+4,096102,460— — 14,174
+32,76871,912— — 36,911
+65,53651,860— — 36,292 (sparse) / 35,244 (batched)
+131,072 31,348 — —33,008(sparse)
+262,144 16,973 — —26,105(sparse)
+†Random-initialized control architectures (not trained); used on 3090 to attribute the speedup to routing vs
+attention-type.Path-selection protocol:batched_sparsestacks allN=14routed FLA calls into one kernel
+(peak∼85GB at 128K) and dominates short context where dispatch overhead matters;sparsedispatches per block
+(peak∼32GB at 128K) and dominates long context where the stacked footprint OOMs. We report the faster path
+at eachT.Bench limits: Dense Softmax 1.3B OOMs above 524K (H200) and 128K (A100/H100 SXM 80GB);
+MoLsparse OOMs above 262K with the current KV-cache implementation; FlashAttention-3, fp8 KV-cache, or
+multi-GPU serving could move all ceilings.
+chitecture was1.45×fasterthan Dense, so the tax is memory-budget-specific.(3)Prefill advantage is single-
+GPU, batch=1 on FlashAttention-2 + FLA kernels, with hardware-specific onset (T≈5−6K on RTX 3090;
+T=64–128K on A100/H100/H200; Section 5.6). Multi-GPU parallelism, batched serving, FlashAttention-3,
+and fp8 KV-cache could shift the crossover; we report a controlled microbenchmark, not a deployment result.
+MoLdecode is slower at every measured context (3.1–9.7×) and we do not extrapolate beyond 24K.(4)
+The 1.3B-scale comparison uses FineWeb-Edu 20B tokens at∼15.6 tokens/active-param; larger budgets and
+additional corpora are needed to test whether the iso-total gap persists.
+6 Related Work
+MoE and layer modularity.Standard MoE [Fedus et al., 2022, Shazeer et al., 2017, Zoph et al., 2022]
+routes tokens to FFN experts within a full-width layer. In contrast,MoLroutes over whole transformer
+blocks at reduceddmodel. Layer-level modularity work modifieswhichlayers execute (MoD [Raposo et al.,
+2024], MoLEx [Teo and Nguyen, 2025], MoR [Bae et al., 2025], MoEUT [Csordás et al., 2024]); sub-network
+parallelism partitions weights (UoE [Yang et al., 2025]), the FFN only (FlashMHF [Zhang et al., 2026]), or
+sub-blocks (AltUp [Baykal et al., 2023]); MoM [Gong et al., 2024] and MoUE [Chen et al., 2026] pool/share
+modules, all at fulld model. No prior work combines parallel blocks, reduced-dmodel down/up projections
+(used as fine-tuning in adapters/LoRA [Houlsby et al., 2019, Hu et al., 2022]), top-kblock routing, and
+hybrid attention.
+9
+--- PAGE 10 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Hybrid attention.Unlike sequential hybrids that alternate attention types across layers [Glorioso et al.,
+2024, Gu and Dao, 2024, Peng et al., 2023, Qwen Team, 2025],MoLcarries softmax (shared) andO(T)
+DeltaNet [Yang et al., 2024] (routed)withinevery layer.
+References
+Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Haru-
+tyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun. Mixture-of-recursions: Learning dynamic recursive
+depths for adaptive token-level computation. InNeurIPS, 2025.
+Cenk Baykal, Dylan Cutler, Nishanth Dikkala, Nikhil Ghosh, Rina Panigrahy, and Xin Wang. Alternating
+updates for efficient transformers. InNeurIPS, 2023.
+Loubna Ben Allal, Anton Lozhkov, Guilherme Penedo, Thomas Wolf, and Leandro von Werra. Cosmopedia:
+Creating large-scale synthetic data for pre-training.Hugging Face Blog, 2024. URLhttps://huggingface.
+co/blog/cosmopedia.
+Yilong Chen, Naibin Gu, Junyuan Shang, Zhenyu Zhang, Yuchen Feng, Jiawei Sheng, Tingwen Liu, Shuo-
+huan Wang, Yu Sun, Hua Wu, and Haifeng Wang. Mixture of universal experts: Scaling virtual width via
+depth-width transformation.arXiv preprint arXiv:2603.04971, 2026.
+RóbertCsordás, KazukiIrie, JürgenSchmidhuber, ChristopherPotts, andChristopherD.Manning. MoEUT:
+Mixture-of-experts universal transformers. InNeurIPS, 2024.
+Damai Dai, Chengqi Deng, Chenggang Zhao, R. X. Xu, Huazuo Gao, Deli Chen, Jiashi Li, Wangding Zeng,
+Xingkai Yu, Yu Wu, et al. DeepSeekMoE: Towards ultimate expert specialization in mixture-of-experts
+language models.arXiv preprint arXiv:2401.06066, 2024.
+DeepSeek-AI. DeepSeek-V3 technical report.arXiv preprint arXiv:2412.19437, 2024.
+William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter models
+with simple and efficient sparsity.JMLR, 23:1–39, 2022.
+Paolo Glorioso, Quentin Anthony, Yury Tokpanov, James Whittington, Jonathan Pilault, Adam Ibrahim,
+and Beren Millidge. Zamba: A compact 7b ssm hybrid model.arXiv preprint arXiv:2405.16712, 2024.
+Zhuocheng Gong, Ang Lv, Jian Guan, Wei Wu, Huishuai Zhang, Minlie Huang, Dongyan Zhao, and Rui
+Yan. Mixture-of-modules: Reinventing transformers as dynamic assemblies of modules. InEMNLP, 2024.
+Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. InCOLM,
+2024.
+Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin de Laroussilhe, Andrea Ges-
+mundo, Mona Attariyan, and Sylvain Gelly. Parameter-efficient transfer learning for NLP. InICML,
+2019.
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and
+Weizhu Chen. LoRA: Low-rank adaptation of large language models. InICLR, 2022.
+Jie Hu, Li Shen, and Gang Sun. Squeeze-and-excitation networks. InCVPR, 2018.
+Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, Dehao Chen, Orhan Firat, Yanping Huang, Maxim
+Krikun, Noam Shazeer, and Zhifeng Chen. GShard: Scaling giant models with conditional computation
+and automatic sharding. InICLR, 2021.
+StephanieLin, JacobHilton, andOwainEvans. TruthfulQA:Measuringhowmodelsmimichumanfalsehoods.
+InProceedings of the 60th Annual Meeting of the Association for Computational Linguistics, 2022.
+Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models. In
+International Conference on Learning Representations, 2017.
+Deepak Narayanan, Mohammad Shoeybi, Jared Casper, Patrick LeGresley, Mostofa Patwary, Vijay Anand
+Korthikanti, Dmitri Vainbrand, Prethvi Kashinkunti, Julie Bernauer, Bryan Catanzaro, Amar Phan-
+ishayee, and Matei Zaharia. Efficient large-scale language model training on GPU clusters using Megatron-
+LM. InProceedings of the International Conference for High Performance Computing, Networking, Storage
+and Analysis (SC), 2021.
+Guilherme Penedo, Hynek Kydlíček, Loubna Ben Allal, Anton Lozhkov, Margaret Mitchell, Colin Raffel,
+Leandro Von Werra, and Thomas Wolf. The FineWeb datasets: Decanting the web for the finest text data
+at scale.NeurIPS Datasets and Benchmarks Track, 2024.
+10
+--- PAGE 11 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Bo Peng, Eric Alcaide, Quentin Anthony, et al. Rwkv: Reinventing rnns for the transformer era.EMNLP
+Findings, 2023.
+Qwen Team. Qwen3-next: Hybrid attention language models, 2025. Model card:https://huggingface.co/
+Qwen/Qwen3-Next-80B-A3B-Instruct. Architecture uses 3:1 Gated DeltaNet to Gated Attention ratio.
+DavidRaposo, SamRitter, BlakeRichards, TimothyLillicrap, PeterConwayHumphreys, andAdamSantoro.
+Mixture-of-depths: Dynamically allocating compute in transformer-based language models. InICML,
+2024.
+Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean.
+Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. InICLR, 2017.
+Rachel Teo and Tan Minh Nguyen. MoLEx: Mixture of layer experts for fine-tuning with sparse upcycling.
+InICLR, 2025.
+Ivan Ternovtsii and Yurii Bilak. Equifinality in mixture of experts: Routing topology does not determine
+language modeling quality.arXiv preprint arXiv:2604.14419, 2026. URLhttps://arxiv.org/abs/2604.
+14419.
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule.
+arXiv preprint arXiv:2412.06464, 2024.
+Yujiao Yang, Jing Lian, and Linhui Li. Union of experts: Adapting hierarchical routing to equivalently
+decomposed transformer.arXiv preprint arXiv:2503.02495, 2025.
+Minshen Zhang, Xiang Hu, Jianguo Li, Wei Wu, and Kewei Tu. Flash multi-head feed-forward network.
+arXiv preprint (under review at ICLR 2026), 2026.
+Barret Zoph, Irwan Bello, Sameer Kumar, Nan Du, Yanping Huang, Jeff Dean, Noam Shazeer, and William
+Fedus. ST-MoE: Designing stable and transferable sparse expert models.arXiv preprint arXiv:2202.08906,
+2022.
+A The Rank-1 Expressiveness Ceiling
+Beforedecomposinglayerstructure, weestablishedthefundamentalqualityconstraint: per-expertexpressive-
+ness. A rank-1 mirror experiment compares 65,536 rank-1 experts against 256 rank-256 experts at matched
+total expert parameters (∼67M/layer) and matched active compute (K=1024rank-1 vsK=4rank-256).
+Table 8: Rank-1 mirror experiment. 65,536 rank-1 experts cannot replicate 256 rank-256 experts.
+ModelN/layer Rank Params PPL
+High-rank reference 256 256∼290M12.55
+Rank-1 mirror 65,536 1 322.7M 47.51
+CT-MoE Wide 1×12 1,024 1 84.7M 33.93
+The rank-1 mirror achieves PPL 47.51,3.8×worse, despite 11% more total parameters. This establishes that
+the rank-1 constraint is the binding quality limit: architectural rearrangements operate within this ceiling,
+motivating the transition to dense FFN thin blocks (Section 2).
+B Active Compute Scaling
+Scaling fromK=12toK=128active rank-1 experts (10×more active FLOPs,N=4096, 138M params,
+τ=15) yields PPL 33.22, closing only 19% of the 3.67-PPL gap to the dense baseline (30.26) despite10×
+more active computation. This confirms that quality is limited byper-expert expressiveness, not the number
+of active experts.
+C Activation-Level Gating
+Squeeze-and-Excitation (SE) gating [Hu et al., 2018] applied to expert activations (notdmodel-dimensional
+vectors) achieves PPL 31.82, the best iso-parameter rank-1 result. A small MLP (K→4→K, 896 extra
+parameters total) modulates routing weights based on expert activation magnitudes. SE closes 46% of the
+dense gap (33.93→31.82, target 29.36). Neither active compute scaling nor activation gating fully close the
+gap, motivating the structural decomposition ofMoL.
+11
+--- PAGE 12 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+D MoL Granularity Sweep
+Table 9: MoL granularity sweep on WikiText-103 (50K steps). All with rank-1 MoE FFN.
+Configd thin KParams PPL Speed
+CT-MoE baseline 1024 — 84.7M 33.93 —
+K=7 d=256 split_all 256 7 85.6M34.831.51 s/s
+K=7 d=256 split_mid6 256 7 85.4M 35.05 1.85 s/s
+K=18 d=128 128 18 86.1M 36.67 1.08 s/s
+K=40 d=64 64 40 84.7M 38.65 0.69 s/s
+K=1 d=256 256 1 51.4M 39.71 4.87 s/s
+K=7atd thin=256with all layers split reaches PPL 34.83, only 0.90 worse than the baseline. Width matters
+more than count at iso-parameters:d thin=256(K=7) outperformsd thin=128(K=18) by 1.62 PPL. Full-
+width anchor layers are unnecessary: split_all (34.83) outperforms split_mid6 (35.05).
+E DeltaNet Speed Crossover
+Table 10: DeltaNet vs softmax attention speed (isolated block, forward+backward).
+SeqLen Softmax (ms) DeltaNet (ms) Ratio
+512 1.07 3.12 0.34×
+1024 1.89 3.18 0.59×
+2048 4.04 3.331.21×
+4096 11.06 4.81 2.30×
+8192 36.08 8.93 4.04×
+16384 131.81 16.88 7.81×
+DeltaNet crosses softmax atT≈2048and reaches7.8×faster atT=16K.
+F Block-Parallel Model Sharding (Analytic)
+MoL’s thin blocks have no within-layer cross-block data dependencies, which makes them a natural fit
+for expert-parallel placement. A prototype distributing 14 routed blocks across 3 GPUs over PCIe (with
+differentiable all-to-all token dispatch) yields a 38% per-GPU parameter reduction and 23% VRAM savings
+at a 34% wall-clock penalty; the penalty is expected to shrink substantially on NVLink. Compared to
+Megatron-style tensor parallelism, which incurs two all-reduces per transformer layer in the forward pass
+[Narayanan et al., 2021], and to standard expert-parallel MoE, where dispatch/combine collectives per MoE
+layer can dominate step time at scale [DeepSeek-AI, 2024],MoL’s block-parallel design requires only one
+all-reduce per split stage and keeps attention local to each block. A larger-scale strategy would combine
+block placement (primary axis), pipeline depth, and context parallelism inside long routed sub-sequences;
+we leave a measured throughput study to future work.
+G Multi-Seed Validation
+Table 11: Multi-seed validation (seeds 42, 137, 256) on WikiText-103, 50K steps.
+Seed 1+3of15 1+2of5 Softmax 1+2of5 Sparse 3/5 Dense top-3 Dense all
+(198M) (87.5M) (85.3M) (85.3M) (85.3M) (85.3M)
+42 29.96 30.95 32.46 32.04 30.85 31.80
+137 29.94 31.57 32.41 32.33 30.93 32.03
+256 30.08 31.20 32.19 32.21 31.06 31.98
+Mean±std29.99±0.08 31.24±0.31 32.35±0.15 32.19±0.15 30.95±0.11 31.94±0.12
+12
+--- PAGE 13 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+H Decode Latency: 3090 KV-cache Tables
+The decode bench in Section 5.6 reports a single 3090 summary line; the full table is reproduced here.MoL
+exhibitssub-lineardecode latency growth with context: Dense Softmax hasO(T)KV-cache memory traffic
+on every layer’s attention, whileMoLsplits attention across a shared softmax block (alsoO(T)) and routed
+DeltaNet blocks (O(1)recurrent state). With 1 shared and 3 routed-active per token in 1+3of15, only∼1/4
+of attention work isO(T), so decode latency grows much more slowly with context than Dense.
+Table 12: Decode latency per token (ms, batch=1, RTX 3090, KV cache enabled). Dense scales linearly;
+MoLstays flat at∼60ms, dominated by a per-block Python dispatch floor that masks the smaller linear-
+growth term fromMoL’s single shared softmax block.
+Context Dense Softmax 1.3B (ms/tok)MoLHybrid 2.08B (ms/tok) Dense growth
+2566.263.2 —
+1,0246.964.2 +12%
+4,0969.663.3 +55%
+8,19212.962.5 +108%
+16,38419.665.2 +216%
+24,57626.5∼65 +328%
+The asymptotic property is measured directly:Dense’s decode latency grows4.3×over 256–24K whileMoL’s
+grows<5%.RTX 3090 memory caps direct measurement at∼24K, so we do not extrapolate beyond. KV
+cache alone gives2.74×/1.92×/6.19×uplift on Dense 1.3B / Dense 0.7B /MoLat short context.
+The∼60 ms floor would shrink under a per-block-fused kernel: a partial fix (FLA-only fusion) gave+8%
+throughput. Full fusion is deferred. The decode bench was not re-run on H200; the prefill measurements
+(Section 5.6) show the same crossover regime appears on Hopper atT≈96−128K (a∼25×shift vs 3090), so
+the asymptotic decode-latency story should hold on H200 starting from a higher absolute threshold.
+IK active Sweep at 80M (Fixed PoolN=5)
+To isolate the effect ofKactive at fixed pool size, we ran three additional 60K conditions on FineWeb-Edu,
+varyingK active while applying theMoLdesign ruleK active×dexpert≈dmodel andK active×dff,thin≈dff,dense
+(active FFN width held at∼4096):
+Table 13:Kactive sweep at 80M,N=5, FineWeb-Edu 60K steps. All conditions iso-active-FFN-width∼4096.
+Single seed each.
+ConditionK d expert dff,thin Total Active PPL @ 60K∆vs Dense 98M
+1+1of5 (K=2) 2 512 2048 228M 119M27.47−2.11
+1+2of5 (K=3) 3 320 1344 132M 98M 27.51−2.07
+1+3of5 (K=4, baseline) 4 256 1024 106M 95M 27.96−1.62
+K=2andK=3are tied within seed noise (σ≈0.12from Section G);K=4trails by∼0.5 PPL—outside seed
+noise but within5σ. The direction is opposite to MoE granularity findings [Dai et al., 2024] that favour
+fine-grained routing. We attribute the difference to scope: atMoL, blocks include attention plus FFN (not
+FFN alone), so per-block compute capacity matters more than block count for shaping representations. The
+result is a single-seed sweep at one scale; we do not claim it generalises beyond the 80M /N=5regime.
+J Iso-total Gap at 1.3B: Candidate Causes
+The 3.01 PPL gap between Dense Softmax 1.3B andMoL2.08B-total at 20K steps does not reproduce the
+Cosmopedia-80M crossover. Three candidate causes are consistent with the missed crossover, but cannot be
+separated from a single trio of runs:
+Active per-layer FFN capacity.At 1.3B,MoL’s active capacity (4 active blocks atdff,thin=2048) totals
+8192, matched to Dense’sdff=8192. On Cosmopedia 80M, by contrast,MoL’s active capacity (3×1024 =
+3072) was2.74×Dense’sdff=1120, leaving a much larger margin to amortise routing overhead.
+13
+--- PAGE 14 ---
+Mixture of Layers with Hybrid Attention:
+Parallel Thin Blocks for Sparse Transformer ComputeA Preprint
+Within-MoL sparsity.Higher at 1.3B: 4-of-15 active vs 3-of-5 on Cosmopedia 1+2of5. More routed pool
+to specialise across at the same active count.
+Total-parameter undertraining.On a total-parameter basis,MoLsees only 9.6 tokens/param at 20B
+tokens, well below Chinchilla-optimal (∼20×) for a 2.08B-total model. Dense 1.3B sees 15.4 tokens/param.
+A stronger crossover claim at 1.3B would require a multi-seed budget sweep we did not run; whether the gap
+is structural, undertraining, or optimizer/router/aux-loss tuning specific to this scale is not separable here.
+K Zero-shot Evaluation: Per-Task Details
+Run config: lm-eval-harness 0.4.7, bf16, batch size 64 (47.5 GB peak on H100 NVL), max length 2048, GPT-
+2 tokenizer (matches training). Each model is loaded via a smalllm_eval.api.model.LMsubclass that
+reads the architecture cfg from the checkpoint and supports batched length-bucketed loglikelihood. MMLU
+defaults to 5-shot per its task config; all other benchmarks are 0-shot.
+Table 14 extends the headline table (Table 6) with TruthfulQA mc1, rawaccfor HellaSwag/ARC/PIQA
+(whose headline metric isacc_norm), and stderr per cell.
+Table 14: Zero-shot accuracy with stderr (%). Stderr from lm-eval-harness 1000-iter bootstrap.
+Task Metric Dense 1.3B Dense 0.7BMoL0.61B/2.08B
+MMLU 5-shot acc24.31±0.4 23.98±0.4 23.07±0.4
+HellaSwag acc33.49±0.5 26.81±0.4 27.51±0.4
+HellaSwag acc_norm39.71±0.5 34.10±0.5 35.10±0.5
+ARC-Easy acc59.05±1.0 54.04±1.0 54.55±1.0
+ARC-Easy acc_norm53.07±1.0 48.86±1.0 48.15±1.0
+ARC-Challenge acc24.74±1.3 24.49±1.3 24.83±1.3
+ARC-Challenge acc_norm26.88±1.3 25.43±1.3 26.02±1.3
+PIQA acc65.94±1.1 62.79±1.1 63.49±1.1
+PIQA acc_norm65.56±1.1 63.98±1.1 64.09±1.1
+WinoGrande acc51.62±1.4 49.33±1.4 54.38±1.4
+TruthfulQA mc1 acc21.18±1.4 23.13±1.5 21.91±1.4
+TruthfulQA mc2 acc37.83±1.4 40.89±1.5 39.55±1.4
+Two patterns are worth noting beyond the main-body summary:
+Inverse scaling on TruthfulQA.Dense 0.7B leads on both mc1 and mc2 — a documented pattern at
+small scale where the smaller model knows fewer plausible-but-false alternatives, shrinking its hallucination
+surface [Lin et al., 2022].MoLsits between the two dense baselines, consistent with its capacity placement.
+WinoGrande.MoL0.61B-active wins this coreference task by 2.76 pts vs Dense 1.3B and 5.05 pts vs iso-
+active Dense 0.7B. WinoGrande is the only task where additional total capacity inMoL(2.08B vs 1.31B)
+appears to help despite sparse activation; the per-layer mixture of 14 specialised routed blocks may better
+match the heterogeneous coreference contexts than a single wide FFN.
+14

@@ -615,6 +615,38 @@ class GPTConfig:
 
 
 
+    # -- SCH: Structured Code Output Heads -------------------------------------
+    # Replaces the dense V x d softmax head with logit(w|h) = phi_k(c(w))^T g(h),
+    # where c(w) is a frozen binary code and phi_k its monomial expansion up to
+    # interaction order k. See nanochat/code_head.py for the derivation; the short
+    # version is that order 1 is Oda et al. 2017 (logit rank <= B), order B is the
+    # exact softmax, and everything between is unexplored.
+    use_code_head: bool = False                     # master switch for the code output head
+    sch_head_type: str = 'code'                     # code | hsoftmax (Huffman hierarchical softmax baseline)
+    sch_bits: int = 0                               # B, code length (0 = ceil(log2 V), the minimal/degenerate code)
+    sch_order: int = 2                              # k, highest monomial interaction order kept
+    sch_max_m: int = 0                              # cap on M (0 = uncapped); also sets M directly for non-monomial phi modes
+    sch_phi_mode: str = 'monomial'                  # monomial | random_binary (structure control) | onehot (VQ-Logits) | learned (matched-capacity control) | gaussian
+    sch_code_mode: str = 'binary'                   # binary | random | ecc | frequency | file
+    sch_code_path: str = ''                         # .pt with a (V, B) uint8 code matrix (semantic codes from scripts/code_assign.py)
+    sch_code_ecc_bits: int = 0                      # parity bits appended to the base code; sweeps the ECC-vs-semantic tension on one axis
+    sch_code_seed: int = 1234                       # seed for code assignment and monomial subsampling
+    sch_phi_density: float = 0.0                    # row density for phi_mode=random_binary (0 = match the monomial arm)
+    sch_phi_dtype: str = 'bf16'                     # bf16 | fp32 storage for the frozen Phi
+    sch_phi_normalize: int = 1                      # rescale Phi to unit mean row norm (reparameterisation; needed for stability at order 3+)
+    sch_phi_center: int = 0                         # mean-centre Phi columns (ablation; adds the constant direction to the span)
+    sch_g_type: str = 'linear'                      # linear | mlp. MLP separates "ladder saturated" from "hit the width cap d"
+    sch_g_hidden: int = 0                           # hidden width of the MLP g (0 = n_embd)
+    sch_g_layers: int = 2                           # depth of the MLP g
+    sch_g_out_std: float = 0.001                    # init std of g's final layer, matching lm_head's
+    sch_mixture: int = 1                            # m code heads mixed by log-sum-exp (>1 escapes the rank bound entirely)
+    sch_residual_rank: int = 0                      # r for the dense residual hybrid: logit += v_w . W_r h, buys r rank for rV params
+    sch_logit_act: str = 'none'                     # none | sigsoftmax | monotonic (pointwise nonlinearity on code logits)
+    sch_bias: int = 0                               # learned per-token bias (V params, +1 rank, BREAKS zero-shot vocab extension)
+    sch_input_mode: str = 'table'                   # table | linear | expanded | nonlinear | tied - Phase 3 input-side arms
+    sch_input_hidden: int = 0                       # hidden width for sch_input_mode=nonlinear (0 = 4 * n_embd)
+
+
 # Used by notebooks to validate kwargs passed to GPTConfig.
 RESEARCH_ALLOWED_KEYS = {
     "use_moe", "use_perm",
@@ -702,6 +734,13 @@ RESEARCH_ALLOWED_KEYS = {
     "cond_mult_impl", "cond_mult_scale",
     "cond_attn_projs", "cond_layer_frac",
     # MoL: Mixture of Layers (baseline, arXiv:2605.09516)
+    # SCH: Structured Code Output Heads
+    "use_code_head", "sch_head_type", "sch_bits", "sch_order", "sch_max_m",
+    "sch_phi_mode", "sch_code_mode", "sch_code_path", "sch_code_ecc_bits",
+    "sch_code_seed", "sch_phi_density", "sch_phi_dtype", "sch_phi_normalize",
+    "sch_phi_center", "sch_g_type", "sch_g_hidden", "sch_g_layers", "sch_g_out_std",
+    "sch_mixture", "sch_residual_rank", "sch_logit_act", "sch_bias",
+    "sch_input_mode", "sch_input_hidden",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
@@ -9833,7 +9872,36 @@ class GPT(nn.Module):
         self.context_updaters = None
         # CCL: context is derived per-block inside RemixedBlock/CCLBlock via SelectiveContextStream.
         # GlobalContextManager and context_updaters are not used for remix_linear.
-        self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
+        # SCH: the output head is either the dense V x d softmax or a structured
+        # code head. It keeps the name `lm_head` on purpose so every downstream
+        # consumer (setup_optimizer's unembedding group, num_scaling_params,
+        # checkpointing, the forward pass) keeps working unchanged.
+        self.use_code_head = bool(getattr(config, 'use_code_head', False))
+        if self.use_code_head:
+            from nanochat.code_head import build_code_head, describe_head, CodeInputEmbedding
+            if getattr(config, 'sch_head_type', 'code') == 'hsoftmax':
+                # The tree head returns a loss, not logits, so forward() returns
+                # before the auxiliary-objective block. Refuse the combination
+                # instead of silently dropping those terms.
+                assert not config.use_remix_linear and not getattr(config, 'use_moe', False), \
+                    "sch_head_type=hsoftmax returns a loss directly and cannot carry the " \
+                    "remix/MoE auxiliary objectives; run it on the dense backbone"
+            self.lm_head = build_code_head(config, padded_vocab_size, config.n_embd)
+            print0(describe_head(self.lm_head))
+            # Phase 3: coding the input side too. Only meaningful for the
+            # capability claim, since a code head alone lets new tokens be
+            # generated but not consumed, which is half a capability.
+            in_mode = getattr(config, 'sch_input_mode', 'table')
+            if in_mode != 'table':
+                assert getattr(config, 'sch_head_type', 'code') == 'code', \
+                    "sch_input_mode requires the code head (sch_head_type=code)"
+                self.transformer.wte = CodeInputEmbedding(
+                    in_mode, self.lm_head, config.n_embd,
+                    hidden=getattr(config, 'sch_input_hidden', 0))
+                print0(f"[SCH] input embedding replaced: mode={in_mode} "
+                       f"in_dim={self.transformer.wte.in_dim}")
+        else:
+            self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Design 10 (auxiliary objective): lightweight head predicts boundary or entropy from
         # the mean context vector across all RemixedBlocks. Forces context to encode
         # non-trivial information and prevents gradient-collapse to identity.
@@ -10226,10 +10294,21 @@ class GPT(nn.Module):
                     sub.scale.data.fill_(1.0)
 
         # Embedding and unembedding
-        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+        if self.use_code_head:
+            # Must run AFTER the NaN-poison pass above: the head materialises its
+            # frozen Phi here (never in __init__, which runs on the meta device
+            # and is followed by to_empty(), so a constructor-built buffer would
+            # hold garbage).
+            self.lm_head.init_weights()
+            if not isinstance(self.transformer.wte, nn.Embedding):
+                self.transformer.wte.init_weights()
+            else:
+                torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+        else:
+            torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+            torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
         if "wpe" in self.transformer:
             torch.nn.init.normal_(self.transformer.wpe.weight, mean=0.0, std=1.0)
-        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
@@ -10388,7 +10467,11 @@ class GPT(nn.Module):
         # embeddings and it saves memory. Exception: fp16 requires fp32 embeddings
         # because GradScaler cannot unscale fp16 gradients.
         if COMPUTE_DTYPE != torch.float16:
-            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
+            # Only a real lookup table is safe to keep in reduced precision. A
+            # coded input embedding (sch_input_mode != table) is a matmul, so its
+            # master weights stay fp32 like every other matrix in the model.
+            if isinstance(self.transformer.wte, nn.Embedding):
+                self.transformer.wte.to(dtype=COMPUTE_DTYPE)
             for ve in self.value_embeds.values():
                 ve.to(dtype=COMPUTE_DTYPE)
 
@@ -10487,8 +10570,27 @@ class GPT(nn.Module):
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
         wpe_numel = self.transformer.wpe.weight.numel() if "wpe" in self.transformer else 0
-        nparams_exclude = (self.transformer.wte.weight.numel() + wpe_numel + value_embeds_numel +
+        wte_numel = sum(p.numel() for p in self.transformer.wte.parameters())
+        nparams_exclude = (wte_numel + wpe_numel + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        # SCH: the head's FLOPs are NOT 6 * head_params.
+        #   - the frozen Phi does V*M MACs per token while owning zero parameters,
+        #     so the 6N proxy would report the code head as almost free;
+        #   - a hierarchical softmax owns V*d node parameters but touches only
+        #     ~log2(V)*d of them per token, so the same proxy would overcharge it
+        #     by three orders of magnitude;
+        #   - a coded input embedding is a matmul, not the free gather that an
+        #     nn.Embedding is.
+        # Both are therefore removed from the generic term and priced exactly.
+        # This is the "honest cost model" the head has to be argued against: at
+        # V=32k, d=512, order 4 (M=1940) the code head is 17x smaller in
+        # parameters and ~4x more expensive in compute than the dense softmax.
+        sch_head_flops = 0
+        if getattr(self, 'use_code_head', False):
+            nparams_exclude += sum(p.numel() for p in self.lm_head.parameters())
+            sch_head_flops += self.lm_head.flops_per_token()
+        if not isinstance(self.transformer.wte, nn.Embedding):
+            sch_head_flops += self.transformer.wte.flops_per_token()
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -10496,7 +10598,7 @@ class GPT(nn.Module):
             window = window_size[0]  # (left, right) tuple, we use left
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        total_flops = 6 * (nparams - nparams_exclude) + attn_flops
+        total_flops = 6 * (nparams - nparams_exclude) + attn_flops + sch_head_flops
 
         # Compute active FLOPs: count inactive expert params as fractionally active
         # For each MoE layer: active_fraction = topk / K_total
@@ -11217,10 +11319,24 @@ class GPT(nn.Module):
 
         # Forward the lm_head (compute logits)
         softcap = 20 # smoothly cap the logits to the range [-softcap, softcap]
+        if self.use_code_head and getattr(self.lm_head, 'custom_loss', False):
+            # Hierarchical softmax owns its own loss: the whole point of a tree
+            # head is that the full V-wide logit vector is never materialised.
+            # Incompatible with the auxiliary objectives below, asserted in __init__.
+            assert targets is not None, (
+                "hierarchical softmax cannot produce a logit vector; it supports the "
+                "loss path only (use a code or dense head for generation / rank probes)")
+            return self.lm_head.loss(x, targets, reduction=loss_reduction)
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+        # A self-normalised head (log-sum-exp mixture, sigsoftmax) already returns
+        # log-probabilities. Squashing those with tanh would silently change the
+        # distribution rather than bound a logit, so softcap is skipped there;
+        # F.cross_entropy is still exact, because log_softmax of a normalised
+        # log-prob vector is the identity.
+        if not (self.use_code_head and getattr(self.lm_head, 'self_normalized', False)):
+            logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
         if targets is not None:
             # training: given the targets, compute and return the loss

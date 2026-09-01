@@ -395,6 +395,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --use-code-head|--sch-head-type|--sch-bits|--sch-order|--sch-max-m|--sch-phi-mode|--sch-code-mode|--sch-code-path|--sch-code-ecc-bits|--sch-code-seed|--sch-phi-density|--sch-phi-dtype|--sch-phi-normalize|--sch-phi-center|--sch-g-type|--sch-g-hidden|--sch-g-layers|--sch-g-out-std|--sch-mixture|--sch-residual-rank|--sch-logit-act|--sch-bias|--sch-input-mode|--sch-input-hidden|--sch-holdout-tokens|--sch-holdout-seed|--sch-holdout-min-id|--sch-holdout-mode|--sch-decile-metrics|--sch-rank-probe|--sch-eval-steps)
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         *)
             # Stop parsing flags when we hit a depth
             if [[ "$1" =~ ^[0-9]+$ ]]; then

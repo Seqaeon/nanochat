@@ -233,8 +233,19 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
         has_sparse_mst = (getattr(cfg, 'use_mst', False) and getattr(cfg, 'mst_routing_mode', '') == 'topk_hard') if cfg else False
         has_remix = getattr(cfg, 'use_remix_linear', False) if cfg else False
         find_unused = bool(has_moe or has_eet or has_sparse_mst or has_remix)
-        print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank}, find_unused_parameters={find_unused})")
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=find_unused)
+        # SCH: a structured code head carries a frozen Phi buffer that is up to
+        # V x M (842 MB at V=131072, M=3213). DDP's default broadcast_buffers
+        # would re-broadcast it from rank 0 on every forward, which would dwarf
+        # the gradient all-reduce. Phi is built deterministically from the same
+        # code matrix on every rank and never changes during training, so there
+        # is nothing to synchronise.
+        has_code_head = getattr(cfg, 'use_code_head', False) if cfg else False
+        broadcast_buffers = not has_code_head
+        print0(f"✓ Wrapping model with DistributedDataParallel (rank {rank}, "
+               f"find_unused_parameters={find_unused}, broadcast_buffers={broadcast_buffers})")
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
+                                                    find_unused_parameters=find_unused,
+                                                    broadcast_buffers=broadcast_buffers)
     elif parallel_type == "dp":
         num_gpus = torch.cuda.device_count()
         if torch.cuda.is_available() and num_gpus > 1:
