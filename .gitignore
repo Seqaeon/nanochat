@@ -29,3 +29,10 @@ tokenizer/
 *.md
 !README.md
 !**/README.md
+
+# Compiler caches. Belt and braces: the scripts point these at out/ (already ignored),
+# but a stray TORCHINDUCTOR_CACHE_DIR or a new script must not be able to commit them.
+.inductor_cache/
+.triton_cache/
+**/.inductor_cache/
+**/.triton_cache/

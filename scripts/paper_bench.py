@@ -32,8 +32,11 @@ import time
 # every invocation re-runs matmul autotuning and can land on a different kernel
 # config, which shows up as large run-to-run swings that look like noise but are
 # not. Set TORCHINDUCTOR_CACHE_DIR yourself to override.
+# out/ is gitignored; scratch/ is not. This used to write to scratch/, which put 92 MB
+# of Triton artifacts across 1758 files into a commit. paper_throughput.py already used
+# out/, so this also lets the two benchmarks share one cache.
 os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR",
-                      os.path.join(os.getcwd(), "scratch", ".inductor_cache"))
+                      os.path.join(os.getcwd(), "out", ".inductor_cache"))
 os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
 
 import torch
