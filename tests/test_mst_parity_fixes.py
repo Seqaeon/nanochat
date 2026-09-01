@@ -1029,3 +1029,106 @@ def test_stream_shared_rejects_impossible_splits():
 def test_stream_shared_is_off_by_default():
     m = build_meta(mst_stream_topk=2)
     assert m.layers[0]._stream_shared == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Stage 19: non-GEMM overhead cuts. Measurement (scripts/p10_mfu_microbench.py,
+# H100) showed MST's block-diagonal GEMMs clear their wall-clock crossover at
+# every D >= 512, and that the 2.4x training gap against dense is non-GEMM time:
+# 36.7 ms of a 47.7 ms step at depth 12, against dense's 10.6 of 20.2. These three
+# cuts attack that without touching the mathematics.
+#
+#   O3 (_rope_streams):  RoPE and QK-norm run once over (B, T, N, H, hd) instead
+#       of N times over per-stream slices. Both are elementwise and identical
+#       across streams, so the result must be exactly the per-stream one.
+#   O4 (fused QKV):      one bmm with a 3x wider output instead of three, because
+#       the reduction dimension d is what makes these GEMMs narrow. Exact in the
+#       forward; the backward reassociates, so it agrees only to bf16 rounding.
+#   O5 (gated diagnostics): the routing reductions are graph outputs under
+#       torch.compile, so they cost on every step rather than on log steps.
+# ═══════════════════════════════════════════════════════════════════════════
+
+from nanochat.gpt import apply_rotary_emb as _apply_rotary_emb
+from nanochat.mst import _rope_streams
+
+
+def _real_model(**overrides):
+    """An allocated, non-identity MST. build_meta gives shapes only."""
+    torch.manual_seed(0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        m = MST(make_config(**overrides))
+        m.init_weights()
+    _wake_residual_branches(m)
+    m.eval()
+    return m
+
+
+def test_o3_rope_streams_matches_the_per_stream_form():
+    """The whole point of hoisting: same arithmetic, one call instead of N."""
+    B, T, N, H, hd = 2, 8, N_SUBS, 3, 16
+    torch.manual_seed(0)
+    x = torch.randn(B, T, N, H, hd)
+    cos = torch.randn(1, T, 1, hd // 2)
+    sin = torch.randn(1, T, 1, hd // 2)
+
+    fused = _rope_streams(x, cos, sin)
+    for j in range(N):
+        per_stream = _apply_rotary_emb(x[:, :, j], cos, sin)
+        assert torch.equal(fused[:, :, j], per_stream), \
+            f"stream {j} diverges from gpt.apply_rotary_emb"
+
+
+def test_o4_fused_qkv_is_exact_in_the_forward():
+    """One (N, 3*qkv, d) bmm must give the same q/k/v as three (N, qkv, d) ones.
+
+    Compared against the model's own unfused path rather than a reimplementation,
+    by flipping _fuse_qkv, so the test cannot drift from the code it checks.
+    """
+    m = _real_model(mst_stream_topk=1, mst_stream_router_noise=0.0)
+    idx = torch.arange(SEQ).remainder(VOCAB).view(1, SEQ)
+    tgt = torch.arange(1, SEQ + 1).remainder(VOCAB).view(1, SEQ)
+
+    assert all(layer._fuse_qkv for layer in m.layers), "fusion should be on by default"
+    with torch.no_grad():
+        fused = m(idx, targets=tgt)
+    for layer in m.layers:
+        layer._fuse_qkv = False
+    with torch.no_grad():
+        unfused = m(idx, targets=tgt)
+
+    a = fused[0] if isinstance(fused, tuple) else fused
+    b = unfused[0] if isinstance(unfused, tuple) else unfused
+    assert torch.equal(a, b), f"fused QKV changed the forward: {a.item()} vs {b.item()}"
+
+
+def test_o4_fusion_is_off_when_kv_is_shared():
+    """Shared K/V stores c_k_w at (qkv, d), so there is no stream axis to concat."""
+    assert build_meta(mst_shared_kv_attn=1).layers[0]._fuse_qkv is False
+    assert build_meta(mst_shared_kv_attn=0).layers[0]._fuse_qkv is True
+
+
+def test_o5_routing_diagnostics_are_off_in_the_hot_path():
+    """Populated on log steps, absent otherwise, and compute_diagnostics still works.
+
+    The reductions write to module attributes, which makes them graph outputs under
+    torch.compile: they pin the routing mask alive and block dead-code elimination on
+    every step. Gating them on _diag_enabled reuses the two-graph mechanism that
+    _diag_sub_states already relies on.
+    """
+    m = _real_model(mst_stream_topk=2, mst_stream_router_noise=0.0)
+    idx = torch.arange(SEQ).remainder(VOCAB).view(1, SEQ)
+    layer = m.layers[0]
+
+    m._diag_enabled = False
+    with torch.no_grad():
+        m(idx)
+    assert layer._last_stream_load is None, "stream load captured off a log step"
+    assert layer._last_route_entropy is None, "route entropy captured off a log step"
+
+    m._diag_enabled = True
+    with torch.no_grad():
+        m(idx)
+    assert layer._last_stream_load is not None and layer._last_stream_load.numel() == N_SUBS
+    assert layer._last_route_entropy is not None
+    diag = m.compute_diagnostics()
+    assert 'stream_load_L0_S0' in diag and 'route_entropy_L0' in diag
