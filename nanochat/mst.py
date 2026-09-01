@@ -847,26 +847,6 @@ def _batched_linear(x, weight):
     return y.view(N, B, T, -1).permute(1, 2, 0, 3)
 
 
-def _rope_streams(x, cos, sin):
-    """apply_rotary_emb for a (B, T, N, H, hd) tensor, stream axis kept.
-
-    gpt.apply_rotary_emb asserts ndim == 4 and concatenates on dim 3, so it cannot
-    take the stream axis. Two reasons to keep that axis rather than flattening it
-    into the head axis. RoPE and QK-norm are elementwise and identical across
-    streams, so hoisting them out of the per-stream attention loop runs them once
-    instead of N times. And with the fused QKV projection, q/k/v are strided slices
-    of one (B, T, N, 3, H, hd) buffer, so N and H are not adjacent and the flatten
-    would not be a view.
-
-    cos/sin arrive as (1, T, 1, hd/2) and gain the stream axis here. Arithmetic is
-    identical to gpt.apply_rotary_emb, so this is bit-identical to the per-stream form.
-    """
-    half = x.shape[-1] // 2
-    x1, x2 = x[..., :half], x[..., half:]
-    c, s = cos.unsqueeze(2), sin.unsqueeze(2)          # (1, T, 1, 1, hd/2)
-    return torch.cat([x1 * c + x2 * s, x1 * (-s) + x2 * c], dim=-1)
-
-
 class BatchedMSTLayer(nn.Module):
     """Compile-optimized MST layer: all N sub-transformers processed via batched ops.
 
@@ -982,10 +962,6 @@ class BatchedMSTLayer(nn.Module):
         self._router_entropy_weight = config.mst_router_entropy_weight
         self._contrastive_diversity_weight = config.mst_contrastive_diversity_weight
         self._shared_kv_attn = bool(config.mst_shared_kv_attn)
-        # Fuse the three QKV projections into one bmm with a 3x wider output. See the
-        # forward pass for why. Shared K/V stores c_k_w/c_v_w at (qkv, d) rather than
-        # (N*qkv, d), so there is nothing to concatenate along the stream axis.
-        self._fuse_qkv = not self._shared_kv_attn
         # Stage 14: free cross-stream mixing (see mix_channels)
         self._mix_mode = str(getattr(config, 'mst_channel_mix', 'none'))
         _site = str(getattr(config, 'mst_channel_mix_site', 'layer'))
@@ -1131,7 +1107,7 @@ class BatchedMSTLayer(nn.Module):
         # C: Mean transition — parameter-free mean-add replaces AggDist
         self._mean_transition = bool(config.mst_mean_transition)
 
-    def _stream_gate(self, sub_states, diag=False):
+    def _stream_gate(self, sub_states):
         """Stage 16: pick k of N streams for each token. Returns (w, aux_loss).
 
         `w` is (B, T, N), exactly 0 or 1 in value so the forward pass is genuinely the
@@ -1196,15 +1172,8 @@ class BatchedMSTLayer(nn.Module):
             probs_mean = probs.mean(dim=(0, 1))                        # (N,), sums to 1
             load_frac = mask.mean(dim=(0, 1)) / k                      # (N,), sums to 1
             aux = self._stream_router_aux * N * (load_frac * probs_mean).sum()
-        # Diagnostics only. This is a reduction over the whole (B, T, N) mask stored
-        # to a module attribute, so under torch.compile it is a graph output: it pins
-        # `mask` alive and blocks dead-code elimination on every step, not just the
-        # ones that read it. `diag` follows MST._diag_enabled, which base_train already
-        # toggles on log steps, so Dynamo specialises exactly two graph variants -- the
-        # same mechanism _diag_sub_states uses.
-        if diag:
-            with torch.no_grad():
-                self._last_stream_load = mask.mean(dim=(0, 1)).detach()
+        with torch.no_grad():
+            self._last_stream_load = mask.mean(dim=(0, 1)).detach()
         return w, aux
 
     def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w):
@@ -1232,6 +1201,7 @@ class BatchedMSTLayer(nn.Module):
         B, T, N, d = x.shape
         k = self._stream_topk
         K = max(1, min(T, int(math.ceil(T * k / N * self._stream_capacity_factor))))
+
         mask = (stream_w.detach() > 0).to(x.dtype)                     # (B, T, N)
         # Rank selected tokens by position: earliest selected gets the largest key, so
         # topk(K) keeps the first K in sequence order. Unselected score 0, below any
@@ -1252,33 +1222,18 @@ class BatchedMSTLayer(nn.Module):
 
         out = torch.zeros(B, N, T, d, dtype=og.dtype, device=og.device)
         out.scatter_(2, idx, og)
-        # Overflow accounting. ALWAYS a tensor, NEVER a Python float, and never guarded by
-        # a Python branch on a tensor.
-        #
-        # The original form was `float(...) if selected > 0 else 0.0`. Both halves are
-        # traps: `float()` on a CUDA tensor is `.item()`, a device-to-host sync AND a
-        # Dynamo graph break, and `selected > 0` is data-dependent branching, a second
-        # break. Measured at L=8 with torch._dynamo.explain: turning dispatch on took the
-        # compiled model from 1 graph / 0 breaks to 11 graphs / 10 breaks, one per layer.
-        # Every break materialises the live set at the boundary and kills fusion across
-        # it (the OOM), and the sync serialises the pipeline (the 2x step time and halved
-        # MFU). None of it was the gather/scatter: in isolation the dispatched FFN is 2.0x
-        # faster than the masked one at 0.42x the peak memory.
-        #
-        # This deliberately does NOT hang off `diag`. base_train sets _mst_diag_every =
-        # args.log_every, which DEFAULTS TO 1, so _diag_enabled is true on every step and
-        # a diag-gated version of this line is not gated at all. The reduction itself is
-        # two cheap sums with no sync; only the float() and the branch were expensive, so
-        # there is nothing left worth gating. compute_diagnostics does the conversion.
-        #
-        # The `selected > 0` guard was dead anyway: top-k always selects k, so mask.sum()
-        # is never zero, and clamp_min(1) already handles the divide.
+        # ALWAYS a tensor, never float(), never a Python branch on a tensor. The former
+        # `float(...) if selected > 0 else 0.0` put two Dynamo graph breaks in every
+        # layer: measured at L=8, dispatch=1 went from 1 graph to 11. That is what made
+        # dispatch look 2x slower at half the MFU and OOM at a batch masking fits.
+        # The `selected > 0` guard was dead: top-k always selects k, and clamp_min(1)
+        # already handles the divide. compute_diagnostics does the conversion.
         with torch.no_grad():
             self._last_stream_drop = 1.0 - keep.sum() / mask.sum().clamp_min(1)
         return out.permute(0, 2, 1, 3)                                 # (B, T, N, d)
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
-                kv_cache=None, total_sub_layers=1, diag=False):
+                kv_cache=None, total_sub_layers=1):
         """
         Args:
             sub_states: (B, T, N, d) batched sub-transformer states
@@ -1287,7 +1242,6 @@ class BatchedMSTLayer(nn.Module):
             window_sizes: list of N (left, right) tuples for per-sub sliding window
             kv_cache: optional KVCache for inference
             total_sub_layers: n_layer * N for cache slot indexing
-            diag: capture routing diagnostics. Off in the hot path; see _stream_gate.
 
         Returns: (sub_states, aux_loss)
         """
@@ -1308,7 +1262,7 @@ class BatchedMSTLayer(nn.Module):
         # FFN gates so a token uses a consistent set of streams within the layer.
         stream_w, stream_aux = (None, None)
         if self._stream_sparse:
-            stream_w, stream_aux = self._stream_gate(sub_states, diag=diag)
+            stream_w, stream_aux = self._stream_gate(sub_states)
 
         # Reshape stored 2D weights (N*out, in) → 3D (N, out, in) for batched ops
         c_q_w = self.c_q_w.view(N, self.qkv_dim, d)
@@ -1329,38 +1283,18 @@ class BatchedMSTLayer(nn.Module):
         # Pre-norm
         x = norm(sub_states)  # (B, T, N, d) — RMSNorm on last dim
 
-        # Batched Q, K, V projections: (B, T, N, d) @ (N, qkv, d).T → (B, T, N, qkv).
-        #
-        # One bmm with a 3x wider output beats three, because the reduction dimension d
-        # is what makes these GEMMs narrow and tripling the output is what lets cuBLAS
-        # pick a full-width tile. Measured on H100 at d=384: 418 TFLOP/s for the d>d
-        # shape against 539 for d>4d. The three weights stay separate Parameters, so
-        # every existing checkpoint, Muon group, grad-equalize hook, estimate_flops name
-        # list and diagnostic script is untouched; the cat is over weights (a few MB per
-        # layer) rather than activations.
-        #
-        # Not available with shared K/V, where c_k_w and c_v_w are (qkv, d) and would
-        # have to be materialised to (N, qkv, d) first.
-        if self._fuse_qkv:
-            qkv_w = torch.cat([c_q_w, c_k_w, c_v_w], dim=1)      # (N, 3*qkv, d)
-            qkv = _batched_linear(x, qkv_w)                      # (B, T, N, 3*qkv)
-            # 3*qkv splits as (3, n_head, head_dim) with q, k, v in that order because
-            # the cat was along the output axis. Each of the three is a strided view,
-            # no copy.
-            qkv = qkv.view(B, T, N, 3, self.n_head, self.head_dim)
-            q5, k5, v5 = qkv[:, :, :, 0], qkv[:, :, :, 1], qkv[:, :, :, 2]
-        else:
-            q5 = _batched_linear(x, c_q_w).view(B, T, N, self.n_head, self.head_dim)
-            k5 = _batched_linear(x, c_k_w).view(B, T, N, self.n_head, self.head_dim)
-            v5 = _batched_linear(x, c_v_w).view(B, T, N, self.n_head, self.head_dim)
+        # Batched Q, K, V projections: (B, T, N, d) @ (N, qkv, d).T → (B, T, N, qkv)
+        q = _batched_linear(x, c_q_w)
+        k = _batched_linear(x, c_k_w)
+        v = _batched_linear(x, c_v_w)
 
         # Stage 11-A: Cross-sub query modulation — add low-rank D→r→(N*qkv) correction to Q
         if self._cross_sub_qmod > 0:
             x_flat = x.reshape(B, T, N * d)  # (B, T, D) — full D-dim representation
             qmod = F.linear(x_flat, self.qmod_down_w.to(dtype=x_flat.dtype))   # (B, T, r)
             qmod = F.linear(qmod, self.qmod_up_w.to(dtype=qmod.dtype))         # (B, T, N*qkv)
-            qmod = qmod.view(B, T, N, self.n_head, self.head_dim)
-            q5 = q5 + qmod  # queries now conditioned on cross-sub features
+            qmod = qmod.view(B, T, N, self.qkv_dim)
+            q = q + qmod  # queries now conditioned on cross-sub features
 
         # Value embedding, per-sub gating. Legacy ve is (B, T, d) and broadcasts
         # over the stream axis; G3's is (B, T, N*d) and gives each stream its own slice.
@@ -1373,30 +1307,27 @@ class BatchedMSTLayer(nn.Module):
             gates = torch.einsum('btng,nhg->btnh',
                                  gate_in, ve_gate_w.to(dtype=gate_in.dtype))
             gates = 2.0 * torch.sigmoid(gates)  # (B, T, N, n_head)
-            # v is already (B, T, N, H, hd). ve_heads is (B, T, n_ve, H, hd) and
-            # broadcasts over the stream axis when n_ve == 1.
-            v5 = v5 + gates.unsqueeze(-1) * ve_heads
+            # Apply to v: reshape v to (B,T,N,H,hd), add gated VE
+            v_heads = v.view(B, T, N, self.n_head, self.head_dim)
+            v_heads = v_heads + gates.unsqueeze(-1) * ve_heads
+            v = v_heads.reshape(B, T, N, self.qkv_dim)
 
+        # Per-sub flash attention (loop — N is static, compile unrolls it)
+        # Each sub may have a different sliding window size.
         half_hd = self.head_dim // 2
         cos_slice = cos[..., :half_hd]
         sin_slice = sin[..., :half_hd]
 
-        # RoPE and QK-norm run ONCE over the whole (B, T, N, H, hd) tensor rather than
-        # N times on per-stream slices. Both are elementwise and stream-independent, so
-        # this is bit-identical; it removes roughly 6 kernels per stream per layer, and
-        # the per-stream form was the largest single contributor to MST's non-GEMM time
-        # (36.7 ms of a 47.7 ms step at depth 12 against dense's 10.6 of 20.2).
-        #
-        # flash_attn stays in the loop because window_size is a per-call scalar pair and
-        # --mst-multi-scale-windows gives each stream a different one. With uniform
-        # windows the N calls could collapse to one over N*n_head heads, since attention
-        # never mixes heads.
-        q5 = norm(_rope_streams(q5, cos_slice, sin_slice))
-        k5 = norm(_rope_streams(k5, cos_slice, sin_slice))
-
         attn_results = []
         for j in range(N):
-            qj, kj, vj = q5[:, :, j], k5[:, :, j], v5[:, :, j]
+            qj = q[:, :, j].view(B, T, self.n_head, self.head_dim)
+            kj = k[:, :, j].view(B, T, self.n_head, self.head_dim)
+            vj = v[:, :, j].view(B, T, self.n_head, self.head_dim)
+
+            # RoPE + QK-norm
+            qj = apply_rotary_emb(qj, cos_slice, sin_slice)
+            kj = apply_rotary_emb(kj, cos_slice, sin_slice)
+            qj, kj = norm(qj), norm(kj)
 
             ws = window_sizes[j] if window_sizes is not None else (-1, 0)
             if kv_cache is None:
@@ -1606,13 +1537,10 @@ class BatchedMSTLayer(nn.Module):
                     aggregated_slices = torch.einsum('btsn,btnsd->btsd', slice_weights, x_sliced)
                     # Flatten back to d-dim: (B, T, S, slice_d) → (B, T, d)
                     aggregated = aggregated_slices.reshape(B, T, d)
-                    # Track entropy for diagnostics (mean across slices). Gated: see
-                    # _stream_gate for why an ungated reduction into a module attribute
-                    # costs on every step under torch.compile.
-                    if diag:
-                        with torch.no_grad():
-                            ent = -(slice_weights * (slice_weights + 1e-8).log()).sum(-1).mean()
-                            self._last_route_entropy = ent
+                    # Track entropy for diagnostics (mean across slices)
+                    with torch.no_grad():
+                        ent = -(slice_weights * (slice_weights + 1e-8).log()).sum(-1).mean()
+                        self._last_route_entropy = ent
                     # Compute weights for aux loss (mean across slices)
                     weights = slice_weights.mean(dim=2)  # (B, T, N)
                 else:
@@ -1632,11 +1560,10 @@ class BatchedMSTLayer(nn.Module):
                     else:
                         weights = F.softmax(logits, dim=-1)
 
-                    if diag:
-                        with torch.no_grad():
-                            probs = F.softmax(logits, dim=-1)
-                            ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
-                            self._last_route_entropy = ent
+                    with torch.no_grad():
+                        probs = F.softmax(logits, dim=-1)
+                        ent = -(probs * (probs + 1e-8).log()).sum(-1).mean()
+                        self._last_route_entropy = ent
 
                     aggregated = (weights.unsqueeze(-1) * x).sum(dim=2)  # (B, T, d)
 
@@ -2531,8 +2458,7 @@ class MST(nn.Module):
                     sub_states, cos_sin, ve=ve,
                     window_sizes=sub_ws,
                     kv_cache=kv_cache,
-                    total_sub_layers=total_sub_layers,
-                    diag=self._diag_enabled)
+                    total_sub_layers=total_sub_layers)
                 total_aux_loss = total_aux_loss + aux_loss
 
                 # Global residual: subs WRITE to D-dim shared stream
@@ -2783,12 +2709,9 @@ class MST(nn.Module):
         for layer in self.layers:
             if not (isinstance(layer, BatchedMSTLayer) and layer._stream_sparse):
                 continue
-            # S+k streams run, not k: the mst_stream_shared streams are ALWAYS active,
-            # so they are not part of the saving. Omitting S here reported S=1,k=1 (two
-            # of four streams running) with exactly the same active FLOPs as S=0,k=1
-            # (one of four), which would have credited MoL's shared-block topology with a
-            # saving it does not have -- the same class of error as the Monarch
-            # up-projection discount. max() guards S+k == N, where nothing is skipped.
+            # S+k streams run, not k: mst_stream_shared streams are ALWAYS active, so
+            # they are not part of the saving. Omitting S reported S=1,k=1 (two of four
+            # streams running) with the same active FLOPs as S=0,k=1 (one of four).
             frac = max(0.0, 1.0 - (layer._stream_shared + layer._stream_topk) / N)
             # Stage 18: under a Monarch permutation the up-projection is NOT skippable.
             # Stream j's down-projection reads hidden units produced by every stream's
@@ -2879,8 +2802,7 @@ class MST(nn.Module):
                     p = (load / load.sum().clamp_min(1e-9)).clamp_min(1e-9)
                     diag[f'stream_entropy_L{i}'] = float(-(p * p.log()).sum())
                 # Phase B only: fraction of selected (token, stream) pairs evicted by the
-                # capacity limit. This is the number mst_stream_capacity_factor trades
-                # against, so it has to reach the training log.
+                # capacity limit, the number mst_stream_capacity_factor trades against.
                 if getattr(layer, '_stream_dispatch', False):
                     diag[f'stream_drop_L{i}'] = float(layer._last_stream_drop)
                 continue
