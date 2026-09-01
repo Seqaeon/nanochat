@@ -117,24 +117,24 @@ echo "  tokens ${TOKENS}   seeds ${SEEDS}   out ${OUT_BASE}"
 echo "============================================================"
 
 # MST, plain value embeddings (no G3)
-run ISO_mst "$DEPTH" \
-    --use-mst 1 --models base --mst-n-subs "$N_SUBS" --mst-sub-dim "$SUB_DIM" \
-    --mst-head-dim 0 --mst-input-mode learned_proj \
-    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
-    --mst-transition-mode aggregate_distribute \
-    --mst-final-mode concat_proj --mst-final-topk 0 \
-    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
-    --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
-    --mst-transition-width-mult 4.0 --mst-sub-lr-scale 2.0 \
-    --mst-multi-scale-windows 1 \
-    --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
-    --mst-stream-topk 1 --mst-stream-router-noise 1.0
-
+#run ISO_mst "$DEPTH" \
+#    --use-mst 1 --models base --mst-n-subs "$N_SUBS" --mst-sub-dim "$SUB_DIM" \
+#    --mst-head-dim 0 --mst-input-mode learned_proj \
+#    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+#    --mst-transition-mode aggregate_distribute \
+#    --mst-final-mode concat_proj --mst-final-topk 0 \
+#    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+#    --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+#    --mst-transition-width-mult 4.0 --mst-sub-lr-scale 2.0 \
+#    --mst-multi-scale-windows 1 \
+#    --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+#    --mst-stream-topk 1 --mst-stream-router-noise 1.0
+#
 # MoL, plain shared value-embedding table (no per-block VE)
-run ISO_mol "$DEPTH" \
-    --use-mol 1 --models base --mol-n-blocks 15 --mol-n-shared 1 --mol-topk 3 \
-    --mol-thin-dim "$SUB_DIM" --mol-head-dim 64 --mol-ffn-mult 4.0 \
-    --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1
+#run ISO_mol "$DEPTH" \
+#    --use-mol 1 --models base --mol-n-blocks 15 --mol-n-shared 1 --mol-topk 3 \
+#    --mol-thin-dim "$SUB_DIM" --mol-head-dim 64 --mol-ffn-mult 4.0 \
+#    --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1
 
 # ---------------------------------------------------------------- gate_attn
 # Does gating ATTENTION as well as the FFN pay, and does it need a shared stream?
