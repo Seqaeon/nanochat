@@ -661,7 +661,47 @@ training-FLOPs and parameter panels only.
 Perplexity gaps of this size need not translate into downstream ability, so we
 evaluate zero-shot transfer against two dense reference points that bracket MST:
 one matched on total parameters and one matched on FLOPs per token
-(Table~\ref{tab:downstream}). \PH
+(Table~\ref{tab:downstream}).
+
+The head-to-head against the iso-FLOP point is favourable but individually weak:
+MST wins 12 of the 22 tasks, loses 7 and ties 3, a mean per-task margin of
+$+0.75$ points with a standard error of $0.54$ ($t=1.41$, sign-test $p=0.36$), and
+BoolQ ($+7.9$) and SQuAD ($+6.2$) supply most of it. The result that does carry
+weight is the agreement in Table~\ref{tab:coreladder}: placing MST on a CORE-versus-cost
+curve fitted to three dense points reproduces the \bpb-derived Pareto multipliers of
+Table~\ref{tab:ratio} on all four cost axes, to within $0.03$. CORE was not used to fit
+anything, so this is an out-of-sample check that the \bpb\ advantage is a capability
+advantage and not a tokenizer or calibration artifact.
+
+\begin{table}[t]
+\caption{CORE against cost. The curve $\mathrm{CORE} = a + b\ln x$ is fitted to the
+three dense points. With three points and two parameters the fit has one residual
+degree of freedom, so its $R^2>0.999$ is close to automatic and is not itself evidence;
+the evidence is the agreement with the independently derived \bpb\ multipliers in the
+last column. ``Dense at MST's cost'' reads the
+fitted curve at MST $L{=}24$'s value; the multiplier is the dense cost needed to reach
+MST's CORE, divided by MST's actual cost, so $>1$ favours MST. The final column repeats
+the \bpb\ multipliers of Table~\ref{tab:ratio} for comparison.}
+\label{tab:coreladder}
+\begin{center}
+\begin{small}
+\begin{tabular}{lrrrr}
+\toprule
+Cost axis & MST $L{=}24$ & Dense at MST's cost & CORE mult. & \bpb\ mult. \\
+\midrule
+FLOPs/token    & $1.481\times10^{9}$ & 0.1753 & $\mathbf{1.24\times}$ & $1.23\times$ \\
+Training FLOPs & $4.823\times10^{18}$ & 0.1910 & $1.07\times$ & $1.10\times$ \\
+Matrix params  & 259.7M              & 0.2008 & $0.92\times$ & $0.92\times$ \\
+Total params   & 964M                & 0.2399 & $0.63\times$ & $0.64\times$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+Dense reference points: $L{=}16$ (CORE 0.181), $L{=}20$ (0.233), $L{=}22$ (0.255).
+MST $L{=}24$ scores 0.194. The ordering across axes is the same one the \bpb\ curves
+give: MST buys inference compute efficiently, is roughly neutral on matrix parameters,
+and pays on total parameters, where the per-stream value embeddings dominate.
+\end{table}
 
 \begin{table}[t]
 \caption{Zero-shot accuracy (\%). MST is compared against a dense model matched on
@@ -674,15 +714,15 @@ total parameters and a dense model matched on FLOPs per token.}
 Task & MST $L{=}24$ & Dense $L{=}20$ & Dense $L{=}16$ \\
      & (964M) & (iso-param, $0.93\times$) & (iso-FLOP, $1.07\times$) \\
 \midrule
-ARC-Easy (10-shot)      & \PH & 65.5 & \PH \\
-PIQA (10-shot)          & \PH & 72.9 & \PH \\
-HellaSwag (10-shot)     & \PH & 49.4 & \PH \\
-Winograd (0-shot)       & \PH & 65.2 & \PH \\
-LAMBADA (0-shot)        & \PH & 40.5 & \PH \\
-OpenBook QA (0-shot)    & \PH & 38.6 & \PH \\
-ARC-Challenge (10-shot) & \PH & 36.9 & \PH \\
+ARC-Easy (10-shot)      & 64.1 & 65.5 & 61.2 \\
+PIQA (10-shot)          & 70.5 & 72.9 & 70.1 \\
+HellaSwag (10-shot)     & 43.5 & 49.4 & 42.5 \\
+Winograd (0-shot)       & 61.2 & 65.2 & 64.8 \\
+LAMBADA (0-shot)        & 34.9 & 40.5 & 33.5 \\
+OpenBook QA (0-shot)    & 34.2 & 38.6 & 36.4 \\
+ARC-Challenge (10-shot) & 33.4 & 36.9 & 31.7 \\
 \midrule
-\textbf{CORE metric}    & \PH & \textbf{0.233} & \PH \\
+\textbf{CORE metric}    & \textbf{0.194} & \textbf{0.233} & \textbf{0.181} \\
 \bottomrule
 \end{tabular}
 \end{small}
@@ -697,8 +737,30 @@ to $0.93\times$ and dense $L{=}16$ on FLOPs per token to $1.07\times$. We bracke
 \emph{total} rather than matrix parameters here because this table fixes a resource
 a practitioner pays for rather than isolating the cost the architecture is
 responsible for; the matrix-parameter bracket would be $L{=}18$ at $1.10\times$.
-\TODO{Pending: the MST $L{=}24$ column, and dense $L{=}16$ (checkpoint exists,
-evaluation only).}
+MST beats the iso-FLOP point on the aggregate (0.194 against 0.181) and loses to the
+iso-parameter point (0.233), which is the same ordering the \bpb\ multipliers give and
+the reason Table~\ref{tab:coreladder} reports per-axis multipliers rather than a single
+verdict.
+%
+% Full 22-task MST L=24 values, of which seven appear above:
+%   agi_eval_lsat_ar 23.5   arc_challenge 33.4   arc_easy 64.1
+%   bigbench_cs_algorithms 43.2   bigbench_dyck_languages 8.7
+%   bigbench_language_identification 25.3   bigbench_operators 12.9
+%   bigbench_qa_wikidata 39.6   bigbench_repeat_copy_logic 3.1
+%   boolq 59.2   commonsense_qa 25.1   copa 59.0   coqa 20.6
+%   hellaswag 43.5   hellaswag_zeroshot 44.2   jeopardy 3.9
+%   lambada_openai 34.9   openbook_qa 34.2   piqa 70.5   squad 26.9
+%   winograd 61.2   winogrande 52.7   CORE 0.194
+%
+% Full 22-task dense L=16 (iso-FLOP) values:
+%   agi_eval_lsat_ar 24.8   arc_challenge 31.7   arc_easy 61.2
+%   bigbench_cs_algorithms 42.0   bigbench_dyck_languages 10.0
+%   bigbench_language_identification 25.3   bigbench_operators 13.8
+%   bigbench_qa_wikidata 38.3   bigbench_repeat_copy_logic 3.1
+%   boolq 51.3   commonsense_qa 25.1   copa 58.0   coqa 21.6
+%   hellaswag 42.5   hellaswag_zeroshot 42.6   jeopardy 3.4
+%   lambada_openai 33.5   openbook_qa 36.4   piqa 70.1   squad 20.7
+%   winograd 64.8   winogrande 52.9   CORE 0.181
 %
 % Superseded: dense L=22 was the iso-FLOP bracket for the previous
 % aggregate-distribute MST L=32 (0.94x its FLOPs/token). It is 2.54x MST L=24's

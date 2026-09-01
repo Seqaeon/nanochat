@@ -683,9 +683,6 @@ def _dispatch_pair(cap, k=2, depth=2, noise=0.0):
                 layer.stream_router_w.copy_(
                     torch.randn(layer.stream_router_w.shape, generator=g) * 0.3)
         m.eval()
-        # _last_stream_drop is gated on _diag_enabled: computing it costs a device sync
-        # and a graph break per layer, so it is off in the hot path.
-        m._diag_enabled = True
         out.append(m)
     return out
 
@@ -701,7 +698,7 @@ def test_phase_b_matches_masking_when_nothing_overflows(cap):
     idx = torch.arange(256).remainder(VOCAB).view(1, 256)
     with torch.no_grad():
         ref, out = masked(idx), dispatched(idx)
-    assert max(l._last_stream_drop for l in dispatched.layers) == 0.0
+    assert max(float(l._last_stream_drop) for l in dispatched.layers) == 0.0
     assert torch.equal(ref, out), f"dispatch diverged from masking at capacity {cap}"
 
 
@@ -711,7 +708,7 @@ def test_phase_b_drops_on_overflow_and_reports_it():
     idx = torch.arange(256).remainder(VOCAB).view(1, 256)
     with torch.no_grad():
         ref, out = masked(idx), dispatched(idx)
-    drop = max(l._last_stream_drop for l in dispatched.layers)
+    drop = max(float(l._last_stream_drop) for l in dispatched.layers)
     assert drop > 0, "perfectly balanced routing at cap=1.0 would be suspicious"
     assert not torch.equal(ref, out), "dropped tokens must actually change the output"
 

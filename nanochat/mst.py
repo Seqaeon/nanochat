@@ -1207,7 +1207,7 @@ class BatchedMSTLayer(nn.Module):
                 self._last_stream_load = mask.mean(dim=(0, 1)).detach()
         return w, aux
 
-    def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w, diag=False):
+    def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w):
         """Phase B: run the FFN on K < T tokens per stream, and actually skip the rest.
 
         Phase A multiplies the FFN output by a 0/1 gate, which prices the quality cost of
@@ -1252,25 +1252,29 @@ class BatchedMSTLayer(nn.Module):
 
         out = torch.zeros(B, N, T, d, dtype=og.dtype, device=og.device)
         out.scatter_(2, idx, og)
-        # Overflow accounting, diagnostics only, and the single most expensive line in
-        # this function before it was gated. `float()` on a CUDA tensor and a Python bool
-        # on `selected > 0` EACH force a device sync and a Dynamo graph break, once per
-        # layer per step. Measured at L=8: turning dispatch on took the compiled model
-        # from 1 graph / 0 breaks to 11 graphs / 10 breaks. That is what made dispatch
-        # look 2x slower with half the MFU and OOM at a batch the masked path fits --
-        # every break materialises the live set at the boundary and kills fusion across
-        # it, and the sync serialises the pipeline. None of it was the gather/scatter:
-        # in isolation the dispatched FFN is 2.0x faster than the masked one at 0.42x
-        # the peak memory.
+        # Overflow accounting. ALWAYS a tensor, NEVER a Python float, and never guarded by
+        # a Python branch on a tensor.
         #
-        # Under compile the tensor is stored as-is, so it costs a graph output on log
-        # steps and nothing otherwise; compute_diagnostics does the conversion. The
-        # `selected > 0` guard was dead in any case: top-k always selects k, and
-        # clamp_min(1) already handles the divide.
-        if diag:
-            with torch.no_grad():
-                drop = 1.0 - keep.sum() / mask.sum().clamp_min(1)
-                self._last_stream_drop = drop if torch.compiler.is_compiling() else float(drop)
+        # The original form was `float(...) if selected > 0 else 0.0`. Both halves are
+        # traps: `float()` on a CUDA tensor is `.item()`, a device-to-host sync AND a
+        # Dynamo graph break, and `selected > 0` is data-dependent branching, a second
+        # break. Measured at L=8 with torch._dynamo.explain: turning dispatch on took the
+        # compiled model from 1 graph / 0 breaks to 11 graphs / 10 breaks, one per layer.
+        # Every break materialises the live set at the boundary and kills fusion across
+        # it (the OOM), and the sync serialises the pipeline (the 2x step time and halved
+        # MFU). None of it was the gather/scatter: in isolation the dispatched FFN is 2.0x
+        # faster than the masked one at 0.42x the peak memory.
+        #
+        # This deliberately does NOT hang off `diag`. base_train sets _mst_diag_every =
+        # args.log_every, which DEFAULTS TO 1, so _diag_enabled is true on every step and
+        # a diag-gated version of this line is not gated at all. The reduction itself is
+        # two cheap sums with no sync; only the float() and the branch were expensive, so
+        # there is nothing left worth gating. compute_diagnostics does the conversion.
+        #
+        # The `selected > 0` guard was dead anyway: top-k always selects k, so mask.sum()
+        # is never zero, and clamp_min(1) already handles the divide.
+        with torch.no_grad():
+            self._last_stream_drop = 1.0 - keep.sum() / mask.sum().clamp_min(1)
         return out.permute(0, 2, 1, 3)                                 # (B, T, N, d)
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
@@ -1482,7 +1486,7 @@ class BatchedMSTLayer(nn.Module):
         # purpose: computing it densely and then dispatching would throw away exactly the
         # work we are trying not to do.
         if stream_w is not None and self._stream_dispatch:
-            ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w, diag=diag)
+            ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w)
         else:
             h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
             # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
