@@ -184,18 +184,40 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
 
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
-    _patch_missing_keys(model_data, model_config)
-    with torch.device("meta"):
-        model = GPT(model_config)
-    # Load the model state
-    model.to_empty(device=device)
-    model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
 
-    model_data, notes = _stack_legacy_templates(model_data, model)
-    for n in notes:
-        log0(f"[checkpoint_manager] {n}")
+    # Alternative architectures. This mirrors build_model_meta in scripts/base_train.py;
+    # without it an MST or MoL checkpoint is rebuilt as a dense GPT and load_state_dict
+    # fails on key mismatch, which eval_core reports as "ERROR loading checkpoint" and
+    # then silently skips.
+    _alt = None
+    if getattr(model_config, "use_eet", False):
+        from nanochat.eet import EarlyExitGPT as _alt
+    elif getattr(model_config, "use_mol", False):
+        from nanochat.mol import MoL as _alt
+    elif getattr(model_config, "use_mst", False):
+        from nanochat.mst import MST as _alt
 
-    model.load_state_dict(model_data, strict=True, assign=True)
+    if _alt is not None:
+        with torch.device("meta"):
+            model = _alt(model_config)
+        model.to_empty(device=device)
+        model.init_weights()
+        # _patch_missing_keys and _stack_legacy_templates are RemixedLinear-specific
+        # and assume the dense module tree, so they are skipped here.
+        model.load_state_dict(model_data, strict=True, assign=True)
+    else:
+        _patch_missing_keys(model_data, model_config)
+        with torch.device("meta"):
+            model = GPT(model_config)
+        # Load the model state
+        model.to_empty(device=device)
+        model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
+
+        model_data, notes = _stack_legacy_templates(model_data, model)
+        for n in notes:
+            log0(f"[checkpoint_manager] {n}")
+
+        model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":
         model.eval()

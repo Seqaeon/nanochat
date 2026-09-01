@@ -43,7 +43,13 @@ def load_any_model(ckpt_dir, device, step=None, tokenizer_dir=None, strict=True)
     _patch_missing_config_keys(cfg_kwargs)
     config = GPTConfig(**cfg_kwargs)
 
-    cls = MST if getattr(config, "use_mst", False) else GPT
+    if getattr(config, "use_mol", False):
+        from nanochat.mol import MoL
+        cls = MoL
+    elif getattr(config, "use_mst", False):
+        cls = MST
+    else:
+        cls = GPT
     with torch.device("meta"):
         model = cls(config)
     model.to_empty(device=device)
@@ -60,7 +66,9 @@ def load_any_model(ckpt_dir, device, step=None, tokenizer_dir=None, strict=True)
     tokenizer = get_tokenizer(tokenizer_dir=tokenizer_dir)
     print(f"[paper_lib] loaded {cls.__name__} from {ckpt_dir} step {step}: "
           f"L={config.n_layer} D={config.n_embd}"
-          + (f" N={config.mst_n_subs} d={config.mst_sub_dim}" if cls is MST else ""))
+          + (f" N={config.mst_n_subs} d={config.mst_sub_dim}" if cls is MST else "")
+          + (f" {config.mol_n_shared}+{config.mol_topk}of{config.mol_n_blocks}"
+             f" d_thin={config.mol_thin_dim}" if cls.__name__ == "MoL" else ""))
     if cls is MST:
         # The checkpoint stores asdict(config), so these are the flags the model
         # was actually trained with. Print them: a mismatch here means every

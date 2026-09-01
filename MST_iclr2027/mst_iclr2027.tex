@@ -60,9 +60,10 @@ sub-transformer runs for every token, so there is no expert dispatch, no
 capacity constraint and no load-balancing sparsity to tune. Against a
 strongly-tuned dense baseline (Muon, $\mu$P, QK-norm, value embeddings,
 sliding-window attention) on a compute-optimal token ladder, MST is
-Pareto-dominant on three axes simultaneously over $199\mathrm{M}\!\rightarrow\!914\mathrm{M}$
-parameters: matching MST's bits-per-byte requires $1.77\times$ the parameters,
-$1.35\times$ the inference FLOPs per token, or $2.00\times$ the training compute.
+more compute-efficient over $413\mathrm{M}\!\rightarrow\!964\mathrm{M}$ total
+parameters: matching MST's bits-per-byte requires $1.23\times$ the inference FLOPs
+per token or $1.10\times$ the training compute. Matrix parameters are unchanged
+within measurement ($0.92\times$); the saving is in compute, not parameter count.
 \TODO{add one downstream + one wall-clock number to the abstract once Tables~4 and~5 are filled}
 \end{abstract}
 
@@ -131,12 +132,13 @@ transformers, coupled once per layer by a routed bottleneck
 $3.75\dmodel^2$ at $\nsub{=}4$, while attention FLOPs and KV cache are preserved
 \emph{exactly by construction}, not approximately.
 
-\item \textbf{Pareto dominance without sparsity.} On a compute-optimal ladder from
-199M to 914M parameters, MST dominates a strong dense baseline on total
-parameters, inference FLOPs per token, and total training compute simultaneously
-(Section~\ref{sec:results}). Unlike MoE and MoL, MST is dense: all
-sub-transformers are active for all tokens, so the parameter win is not traded
-against active compute.
+\item \textbf{Compute efficiency at parameter parity.} On a compute-optimal
+ladder from 413M to 964M total parameters, MST is more efficient than a strong
+dense baseline on both compute axes, inference FLOPs per token ($1.23\times$) and
+total training compute ($1.10\times$), while matrix parameters are at parity
+($0.92\times$) (Section~\ref{sec:results}). The saving is in compute per
+parameter, not in parameter count, and we are explicit that the parameter axes are
+not a win for this configuration.
 
 \item \textbf{The optimization of partitioned weights matters as much as the
 architecture.} A naively-trained partition suffers a $7.2\times$ imbalance in
@@ -415,39 +417,61 @@ ladder. ``Matrices'' excludes embeddings and value embeddings.}
 \toprule
 Model & $L$ & Total params & Matrices & FLOPs/token & Train FLOPs & \bpb $\downarrow$ \\
 \midrule
-\multirow{9}{*}{MST}
- & 8  & 58{,}726{,}416   & 8.4M    & 1.844e8 & 4.875e16 & 1.0510$^\ddagger$ \\
- & 9  & 82{,}809{,}618   & 14.7M   & 2.607e8 & 9.752e16 & 1.0000$^\ddagger$ \\
- & 16 & 199{,}254{,}048  & 65.0M   & 7.251e8 & 7.507e17 & 0.8810 \\
- & 18 & 252{,}696{,}996  & 92.3M   & 9.492e8 & 1.296e18 & 0.8544 \\
- & 20 & 314{,}938{,}920  & 126.2M  & 1.218e9 & 2.150e18 & 0.8349 \\
- & 22 & 386{,}717{,}100  & 167.6M  & 1.535e9 & 3.444e18 & 0.8104 \\
- & 24 & 468{,}768{,}816  & 217.1M  & 1.905e9 & 5.350e18 & 0.7946 \\
- & 26 & 561{,}831{,}348  & 275.6M  & 2.333e9 & 8.087e18 & 0.7804 \\
- & 32 & 914{,}456{,}640  & 511.8M  & 4.008e9 & 2.436e19 & 0.7434 \\
+\multirow{4}{*}{MST}
+ & 8  & 110{,}646{,}288   & 10.0M   & 1.562e8 & 4.386e16 & 1.0320$^\ddagger$ \\
+ & 16 & 413{,}224{,}992   & 77.7M   & 5.746e8 & 6.710e17 & 0.8702 \\
+ & 20 & 654{,}183{,}720   & 150.9M  & 9.528e8 & 1.929e18 & 0.8338 \\
+ & 24 & 964{,}359{,}216   & 259.7M  & 1.481e9 & 4.823e18 & 0.7869 \\
 \midrule
 \multirow{11}{*}{Dense}
- & 8  & 125{,}829{,}648    & 25.2M   & 2.863e8 & 1.261e17 & 0.9691 \\
- & 12 & 286{,}262{,}424    & 84.9M   & 7.385e8 & 8.537e17 & 0.9030 \\
- & 14 & 399{,}115{,}836    & 134.9M  & 1.101e9 & 1.899e18 & 0.8688 \\
- & 16 & 536{,}872{,}992    & 201.3M  & 1.548e9 & 3.817e18 & 0.8364 \\
- & 18 & 701{,}893{,}188    & 286.7M  & 2.134e9 & 7.269e18 & 0.8131 \\
- & 20 & 896{,}535{,}720    & 393.2M  & 2.827e9 & 1.292e19 & 0.7906 \\
- & 22 & 1{,}123{,}159{,}884 & 523.4M & 3.694e9 & 2.209e19 & 0.7714 \\
- & 24 & 1{,}384{,}124{,}976 & 679.5M & 4.690e9 & 3.594e19 & 0.7545 \\
- & 26 & 1{,}681{,}790{,}292 & 863.9M & 5.894e9 & 5.684e19 & 0.7382 \\
- & 28 & 2{,}018{,}515{,}128 & 1079.0M & 7.250e9 & 8.661e19 & 0.7246 \\
- & 30 & 2{,}396{,}658{,}780 & 1327.1M & 8.847e9 & 1.291e20 & 0.7120 \\
+ & 8  & 125{,}829{,}648    & 25.2M   & 2.863e8 & 1.261e17 & 0.9602 \\
+ & 12 & 286{,}261{,}730    & 84.9M   & 7.597e8 & 8.537e17 & 0.8654 \\
+ & 14 & 399{,}114{,}882    & 134.9M  & 1.129e9 & 1.899e18 & 0.8312 \\
+ & 16 & 536{,}871{,}738    & 201.3M  & 1.585e9 & 3.817e18 & 0.7988 \\
+ & 18 & 701{,}891{,}594    & 286.7M  & 2.180e9 & 7.268e18 & 0.7755 \\
+ & 20 & 896{,}533{,}746    & 393.2M  & 2.886e9 & 1.292e19 & 0.7530 \\
+ & 22 & 1{,}123{,}157{,}490 & 523.4M & 3.763e9 & 2.209e19 & 0.7338 \\
+ & 24 & 1{,}384{,}122{,}122 & 679.5M & 4.775e9 & 3.594e19 & 0.7169 \\
+ & 26 & 1{,}681{,}786{,}938 & 863.9M & 5.991e9 & 5.684e19 & 0.7006 \\
+ & 28 & 2{,}018{,}511{,}234 & 1079.0M & 7.366e9 & 8.661e19 & 0.6870 \\
+ & 30 & 2{,}396{,}654{,}306 & 1327.1M & 8.977e9 & 1.291e20 & 0.6744 \\
 \bottomrule
 \end{tabular}
 \end{small}
 \end{center}
-$^\ddagger$\,below the amortization threshold; excluded from the fits of
-Table~\ref{tab:fits} and reported as a sensitivity in Section~\ref{sec:limitations}.
+$^\ddagger$\,below the amortization threshold (it sits \emph{above} the dense curve
+on both compute axes); excluded from the fits of Table~\ref{tab:fits} and reported
+as a sensitivity in Section~\ref{sec:limitations}. The MST ladder currently has
+three points above the threshold, against eleven for dense; Section~\ref{sec:limitations}
+treats this as the principal limitation of the scaling claim.
 All cost columns are recomputed from a single implementation at one commit, so the
 two arms are directly comparable; the token budget is $10.5$ tokens per scaling
 parameter and Train FLOPs is FLOPs/token $\times$ tokens.
 \end{table}
+
+\paragraph{Which parameter axis, and what it now says.} We report matrix
+parameters alongside total parameters. Embeddings, per-layer value
+embeddings and the output head are excluded from the former, following
+\citet{kaplan2020scaling} and \citet{hoffmann2022chinchilla}. The reason is not
+convention alone: the dense baseline spends 44\% of its total parameters on value
+embeddings at $L{=}24$, and the width of that table is a design choice orthogonal
+to the layer decomposition --- widening MST's from $\dsub$ to $\nsub\dsub$ moves
+total parameters by $1.95\times$ while leaving matrix parameters bit-identical
+(Table~\ref{tab:veplain}). A parameter curve in which one lookup table moves the
+answer more than the architecture does is measuring the wrong quantity. We report
+total parameters throughout so that this can be checked rather than taken on
+trust.
+
+On the current configuration neither parameter axis is a win. Matrix parameters
+sit at $0.92\times$ averaged over $L\!\in\![16,24]$ and $1.01\times$ at $L{=}16$,
+so MST is parameter-neutral on the axis it is responsible for, and total
+parameters are $0.64\times$, driven by the per-stream value-embedding table
+(Table~\ref{tab:veplain}: the shared-table variant is $1.23\times$ on total
+parameters at a cost of $0.08\times$ on FLOPs per token). The efficiency claim of
+this paper is therefore on the two compute axes, not on parameters, and we state
+it that way throughout. An earlier configuration of MST inverted this trade,
+winning on parameters and losing on compute; we report the compute-efficient one
+because compute is the resource the paper is about.
 
 \subsection{Pareto dominance}
 
@@ -455,32 +479,44 @@ parameter and Train FLOPs is FLOPs/token $\times$ tokens.
 \begin{center}
 \includegraphics[width=\textwidth]{fig_scaling.pdf}
 \end{center}
-\caption{MST lies below the dense scaling curve on all three cost axes. Points are
+\caption{MST lies below the dense scaling curve on both compute axes and above it
+on the parameter axes. Points are
 measured runs; lines are power-law fits (Table~\ref{tab:fits}). Hollow markers are
 MST models below the amortization threshold, which are excluded from the MST fit.
 Each panel states the multiplier a dense model needs to reach the same
-bits-per-byte, averaged over $L\!\in\![16,32]$.}
+bits-per-byte, averaged over $L\!\in\![16,32]$. MoL \citep{ternovtsii2026mol}
+appears on the training-FLOPs and matrix-parameter panels only: under
+compute-optimal budgeting it trains on $3.13\times$ MST's tokens at $L{=}16$, so a
+per-token point would not be comparable. Section~\ref{sec:isotoken} gives that
+comparison at fixed data.}
 \label{fig:pareto}
 \end{figure}
 
-Figure~\ref{fig:pareto} shows MST below the
-dense curve on all three axes over the entire measured range. Table~\ref{tab:ratio}
+Figure~\ref{fig:pareto} shows MST below the dense curve on both compute axes over
+the measured range, and above it on both parameter axes. Table~\ref{tab:ratio}
 quantifies the gap by inverting the dense fit: for each MST model we report the
 resource a dense model would require to reach the same \bpb.
 
 \begin{table}[t]
 \caption{Resource multiplier a dense model needs to match each MST model, obtained
-by inverting the dense power-law fit. The multiplier is stable across the range.}
+by inverting the dense power-law fit. The multiplier is stable across the range.
+Matrix parameters (embeddings, value embeddings and the output head excluded) is
+the primary parameter axis, following \citet{kaplan2020scaling}; total parameters
+are reported below the rule for completeness. $^\dagger$FLOPs per token is an
+inference-cost axis and is only comparable across architectures at fixed training
+data; see Section~\ref{sec:isotoken}.}
 \label{tab:ratio}
 \begin{center}
 \begin{small}
-\begin{tabular}{lrrrrrrrr}
+\begin{tabular}{lrrrr}
 \toprule
-MST $L$ & 16 & 18 & 20 & 22 & 24 & 26 & 32 & \textbf{mean} \\
+MST $L$ & 16 & 20 & 24 & \textbf{mean} \\
 \midrule
-Total parameters & 1.66 & 1.74 & 1.73 & 1.86 & 1.84 & 1.82 & 1.75 & \textbf{1.77}$\times$ \\
-FLOPs / token    & 1.22 & 1.30 & 1.30 & 1.42 & 1.42 & 1.41 & 1.39 & \textbf{1.35}$\times$ \\
-Training FLOPs   & 1.64 & 1.86 & 1.85 & 2.22 & 2.20 & 2.16 & 2.08 & \textbf{2.00}$\times$ \\
+FLOPs / token$^\dagger$ & 1.25 & 1.15 & 1.30 & \textbf{1.23}$\times$ \\
+Training FLOPs   & 1.17 & 0.94 & 1.18 & \textbf{1.10}$\times$ \\
+\midrule
+Matrix parameters & 1.01 & 0.83 & 0.92 & \textbf{0.92}$\times$ \\
+Total parameters & 0.66 & 0.60 & 0.66 & \textbf{0.64}$\times$ \\
 \bottomrule
 \end{tabular}
 \end{small}
@@ -500,7 +536,9 @@ axes and steepen the fit artificially; we report that crossover in
 Section~\ref{sec:limitations} rather than fitting through it.
 
 \begin{table}[t]
-\caption{Power-law fits $\bpb = a x^{b}$, MST $L\!\in\![16,32]$ and dense $L\!\in\![12,30]$.}
+\caption{Power-law fits $\bpb = a x^{b}$, MST $L\!\in\![16,24]$ (three points) and
+dense $L\!\in\![8,30]$ (eleven points). The MST $R^2$ values are materially lower
+than dense's; with three points these fits are descriptive, not predictive.}
 \label{tab:fits}
 \begin{center}
 \begin{small}
@@ -508,14 +546,115 @@ Section~\ref{sec:limitations} rather than fitting through it.
 \toprule
 Axis $x$ & Dense $a$, $b$ & $R^2$ & MST $a$, $b$ & $R^2$ \\
 \midrule
-Total parameters & $7.291\,x^{-0.1077}$ & 0.998 & $7.446\,x^{-0.1119}$ & 0.996 \\
-FLOPs / token    & $5.904\,x^{-0.0923}$ & 0.998 & $6.713\,x^{-0.0997}$ & 0.996 \\
-Training FLOPs   & $5.905\,x^{-0.0457}$ & 0.998 & $6.590\,x^{-0.0490}$ & 0.996 \\
+FLOPs / token$^\dagger$ & $7.035\,x^{-0.1025}$ & 0.999 & $7.366\,x^{-0.1057}$ & 0.984 \\
+Training FLOPs   & $7.036\,x^{-0.0507}$ & 0.999 & $7.015\,x^{-0.0508}$ & 0.984 \\
+\midrule
+Matrix parameters & $4.444\,x^{-0.0897}$ & 1.000 & $3.924\,x^{-0.0827}$ & 0.979 \\
+Total parameters & $8.894\,x^{-0.1196}$ & 0.999 & $9.072\,x^{-0.1180}$ & 0.982 \\
 \bottomrule
 \end{tabular}
 \end{small}
 \end{center}
 \end{table}
+
+\subsection{Iso-token control and comparison to MoL}
+\label{sec:isotoken}
+
+The compute-optimal protocol of Section~\ref{sec:experiments} gives each
+architecture a token budget proportional to its own scaling parameters, so arms
+that carry more matrix parameters train on more data. This is the correct
+protocol for a compute-efficiency claim, but it confounds any \emph{per-token}
+comparison, and the confound is large for architectures whose total and active
+parameter counts diverge. We therefore report an iso-token control.
+
+We reimplement MoL \citep{ternovtsii2026mol} from its published equations; there
+is no public code release. Our implementation reproduces the paper's reported
+parameter counts to within 0.5\% (85.3M for its Table~1 configuration, 0.61B
+active for its 1.3B configuration) and all three of its quoted projection-overhead
+figures (40/57/73\% at $\dsub \in \{256,128,64\}$), which is the strongest
+correctness evidence available without a reference implementation. Routed blocks
+use softmax attention rather than Gated DeltaNet; the authors' own dense-DeltaNet
+control matches dense softmax to within 0.01 PPL, so the attention type is not the
+source of MoL's structural effect, but this does mean we do not run their single
+best configuration.
+
+At $L{=}8$ under the compute-optimal protocol the three arms draw very different
+budgets, because MoL's $1{+}3\text{of}15$ topology carries $3.75\times$ more total
+than active parameters: 0.59B tokens for MoL, 0.44B for dense, 0.28B for MST.
+Table~\ref{tab:isotoken} repeats all three at a common 0.6B, chosen as MoL's own
+compute-optimal point so that it is not disadvantaged.
+
+\begin{table}[t]
+\caption{Iso-token control at $L{=}8$. Multipliers are anchored on the dense arm
+of the same table and use the dense ladder exponents, so dense is $1.000\times$ by
+construction. Both MST and MoL use plain shared value embeddings here, so the
+only difference is the layer structure.}
+\label{tab:isotoken}
+\begin{center}
+\begin{small}
+\begin{tabular}{lccccc}
+\toprule
+& \multicolumn{2}{c}{\bpb} & \multicolumn{3}{c}{At 0.6B tokens} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}
+Model & own budget & 0.6B & FLOPs/token & training FLOPs & total params \\
+\midrule
+Dense & 0.9602 (0.44B) & 0.9427 & $1.000\times$ & $1.000\times$ & 125.8M \\
+MoL $1{+}3\text{of}15$ & 0.9908 (0.59B) & 0.9878 & $0.962\times$ & $0.610\times$ & 89.7M \\
+MST ($\nsub{=}4$) & 1.0320 (0.28B) & 0.9978 & $\mathbf{1.061\times}$ & $0.609\times$ & \textbf{60.3M} \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+Three observations. First, the protocol confound is most of the apparent gap: MoL
+leads MST by 0.0412\,\bpb\ at each arm's own budget and by 0.0100 at equal tokens,
+a $4.1\times$ reduction. MST gains 0.0341 from the extra data and MoL only 0.0030,
+since MoL was already at its budget. This also reconciles our numbers with the
+source paper, which trains every arm of a comparison at a fixed token count and
+consequently reports no gain of the size the unequal-budget reading suggests.
+
+Second, the ranking inverts. At equal tokens MST is above the dense curve on
+FLOPs per token ($1.061\times$) and MoL is below it ($0.962\times$), the reverse
+of the unequal-budget picture. The local exponent from MST to MoL is $-0.052$,
+half the dense ladder's $-0.104$: MoL spends $1.215\times$ MST's FLOPs per token
+and returns 0.0100\,\bpb\ where the dense curve would return 0.0202 for the same
+spend. MST reaches this with 60.3M total parameters against MoL's 89.7M.
+
+Third, the two are indistinguishable on training FLOPs ($0.609\times$ versus
+$0.610\times$), as they are at every setting we tested. The architectures differ
+in \emph{where} they place their cost, not in total compute efficiency at this
+scale, and a comparison that fixes only one of the two axes will report whichever
+answer that axis favours. We report both throughout for this reason.
+
+\paragraph{What we claim against MoL, and what we do not.} We do not claim a
+total-compute advantage over MoL. On training FLOPs the two are indistinguishable
+at every setting we measured: $0.665\times$ versus $0.666\times$ at $L{=}8$ under
+each arm's own budget, $1.175\times$ versus $1.181\times$ at $L{=}16$, and
+$0.610\times$ versus $0.609\times$ in the iso-token control, with matching growth
+across $L{=}8$ to $L{=}16$ ($1.766\times$ against $1.774\times$). The two
+architectures place their cost differently; at this scale they do not differ in
+total compute efficiency.
+
+The difference is in parameters, and it is not marginal. At $L{=}16$ MST carries
+77.7M matrix parameters against MoL's 314.8M ($0.25\times$), and 413.2M total
+against 1388.6M ($0.30\times$), each arm with its own value-embedding variant.
+MoL's $1{+}3\text{of}15$ topology instantiates fifteen blocks per layer of which
+four are active, and pays a $2\dmodel\dsub$ projection wrapper on each; MST's
+partition pays a single coupling per layer regardless of $\nsub$
+(Eq.~\ref{eq:budget}). Together with the iso-token result this gives the claim we
+do make: \emph{MST matches MoL's total-compute efficiency with four times fewer
+matrix parameters and a lower per-token cost at equal training data.}
+
+\paragraph{A caution about the per-token axis.} Under compute-optimal budgeting an
+architecture's token allocation scales with its own parameter count, so the
+FLOPs-per-token axis compares models that saw different amounts of data. This
+cuts both ways rather than favouring one architecture: at $L{=}16$ MST trains on
+$0.485\times$ dense's tokens and is penalised on that axis, while MoL trains on
+$3.13\times$ MST's and is flattered by it. We therefore restrict cross-architecture
+per-token comparisons to the iso-token control of
+Table~\ref{tab:isotoken}, and Figure~\ref{fig:pareto} plots MoL on the
+training-FLOPs and parameter panels only.
 
 \subsection{Downstream transfer}
 
@@ -532,18 +671,18 @@ total parameters and a dense model matched on FLOPs per token.}
 \begin{small}
 \begin{tabular}{lccc}
 \toprule
-Task & MST $L{=}32$ & Dense $L{=}20$ & Dense $L{=}22$ \\
-     & (914M) & (iso-param) & (iso-FLOP) \\
+Task & MST $L{=}24$ & Dense $L{=}20$ & Dense $L{=}16$ \\
+     & (964M) & (iso-param, $0.93\times$) & (iso-FLOP, $1.07\times$) \\
 \midrule
-ARC-Easy (10-shot)      & 66.8 & \PH & \PH \\
-PIQA (10-shot)          & 73.3 & \PH & \PH \\
-HellaSwag (10-shot)     & 51.6 & \PH & \PH \\
-Winograd (0-shot)       & 63.4 & \PH & \PH \\
-LAMBADA (0-shot)        & 40.0 & \PH & \PH \\
-OpenBook QA (0-shot)    & 40.0 & \PH & \PH \\
-ARC-Challenge (10-shot) & 37.5 & \PH & \PH \\
+ARC-Easy (10-shot)      & \PH & 65.5 & \PH \\
+PIQA (10-shot)          & \PH & 72.9 & \PH \\
+HellaSwag (10-shot)     & \PH & 49.4 & \PH \\
+Winograd (0-shot)       & \PH & 65.2 & \PH \\
+LAMBADA (0-shot)        & \PH & 40.5 & \PH \\
+OpenBook QA (0-shot)    & \PH & 38.6 & \PH \\
+ARC-Challenge (10-shot) & \PH & 36.9 & \PH \\
 \midrule
-\textbf{CORE metric}    & \textbf{0.231} & \PH & \PH \\
+\textbf{CORE metric}    & \PH & \textbf{0.233} & \PH \\
 \bottomrule
 \end{tabular}
 \end{small}
@@ -552,8 +691,37 @@ Seven of the 22 CORE tasks, chosen as those with meaningful headroom at this
 scale; the CORE metric aggregates all 22. Tasks on which a model of this size
 sits at chance (CommonsenseQA, WinoGrande, Jeopardy, BigBench repeat-copy) carry
 no signal here and are deferred to Appendix~\ref{app:details}.
-\TODO{dense columns pending: $L{=}20$ is $0.98\times$ MST total params, $L{=}22$
-is $0.92\times$ MST FLOPs/token}
+The reference points bracket MST $L{=}24$ (964M total, 259.7M matrices,
+$1.481\!\times\!10^{9}$ FLOPs/token): dense $L{=}20$ matches it on total parameters
+to $0.93\times$ and dense $L{=}16$ on FLOPs per token to $1.07\times$. We bracket on
+\emph{total} rather than matrix parameters here because this table fixes a resource
+a practitioner pays for rather than isolating the cost the architecture is
+responsible for; the matrix-parameter bracket would be $L{=}18$ at $1.10\times$.
+\TODO{Pending: the MST $L{=}24$ column, and dense $L{=}16$ (checkpoint exists,
+evaluation only).}
+%
+% Superseded: dense L=22 was the iso-FLOP bracket for the previous
+% aggregate-distribute MST L=32 (0.94x its FLOPs/token). It is 2.54x MST L=24's
+% and is not a bracket for the current lineage. Measured CORE values retained in
+% case MST L=32 is re-run:
+%   agi_eval_lsat_ar 24.8   arc_challenge 39.8   arc_easy 69.0
+%   bigbench_cs_algorithms 42.1   bigbench_dyck_languages 9.1
+%   bigbench_language_identification 24.6   bigbench_operators 18.1
+%   bigbench_qa_wikidata 44.3   bigbench_repeat_copy_logic 0.0
+%   boolq 59.7   commonsense_qa 30.6   copa 65.0   coqa 30.4
+%   hellaswag 52.8   hellaswag_zeroshot 52.4   jeopardy 7.7
+%   lambada_openai 41.3   openbook_qa 39.6   piqa 73.3   squad 41.8
+%   winograd 67.4   winogrande 56.4   CORE 0.255
+%
+% Full 22-task dense L=20 (iso-param) values, of which seven appear above:
+%   agi_eval_lsat_ar 23.9   arc_challenge 36.9   arc_easy 65.5
+%   bigbench_cs_algorithms 43.0   bigbench_dyck_languages 11.9
+%   bigbench_language_identification 24.6   bigbench_operators 16.7
+%   bigbench_qa_wikidata 39.9   bigbench_repeat_copy_logic 3.1
+%   boolq 60.5   commonsense_qa 20.9   copa 67.0   coqa 25.6
+%   hellaswag 49.4   hellaswag_zeroshot 49.3   jeopardy 6.0
+%   lambada_openai 40.5   openbook_qa 38.6   piqa 72.9   squad 36.0
+%   winograd 65.2   winogrande 54.4   CORE 0.233
 \end{table}
 
 \subsection{Throughput, memory and hardware utilization}
@@ -649,7 +817,11 @@ ablation whose sign flips with scale.
 \begin{table}[t]
 \caption{Ablation transfer. The one intervention measured at two depths keeps its
 sign and approximate magnitude, which is the basis on which we run the remaining
-ablations at $L{=}8$ only.}
+ablations at $L{=}8$ only. \TODO{These four values are from the previous
+aggregate-distribute lineage and no longer match Table~\ref{tab:cost}: the
+$L{=}16$ recipe row reads 0.8810 here against 0.8702 in the cost table. Re-run
+both conditions in the current lineage, or state explicitly that this table
+measures the earlier configuration.}}
 \label{tab:transfer}
 \begin{center}
 \begin{small}
@@ -661,6 +833,49 @@ Plain partition (no recipe)          & 1.0798 & 0.9057 & \\
 \; + full recipe (Section~\ref{sec:optim}) & 1.0510 & 0.8810 & \\
 \midrule
 $\Delta$                              & $-0.0288$ & $-0.0247$ & \textbf{same sign, $0.86\times$ magnitude} \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
+\paragraph{Per-stream value embeddings, and where they are paid for.} The one
+component measured at $L{=}16$ under the shipped sparse configuration is the width
+of the value-embedding table. Giving each stream its own $\dsub$-wide slice of an
+$\nsub\dsub$-wide table, rather than broadcasting one $\dsub$-wide vector to all
+streams with per-stream gates, is worth $0.0059$\,\bpb\ ($0.8702$ against
+$0.8761$). Since value embeddings are a lookup, this is free on both FLOPs axes:
+it moves the FLOPs-per-token multiplier from $1.10\times$ to $1.18\times$ and the
+training-FLOPs multiplier from $0.88\times$ to $1.01\times$ at no compute cost.
+
+It is not free in parameters. The wide table adds 201.3M, which is $1.95\times$
+MST's total (Table~\ref{tab:veplain}). Against the dense model of matching quality
+(dense $L{=}12$, $0.8654$\,\bpb, 286.3M total) the wide-table configuration is
+$1.44\times$ larger and the shared-table configuration is $0.74\times$, so this
+one choice decides the sign of the total-parameter comparison. It does not touch
+the transformer-matrix comparison at all --- 77.7M against dense's 84.9M,
+$0.91\times$, either way --- which is why we report matrices separately throughout
+and treat them as the parameter axis the layer decomposition is actually
+responsible for. We keep the wide table in the headline configuration because it
+is free on the compute axes, and report the shared-table point as the operating
+point for a parameter-constrained deployment.
+
+\begin{table}[t]
+\caption{Value-embedding width at $L{=}16$, single seed, both arms otherwise the
+shipped sparse configuration. Multipliers are against the dense ladder; ``vs
+dense'' compares total parameters to the dense model of matching quality
+($L{=}12$, 286.3M).}
+\label{tab:veplain}
+\begin{center}
+\begin{small}
+\begin{tabular}{lccccc}
+\toprule
+Value-embedding table & \bpb & FLOPs/tok & train FLOPs & Total & Matrices \\
+\midrule
+Per-stream, $\nsub\dsub$ wide (ours) & \textbf{0.8702} & $\mathbf{1.18\times}$ & $\mathbf{1.01\times}$ & 413.2M ($1.44\times$ dense) & 77.7M \\
+Shared, $\dsub$ wide                 & 0.8761 & $1.10\times$ & $0.88\times$ & \textbf{211.9M} ($\mathbf{0.74\times}$ dense) & 77.7M \\
+\midrule
+$\Delta$ & $-0.0059$ & $+0.08$ & $+0.13$ & $+201.3$M ($1.95\times$) & unchanged \\
 \bottomrule
 \end{tabular}
 \end{small}
@@ -842,12 +1057,16 @@ expert parallelism requires. \TODO{optional: measured 2-GPU numbers}
 % =========================================================================
 
 \textbf{Range of validity.} The efficiency multipliers of Table~\ref{tab:ratio}
-are measured from 199M to 914M total parameters and $7.6\times10^{17}$ to
-$2.4\times10^{19}$ training FLOPs. Below roughly 100M parameters MST is
-\emph{worse} than dense on the compute axes: the coupling and input/output
-projections are a fixed overhead that has not yet amortized. We observe no
-crossover at the upper end and the multiplier is flat to mildly increasing, but we
-cannot exclude a crossover beyond 914M. This caution is not hypothetical: MoL
+are measured from 413M to 964M total parameters and $6.7\times10^{17}$ to
+$4.8\times10^{18}$ training FLOPs, and rest on \emph{three} MST points against
+eleven dense points. That is the principal limitation of this paper. The $L{=}20$
+point is off-trend on every axis ($1.15\times$ FLOPs per token against
+$1.25\times$ and $1.30\times$ at $L{=}16$ and $L{=}24$), and with three points we
+cannot distinguish a genuine irregularity from run-to-run variation; the MST fits
+in Table~\ref{tab:fits} carry $R^2 \approx 0.98$ against dense's $0.999$. At
+$L{=}8$ MST is \emph{worse} than dense on both compute axes ($0.87\times$ FLOPs
+per token): the coupling and input/output projections are a fixed overhead that
+has not yet amortized. We cannot exclude a crossover beyond 964M. This caution is not hypothetical: MoL
 reports an advantage at 104M that inverts into a 3.01 PPL deficit at 1.3B on the
 iso-total-parameter axis.
 
