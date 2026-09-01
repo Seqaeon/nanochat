@@ -17,6 +17,8 @@ speed tables the same way.
 
     python -m scripts.paper_bench --depths 24 --out scratch/paper_bench.json
     python -m scripts.paper_bench --only a1        # just the head_dim sweep
+    python -m scripts.paper_bench --only a5 --depths 8 --decode-contexts 256 16384
+    python -m scripts.paper_bench --only a4,a5 --depths 8 --lengths 2048 16384
 """
 import argparse
 import contextlib
@@ -79,6 +81,8 @@ def make_config(depth, mst, seq_len=SEQ):
 COMPILE = True   # set by --no-compile
 ITERS = 0        # set by --iters; 0 means use each experiment's default
 ARMS = ("mst", "dense")   # set by --arms
+DEFAULT_PREFILL_LENGTHS = (2048, 4096, 8192, 16384, 32768)
+DEFAULT_DECODE_CONTEXTS = (256, 1024, 4096, 8192, 16384)
 MULTI_SCALE = True        # set by --no-multi-scale
 
 # SP2_k1 default settings
@@ -230,7 +234,7 @@ def a3_train_step(depth, device, batch=4):
 
 
 # ---------------------------------------------------------------- A4
-def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1):
+def a4_prefill(depth, device, lengths=DEFAULT_PREFILL_LENGTHS, batch=1):
     """Prefill throughput vs sequence length.
 
     One model per arm for the whole sweep, built at the longest length. Building
@@ -267,7 +271,7 @@ def a4_prefill(depth, device, lengths=(2048, 4096, 8192, 16384, 32768), batch=1)
 
 
 # ---------------------------------------------------------------- A5
-def a5_decode(depth, device, contexts=(256, 1024, 4096, 8192, 16384)):
+def a5_decode(depth, device, contexts=DEFAULT_DECODE_CONTEXTS):
     """Per-token decode latency with a KV cache, batch 1.
 
     Deliberately NOT compiled. FA3's flash_attn_with_kvcache is not traceable by
@@ -324,6 +328,21 @@ def main():
                          "timings from separate invocations share no thermal "
                          "state; min-based timing makes this largely safe, but "
                          "prefer one invocation when both arms go in one table.")
+    # A4 and A5 both sweep a sequence-length axis, so --lengths sets both at once.
+    # The two specific flags override it when a section needs its own list.
+    ap.add_argument("--lengths", type=int, nargs="+", default=None,
+                    help="sequence lengths for BOTH A4 (prefill) and A5 (decode), e.g. "
+                         "--lengths 2048 16384. Overridden per-section by "
+                         "--prefill-lengths / --decode-contexts.")
+    ap.add_argument("--decode-contexts", type=int, nargs="+", default=None,
+                    help="A5 context lengths only; overrides --lengths. Fewer and "
+                         "shorter values also shrink the KV cache and the model's "
+                         "seq_len allocation, so a two-point run is much cheaper than "
+                         "trimming the default list would suggest. "
+                         f"Default {DEFAULT_DECODE_CONTEXTS}.")
+    ap.add_argument("--prefill-lengths", type=int, nargs="+", default=None,
+                    help="A4 sequence lengths only; overrides --lengths. "
+                         f"Default {DEFAULT_PREFILL_LENGTHS}.")
     ap.add_argument("--prefill-batch", type=int, default=1,
                     help="batch size for A4. At batch 1 a fixed per-call "
                          "dispatch cost dominates below T=16384 and the "
@@ -386,6 +405,10 @@ def main():
     out = {"gpu": torch.cuda.get_device_name(0), "compiled": COMPILE,
            "arms": list(ARMS), "iters": ITERS, "multi_scale": MULTI_SCALE,
            "peak_tflops": gpu_peak_tflops(), "runs": {}}
+    # Precedence: the section-specific flag, then --lengths, then the default.
+    prefill_lengths = tuple(args.prefill_lengths or args.lengths or DEFAULT_PREFILL_LENGTHS)
+    decode_contexts = tuple(args.decode_contexts or args.lengths or DEFAULT_DECODE_CONTEXTS)
+
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     skip = {s.strip() for s in args.skip.split(",")} if args.skip else set()
     want = lambda k: (only is None or k in only) and k not in skip
@@ -407,9 +430,11 @@ def main():
             print("[A3/A6] train step, memory, MFU"); r["a3"] = a3_train_step(depth, dev, args.batch)
         if want("a4"):
             print(f"[A4] prefill (batch {args.prefill_batch})")
-            r["a4"] = a4_prefill(depth, dev, batch=args.prefill_batch)
+            r["a4"] = a4_prefill(depth, dev, batch=args.prefill_batch,
+                                 lengths=prefill_lengths)
         if want("a5"):
-            print("[A5] decode"); r["a5"] = a5_decode(depth, dev)
+            print("[A5] decode")
+            r["a5"] = a5_decode(depth, dev, contexts=decode_contexts)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     json.dump(out, open(args.out, "w"), indent=2)
