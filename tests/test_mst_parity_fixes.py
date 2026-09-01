@@ -1132,3 +1132,27 @@ def test_o5_routing_diagnostics_are_off_in_the_hot_path():
     assert layer._last_route_entropy is not None
     diag = m.compute_diagnostics()
     assert 'stream_load_L0_S0' in diag and 'route_entropy_L0' in diag
+
+
+def test_shared_streams_are_not_free_in_the_flops_accounting():
+    """S+k streams run, so the discount is 1 - (S+k)/N, not 1 - k/N.
+
+    mst_stream_shared streams are ALWAYS active. Counting only the routed k credited
+    the MoL-style shared topology with a saving it does not have: S=1,k=1 (two of four
+    streams running) reported exactly the same active FLOPs as S=0,k=1 (one of four).
+    Same class of error as the Monarch up-projection discount, and it would have
+    corrupted every FLOPs-vs-bpb point for any arm using a shared stream.
+    """
+    def active_fraction(shared, topk):
+        m = build_meta(mst_stream_shared=shared, mst_stream_topk=topk)
+        total, active, _ = m.estimate_flops()
+        return active / total
+
+    f01, f11, f12 = active_fraction(0, 1), active_fraction(1, 1), active_fraction(1, 2)
+    assert f01 < f11 < f12, \
+        f"more active streams must cost more: {f01:.4f} {f11:.4f} {f12:.4f}"
+    # The discount is linear in the number of running streams, so equal increments of
+    # S+k must move the active fraction by equal amounts.
+    assert abs((f11 - f01) - (f12 - f11)) < 1e-6
+    # S + k == N leaves nothing to skip.
+    assert active_fraction(N_SUBS - 1, 1) == 1.0

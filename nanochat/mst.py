@@ -2783,7 +2783,13 @@ class MST(nn.Module):
         for layer in self.layers:
             if not (isinstance(layer, BatchedMSTLayer) and layer._stream_sparse):
                 continue
-            frac = 1.0 - layer._stream_topk / N
+            # S+k streams run, not k: the mst_stream_shared streams are ALWAYS active,
+            # so they are not part of the saving. Omitting S here reported S=1,k=1 (two
+            # of four streams running) with exactly the same active FLOPs as S=0,k=1
+            # (one of four), which would have credited MoL's shared-block topology with a
+            # saving it does not have -- the same class of error as the Monarch
+            # up-projection discount. max() guards S+k == N, where nothing is skipped.
+            frac = max(0.0, 1.0 - (layer._stream_shared + layer._stream_topk) / N)
             # Stage 18: under a Monarch permutation the up-projection is NOT skippable.
             # Stream j's down-projection reads hidden units produced by every stream's
             # fc_w, so a real sparse kernel has to compute all of them and only fc_proj_w

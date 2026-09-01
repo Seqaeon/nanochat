@@ -31,6 +31,10 @@ from nanochat.gpt import GPT, GPTConfig
 from nanochat.mst import MST, BatchedMSTLayer
 
 VOCAB, SEQ, ASPECT, N_SUBS, HEAD_DIM = 32768, 2048, 64, 4, 128
+# base_train.py defaults --window-pattern to SSSL; GPTConfig's own default is SSSSL.
+# The runs used base_train's, and the pattern changes the attention FLOPs term, so it
+# has to be set explicitly or the dense FLOPs will not match the recorded ones.
+WINDOW = "SSSL"
 
 
 def model_dim(depth):
@@ -40,7 +44,8 @@ def model_dim(depth):
 def dense_cfg(depth):
     D = model_dim(depth)
     return GPTConfig(sequence_len=SEQ, vocab_size=VOCAB, n_layer=depth,
-                     n_head=D // HEAD_DIM, n_kv_head=D // HEAD_DIM, n_embd=D)
+                     n_head=D // HEAD_DIM, n_kv_head=D // HEAD_DIM, n_embd=D,
+                     window_pattern=WINDOW)
 
 
 def mst_cfg(depth, topk=1, gate_attn=0):
@@ -49,6 +54,7 @@ def mst_cfg(depth, topk=1, gate_attn=0):
     return GPTConfig(
         sequence_len=SEQ, vocab_size=VOCAB, n_layer=depth,
         n_head=D // HEAD_DIM, n_kv_head=D // HEAD_DIM, n_embd=D,
+        window_pattern=WINDOW,
         use_mst=True, mst_n_subs=N_SUBS, mst_sub_dim=D // N_SUBS,
         mst_head_dim=0, mst_input_mode='learned_proj',
         mst_routing_mode='soft_weighted', mst_routing_topk=0,
@@ -90,7 +96,14 @@ def report(depths, gate_attn):
     for depth in depths:
         for name, cls, cfg in (("dense", GPT, dense_cfg(depth)),
                                ("mst", MST, mst_cfg(depth, gate_attn=gate_attn))):
-            m = build(cfg, cls)
+            try:
+                m = build(cfg, cls)
+            except AssertionError as e:
+                # MST needs mst_sub_head_dim | (D/N), i.e. D a multiple of 256. Depths
+                # whose D=64L rounded to 128 is not (18 -> 1152, 22 -> 1408) have no MST
+                # arm at all; the dense row is still wanted as a curve point.
+                print(f"{name:<10} {depth:3d}   (no MST arm: {str(e).split(';')[0]})")
+                continue
             counts = m.num_scaling_params()
             total_flops, active_flops, active_params = m.estimate_flops()
             total = counts['total']

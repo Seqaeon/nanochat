@@ -31,6 +31,11 @@
 #   (shared block inside vs outside the routing softmax), then whether routed
 #   attention actually restricts.
 #
+# ATTENTION-GATING ARMS were added 2026-09-01 (ISO_mst_gattn, ISO_mst_gattn_s1,
+# ISO_mst_s1). They share the iso-token budget for the same reason the original three
+# do: gating attention changes the active parameter count, so an own-budget run would
+# confound the architecture change with a data change.
+#
 #   bash scripts/p10_isotoken.sh            # d8, 0.6B tokens
 #   TOKENS=1000000000 bash scripts/p10_isotoken.sh
 #   bash scripts/p10_isotoken.sh 8 16
@@ -131,13 +136,86 @@ run ISO_mol "$DEPTH" \
     --mol-thin-dim "$SUB_DIM" --mol-head-dim 64 --mol-ffn-mult 4.0 \
     --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1
 
+# ---------------------------------------------------------------- gate_attn
+# Does gating ATTENTION as well as the FFN pay, and does it need a shared stream?
+#
+# WHY THIS IS THE LEVER. mst_stream_topk currently gates the FFN only, because a
+# skipped token stops being a key/value for that stream and the attention semantics
+# change per stream. Measured at L=24 (scripts/p11_active_params.py), the FFN is 44.4%
+# of a layer's matmul parameters and attention is 38.9%, so k=1-of-4 on the FFN alone
+# removes 33.3% of a layer and 66.7% keeps running. Adding attention takes it to 62.5%
+# removed, 37.5% active.
+#
+# That is the difference between the two ends of MoL's own speedup curve (their 2.3):
+# 1.53x forward speedup at 57% active, 2.85x at 20%. At 66.7% active there is nothing
+# to win, which is why the p08 `dispatch` group could not have shown a speedup no matter
+# how the gather/scatter was implemented.
+#
+# WHY THE SHARED ARM IS NOT OPTIONAL. Gating attention is exactly what creates MoL's
+# "attention coverage problem" (their 3.1): at 3-of-15 each block sees 20% of the
+# sequence, and softmax-only 3-of-15 scores WORSE than 3-of-5 (34.73 vs 32.04 PPL)
+# despite 2.2x the parameters. Their fix is 3.2's Shared + Routed topology, an
+# always-active block carrying global context at every layer. So gate_attn ALONE tests
+# whether the coverage problem bites us, and gate_attn + shared tests whether their fix
+# transfers. Running only the first would confound "attention gating is bad" with
+# "attention gating without coverage is bad".
+#
+# NOTE ON SPARSITY LEVELS. These arms are deliberately NOT iso-active-FLOPs with each
+# other; S=1,k=1 runs two of four streams against gate_attn's one. That is the point:
+# the axis is bpb against active FLOPs, and each arm places itself on it. estimate_flops
+# now discounts by 1 - (S+k)/N, so the shared stream is charged for (it was NOT before
+# 2026-09-01, which made S=1,k=1 look identical in cost to S=0,k=1; see
+# tests/test_mst_parity_fixes.py::test_shared_streams_are_not_free_in_the_flops_accounting).
+#
+# What each arm actually costs, from scripts/p11_active_params.py. The 33.3% / 62.5%
+# figures above are shares of a LAYER's matmul parameters; these are whole-model active
+# FLOPs per token, which also carry embeddings, the head, and the attention QK/AV term:
+#
+#            arm            S+k   d8 act.FLOPs  act/total   d24 act.FLOPs  act/total
+#   ISO_mst (control)        1      1.562e8      0.892        1.481e9      0.744
+#   ISO_mst_gattn            1      1.382e8      0.790        1.192e9      0.599
+#   ISO_mst_gattn_s1         2      1.505e8      0.860        1.459e9      0.733
+#   ISO_mst_s1               2      1.625e8      0.928        1.651e9      0.829
+#
+# So gate_attn buys 11.5% of active FLOPs at d8 and 19.5% at d24: the saving GROWS with
+# depth, because attention's share of a layer grows with d. Read the d8 result as a
+# lower bound on what it is worth at the depths the paper reports.
+MST_ISO="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DIM \
+    --mst-head-dim 0 --mst-input-mode learned_proj \
+    --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
+    --mst-transition-mode aggregate_distribute \
+    --mst-final-mode concat_proj --mst-final-topk 0 \
+    --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+    --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+    --mst-transition-width-mult 4.0 --mst-sub-lr-scale 2.0 \
+    --mst-multi-scale-windows 1 \
+    --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense"
+
+# Attention gated too, no shared stream. 1 of 4 streams active, 37.5% of a layer.
+run ISO_mst_gattn "$DEPTH" $MST_ISO \
+    --mst-stream-topk 1 --mst-stream-router-noise 1.0 \
+    --mst-stream-gate-attn 1
+
+# MoL's Shared + Routed topology: stream 0 always on, top-1 over the remaining 3.
+# 2 of 4 streams active, 58.3% of a layer. Costs more than the arm above and is
+# expected to recover the coverage it loses.
+run ISO_mst_gattn_s1 "$DEPTH" $MST_ISO \
+    --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0 \
+    --mst-stream-gate-attn 1
+
+# Shared stream WITHOUT attention gating. Isolates what the always-active stream costs
+# on its own, so the pair above can be read as a coverage effect rather than a capacity
+# one. Skip this if compute is tight; it is the least informative of the three.
+run ISO_mst_s1 "$DEPTH" $MST_ISO \
+    --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0
+
 # Dense at the same budget. Makes it a real triple and costs one short run.
 run ISO_dense "$DEPTH" --models base
 
 echo ""
 echo "============================================================"
 echo "  done depth ${DEPTH}: ${OUT_BASE}/d${DEPTH}/"
-echo "  All three saw ${TOKENS} tokens, so bpb is directly comparable."
+echo "  Every arm saw ${TOKENS} tokens, so bpb is directly comparable."
 echo "  FLOPs/token still differs; divide by it for the per-token axis."
 echo "============================================================"
 done

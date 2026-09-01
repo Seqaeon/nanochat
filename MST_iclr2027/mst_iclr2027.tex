@@ -409,32 +409,41 @@ vocabulary.
 \begin{table}[t]
 \caption{Cost and quality. MST is $\nsub{=}4$ with all components of
 Section~\ref{sec:method}. Dense is the matched baseline at the same $\dmodel = 64L$
-ladder. ``Matrices'' excludes embeddings and value embeddings.}
+ladder. ``Matrices'' excludes embeddings and value embeddings. Active counts discount
+the streams the top-$k$ gate switches off. The gate reaches the FFN only, which is
+$44.4\%$ of a layer's matmul parameters, so $k{=}1$ of $\nsub{=}4$ removes $33.3\%$ of a
+layer and $66.7\%$ stays active; gating attention as well would remove $62.5\%$
+(Section~\ref{sec:limitations}). For dense the active and total counts coincide by
+definition. The FLOPs/token column is the \emph{active} count for both arms.}
 \label{tab:cost}
 \begin{center}
 \begin{small}
-\begin{tabular}{llrrrrr}
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{llrrrrrrr}
 \toprule
-Model & $L$ & Total params & Matrices & FLOPs/token & Train FLOPs & \bpb $\downarrow$ \\
+& & \multicolumn{2}{c}{Parameters} & \multicolumn{2}{c}{Matrices}
+& \multicolumn{2}{c}{FLOPs} & \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+Model & $L$ & Total & Active & Total & Active & /token & Training & \bpb $\downarrow$ \\
 \midrule
 \multirow{4}{*}{MST}
- & 8  & 110{,}646{,}288   & 10.0M   & 1.562e8 & 4.386e16 & 1.0320$^\ddagger$ \\
- & 16 & 413{,}224{,}992   & 77.7M   & 5.746e8 & 6.710e17 & 0.8702 \\
- & 20 & 654{,}183{,}720   & 150.9M  & 9.528e8 & 1.929e18 & 0.8338 \\
- & 24 & 964{,}359{,}216   & 259.7M  & 1.481e9 & 4.823e18 & 0.7869 \\
+ & 8  & 110.6M   & 107.5M   & 10.0M    & 6.8M     & 1.562e8 & 4.386e16 & 1.0320$^\ddagger$ \\
+ & 16 & 413.2M   & 388.1M   & 77.7M    & 52.5M    & 5.746e8 & 6.710e17 & 0.8702 \\
+ & 20 & 654.2M   & 605.0M   & 150.9M   & 101.7M   & 9.528e8 & 1.929e18 & 0.8338 \\
+ & 24 & 964.4M   & 879.4M   & 259.7M   & 174.8M   & 1.481e9 & 4.823e18 & 0.7869 \\
 \midrule
 \multirow{11}{*}{Dense}
- & 8  & 125{,}829{,}648    & 25.2M   & 2.863e8 & 1.261e17 & 0.9602 \\
- & 12 & 286{,}261{,}730    & 84.9M   & 7.597e8 & 8.537e17 & 0.8654 \\
- & 14 & 399{,}114{,}882    & 134.9M  & 1.129e9 & 1.899e18 & 0.8312 \\
- & 16 & 536{,}871{,}738    & 201.3M  & 1.585e9 & 3.817e18 & 0.7988 \\
- & 18 & 701{,}891{,}594    & 286.7M  & 2.180e9 & 7.268e18 & 0.7755 \\
- & 20 & 896{,}533{,}746    & 393.2M  & 2.886e9 & 1.292e19 & 0.7530 \\
- & 22 & 1{,}123{,}157{,}490 & 523.4M & 3.763e9 & 2.209e19 & 0.7338 \\
- & 24 & 1{,}384{,}122{,}122 & 679.5M & 4.775e9 & 3.594e19 & 0.7169 \\
- & 26 & 1{,}681{,}786{,}938 & 863.9M & 5.991e9 & 5.684e19 & 0.7006 \\
- & 28 & 2{,}018{,}511{,}234 & 1079.0M & 7.366e9 & 8.661e19 & 0.6870 \\
- & 30 & 2{,}396{,}654{,}306 & 1327.1M & 8.977e9 & 1.291e20 & 0.6744 \\
+ & 8  & 125.8M   & 125.8M   & 25.2M    & 25.2M    & 2.863e8 & 1.261e17 & 0.9602 \\
+ & 12 & 286.3M   & 286.3M   & 84.9M    & 84.9M    & 7.597e8 & 8.537e17 & 0.8654 \\
+ & 14 & 399.1M   & 399.1M   & 134.9M   & 134.9M   & 1.129e9 & 1.899e18 & 0.8312 \\
+ & 16 & 536.9M   & 536.9M   & 201.3M   & 201.3M   & 1.585e9 & 3.817e18 & 0.7988 \\
+ & 18 & 701.9M   & 701.9M   & 286.7M   & 286.7M   & 2.180e9 & 7.268e18 & 0.7755 \\
+ & 20 & 896.5M   & 896.5M   & 393.2M   & 393.2M   & 2.886e9 & 1.292e19 & 0.7530 \\
+ & 22 & 1123.2M  & 1123.2M  & 523.4M   & 523.4M   & 3.763e9 & 2.209e19 & 0.7338 \\
+ & 24 & 1384.1M  & 1384.1M  & 679.5M   & 679.5M   & 4.775e9 & 3.594e19 & 0.7169 \\
+ & 26 & 1681.8M  & 1681.8M  & 863.9M   & 863.9M   & 5.991e9 & 5.684e19 & 0.7006 \\
+ & 28 & 2018.5M  & 2018.5M  & 1079.0M  & 1079.0M  & 7.366e9 & 8.661e19 & 0.6870 \\
+ & 30 & 2396.7M  & 2396.7M  & 1327.1M  & 1327.1M  & 8.977e9 & 1.291e20 & 0.6744 \\
 \bottomrule
 \end{tabular}
 \end{small}
@@ -689,18 +698,25 @@ the \bpb\ multipliers of Table~\ref{tab:ratio} for comparison.}
 \toprule
 Cost axis & MST $L{=}24$ & Dense at MST's cost & CORE mult. & \bpb\ mult. \\
 \midrule
-FLOPs/token    & $1.481\times10^{9}$ & 0.1753 & $\mathbf{1.24\times}$ & $1.23\times$ \\
-Training FLOPs & $4.823\times10^{18}$ & 0.1910 & $1.07\times$ & $1.10\times$ \\
-Matrix params  & 259.7M              & 0.2008 & $0.92\times$ & $0.92\times$ \\
-Total params   & 964M                & 0.2399 & $0.63\times$ & $0.64\times$ \\
+Active matrix params  & 174.8M               & 0.1701 & $\mathbf{1.36\times}$ & --- \\
+FLOPs/token           & $1.481\times10^{9}$  & 0.1753 & $\mathbf{1.24\times}$ & $1.23\times$ \\
+Training FLOPs        & $4.823\times10^{18}$ & 0.1910 & $1.07\times$ & $1.10\times$ \\
+Total matrix params   & 259.7M               & 0.2008 & $0.92\times$ & $0.92\times$ \\
+Active params         & 879.4M               & 0.2307 & $0.69\times$ & --- \\
+Total params          & 964.4M               & 0.2399 & $0.63\times$ & $0.64\times$ \\
 \bottomrule
 \end{tabular}
 \end{small}
 \end{center}
 Dense reference points: $L{=}16$ (CORE 0.181), $L{=}20$ (0.233), $L{=}22$ (0.255).
-MST $L{=}24$ scores 0.194. The ordering across axes is the same one the \bpb\ curves
-give: MST buys inference compute efficiently, is roughly neutral on matrix parameters,
-and pays on total parameters, where the per-stream value embeddings dominate.
+MST $L{=}24$ scores 0.194. Dense is dense, so its active and total counts coincide and
+the \bpb\ multipliers were only ever computed on the total axes; the two active rows have
+no \bpb\ counterpart to compare against and are new here.
+The ordering is the same one the \bpb\ curves give: MST buys inference compute
+efficiently, is neutral on total matrix parameters, and pays on total parameters, where
+the per-stream value embeddings dominate. Active matrix parameters, the axis that both
+excludes the embeddings MST is charged for and counts only the streams that actually
+run, is where the architecture looks best at $1.36\times$.
 \end{table}
 
 \begin{table}[t]
@@ -712,7 +728,8 @@ total parameters and a dense model matched on FLOPs per token.}
 \begin{tabular}{lccc}
 \toprule
 Task & MST $L{=}24$ & Dense $L{=}20$ & Dense $L{=}16$ \\
-     & (964M) & (iso-param, $0.93\times$) & (iso-FLOP, $1.07\times$) \\
+     & (964M total) & (iso-param, $0.93\times$) & (iso-FLOP, $1.07\times$) \\
+Active matrices & 174.8M & 393.2M & 201.3M \\
 \midrule
 ARC-Easy (10-shot)      & 64.1 & 65.5 & 61.2 \\
 PIQA (10-shot)          & 70.5 & 72.9 & 70.1 \\
@@ -736,7 +753,12 @@ $1.481\!\times\!10^{9}$ FLOPs/token): dense $L{=}20$ matches it on total paramet
 to $0.93\times$ and dense $L{=}16$ on FLOPs per token to $1.07\times$. We bracket on
 \emph{total} rather than matrix parameters here because this table fixes a resource
 a practitioner pays for rather than isolating the cost the architecture is
-responsible for; the matrix-parameter bracket would be $L{=}18$ at $1.10\times$.
+responsible for; the total-matrix-parameter bracket would be $L{=}18$ at $1.10\times$.
+On \emph{active} matrix parameters no dense point in the ladder is low enough to
+bracket from below: MST $L{=}24$ runs 174.8M against dense $L{=}16$'s 201.3M, so even
+the iso-FLOP reference carries $1.15\times$ MST's active matrices while scoring lower
+(0.181 against 0.194). The dense ladder would need $L\!\approx\!15$ for a true
+iso-active-matrix bracket.
 MST beats the iso-FLOP point on the aggregate (0.194 against 0.181) and loses to the
 iso-parameter point (0.233), which is the same ordering the \bpb\ multipliers give and
 the reason Table~\ref{tab:coreladder} reports per-axis multipliers rather than a single
@@ -930,12 +952,13 @@ dense'' compares total parameters to the dense model of matching quality
 \label{tab:veplain}
 \begin{center}
 \begin{small}
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccc}
 \toprule
 Value-embedding table & \bpb & FLOPs/tok & train FLOPs & Total & Matrices \\
 \midrule
-Per-stream, $\nsub\dsub$ wide (ours) & \textbf{0.8702} & $\mathbf{1.18\times}$ & $\mathbf{1.01\times}$ & 413.2M ($1.44\times$ dense) & 77.7M \\
-Shared, $\dsub$ wide                 & 0.8761 & $1.10\times$ & $0.88\times$ & \textbf{211.9M} ($\mathbf{0.74\times}$ dense) & 77.7M \\
+Per-stream, $\nsub\dsub$ wide (ours) & \textbf{0.8702} & $\mathbf{1.18\times}$ & $\mathbf{1.01\times}$ & 413.2M ($1.44\times$) & 77.7M \\
+Shared, $\dsub$ wide                 & 0.8761 & $1.10\times$ & $0.88\times$ & \textbf{211.9M} ($\mathbf{0.74\times}$) & 77.7M \\
 \midrule
 $\Delta$ & $-0.0059$ & $+0.08$ & $+0.13$ & $+201.3$M ($1.95\times$) & unchanged \\
 \bottomrule
