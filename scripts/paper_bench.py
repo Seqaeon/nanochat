@@ -57,7 +57,8 @@ def make_config(depth, mst, seq_len=SEQ):
     if not mst:
         return GPTConfig(**common)
     return GPTConfig(**common, use_mst=True, mst_n_subs=N_SUBS, mst_sub_dim=d,
-                     mst_head_dim=0, mst_input_mode='learned_proj',
+                     mst_head_dim=0, mst_sub_head_dim=SUB_HEAD_DIM,
+                     mst_input_mode='learned_proj',
                      mst_routing_mode='soft_weighted', mst_routing_topk=0,
                      mst_ffn_mode='standard',
                      mst_transition_mode='aggregate_distribute',
@@ -66,13 +67,28 @@ def make_config(depth, mst, seq_len=SEQ):
                      mst_grad_equalize=1, mst_block_diagonal_muon=1,
                      mst_transition_width_mult=float(N_SUBS),
                      mst_sub_lr_scale=2.0,
-                     mst_multi_scale_windows=int(MULTI_SCALE))
+                     mst_multi_scale_windows=int(MULTI_SCALE),
+                     mst_compose_windows=int(COMPOSE_WINDOWS),
+                     mst_wo_mode=WO_MODE,
+                     mst_stream_topk=STREAM_TOPK,
+                     mst_stream_router_noise=STREAM_ROUTER_NOISE,
+                     mst_per_stream_ve=PER_STREAM_VE,
+                     mst_final_norm=FINAL_NORM)
 
 
 COMPILE = True   # set by --no-compile
 ITERS = 0        # set by --iters; 0 means use each experiment's default
 ARMS = ("mst", "dense")   # set by --arms
 MULTI_SCALE = True        # set by --no-multi-scale
+
+# SP2_k1 default settings
+STREAM_TOPK = 1
+STREAM_ROUTER_NOISE = 1.0
+SUB_HEAD_DIM = 64
+WO_MODE = 'dense'
+COMPOSE_WINDOWS = 1
+PER_STREAM_VE = 0
+FINAL_NORM = 1
 
 
 def _arms():
@@ -322,6 +338,18 @@ def main():
                          "(default: all of them)")
     ap.add_argument("--skip", type=str, default=None,
                     help="comma-separated subset to skip, e.g. --skip a1")
+    ap.add_argument("--stream-topk", type=int, default=1,
+                    help="top-k active streams (1 for SP2_k1 sparse routing, 0 for dense/soft)")
+    ap.add_argument("--sub-head-dim", type=int, default=64,
+                    help="head dimension per stream in MST (default: 64 for SP2_k1)")
+    ap.add_argument("--wo-mode", type=str, default="dense",
+                    help="attention output projection mode (default: dense for SP2_k1)")
+    ap.add_argument("--compose-windows", type=int, default=1,
+                    help="compose multi-scale windows (default: 1 for SP2_k1)")
+    ap.add_argument("--per-stream-ve", type=int, default=0,
+                    help="per-stream value embeddings (0 for standard SP2_k1, 1 for VE variants)")
+    ap.add_argument("--final-norm", type=int, default=1,
+                    help="final layer norm after MST block (default: 1)")
     ap.add_argument("--out", type=str, default="scratch/paper_bench.json")
     ap.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True,
                     help="torch.compile both arms (default on, matches base_train.py). "
@@ -330,9 +358,16 @@ def main():
     args = ap.parse_args()
 
     global COMPILE, ITERS, ARMS, MULTI_SCALE
+    global STREAM_TOPK, SUB_HEAD_DIM, WO_MODE, COMPOSE_WINDOWS, PER_STREAM_VE, FINAL_NORM
     COMPILE = args.compile
     MULTI_SCALE = args.multi_scale
     ITERS = args.iters
+    STREAM_TOPK = args.stream_topk
+    SUB_HEAD_DIM = args.sub_head_dim
+    WO_MODE = args.wo_mode
+    COMPOSE_WINDOWS = args.compose_windows
+    PER_STREAM_VE = args.per_stream_ve
+    FINAL_NORM = args.final_norm
     ARMS = tuple(a.strip() for a in args.arms.split(","))
     bad = [a for a in ARMS if a not in ("mst", "dense")]
     if bad:
@@ -343,6 +378,8 @@ def main():
     dev = torch.device("cuda")
     print(f"device: {torch.cuda.get_device_name(0)}  "
           f"peak bf16: {gpu_peak_tflops()} TFLOP/s")
+    print(f"MST config: SP2_k1 (stream_topk={STREAM_TOPK}, sub_head_dim={SUB_HEAD_DIM}, "
+          f"wo_mode={WO_MODE}, compose_windows={COMPOSE_WINDOWS}, per_stream_ve={PER_STREAM_VE})")
     print(f"torch.compile: {'ON' if COMPILE else 'OFF'}"
           + ("" if COMPILE else "   <-- NOT a reportable configuration"))
 
