@@ -31,10 +31,13 @@
 #   (shared block inside vs outside the routing softmax), then whether routed
 #   attention actually restricts.
 #
-# ATTENTION-GATING ARMS were added 2026-09-01 (ISO_mst_gattn, ISO_mst_gattn_s1,
-# ISO_mst_s1). They share the iso-token budget for the same reason the original three
-# do: gating attention changes the active parameter count, so an own-budget run would
-# confound the architecture change with a data change.
+# ATTENTION-GATING ARMS were added 2026-09-01: ISO_mst_ve (control), ISO_mst_ve_gattn,
+# ISO_mst_ve_gattn_s1, ISO_mst_ve_s1. They share the iso-token budget for the same reason
+# the original three do: gating attention changes the active parameter count, so an
+# own-budget run would confound the architecture change with a data change. Unlike the
+# three above they DO use per-stream value embeddings, because they compare MST against
+# MST and the headline uses them; see the block above those arms for why that is not
+# cosmetic.
 #
 #   bash scripts/p10_isotoken.sh            # d8, 0.6B tokens
 #   TOKENS=1000000000 bash scripts/p10_isotoken.sh
@@ -180,7 +183,33 @@ echo "============================================================"
 # So gate_attn buys 11.5% of active FLOPs at d8 and 19.5% at d24: the saving GROWS with
 # depth, because attention's share of a layer grows with d. Read the d8 result as a
 # lower bound on what it is worth at the depths the paper reports.
-MST_ISO="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DIM \
+# ══ THESE ARMS RUN PER-STREAM VALUE EMBEDDINGS. THE THREE ABOVE DO NOT. ══
+# The "no value-embedding variants" rule at the top exists to keep MST vs MoL vs dense
+# an architecture-only comparison. It does not apply here, because these arms compare
+# MST against MST, and the headline SP2_k1 config uses --mst-per-stream-ve 1 (G3). A
+# delta measured on plain VE would not transfer, and NOT for a bookkeeping reason:
+#
+#   VE enters the model through v, inside attention:
+#       v5 = v5 + gates.unsqueeze(-1) * ve_heads       # mst.py, attention block
+#       if stream_w is not None and self._stream_gate_attn:
+#           attn_out = stream_w.unsqueeze(-1) * attn_out
+#
+#   so gating attention discards the gated stream's VE contribution along with its
+#   attention output. Under a SHARED table every stream injects the same vector, so a
+#   token still receives that content through whichever stream it did select. Under
+#   per-stream VE each stream reads its OWN slice, and gating stream j destroys slice j
+#   for that token with nothing else carrying it. Attention gating therefore costs
+#   STRICTLY MORE under G3, and a plain-VE measurement is an optimistic estimate of what
+#   the headline config would pay. That is the failure mode this ordering avoids:
+#   adopting gate_attn on a plain-VE result and having it regress at the headline.
+#
+# This is why ISO_mst_ve below exists and the plain-VE ISO_mst above is NOT the control
+# for these arms. It costs one extra run; without it there is no valid delta.
+#
+# FLOPs are unaffected by the VE choice (value embeddings are lookups and are excluded
+# from the FLOPs formula), so the cost table above holds for these arms too. Only the
+# total parameter count moves, 60.3M to 110.6M at d8, and only bpb is at stake.
+MST_ISO_VE="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DIM \
     --mst-head-dim 0 --mst-input-mode learned_proj \
     --mst-routing-mode soft_weighted --mst-routing-topk 0 --mst-ffn-mode standard \
     --mst-transition-mode aggregate_distribute \
@@ -189,24 +218,30 @@ MST_ISO="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DIM \
     --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
     --mst-transition-width-mult 4.0 --mst-sub-lr-scale 2.0 \
     --mst-multi-scale-windows 1 \
-    --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense"
+    --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
+    --mst-per-stream-ve 1"
 
-# Attention gated too, no shared stream. 1 of 4 streams active, 37.5% of a layer.
-run ISO_mst_gattn "$DEPTH" $MST_ISO \
+# The control every arm below is read against: the headline SP2_k1 config at this
+# budget. Not optional.
+run ISO_mst_ve "$DEPTH" $MST_ISO_VE \
+    --mst-stream-topk 1 --mst-stream-router-noise 1.0
+
+# Attention gated too, no shared stream. 1 of 4 streams active.
+run ISO_mst_ve_gattn "$DEPTH" $MST_ISO_VE \
     --mst-stream-topk 1 --mst-stream-router-noise 1.0 \
     --mst-stream-gate-attn 1
 
 # MoL's Shared + Routed topology: stream 0 always on, top-1 over the remaining 3.
-# 2 of 4 streams active, 58.3% of a layer. Costs more than the arm above and is
-# expected to recover the coverage it loses.
-run ISO_mst_gattn_s1 "$DEPTH" $MST_ISO \
+# 2 of 4 streams active. Costs more than the arm above and is expected to recover the
+# coverage it loses.
+run ISO_mst_ve_gattn_s1 "$DEPTH" $MST_ISO_VE \
     --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0 \
     --mst-stream-gate-attn 1
 
-# Shared stream WITHOUT attention gating. Isolates what the always-active stream costs
-# on its own, so the pair above can be read as a coverage effect rather than a capacity
-# one. Skip this if compute is tight; it is the least informative of the three.
-run ISO_mst_s1 "$DEPTH" $MST_ISO \
+# DROP THIS ONE FIRST if compute is tight. Shared stream WITHOUT attention gating, to
+# attribute a gattn_s1 win to coverage rather than to the extra always-on capacity. Only
+# worth running once gattn_s1 has come back looking good.
+run ISO_mst_ve_s1 "$DEPTH" $MST_ISO_VE \
     --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0
 
 # Dense at the same budget. Makes it a real triple and costs one short run.
