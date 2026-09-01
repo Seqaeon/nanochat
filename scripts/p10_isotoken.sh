@@ -219,7 +219,7 @@ MST_ISO_VE="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DI
     --mst-transition-width-mult 4.0 --mst-sub-lr-scale 2.0 \
     --mst-multi-scale-windows 1 \
     --mst-sub-head-dim 64 --mst-compose-windows 1 --mst-wo-mode dense \
-    --mst-per-stream-ve 1"
+    --mst-per-stream-ve 1 --target-tokens -1"
 
 # The control every arm below is read against: the headline SP2_k1 config at this
 # budget. Not optional.
@@ -245,7 +245,7 @@ run ISO_mst_ve_s1 "$DEPTH" $MST_ISO_VE \
     --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0
 
 # Dense at the same budget. Makes it a real triple and costs one short run.
-run ISO_dense "$DEPTH" --models base
+#run ISO_dense "$DEPTH" --models base
 
 echo ""
 echo "============================================================"
