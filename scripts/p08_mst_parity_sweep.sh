@@ -190,12 +190,12 @@ echo "════════════════════════�
 # The anchor. Without a same-sweep baseline the deltas are not readable, because
 # the reference 1.0510 is a single seed from a different sweep.
 # The two dense controls duplicate p32's; skip this group if you already have them.
-#if has control; then
-#    echo ""; echo "### CONTROL: anchors for every delta below"
+if has control; then
+    echo ""; echo "### CONTROL: anchors for every delta below"
 #    run CTRL_mst_full   "$DEPTH" $MST_FULL
-#    run CTRL_dense_hd128 "$DEPTH" --models base
+    run CTRL_dense_hd128 "$DEPTH" --models base
 #    run CTRL_dense_hd32  "$DEPTH" --models base --head-dim 32
-#fi
+fi
 
 # ---------------------------------------------------------------- combo
 # Runs before the singles on purpose: this is the go/no-go. G1 is carried at both
