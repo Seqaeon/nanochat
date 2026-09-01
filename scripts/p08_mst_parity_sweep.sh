@@ -709,6 +709,12 @@ fi
 # ---------------------------------------------------------------- dispatch
 # Does Phase B (real gather/scatter) cost bpb, and is it worth turning on?
 #
+# ══ REQUIRES THE 2026-09-01 GRAPH-BREAK FIX. ══
+# Before it, `float()` and a data-dependent `if` in _ffn_dispatched put a Dynamo break in
+# every layer (1 graph -> 11 at L=8), which showed up as 2x step time, half the MFU and
+# OOM at a batch the masked path fits. Any dispatch measurement taken before that fix is
+# invalid. Confirm with torch._dynamo.explain that dispatch=1 still gives 0 breaks.
+#
 # ══ RUN THE WALL-CLOCK CHECK FIRST. It needs no training. ══
 # Add --mst-stream-dispatch 1 to the MST arm of the A1-A5 benchmark at depth 24 and
 # compare ms/step against the masked 76.09. If dispatch does not beat that, this whole

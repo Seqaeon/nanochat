@@ -1207,7 +1207,7 @@ class BatchedMSTLayer(nn.Module):
                 self._last_stream_load = mask.mean(dim=(0, 1)).detach()
         return w, aux
 
-    def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w):
+    def _ffn_dispatched(self, x, stream_w, fc_w, fc_proj_w, diag=False):
         """Phase B: run the FFN on K < T tokens per stream, and actually skip the rest.
 
         Phase A multiplies the FFN output by a 0/1 gate, which prices the quality cost of
@@ -1232,7 +1232,6 @@ class BatchedMSTLayer(nn.Module):
         B, T, N, d = x.shape
         k = self._stream_topk
         K = max(1, min(T, int(math.ceil(T * k / N * self._stream_capacity_factor))))
-
         mask = (stream_w.detach() > 0).to(x.dtype)                     # (B, T, N)
         # Rank selected tokens by position: earliest selected gets the largest key, so
         # topk(K) keeps the first K in sequence order. Unselected score 0, below any
@@ -1253,10 +1252,25 @@ class BatchedMSTLayer(nn.Module):
 
         out = torch.zeros(B, N, T, d, dtype=og.dtype, device=og.device)
         out.scatter_(2, idx, og)
-        with torch.no_grad():
-            selected = mask.sum()
-            self._last_stream_drop = float(
-                1.0 - keep.sum() / selected.clamp_min(1)) if selected > 0 else 0.0
+        # Overflow accounting, diagnostics only, and the single most expensive line in
+        # this function before it was gated. `float()` on a CUDA tensor and a Python bool
+        # on `selected > 0` EACH force a device sync and a Dynamo graph break, once per
+        # layer per step. Measured at L=8: turning dispatch on took the compiled model
+        # from 1 graph / 0 breaks to 11 graphs / 10 breaks. That is what made dispatch
+        # look 2x slower with half the MFU and OOM at a batch the masked path fits --
+        # every break materialises the live set at the boundary and kills fusion across
+        # it, and the sync serialises the pipeline. None of it was the gather/scatter:
+        # in isolation the dispatched FFN is 2.0x faster than the masked one at 0.42x
+        # the peak memory.
+        #
+        # Under compile the tensor is stored as-is, so it costs a graph output on log
+        # steps and nothing otherwise; compute_diagnostics does the conversion. The
+        # `selected > 0` guard was dead in any case: top-k always selects k, and
+        # clamp_min(1) already handles the divide.
+        if diag:
+            with torch.no_grad():
+                drop = 1.0 - keep.sum() / mask.sum().clamp_min(1)
+                self._last_stream_drop = drop if torch.compiler.is_compiling() else float(drop)
         return out.permute(0, 2, 1, 3)                                 # (B, T, N, d)
 
     def forward(self, sub_states, cos_sin, ve=None, window_sizes=None,
@@ -1468,7 +1482,7 @@ class BatchedMSTLayer(nn.Module):
         # purpose: computing it densely and then dispatching would throw away exactly the
         # work we are trying not to do.
         if stream_w is not None and self._stream_dispatch:
-            ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w)
+            ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w, diag=diag)
         else:
             h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
             # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
@@ -2854,6 +2868,11 @@ class MST(nn.Module):
                     # Entropy of the selection distribution, against log(N) for uniform.
                     p = (load / load.sum().clamp_min(1e-9)).clamp_min(1e-9)
                     diag[f'stream_entropy_L{i}'] = float(-(p * p.log()).sum())
+                # Phase B only: fraction of selected (token, stream) pairs evicted by the
+                # capacity limit. This is the number mst_stream_capacity_factor trades
+                # against, so it has to reach the training log.
+                if getattr(layer, '_stream_dispatch', False):
+                    diag[f'stream_drop_L{i}'] = float(layer._last_stream_drop)
                 continue
             trans = getattr(layer, 'transition', None)
             if trans is None:

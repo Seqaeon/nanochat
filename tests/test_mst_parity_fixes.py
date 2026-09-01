@@ -683,6 +683,9 @@ def _dispatch_pair(cap, k=2, depth=2, noise=0.0):
                 layer.stream_router_w.copy_(
                     torch.randn(layer.stream_router_w.shape, generator=g) * 0.3)
         m.eval()
+        # _last_stream_drop is gated on _diag_enabled: computing it costs a device sync
+        # and a graph break per layer, so it is off in the hot path.
+        m._diag_enabled = True
         out.append(m)
     return out
 
