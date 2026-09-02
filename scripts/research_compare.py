@@ -49,6 +49,11 @@ def save_sweep_state(run_dir_path: Path, state: dict) -> None:
         json.dump(state, f, indent=2)
 
 
+def _iso_flops(args):
+    """True when the horizon comes from a FLOPs budget rather than a token budget."""
+    return (getattr(args, 'target_flops', 0) or 0) > 0 or (getattr(args, 'target_active_flops', 0) or 0) > 0
+
+
 def run_training_sweep(args):
     # Ensure environment is ready
     check_and_prepare_env(args)
@@ -116,9 +121,12 @@ def run_training_sweep(args):
         "--max-seq-len", str(max_seq_len),
         "--device-batch-size", str(device_batch_size),
         "--total-batch-size", str(total_batch_size), # standard for reference
-        "--target-tokens", str(-1 if getattr(args, 'target_flops', 0) > 0 else target_tokens),
+        # An isoFLOP profile fixes the horizon from a FLOPs budget, on either the total
+        # or the active axis, and both of those override the token budget entirely.
+        "--target-tokens", str(-1 if _iso_flops(args) else target_tokens),
         *(["--target-flops", str(args.target_flops)] if getattr(args, 'target_flops', 0) > 0 else []),
-        *(["--target-param-data-ratio", str(args.target_param_data_ratio)] if (args.target_param_data_ratio > 0 and getattr(args, 'target_flops', 0) <= 0) else []),
+        *(["--target-active-flops", str(args.target_active_flops)] if getattr(args, 'target_active_flops', 0) > 0 else []),
+        *(["--target-param-data-ratio", str(args.target_param_data_ratio)] if (args.target_param_data_ratio > 0 and not _iso_flops(args)) else []),
         "--eval-every", str(eval_every),        
         "--log-every", str(log_every),
         "--core-metric-every", "0" if args.skip_core else str(args.core_metric_every),
@@ -814,6 +822,7 @@ if __name__ == "__main__":
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
     parser.add_argument("--target-param-data-ratio", type=float, default=-1.0, help="Chinchilla token:param ratio (e.g. 20.0); -1 = use base_train.py default (10.5)")
     parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations per model architecture to reach exact target FLOPs (-1 = disable)")
+    parser.add_argument("--target-active-flops", type=float, default=-1.0, help="as --target-flops but on the ACTIVE FLOPs/token axis, which is the one the Pareto plots use. Required for an isoFLOP profile that mixes gated and dense arms (-1 = disable)")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="base warmup ratio passed to all runs")
     parser.add_argument("--warmdown-ratio", type=float, default=0.7, help="ratio of iterations for LR warmdown (rest is constant LR)")

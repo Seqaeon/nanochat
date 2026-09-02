@@ -1736,7 +1736,7 @@ x, y = sch_apply_holdout(x, y)
 # Calculate the number of iterations we will train for and set up the various schedulers
 
 # num_iterations: either it is given, or from target flops, or from target data:param ratio (in that order)
-assert args.num_iterations > 0 or args.target_param_data_ratio > 0 or args.target_flops > 0
+assert args.num_iterations > 0 or args.target_param_data_ratio > 0 or args.target_flops > 0 or args.target_active_flops > 0
 if args.num_iterations > 0:
     # Override num_iterations to a specific value if given
     num_iterations = args.num_iterations
