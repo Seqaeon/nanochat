@@ -44,30 +44,56 @@
 # ============================================================================
 set -o pipefail
 
-FORCE=0; SEEDS=1
+FORCE=0; SEEDS=1; ARMS=both
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=1; shift ;;
         --seeds) SEEDS="$2"; shift 2 ;;
-        *) echo "unknown arg: $1"; exit 1 ;;
+        # Split the profile across machines: run the dense arms in one place and the
+        # MST arms in another. Each half keeps its own state file, so pointing both at
+        # the same OUT_BASE (a shared volume) merges them; pointing them at different
+        # ones keeps them independent and the halves are combined when plotting.
+        --arms) ARMS="$2"; shift 2 ;;
+        --dense-only) ARMS=dense; shift ;;
+        --mst-only) ARMS=mst; shift ;;
+        *) echo "unknown arg: $1"; echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|both]"; exit 1 ;;
     esac
 done
+case "$ARMS" in
+    both|dense|mst) ;;
+    *) echo "--arms must be one of: dense, mst, both (got '$ARMS')"; exit 1 ;;
+esac
 
 TOKENS="${TOKENS:-1167968256}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
-DENSE_DEPTHS="${DENSE_DEPTHS:-10 12 14 16}"
+DENSE_DEPTHS="${DENSE_DEPTHS-10 12 14 16}"
 # L=20 is deliberately excluded: it is MST's off-trend ladder point (1.125x against
 # 1.222x at L=16 and 1.284x at L=24). L=12/16/24 give an over-trained, a
 # compute-optimal and an under-trained point at this fixed D, which is the spread a
 # fixed-data curve needs.
-MST_DEPTHS="${MST_DEPTHS:-12 16 24}"
+MST_DEPTHS="${MST_DEPTHS-12 16 24}"
+[ "$ARMS" = "mst" ]   && DENSE_DEPTHS=""
+[ "$ARMS" = "dense" ] && MST_DEPTHS=""
 OUT_BASE="${OUT_BASE:-out/p13_isodata}"
 mkdir -p "$OUT_BASE"
 LOGFILE="${OUT_BASE}/p13.log"
 STATE="${OUT_BASE}/p13_state.json"
 [ "$FORCE" -eq 1 ] && rm -f "$STATE"
 [ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
+
+# Interrupt handling. Without this an INT lands on the foreground process group, kills
+# the arm's torchrun, and the loop reads the nonzero status as "this arm failed" and
+# starts the NEXT multi-hour arm. One Ctrl-C then costs a run rather than stopping one.
+ABORT=0
+ALL_ARMS=()
+FAILED_ARMS=()
+on_signal() {
+    ABORT=1
+    printf '\n>>> interrupt received. Stopping. The current arm keeps its checkpoints\n'
+    printf '>>> and resumes from its last step when this script is re-run.\n'
+}
+trap on_signal INT TERM
 
 done_already() {
     [ "$FORCE" -eq 1 ] && return 1
@@ -97,15 +123,29 @@ run() {
     local depth="$1"; shift
     for s in $(seq 1 "$SEEDS"); do
         local t="${tag}_s${s}"
+        ALL_ARMS+=("$t")
+        [ "$ABORT" -eq 1 ] && continue
         if done_already "$t"; then echo "SKIP $t"; continue; fi
         echo ""; echo "=== $t (depth $depth, ${TOKENS} tokens) ==="
         local dir="${OUT_BASE}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
-        if bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
-               "$@" "$depth" 2>&1 | tee -a "$LOGFILE"; then
+        local rc=0
+        bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
+             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
+        if [ "$ABORT" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
+            ABORT=1
+            echo "INTERRUPTED $t  (resumes from its last checkpoint on the next run)"
+            continue
+        fi
+        # An arm counts as complete only if it left the result row this profile reads.
+        # research_sweep.sh can exit 0 without training anything, because its own
+        # per-model state may already believe the models are finished; marking that
+        # done would drop a point from the profile with no error anywhere.
+        if [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
             mark_done "$t"; echo "OK $t"
         else
-            echo "FAIL $t"
+            FAILED_ARMS+=("$t")
+            echo "FAIL $t (rc=$rc)"
         fi
     done
 }
@@ -133,7 +173,7 @@ mst_config() {                            # mst_config <depth>
 
 echo "============================================================"
 echo "  P13 iso-data profile   D = ${TOKENS} tokens for every arm"
-echo "  dense depths: ${DENSE_DEPTHS}    MST depths: ${MST_DEPTHS}"
+echo "  arms: ${ARMS}    dense depths: ${DENSE_DEPTHS:-(none)}    MST depths: ${MST_DEPTHS:-(none)}"
 echo "  out ${OUT_BASE}"
 echo "============================================================"
 
@@ -151,8 +191,21 @@ done
 
 echo ""
 echo "============================================================"
+REMAINING=()
+for a in "${ALL_ARMS[@]}"; do done_already "$a" || REMAINING+=("$a"); done
+echo "  arms complete: $(( ${#ALL_ARMS[@]} - ${#REMAINING[@]} )) / ${#ALL_ARMS[@]}"
+[ ${#REMAINING[@]} -gt 0 ] && echo "  still to run:  ${REMAINING[*]}"
+[ ${#FAILED_ARMS[@]} -gt 0 ] && echo "  failed:        ${FAILED_ARMS[*]}"
+[ ${#REMAINING[@]} -gt 0 ] && echo "  re-run this script to continue; finished arms are skipped."
+echo "============================================================"
+echo ""
+echo "============================================================"
 echo "  done: ${OUT_BASE}/"
 echo "  Fit bpb = a * (active FLOPs/token)^b on the DENSE runs only, then read"
 echo "  each MST run's multiplier off that fit. Every arm saw ${TOKENS} tokens,"
 echo "  so the fit and the multipliers carry no budget-rule assumption."
 echo "============================================================"
+
+[ "$ABORT" -eq 1 ] && exit 130
+[ ${#REMAINING[@]} -gt 0 ] && exit 1
+exit 0
