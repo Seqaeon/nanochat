@@ -648,6 +648,51 @@ in \emph{where} they place their cost, not in total compute efficiency at this
 scale, and a comparison that fixes only one of the two axes will report whichever
 answer that axis favours. We report both throughout for this reason.
 
+\paragraph{The control at $L{=}16$, with value embeddings matched.} The $L{=}8$
+control sits below MST's amortization threshold, so we repeat it at $L{=}16$, again
+anchoring the budget on MoL's own compute-optimal point (3.658B tokens) so that MoL
+cannot be called undertrained. Both arms now carry their per-block or per-stream
+value-embedding variant, matching the configuration each paper actually proposes.
+
+\begin{table}[t]
+\caption{Iso-token control at $L{=}16$, both arms at 3.658B tokens with their own
+value-embedding variant. Multipliers are read against the dense ladder fits.
+MoL is at its compute-optimal point here; MST is $3.13\times$ past its own, which
+inflates its per-token multiplier and is stated below.}
+\label{tab:isotoken16}
+\begin{center}
+\begin{small}
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & \bpb & FLOPs/tok & train FLOPs & act.\ matrices & tot.\ matrices & tot.\ params \\
+\midrule
+MST $\nsub{=}4$        & 0.8281 & $\mathbf{1.997\times}$ & $0.938\times$
+                       & $\mathbf{2.633\times}$ & $\mathbf{1.780\times}$ & $\mathbf{0.982\times}$ \\
+MoL $1{+}3\text{of}15$ & \textbf{0.8062} & $1.849\times$ & $\mathbf{1.143\times}$
+                       & $2.208\times$ & $0.590\times$ & $0.367\times$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+MST reaches within 0.0119\,\bpb\ of MoL while spending 29.0\% fewer FLOPs per token.
+The dense exchange rate prices a 29.0\% reduction at $+0.0282$\,\bpb; MST paid
+$+0.0119$, a margin of $0.0163$ in its favour, so over that interval MST converts
+FLOPs into quality at roughly $2.4\times$ the dense rate relative to MoL. It also
+carries $4.05\times$ fewer matrix parameters and trains on $0.71\times$ the compute.
+\end{table}
+
+Two things must be said with this table. MoL retains the lower absolute \bpb, and
+it leads on training FLOPs ($1.143\times$ against $0.938\times$), consistent with
+the claim we decline to make below. And the protocol is not symmetric in MST's
+favour on the per-token axis: anchoring on MoL's budget leaves MST trained
+$3.13\times$ past its own compute-optimal point, and overtraining improves \bpb\ at
+fixed FLOPs per token. The $1.997\times$ is therefore not comparable to the
+$1.222\times$ MST reads at $L{=}16$ on the ladder; it is comparable only to MoL's
+$1.849\times$ in the same row, which is the entire purpose of the control. We chose
+this anchor rather than MST's because the alternative invites the objection that MoL
+was starved, and their Appendix~J pre-registers undertraining as a concern.
+
 \paragraph{What we claim against MoL, and what we do not.} We do not claim a
 total-compute advantage over MoL. On training FLOPs the two are indistinguishable
 at every setting we measured: $0.665\times$ versus $0.666\times$ at $L{=}8$ under
