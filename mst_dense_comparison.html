@@ -48,9 +48,15 @@
       </div>
       
       <div class="chart-wrap">
-        <div class="chart-label">Active Params vs Val BPP</div>
-        <div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="chart-label">Total Matrix Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c2" role="img" aria-label="MST variants vs dense baseline: total matrix params vs val bpp"></canvas></div>
         <div class="fit-info" id="fit-info-mst-c2"></div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-label">Active Matrix Params vs Val BPP</div>
+        <div class="chart-box"><canvas id="mst-c5" role="img" aria-label="MST variants vs dense baseline: active matrix params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-mst-c5"></div>
       </div>
       
       <div class="chart-wrap">
@@ -65,10 +71,6 @@
         <div class="fit-info" id="fit-info-mst-c4"></div>
       </div>
       
-      <div class="chart-wrap">
-        <div class="chart-label">BPP Gap (MST - Dense Baseline) vs Depth</div>
-        <div class="chart-box"><canvas id="mst-gap-chart" role="img" aria-label="BPP gap between MST and dense baseline vs depth"></canvas></div>
-      </div>
     </div>
   </div>
 
@@ -77,19 +79,32 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const DENSE = [
-// Feb 8 scores
-  { id: "dense_d12", total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17 ,  bpp: 0.9030 },          // d12 
-  { id: "dense_d14", total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18 , bpp: 0.8688 },          // d14
-  { id: "dense_d16", total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18 ,  bpp: 0.8364 },          // d16
-  { id: "dense_d18", total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18 ,  bpp: 0.8131 },          // d18
-  { id: "dense_d20", total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19 ,  bpp: 0.7906 },          // d20
-  { id: "dense_d22", total: 1123157490,  active: 1123157490,  flops: 3.763086e9, total_training_flops: 2.208863e19 ,  bpp: 0.7714 },          // d22
-  { id: "dense_d24", total: 1384122122,  active: 1384122122,  flops: 4.775225e9, total_training_flops: 3.594180e19 ,  bpp: 0.7545 },          // d24
-  { id: "dense_d26", total: 1681786938,  active: 1681786938,  flops: 5.991051e9, total_training_flops: 5.683668e19 ,  bpp: 0.7382 },          // d26
-  { id: "dense_d28", total: 2018511234,  active: 2018511234,  flops: 7.365736e9, total_training_flops: 8.660963e19 ,  bpp: 0.7246 },          // d28
-  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20 , bpp: 0.7120 }           // d30
+// UPDATED 2026-09-02. The reference curve now uses the same dense values the paper's
+// Table 1 reports (the old 'Feb 8' scores, kept commented below, sat 0.037614 bpp
+// higher and biased every multiplier read off these charts). Matrix params added so
+// the matrix-parameter charts have a reference; for dense, active == total.
+// Old reference, superseded:
+//  { id: "dense_d12", total: 286261730, active: 286261730, flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.903 },
+//  { id: "dense_d14", total: 399114882, active: 399114882, flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.8688 },
+//  { id: "dense_d16", total: 536871738, active: 536871738, flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.8364 },
+//  { id: "dense_d18", total: 701891594, active: 701891594, flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.8131 },
+//  { id: "dense_d20", total: 896533746, active: 896533746, flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.7906 },
+//  { id: "dense_d22", total: 1123157490, active: 1123157490, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.7714 },
+//  { id: "dense_d24", total: 1384122122, active: 1384122122, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.7545 },
+//  { id: "dense_d26", total: 1681786938, active: 1681786938, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.7382 },
+//  { id: "dense_d28", total: 2018511234, active: 2018511234, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.7246 },
+//  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.712 },
 
-
+  { id: "dense_d12", total: 286261730, active: 286261730, matrices: 84935808, active_matrices: 84935808, flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.865386 },
+  { id: "dense_d14", total: 399114882, active: 399114882, matrices: 134874656, active_matrices: 134874656, flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.831186 },
+  { id: "dense_d16", total: 536871738, active: 536871738, matrices: 201328640, active_matrices: 201328640, flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.798786 },
+  { id: "dense_d18", total: 701891594, active: 701891594, matrices: 286657056, active_matrices: 286657056, flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.775486 },
+  { id: "dense_d20", total: 896533746, active: 896533746, matrices: 393219200, active_matrices: 393219200, flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.752986 },
+  { id: "dense_d22", total: 1123157490, active: 1123157490, matrices: 523374368, active_matrices: 523374368, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.733786 },
+  { id: "dense_d24", total: 1384122122, active: 1384122122, matrices: 679481856, active_matrices: 679481856, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.716886 },
+  { id: "dense_d26", total: 1681786938, active: 1681786938, matrices: 863900960, active_matrices: 863900960, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.700586 },
+  { id: "dense_d28", total: 2018511234, active: 2018511234, matrices: 1078990976, active_matrices: 1078990976, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.686986 },
+  { id: "dense_d30", total: 2396654306, active: 2396654306, matrices: 1327111200, active_matrices: 1327111200, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.674386 },
 ];
 
 
@@ -113,18 +128,18 @@ const MST_VARIANTS = [
   //{id:'aggdist_d9_after', label:'AggDist d9 after',   total:82809618, active:82809618, flops:2.727245e8, bpp:1.000036, total_training_flops: 1.019491e17 ,color:'#FFFF00' }, 
 
 
-  {id:'MoL_d8_ve', label:'MoL d8 With VE', total: 324595472, active: 295756816, flops: 1.897680e8, bpp: 0.983328, total_training_flops: 1.118800e17 ,color:'#7F77DD' }, 
-  {id:'MoL_d16_ve', label:'MoL d16 With VE', total: 1388559392, active: 1157861408, flops: 8.094035e8, bpp: 0.806196, total_training_flops: 2.960551e18 ,color:'#7F77DD' }, 
+  {id:'MoL_d8_ve', label:'MoL d8 With VE', total: 324595472, active: 295756816, matrices: 39382784, active_matrices: 10544128, flops: 1.897680e8, bpp: 0.983328, total_training_flops: 1.118800e17 ,color:'#7F77DD' }, 
+  {id:'MoL_d16_ve', label:'MoL d16 With VE', total: 1388559392, active: 1157861408, matrices: 314817536, active_matrices: 84119552, flops: 8.094035e8, bpp: 0.806196, total_training_flops: 2.960551e18 ,color:'#7F77DD' }, 
 
 
 
-  {id:'MoL_d8', label:'MoL d8', total: 89714448, active: 60875792, flops: 1.897680e8, bpp: 0.990762, total_training_flops: 1.118800e17 ,color:'#D4537E' }, 
-  {id:'MoL_d16', label:'MoL d16', total: 449035296, active: 218337312, flops: 8.094035e8, bpp: 0.816196, total_training_flops: 2.960551e18 ,color:'#D4537E' }, 
+  {id:'MoL_d8', label:'MoL d8', total: 89714448, active: 60875792, matrices: 39382784, active_matrices: 10544128, flops: 1.897680e8, bpp: 0.990762, total_training_flops: 1.118800e17 ,color:'#D4537E' }, 
+  {id:'MoL_d16', label:'MoL d16', total: 449035296, active: 218337312, matrices: 314817536, active_matrices: 84119552, flops: 8.094035e8, bpp: 0.816196, total_training_flops: 2.960551e18 ,color:'#D4537E' }, 
 
- // {id:'aggdist_d8_after_b', label:'AggDist d8 after B', total: 110646288, active: 107500560, flops: 1.562204e8, bpp: 1.031984, total_training_flops: 4.385985e16, color:'#FFFF00' }, 
-  {id:'aggdist_d16_after_b', label:'AggDist d16 after B', total: 413224992, active: 388059168, flops: 5.745500e8, bpp: 0.870216, total_training_flops: 6.709891e17 ,color:'#FFFF00' }, 
-  {id:'aggdist_d20_after_b', label:'AggDist d20 after B', total: 654183720, active: 605031720, flops: 9.527846e8, bpp: 0.833805, total_training_flops: 1.928699e18 ,color:'#FFFF00' }, 
-  {id:'aggdist_d24_after_b', label:'AggDist d24 after B', total: 964359216, active: 879424560, flops: 1.481481e9, bpp: 0.786897, total_training_flops: 4.822672e18 ,color:'#FFFF00' }, 
+ // {id:'aggdist_d8_after_b', label:'AggDist d8 after B', total: 110646288, active: 107500560, matrices: 9982976, active_matrices: 6837248, flops: 1.562204e8, bpp: 1.031984, total_training_flops: 4.385985e16, color:'#FFFF00' }, 
+  {id:'aggdist_d16_after_b', label:'AggDist d16 after B', total: 413224992, active: 388059168, matrices: 77680640, active_matrices: 52514816, flops: 5.745500e8, bpp: 0.870216, total_training_flops: 6.709891e17 ,color:'#FFFF00' }, 
+  {id:'aggdist_d20_after_b', label:'AggDist d20 after B', total: 654183720, active: 605031720, matrices: 150867200, active_matrices: 101715200, flops: 9.527846e8, bpp: 0.833805, total_training_flops: 1.928699e18 ,color:'#FFFF00' }, 
+  {id:'aggdist_d24_after_b', label:'AggDist d24 after B', total: 964359216, active: 879424560, matrices: 259716096, active_matrices: 174781440, flops: 1.481481e9, bpp: 0.786897, total_training_flops: 4.822672e18 ,color:'#FFFF00' }, 
 
 
 
@@ -156,17 +171,19 @@ const MST_VARIANTS = [
   // { id:'dense_new_20', label:'Dense New 20',   total:896535720, active:896535720, flops:2.827242e9, bpp:0.752098,  total_training_flops: 1.291815e19 , color:'#7E53D4' }, 
   // { id:'dense_new_22', label:'Dense New 22',   total:1123159884, active:1123159884, flops:3.693894e9, bpp:0.734426,  total_training_flops: 2.208863e19 , color:'#7E53D4' }, 
 
-  // Dense Updated (DENSE points offset by average gap -0.037614 bpp)
-  { id:'dense_updated_d12', label:'Dense Updated d12', total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.865386, color: '#FF6B35' },
-  { id:'dense_updated_d14', label:'Dense Updated d14', total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.831186, color: '#FF6B35' },
-  { id:'dense_updated_d16', label:'Dense Updated d16', total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.798786, color: '#FF6B35' },
-  { id:'dense_updated_d18', label:'Dense Updated d18', total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.775486, color: '#FF6B35' },
-  { id:'dense_updated_d20', label:'Dense Updated d20', total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.752986, color: '#FF6B35' },
-  { id:'dense_updated_d22', label:'Dense Updated d22', total: 1123157490, active: 1123157490, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.733786, color: '#FF6B35' },
-  { id:'dense_updated_d24', label:'Dense Updated d24', total: 1384122122, active: 1384122122, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.716886, color: '#FF6B35' },
-  { id:'dense_updated_d26', label:'Dense Updated d26', total: 1681786938, active: 1681786938, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.700586, color: '#FF6B35' },
-  { id:'dense_updated_d28', label:'Dense Updated d28', total: 2018511234, active: 2018511234, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.686986, color: '#FF6B35' },
-  { id:'dense_updated_d30', label:'Dense Updated d30', total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.674386, color: '#FF6B35' }, 
+  // Dense Updated: FOLDED INTO THE DENSE REFERENCE ARRAY 2026-09-02 and commented
+  // out here, so the reference curve and these dots are no longer two copies of the
+  // same numbers that can drift apart.
+//  { id:'dense_updated_d12', label:'Dense Updated d12', total: 286261730,  active: 286261730,  flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.865386, color: '#FF6B35' },
+//  { id:'dense_updated_d14', label:'Dense Updated d14', total: 399114882,  active: 399114882,  flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.831186, color: '#FF6B35' },
+//  { id:'dense_updated_d16', label:'Dense Updated d16', total: 536871738,  active: 536871738,  flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.798786, color: '#FF6B35' },
+//  { id:'dense_updated_d18', label:'Dense Updated d18', total: 701891594,  active: 701891594,  flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.775486, color: '#FF6B35' },
+//  { id:'dense_updated_d20', label:'Dense Updated d20', total: 896533746,  active: 896533746,  flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.752986, color: '#FF6B35' },
+//  { id:'dense_updated_d22', label:'Dense Updated d22', total: 1123157490, active: 1123157490, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.733786, color: '#FF6B35' },
+//  { id:'dense_updated_d24', label:'Dense Updated d24', total: 1384122122, active: 1384122122, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.716886, color: '#FF6B35' },
+//  { id:'dense_updated_d26', label:'Dense Updated d26', total: 1681786938, active: 1681786938, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.700586, color: '#FF6B35' },
+//  { id:'dense_updated_d28', label:'Dense Updated d28', total: 2018511234, active: 2018511234, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.686986, color: '#FF6B35' },
+//  { id:'dense_updated_d30', label:'Dense Updated d30', total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.674386, color: '#FF6B35' }, 
   /* { id:'aggdist_d2_overtrained', label:'AggDist d2 Overtrained',   total:9576836, active:9576836, flops:2.809114e7, bpp:1.519422, total_training_flops: 1.347598e15 , color:'#7E53D4' }, 
   { id:'aggdist_d4_overtrained', label:'AggDist d4 Overtrained',   total:21956104, active:21956104, flops:6.458880e7, bpp:1.253005,  total_training_flops: 7.822384e15 ,color:'#7E53D4' }, 
   { id:'aggdist_d6_overtrained', label:'AggDist d6 Overtrained',   total:37776780, active:37776780, flops:1.133268e8, bpp:1.115835,  total_training_flops: 2.759869e16 , color:'#7E53D4' }, */
@@ -531,217 +548,22 @@ buildLegend('leg-mst', MST_VARIANTS);
 const standardVariants = MST_VARIANTS.filter(v => !v.id.includes('overtrained'));
 
 makeChart('mst-c1', standardVariants, d=>d.total,  'total params');
-makeChart('mst-c2', standardVariants, d=>d.active, 'active params');
+// Matrix-parameter axes. Only points carrying `matrices` are plotted: the older
+// variants predate the field, and a missing key would render as NaN rather than be
+// dropped. `active params` was retired here because for dense it is identical to
+// total params and for MST it differs by under 9%, so the chart was a near-duplicate;
+// total vs active MATRIX params differ by 33% and is where the sparsity actually shows.
+const matrixVariants = standardVariants.filter(v => v.matrices > 0);
+makeChart('mst-c2', matrixVariants, d=>d.matrices, 'total matrix params');
+makeChart('mst-c5', matrixVariants, d=>d.active_matrices, 'active matrix params');
 makeChart('mst-c3', standardVariants, d=>d.flops,  'active FLOPs');
 makeChart('mst-c4', MST_VARIANTS, d=>d.total_training_flops, 'total training FLOPs');
 
-// BPP Gap vs Depth Chart
-const GAP_DATA = {
-  depths: [8, 12, 16, 24],
-  dense_bpps: {
-    8: 0.969126,
-    12: 0.9030,
-    16: 0.8364,
-    24: 0.7545
-  },
-  variants: [
-    /* {
-      label: 'MicroAttn',
-      color: '#3CAEA3',
-      data: [
-        { depth: 8, bpp: 1.0358508491364813 },
-        { depth: 16, bpp: 0.8752039886704976 }
-      ]
-    }, */
-    {
-      label: 'AggDist',
-      color: '#7E53D4',
-      data: [
-        { depth: 8, bpp: 1.041720 },
-        { depth: 12, bpp: 0.934262 },
-        { depth: 16, bpp: 0.8730348203279754 },
-        { depth: 24, bpp: 0.785666 }
-      ]
-    },
-    {
-      label: 'AggDist',
-      color: '#3CAEA3',
-      data: [
-        { depth: 8, bpp: 1.079775 },
-        { depth: 12, bpp: 0.973067 },
-        { depth: 16, bpp: 0.905677 },
-      ]
-    },
-    /* {
-      label: 'FFA',
-      color: '#D4537E',
-      data: [
-        { depth: 8, bpp: 1.05 },
-        { depth: 16, bpp: 0.885165159095603 }
-      ]
-    } */
-  ]
-};
+// BPP Gap vs Depth chart removed 2026-09-02: it plotted a raw bpp difference
+// against depth, which is not a Pareto quantity. MST and dense at the same
+// depth have different costs on every axis, so the gap conflates a quality
+// difference with a cost difference and cannot be read either way.
 
-function fitGapPowerLaw(data) {
-  const valid = data.filter(d => d.y > 0 && d.x > 0);
-  if (valid.length < 2) return null;
-  const lx = valid.map(d => Math.log(d.x));
-  const ly = valid.map(d => Math.log(d.y));
-  const n = lx.length;
-  const mx = lx.reduce((s,v) => s+v, 0) / n;
-  const my = ly.reduce((s,v) => s+v, 0) / n;
-  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
-  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
-  const b = cov / varx;
-  const a = Math.exp(my - b * mx);
-  return { a, b };
-}
-
-function fitAbsolutePowerLaw(data) {
-  const lx = data.map(d => Math.log(d.depth));
-  const ly = data.map(d => Math.log(d.bpp));
-  const n = lx.length;
-  if (n < 2) return null;
-  const mx = lx.reduce((s,v) => s+v, 0) / n;
-  const my = ly.reduce((s,v) => s+v, 0) / n;
-  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
-  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
-  const b = cov / varx;
-  const a = Math.exp(my - b * mx);
-  return { a, b };
-}
-
-const densePowerData = [
-  { depth: 8, bpp: 0.969126 },
-  { depth: 12, bpp: 0.9030 },
-  { depth: 14, bpp: 0.8688 },
-  { depth: 16, bpp: 0.8364 },
-  { depth: 18, bpp: 0.8131 },
-  { depth: 20, bpp: 0.7906 },
-  { depth: 22, bpp: 0.7714 },
-  { depth: 24, bpp: 0.7545 },
-  { depth: 26, bpp: 0.7382 },
-  { depth: 28, bpp: 0.7246 },
-  { depth: 30, bpp: 0.7120 }
-];
-const denseAbsoluteFit = fitAbsolutePowerLaw(densePowerData);
-
-const datasets = [];
-const gapCurves = [];
-
-GAP_DATA.variants.forEach(v => {
-  const points = v.data.map(d => {
-    const denseBpp = GAP_DATA.dense_bpps[d.depth];
-    const gap = d.bpp - denseBpp;
-    return { x: d.depth, y: gap };
-  });
-
-  // 1. Measured points
-  datasets.push({
-    type: 'scatter',
-    label: `${v.label} (Measured)`,
-    data: points,
-    backgroundColor: v.color,
-    borderColor: v.color,
-    pointStyle: 'circle',
-    pointRadius: 6,
-    pointHoverRadius: 8,
-    order: 1
-  });
-
-  // 2. Power-law Fit on the Gap
-  const pFit = fitGapPowerLaw(points);
-  if (pFit) {
-    const pCurve = [];
-    for (let d = 8; d <= 64; d += 1) {
-      pCurve.push({ x: d, y: pFit.a * Math.pow(d, pFit.b) });
-    }
-    
-    // Calculate the crossover of absolute scaling curves
-    const varPowerData = v.data.map(d => ({ depth: d.depth, bpp: d.bpp }));
-    const varAbsoluteFit = fitAbsolutePowerLaw(varPowerData);
-    let crossoverStr = "never";
-    if (denseAbsoluteFit && varAbsoluteFit) {
-      const diffExp = varAbsoluteFit.b - denseAbsoluteFit.b;
-      if (diffExp < 0) {
-        const crossover = Math.pow(denseAbsoluteFit.a / varAbsoluteFit.a, 1 / diffExp);
-        crossoverStr = crossover > 1e6 ? ">1M depth" : `crossover @ d=${crossover.toFixed(0)}`;
-      }
-    }
-
-    datasets.push({
-      type: 'line',
-      label: `${v.label} Gap Power Fit (gap = ${pFit.a.toFixed(3)}·d^${pFit.b.toFixed(2)}; absolute ${crossoverStr})`,
-      data: pCurve,
-      borderColor: v.color,
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 0,
-      fill: false,
-      tension: 0.3,
-      order: 2
-    });
-
-    gapCurves.push({ label: v.label, color: v.color, evalFn: d => pFit.a * Math.pow(d, pFit.b) });
-  }
-});
-
-const gapChart = new Chart(document.getElementById('mst-gap-chart'), {
-  type: 'scatter',
-  data: { datasets },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    layout: { padding: { top: 10, right: 10, bottom: 10, left: 10 } },
-    scales: {
-      x: {
-        type: 'linear',
-        title: { display: true, text: 'Depth (Layers)', color: '#888780', font: { size: 11, weight: 'bold' } },
-        min: 6,
-        max: 64,
-        ticks: {
-          stepSize: 4,
-          font: { size: 10 },
-          color: '#888780'
-        },
-        grid: { color: 'rgba(136, 135, 128, 0.1)' }
-      },
-      y: {
-        title: { display: true, text: 'BPP Gap (MST - Dense)', color: '#888780', font: { size: 11, weight: 'bold' } },
-        ticks: {
-          font: { size: 10 },
-          color: '#888780',
-          callback: v => (v >= 0 ? '+' : '') + v.toFixed(4)
-        },
-        grid: { color: 'rgba(136, 135, 128, 0.1)' },
-        min: 0.00,
-        max: 0.10
-      }
-    },
-    plugins: {
-      legend: {
-        display: true,
-        position: 'top',
-        labels: {
-          color: '#888780',
-          font: { size: 10 }
-        }
-      },
-      tooltip: {
-        callbacks: {
-          label: ctx => {
-            const r = ctx.raw;
-            if (ctx.dataset.showLine && ctx.dataset.pointRadius === 0) {
-              return `${ctx.dataset.label}: +${r.y.toFixed(6)} bpp at Depth ${r.x.toFixed(1)}`;
-            }
-            return `${ctx.dataset.label}: +${r.y.toFixed(6)} bpp at Depth ${r.x}`;
-          }
-        }
-      }
-    }
-  }
-});
 
 // Hover crosshair for the gap chart -- shows every variant's fitted gap at
 // the hovered depth. No "vs baseline" delta here since the y-axis is

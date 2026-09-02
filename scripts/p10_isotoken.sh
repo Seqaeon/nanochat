@@ -223,8 +223,8 @@ MST_ISO_VE="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DI
 
 # The control every arm below is read against: the headline SP2_k1 config at this
 # budget. Not optional.
-#run ISO_mst_ve "$DEPTH" $MST_ISO_VE \
-#    --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-active-params 1
+run ISO_mst_ve "$DEPTH" $MST_ISO_VE \
+    --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-active-params 1
 
 # Attention gated too, no shared stream. 1 of 4 streams active.
 #run ISO_mst_ve_gattn "$DEPTH" $MST_ISO_VE \
@@ -241,8 +241,8 @@ MST_ISO_VE="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DI
 # DROP THIS ONE FIRST if compute is tight. Shared stream WITHOUT attention gating, to
 # attribute a gattn_s1 win to coverage rather than to the extra always-on capacity. Only
 # worth running once gattn_s1 has come back looking good.
-run ISO_mst_ve_s1 "$DEPTH" $MST_ISO_VE \
-    --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-active-params 1
+#run ISO_mst_ve_s1 "$DEPTH" $MST_ISO_VE \
+#    --mst-stream-shared 1 --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-active-params 1
 
 # Dense at the same budget. Makes it a real triple and costs one short run.
 #run ISO_dense "$DEPTH" --models base
