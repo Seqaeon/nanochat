@@ -207,10 +207,24 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     return is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size, device
 
-def wrap_model(model, parallel_type="ddp", compile=False, device=None):
+def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_regional=False):
     """
     Wrap the model for distributed or data parallel training, and optionally compile it.
     Automatically propagates custom methods from the inner model to the wrapper.
+
+    compile_regional compiles each repeated transformer layer on its own instead of
+    capturing the whole model in one graph. Dynamo tracing, AOTAutograd partitioning and
+    Inductor scheduling are single-threaded and grow with graph size, so whole-model
+    compile time grows with depth while regional compile time is flat: the layer is
+    compiled once and reused. Measured on MST, one graph either way, no graph breaks:
+
+        L=8   whole 79.1s / 407 kernels   regional 56.8s / 157 kernels
+        L=16  whole 126.3s / 799 kernels  regional 58.0s / 157 kernels
+
+    The cost is that Inductor can no longer fuse across the layer boundary, which
+    measured about 7% slower steps on the same benchmark. Leave it off for anything
+    whose wall-clock or MFU number is reported; turn it on when only bpb is wanted and
+    the compile is blocking the run.
     """
     import os
     import torch.nn as nn
@@ -258,7 +272,22 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None):
             print0(f"i DataParallel requested but only {num_gpus} GPUs available. Skipping wrapper.")
 
     # 2) Compilation
-    if compile:
+    if compile and compile_regional:
+        # Find the repeated block list: MST exposes .layers, GPT exposes .transformer.h.
+        blocks = getattr(inner_model, "layers", None)
+        if blocks is None:
+            tr = getattr(inner_model, "transformer", None)
+            blocks = getattr(tr, "h", None) if tr is not None else None
+        if blocks is None:
+            print0("i --compile-regional requested but no repeated block list found; "
+                   "falling back to whole-model compile.")
+            model = torch.compile(model)
+        else:
+            for i in range(len(blocks)):
+                blocks[i] = torch.compile(blocks[i])
+            print0(f"✓ Regional torch.compile over {len(blocks)} blocks "
+                   f"(compile time flat in depth; no cross-layer fusion)")
+    elif compile:
         model = torch.compile(model)
 
     # 3) Method Propagation

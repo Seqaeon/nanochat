@@ -97,6 +97,24 @@ OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p12.log}"
 
+# Compiled-kernel caches, following runpod_env.sh and p30/p33/p35. Without these each
+# arm compiles from an empty cache, and on an ephemeral runner every relaunch pays the
+# full cost again: MST compiles far more kernels than dense (N=4 streams x 4 window
+# scales, per-stream value embeddings, block-diagonal GEMMs), so it is the arm that
+# suffers. Defaulting them under OUT_BASE means pointing OUT_BASE at a persistent
+# volume also persists the caches, and keeps them inside the gitignored out/ tree.
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${OUT_BASE}/.inductor_cache}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${OUT_BASE}/.triton_cache}"
+
+# Inductor's compile-worker pool defaults to min(32, nproc) subprocesses, each holding
+# its own torch import. On a many-core box with a memory ceiling that is enough RSS to
+# get a worker OOM-killed, and the parent then waits on a future that never resolves.
+# MST drives the pool far harder than dense (~1200 kernels at L=24 against ~400), which
+# is why it is the arm that hangs. Cap it: this costs no step time, unlike
+# --compile-regional, which is left off by default because it loses cross-layer fusion.
+export TORCHINDUCTOR_COMPILE_THREADS="${TORCHINDUCTOR_COMPILE_THREADS:-8}"
+mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
+
 # Arm boundaries and verdicts have to reach the log file, not just stdout. Only the
 # sweep command is piped through tee, so without this the log is undelimited training
 # output and the structure survives only in whatever captured stdout, which on a remote
@@ -139,6 +157,7 @@ COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --sequence-len 2048 --target-param-data-ratio 10.5 \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
   --research-dim -1 --target-active-params 0 --target-tokens -1 \
+  --compile-regional ${COMPILE_REGIONAL:-0} \
   --save-every 200 --eval-every -1 --target-active-flops ${FLOPS}"
 [ -n "${MAX_SHARDS:-}" ] && COMMON="$COMMON --max-shards $MAX_SHARDS"
 

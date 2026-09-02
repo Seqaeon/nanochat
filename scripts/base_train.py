@@ -691,6 +691,7 @@ parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="e
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
+parser.add_argument("--compile-regional", type=int, default=0, choices=[0, 1], help="compile each transformer layer separately instead of the whole model. Compile time then does not grow with depth (MST L=16: 58s vs 126s), at the cost of cross-layer fusion (~7%% slower steps). Use when only bpb is wanted; leave off for reported wall-clock numbers")
 parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory (overrides default)")
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
 # Output
@@ -1553,7 +1554,8 @@ if model_config.use_eet:
         param.requires_grad = False
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = wrap_model(model, parallel_type=args.parallel, compile=args.compile, device=device)
+model = wrap_model(model, parallel_type=args.parallel, compile=args.compile, device=device,
+                   compile_regional=bool(getattr(args, "compile_regional", 0)))
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
