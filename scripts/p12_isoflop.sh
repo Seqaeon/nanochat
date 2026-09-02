@@ -43,7 +43,12 @@
 # ============================================================================
 set -o pipefail
 
-FORCE=0; SEEDS=1; ARMS=both
+FORCE=0; SEEDS=1; ARMS=both; CLI_DEPTHS=()
+usage() {
+    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|both] [depth ...]"
+    echo "  depths given positionally replace the built-in list for whichever arms run,"
+    echo "  so '--mst-only 24' runs exactly one arm and nothing else."
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=1; shift ;;
@@ -55,8 +60,12 @@ while [[ $# -gt 0 ]]; do
         --arms) ARMS="$2"; shift 2 ;;
         --dense-only) ARMS=dense; shift ;;
         --mst-only) ARMS=mst; shift ;;
-        *) echo "unknown arg: $1"; echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|both]"; exit 1 ;;
+        -*) echo "unknown arg: $1"; usage; exit 1 ;;
+        *) CLI_DEPTHS+=("$1"); shift ;;
     esac
+done
+for d in "${CLI_DEPTHS[@]}"; do
+    [[ "$d" =~ ^[0-9]+$ ]] || { echo "depth must be a positive integer, got '$d'"; usage; exit 1; }
 done
 case "$ARMS" in
     both|dense|mst) ;;
@@ -76,11 +85,23 @@ DENSE_DEPTHS="${DENSE_DEPTHS-8 10 12 14}"
 # single suspect measurement pull the isoFLOP frontier down. L=12 and L=24 bracket the
 # optimum at this budget from below and above, which is what the profile needs.
 MST_DEPTHS="${MST_DEPTHS-12 16 24}"
+# Positional depths override the built-in lists, so a single arm can be launched on its
+# own machine. Applied before the --arms filter so "--mst-only 24" means exactly that.
+if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
+    DENSE_DEPTHS="${CLI_DEPTHS[*]}"
+    MST_DEPTHS="${CLI_DEPTHS[*]}"
+fi
 [ "$ARMS" = "mst" ]   && DENSE_DEPTHS=""
 [ "$ARMS" = "dense" ] && MST_DEPTHS=""
 OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
-LOGFILE="${OUT_BASE}/p12.log"
+LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p12.log}"
+
+# Arm boundaries and verdicts have to reach the log file, not just stdout. Only the
+# sweep command is piped through tee, so without this the log is undelimited training
+# output and the structure survives only in whatever captured stdout, which on a remote
+# runner is a different place from the volume the log is written to.
+log() { echo "$*" | tee -a "$LOGFILE"; }
 STATE="${OUT_BASE}/p12_state.json"
 [ "$FORCE" -eq 1 ] && rm -f "$STATE"
 [ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
@@ -128,8 +149,8 @@ run() {
         local t="${tag}_s${s}"
         ALL_ARMS+=("$t")
         [ "$ABORT" -eq 1 ] && continue
-        if done_already "$t"; then echo "SKIP $t"; continue; fi
-        echo ""; echo "=== $t (depth $depth, C=${FLOPS} active FLOPs) ==="
+        if done_already "$t"; then log "SKIP $t"; continue; fi
+        log ""; log "=== $t (depth $depth, C=${FLOPS} active FLOPs) ==="
         local dir="${OUT_BASE}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
         local rc=0
@@ -137,7 +158,7 @@ run() {
              "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
         if [ "$ABORT" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
             ABORT=1
-            echo "INTERRUPTED $t  (resumes from its last checkpoint on the next run)"
+            log "INTERRUPTED $t  (resumes from its last checkpoint on the next run)"
             continue
         fi
         # An arm counts as complete only if it left the result row this profile reads.
@@ -145,10 +166,10 @@ run() {
         # per-model state may already believe the models are finished; marking that
         # done would drop a point from the profile with no error anywhere.
         if [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
-            mark_done "$t"; echo "OK $t"
+            mark_done "$t"; log "OK $t"
         else
             FAILED_ARMS+=("$t")
-            echo "FAIL $t (rc=$rc)"
+            log "FAIL $t (rc=$rc)"
         fi
     done
 }
@@ -197,9 +218,9 @@ echo ""
 echo "============================================================"
 REMAINING=()
 for a in "${ALL_ARMS[@]}"; do done_already "$a" || REMAINING+=("$a"); done
-echo "  arms complete: $(( ${#ALL_ARMS[@]} - ${#REMAINING[@]} )) / ${#ALL_ARMS[@]}"
-[ ${#REMAINING[@]} -gt 0 ] && echo "  still to run:  ${REMAINING[*]}"
-[ ${#FAILED_ARMS[@]} -gt 0 ] && echo "  failed:        ${FAILED_ARMS[*]}"
+log "  arms complete: $(( ${#ALL_ARMS[@]} - ${#REMAINING[@]} )) / ${#ALL_ARMS[@]}"
+[ ${#REMAINING[@]} -gt 0 ] && log "  still to run:  ${REMAINING[*]}"
+[ ${#FAILED_ARMS[@]} -gt 0 ] && log "  failed:        ${FAILED_ARMS[*]}"
 [ ${#REMAINING[@]} -gt 0 ] && echo "  re-run this script to continue; finished arms are skipped."
 echo "============================================================"
 echo ""
