@@ -120,12 +120,45 @@ def report(depths, gate_attn):
     return rows
 
 
+def emit(arm, depth, field, gate_attn=0, shared=0):
+    """Print one number for a shell script to consume.
+
+    p12_isoflop.sh needs active FLOPs per token BEFORE the run, to turn a training-FLOPs
+    budget into a token count. It cannot use base_train's --target-flops, because that
+    divides by estimate_flops()[0], the TOTAL count, while the paper's training-FLOPs
+    axis uses [1], the active one. For MST those differ by 1.34x at L=24, so the two
+    routes would put MST on a different isoFLOP contour than dense.
+    """
+    cls, cfg = ((GPT, dense_cfg(depth)) if arm == "dense"
+                else (MST, mst_cfg(depth, gate_attn=gate_attn)))
+    if arm == "mst" and shared:
+        from dataclasses import replace
+        cfg = replace(cfg, mst_stream_shared=shared)
+    m = build(cfg, cls)
+    counts = m.num_scaling_params()
+    total_flops, active_flops, active_params = m.estimate_flops()
+    vals = {"active_flops": active_flops, "total_flops": total_flops,
+            "matrices": counts["transformer_matrices"], "total": counts["total"],
+            "active": active_params,
+            "scaling": counts["transformer_matrices"] + counts["lm_head"]}
+    print(f"{vals[field]:.10g}")
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--emit", nargs=3, metavar=("ARM", "DEPTH", "FIELD"),
+                    help="print one value and exit, e.g. --emit mst 16 active_flops. "
+                         "Fields: active_flops total_flops matrices total active scaling")
+    ap.add_argument("--shared", type=int, default=0, help="--emit: mst_stream_shared")
     ap.add_argument("--depths", type=int, nargs="+", default=[8, 16, 18, 20, 22, 24])
     ap.add_argument("--gate-attn", action="store_true",
                     help="also gate attention (mst_stream_gate_attn=1)")
     args = ap.parse_args()
+
+    if args.emit:
+        arm, depth, field = args.emit
+        emit(arm, int(depth), field, int(args.gate_attn), args.shared)
+        return
 
     print(f"MST headline arm: N={N_SUBS}, mst_stream_topk=1, "
           f"gate_attn={int(args.gate_attn)}\n")

@@ -661,7 +661,8 @@ parser.add_argument("--research-warmup-ratio", type=float, default=0.05, help="r
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for (-1 = disable)")
-parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
+parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops, using TOTAL FLOPs/token (-1 = disable)")
+parser.add_argument("--target-active-flops", type=float, default=-1.0, help="as --target-flops but using ACTIVE FLOPs/token, which is the axis the Pareto curves use. For dense the two are identical; for a gated model they differ (1.34x at MST L=24), so an isoFLOP profile mixing both arms must pick one and this is the one that matches the plots (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=10.5, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
@@ -1744,6 +1745,13 @@ elif args.target_flops > 0:
     # Calculate the number of iterations from the target flops (used in scaling laws analysis, e.g. runs/scaling_laws.sh)
     num_iterations = round(args.target_flops / (num_flops_per_token * total_batch_size))
     print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
+elif args.target_active_flops > 0:
+    # Same, but on the ACTIVE axis. An isoFLOP profile that mixes a gated model with a
+    # dense one has to put both arms on the same contour, and the contour the Pareto
+    # plots use is active FLOPs/token x tokens. Using the total count instead would place
+    # MST on a 1.34x tighter budget than dense at L=24 and silently bias the profile.
+    num_iterations = round(args.target_active_flops / (num_active_flops_per_token * total_batch_size))
+    print0(f"Calculated number of iterations from target ACTIVE FLOPs: {num_iterations:,}")
 elif args.target_param_data_ratio > 0:
     # Calculate the number of iterations from the target param data ratio (the most common use case)
     num_iterations = target_tokens // total_batch_size
@@ -1754,6 +1762,7 @@ total_tokens = total_batch_size * num_iterations # the actual number of tokens w
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+print0(f"Total training FLOPs (active):  {num_active_flops_per_token * total_tokens:e}")
 print0(f"Total active training FLOPs estimate: {num_active_flops_per_token * total_tokens:e}")
 
 # Research branches use a OneCycle-style schedule; base keeps the original warmup/flat/warmdown schedule

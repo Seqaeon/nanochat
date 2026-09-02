@@ -140,6 +140,18 @@ total training compute ($1.10\times$), while matrix parameters are at parity
 parameter, not in parameter count, and we are explicit that the parameter axes are
 not a win for this configuration.
 
+\item \textbf{Separation from the closest concurrent architecture, on four
+independent grounds.} MoL \citep{ternovtsii2026mol} reaches the same question by
+wrapping each narrow block in its own projection pair rather than partitioning.
+We reimplement it from its published equations and show that the difference is
+structural, not incidental: its total-to-active matrix ratio is $3.74$ against
+MST's $1.48$ and is flat across depth; at equal training data MST is above the
+dense curve on FLOPs per token where MoL is below it, at $0.67\times$ its
+parameters; MST reaches dense wall-clock parity at $\dmodel{=}1536$ where MoL
+reports its own sparse path losing to dense; and MoL's central mechanism, gating
+attention, \emph{costs} $1.86\times$ what it saves when transplanted into MST
+(Section~\ref{sec:mol}).
+
 \item \textbf{The optimization of partitioned weights matters as much as the
 architecture.} A naively-trained partition suffers a $7.2\times$ imbalance in
 per-sub gradient norm and cross-sub contamination in the orthogonalizing
@@ -654,6 +666,84 @@ partition pays a single coupling per layer regardless of $\nsub$
 (Eq.~\ref{eq:budget}). Together with the iso-token result this gives the claim we
 do make: \emph{MST matches MoL's total-compute efficiency with four times fewer
 matrix parameters and a lower per-token cost at equal training data.}
+
+\subsection{Separation from MoL}
+\label{sec:mol}
+
+MoL is the closest concurrent work and the comparison deserves to be made on more
+than one axis. We separate on four, of which two are structural and hold
+regardless of protocol, and two are measured.
+
+\paragraph{1. The projection overhead is a structural constant, and we measure it.}
+MoL wraps every thin block in its own $W_{\mathrm{down}}/W_{\mathrm{up}}$ pair, so the cost of entering
+and leaving a narrow block is paid \emph{per block}. MST partitions the residual
+stream and pays a single coupling per layer. Section~\ref{sec:method} gives the
+closed forms; their consequence is a ratio of total to active matrix parameters
+that does not improve with scale:
+
+\begin{center}
+\begin{small}
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{2}{c}{MoL $1{+}3\text{of}15$} & \multicolumn{2}{c}{MST $\nsub{=}4$} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+$L$ & matrices & total/active & matrices & total/active \\
+\midrule
+8  &  39.4M & 3.74 &  10.0M & 1.46 \\
+16 & 314.8M & 3.74 &  77.7M & 1.48 \\
+20 & ---    & ---  & 150.9M & 1.48 \\
+24 & ---    & ---  & 259.7M & 1.49 \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+
+At $L{=}16$ MoL carries $4.05\times$ MST's total matrix parameters to buy
+$1.60\times$ the active ones. Against the dense curve the two read $0.515\times$
+and $1.032\times$ on total matrix parameters, a factor of two. The formula
+reproduces MoL's own published plumbing fractions (40\%, 57\%, 73\% at
+$\dsub{=}256,128,64$) exactly, so this is their arithmetic, not our
+reinterpretation.
+
+\paragraph{2. At equal data the ranking inverts, and we win it at two thirds the
+parameters.} Every unequal-budget comparison between these architectures is
+confounded, because compute-optimal budgeting hands MoL $3.75\times$ the data for
+carrying $3.75\times$ the total parameters. The iso-token control
+(Table~\ref{tab:isotoken}) removes it: MST reads $1.061\times$ on FLOPs per token
+and MoL $0.962\times$, MST above the dense curve and MoL below it, with MST at
+60.3M total parameters against MoL's 89.7M. This is the only comparison between
+the two that fixes the protocol, and it is the one we rest on.
+
+\paragraph{3. Wall clock.} MST reaches training parity with the dense baseline at
+$\dmodel{=}1536$ (76.1\,ms against 77.2\,ms per step) and is $1.30\times$ faster
+in prefill at $T{=}32768$. MoL's own Section~5.6 reports the opposite for its
+sparse path: $2.8\times$ slower than its batched fallback on two hardware classes,
+decode slower than dense in absolute terms at every measured context, and dense
+still ahead on prefill at $T\!\leq\!2$K. Both architectures reduce FLOPs; only one
+of them currently converts that into time.
+
+\paragraph{4. Their central mechanism does not transfer, which is the sharpest
+evidence the architectures differ.} MoL's Section~3.1 documents an attention
+coverage failure at high sparsity, and its Section~3.2 introduces an always-active
+shared block to repair it. MST never gates attention, so it never has the problem.
+We tested whether adopting their mechanism would help us. At $L{=}8$ with all arms
+on a common token budget, gating attention buys 11.5\% of FLOPs per token and costs
+0.0244~\bpb\ where the dense exchange rate prices that saving at 0.0131: it
+\textbf{costs $1.86\times$ what it saves}, and the multiplier falls from
+$0.899\times$ to $0.812\times$. Adding their shared stream repairs it to within
+$7\times10^{-5}$ of the dense curve, confirming their fix works, but only back to
+neutrality. The result replicates at $L{=}16$. A mechanism that is load-bearing in
+one architecture and actively harmful in the other is not the same architecture
+twice.
+
+\paragraph{What we do not claim.} We do not claim a total-compute advantage. On
+training FLOPs the two are indistinguishable at every setting we measured, and we
+say so in the paragraph above. We also do not run MoL's headline configuration,
+which pairs its routed blocks with Gated DeltaNet; our reimplementation is
+all-softmax, a control they run themselves. Our claim is narrower and, we think,
+more useful: at equal data MST reaches a better point on the compute--quality
+frontier than MoL, at a fraction of the parameters, and it does so without the
+mechanism MoL needs to make its own sparsity viable.
 
 \paragraph{A caution about the per-token axis.} Under compute-optimal budgeting an
 architecture's token allocation scales with its own parameter count, so the
