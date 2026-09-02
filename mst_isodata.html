@@ -1,0 +1,321 @@
+<title>Iso-Data Profile</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --bg:#F3F6F6; --surface:#FFFFFF; --surface-2:#EAEFEF;
+  --ink:#131819; --ink-2:#3A4547; --muted:#667577;
+  --line:#D5DCDC; --line-soft:#E6EBEB;
+  --mst:#BE3F66; --mst-soft:rgba(190,63,102,.13);
+  --dense:#2C6B8E; --dense-soft:rgba(44,107,142,.13);
+  --pos:#20734F; --neg:#A93C2E; --warn:#8A6320;
+  --pos-bg:rgba(32,115,79,.11); --neg-bg:rgba(169,60,46,.11); --warn-bg:rgba(138,99,32,.12);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1213; --surface:#161C1D; --surface-2:#1D2425;
+    --ink:#E9EEEE; --ink-2:#C2CCCC; --muted:#8A9B9D;
+    --line:#2A3334; --line-soft:#212829;
+    --mst:#E97493; --mst-soft:rgba(233,116,147,.15);
+    --dense:#6DB2D6; --dense-soft:rgba(109,178,214,.15);
+    --pos:#54BE93; --neg:#E5786A; --warn:#D3A44E;
+    --pos-bg:rgba(84,190,147,.14); --neg-bg:rgba(229,120,106,.14); --warn-bg:rgba(211,164,78,.14);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1213; --surface:#161C1D; --surface-2:#1D2425;
+  --ink:#E9EEEE; --ink-2:#C2CCCC; --muted:#8A9B9D;
+  --line:#2A3334; --line-soft:#212829;
+  --mst:#E97493; --mst-soft:rgba(233,116,147,.15);
+  --dense:#6DB2D6; --dense-soft:rgba(109,178,214,.15);
+  --pos:#54BE93; --neg:#E5786A; --warn:#D3A44E;
+  --pos-bg:rgba(84,190,147,.14); --neg-bg:rgba(229,120,106,.14); --warn-bg:rgba(211,164,78,.14);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:44px 28px 96px; display:flex; flex-direction:column; gap:38px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
+
+/* header */
+header{display:flex; flex-direction:column; gap:14px; border-bottom:1px solid var(--line); padding-bottom:26px}
+.eyebrow{font-size:11.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase; color:var(--muted)}
+h1{margin:0; font-size:34px; line-height:1.12; font-weight:700; letter-spacing:-.022em; text-wrap:balance}
+.lede{margin:0; max-width:62ch; color:var(--ink-2)}
+.invariant{
+  display:inline-flex; align-items:baseline; gap:9px; align-self:flex-start;
+  padding:7px 13px; border:1px solid var(--line); border-radius:3px; background:var(--surface);
+}
+.invariant b{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:600}
+
+/* verdict */
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line)}
+.tile{background:var(--surface); padding:20px 20px 18px; display:flex; flex-direction:column; gap:6px}
+.tile .arm{font-size:12px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--mst)}
+.tile .big{font-size:38px; font-weight:600; letter-spacing:-.03em; line-height:1}
+.tile .cap{font-size:12.5px; color:var(--muted)}
+.tile.win .big{color:var(--pos)} .tile.lose .big{color:var(--neg)} .tile.soft .big{color:var(--warn)}
+.chip{
+  align-self:flex-start; margin-top:7px; font-size:11px; font-weight:500; letter-spacing:.02em;
+  padding:3px 8px; border-radius:2px;
+}
+.chip.ok{background:var(--pos-bg); color:var(--pos)}
+.chip.over{background:var(--warn-bg); color:var(--warn)}
+.chip.under{background:var(--neg-bg); color:var(--neg)}
+
+/* sections */
+section{display:flex; flex-direction:column; gap:16px}
+h2{margin:0; font-size:13px; font-weight:600; letter-spacing:.11em; text-transform:uppercase; color:var(--muted)}
+h3{margin:0; font-size:19px; font-weight:600; letter-spacing:-.012em}
+p{margin:0; max-width:70ch; color:var(--ink-2)}
+.note{font-size:13.5px; color:var(--muted); max-width:74ch}
+
+.panel{background:var(--surface); border:1px solid var(--line); padding:22px}
+.charts{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:18px}
+.chart-head{display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:6px}
+.chart-head .t{font-size:14px; font-weight:600}
+.chart-head .s{font-size:11.5px; color:var(--muted)}
+svg{display:block; width:100%; height:auto; overflow:visible}
+.legend{display:flex; gap:18px; font-size:12.5px; color:var(--ink-2); margin-top:10px; flex-wrap:wrap}
+.legend i{display:inline-block; width:18px; height:2px; vertical-align:middle; margin-right:7px}
+
+/* table */
+.tablewrap{overflow-x:auto; border:1px solid var(--line); background:var(--surface)}
+table{border-collapse:collapse; width:100%; min-width:760px; font-size:13.5px}
+th,td{padding:9px 13px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line-soft)}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  font-weight:600; border-bottom:1px solid var(--line); background:var(--surface-2)
+}
+tbody tr:last-child td{border-bottom:none}
+tr.d td:first-child{color:var(--dense); font-weight:600}
+tr.m td:first-child{color:var(--mst); font-weight:600}
+tr.hl{background:var(--pos-bg)}
+td.pos{color:var(--pos)} td.neg{color:var(--neg)}
+
+/* readout */
+.finding{display:grid; grid-template-columns:auto 1fr; gap:14px 18px; align-items:start}
+.finding .n{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600; color:var(--muted);
+  border:1px solid var(--line); padding:2px 7px; border-radius:2px; line-height:1.5;
+}
+.finding .b{display:flex; flex-direction:column; gap:5px}
+.finding .b b{font-weight:600; color:var(--ink)}
+footer{border-top:1px solid var(--line); padding-top:20px; font-size:12.5px; color:var(--muted)}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">MST &middot; p13 iso-data profile</div>
+  <h1>Every arm, one billion tokens</h1>
+  <p class="lede">Seven models trained on an identical corpus slice, so training FLOPs and FLOPs
+  per token differ only by architecture. Multipliers below are the dense arm's cost at the same
+  bits per byte, divided by the MST arm's, read off the four dense points by log-log
+  interpolation. No fitted curve.</p>
+  <div class="invariant mono"><b>tokens, all arms</b> 1,167,968,256</div>
+</header>
+
+<section>
+  <h2>Active FLOPs per token, against the dense arms</h2>
+  <div class="tiles" id="tiles"></div>
+  <p class="note">The chip records how each arm sits against its own 10.5-tokens-per-scaling-parameter
+  budget. That fraction and the multiplier fall together, which is the confound this profile has to
+  answer for.</p>
+</section>
+
+<section>
+  <h2>Where each arm lands</h2>
+  <div class="charts" id="charts"></div>
+</section>
+
+<section>
+  <h2>Full profile</h2>
+  <div class="tablewrap"><table>
+    <thead><tr>
+      <th>Arm</th><th>bpb</th><th>Active FLOPs/tok</th><th>Train FLOPs</th>
+      <th>Total params</th><th>Active matrices</th><th>Own budget</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table></div>
+  <p class="note">Own budget is this run's 1.168B tokens divided by 10.5 &times; (transformer
+  matrices + output head) for that arm. 1.00&times; means the arm sits exactly at the ladder's
+  compute-optimal point; below 1.00&times; it is starved.</p>
+</section>
+
+<section>
+  <h2>What the numbers say</h2>
+  <div class="panel finding">
+    <span class="n">01</span>
+    <div class="b"><b>MST's advantage falls monotonically with depth, and crosses below parity by L=24.</b>
+    <span>1.51&times; at L=12, 1.06&times; at L=16, 0.83&times; at L=24 on active FLOPs per token.
+    Same shape on active matrices: 2.19&times;, 1.26&times;, 0.88&times;. On total and active
+    parameters MST is under 1.00&times; at every depth, which is expected and unchanged from the ladder.</span></div>
+
+    <span class="n">02</span>
+    <div class="b"><b>That decay is collinear with starvation, not obviously with depth.</b>
+    <span>Budget fraction runs 1.91&times;, 1.00&times;, 0.36&times; across the same three arms.
+    MST L=24 is the most undertrained model in the experiment, more so than dense L=16 at
+    0.47&times;. A fixed token count set from MST L=16's own budget cannot rank arms whose optimal
+    budgets span 5.3&times;.</span></div>
+
+    <span class="n">03</span>
+    <div class="b"><b>One pair in this table is clean, and MST wins it.</b>
+    <span>Dense L=12 sits at 1.01&times; its own budget and MST L=16 at 1.00&times;. Both are at
+    their compute-optimal point, so neither is starved or overtrained. MST reads 1.06&times; on
+    active FLOPs per token and 1.26&times; on active matrices against that pair. It is one pair,
+    and the margin is thin.</span></div>
+
+    <span class="n">04</span>
+    <div class="b"><b>Dense saturates inside this budget, which compresses the whole comparison.</b>
+    <span>Dense L=14 to L=16 buys 0.0112 bpb for 1.41&times; the FLOPs. In a regime that flat, a
+    cheaper-but-slightly-worse arm is punished hard on the implied-cost axis, because the dense
+    curve is close to vertical. The L=12 multiplier is extrapolated past the measured dense range
+    and should not be quoted.</span></div>
+  </div>
+</section>
+
+<footer>Dense L=10 to L=16 and MST L=12/16/24, all SP2_k1 with per-stream value embeddings,
+d<sub>model</sub> = 64L rounded to a multiple of 128, N=4, T=2048, vocabulary 32,768.
+Multipliers use piecewise log-log interpolation on the four dense points; MST L=12 lies outside
+that range and is extrapolated.</footer>
+</div>
+
+<script>
+const TOK = 1167968256;
+// depth, total, active, matrices, activeMatrices, scaling, activeFlops, bpb
+const DENSE = [
+  [10,195953460,195953460, 49152800, 49152800, 70124320,4.816944e8,0.881968],
+  [12,286262424,286262424, 84935808, 84935808,110101632,7.384666e8,0.857988],
+  [14,399115836,399115836,134874656,134874656,164234784,1.101014e9,0.839507],
+  [16,536872992,536872992,201328640,201328640,234883072,1.547710e9,0.828267],
+];
+const MST = [
+  [12,234405144,223788312, 33078528, 22461696, 58244352,3.184658e8,0.903397],
+  [16,413224992,388059168, 77680640, 52514816,111235072,5.745500e8,0.868981],
+  [24,964359216,879424560,259716096,174781440,310047744,1.481481e9,0.835895],
+];
+const BPB = 7, IDX = {flops:6, total:1, amatr:4};
+
+// piecewise log-log interpolation over the dense points, x = bpb
+function denseAt(field){
+  const pts = DENSE.map(r => [Math.log(r[BPB]), Math.log(r[IDX[field]])]).sort((a,b)=>a[0]-b[0]);
+  return b => {
+    const lx = Math.log(b);
+    if (lx <= pts[0][0]) return Math.exp(pts[0][1] + (lx-pts[0][0])*(pts[1][1]-pts[0][1])/(pts[1][0]-pts[0][0]));
+    for (let i=0;i<pts.length-1;i++) if (lx <= pts[i+1][0])
+      return Math.exp(pts[i][1] + (lx-pts[i][0])*(pts[i+1][1]-pts[i][1])/(pts[i+1][0]-pts[i][0]));
+    const n=pts.length;
+    return Math.exp(pts[n-2][1] + (lx-pts[n-2][0])*(pts[n-1][1]-pts[n-2][1])/(pts[n-1][0]-pts[n-2][0]));
+  };
+}
+const budget = r => TOK/(10.5*r[5]);
+const inRange = b => b <= DENSE[0][BPB] && b >= DENSE[3][BPB];
+
+// ---- verdict tiles ----
+const fEq = denseAt('flops');
+document.getElementById('tiles').innerHTML = MST.map(r => {
+  const mult = fEq(r[BPB])/r[6], bf = budget(r);
+  const cls = !inRange(r[BPB]) ? 'soft' : (mult >= 1 ? 'win' : 'lose');
+  const bc = bf > 1.25 ? 'over' : (bf < 0.8 ? 'under' : 'ok');
+  const bl = bf > 1.25 ? 'overtrained' : (bf < 0.8 ? 'starved' : 'at its own optimum');
+  return `<div class="tile ${cls}">
+    <span class="arm">MST L=${r[0]}</span>
+    <span class="big mono">${mult.toFixed(3)}&times;</span>
+    <span class="cap">dense cost at bpb ${r[BPB].toFixed(4)}, over MST's${inRange(r[BPB])?'':' &mdash; extrapolated'}</span>
+    <span class="chip ${bc}">${bf.toFixed(2)}&times; own budget &middot; ${bl}</span>
+  </div>`;
+}).join('');
+
+// ---- charts ----
+const W=440, H=290, PAD={l:52,r:22,t:16,b:40};
+const IW = W-PAD.l-PAD.r, IH = H-PAD.t-PAD.b;
+
+function fmtX(v, field){
+  if (field==='flops') return (v/1e9).toFixed(v<1e9?2:1)+'G';
+  return (v/1e6).toFixed(0)+'M';
+}
+function chart(field, title, sub, leaders){
+  const all = DENSE.concat(MST);
+  const xs = all.map(r=>Math.log10(r[IDX[field]])), ys = all.map(r=>r[BPB]);
+  const x0=Math.min(...xs)-0.06, x1=Math.max(...xs)+0.06;
+  const y0=Math.min(...ys)-0.006, y1=Math.max(...ys)+0.006;
+  const X = v => PAD.l + (Math.log10(v)-x0)/(x1-x0)*IW;
+  const Y = v => PAD.t + (y1-v)/(y1-y0)*IH;
+
+  let g='';
+  // y grid + labels
+  const yticks=[]; for(let t=Math.ceil(y0*100)/100; t<=y1; t+=0.02) yticks.push(+t.toFixed(3));
+  yticks.forEach(t=>{
+    g+=`<line x1="${PAD.l}" y1="${Y(t).toFixed(1)}" x2="${W-PAD.r}" y2="${Y(t).toFixed(1)}" stroke="var(--line-soft)" stroke-width="1"/>`;
+    g+=`<text x="${PAD.l-9}" y="${(Y(t)+4).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--muted)" class="mono">${t.toFixed(2)}</text>`;
+  });
+  // x ticks at the real arm positions of dense
+  DENSE.forEach(r=>{
+    const x=X(r[IDX[field]]);
+    g+=`<line x1="${x.toFixed(1)}" y1="${PAD.t}" x2="${x.toFixed(1)}" y2="${PAD.t+IH}" stroke="var(--line-soft)" stroke-width="1"/>`;
+    g+=`<text x="${x.toFixed(1)}" y="${PAD.t+IH+16}" text-anchor="middle" font-size="10" fill="var(--muted)" class="mono">${fmtX(r[IDX[field]],field)}</text>`;
+  });
+  g+=`<line x1="${PAD.l}" y1="${PAD.t+IH}" x2="${W-PAD.r}" y2="${PAD.t+IH}" stroke="var(--line)" stroke-width="1"/>`;
+  g+=`<line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t+IH}" stroke="var(--line)" stroke-width="1"/>`;
+
+  // leader lines from each MST point to the dense curve at equal bpb
+  if (leaders){
+    const eq = denseAt(field);
+    MST.forEach(r=>{
+      const dx = X(eq(r[BPB])), mx = X(r[IDX[field]]), y = Y(r[BPB]);
+      g+=`<line x1="${mx.toFixed(1)}" y1="${y.toFixed(1)}" x2="${dx.toFixed(1)}" y2="${y.toFixed(1)}"
+           stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3" opacity=".65"/>`;
+      g+=`<circle cx="${dx.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="var(--bg)" stroke="var(--dense)" stroke-width="1.4"/>`;
+    });
+  }
+  // series
+  const draw = (rows,color,anchor,dy)=>{
+    const d = rows.map(r=>`${X(r[IDX[field]]).toFixed(1)},${Y(r[BPB]).toFixed(1)}`).join(' ');
+    let s = `<polyline points="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+    rows.forEach(r=>{
+      const x=X(r[IDX[field]]), y=Y(r[BPB]);
+      s+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="1.5"/>`;
+      s+=`<text x="${x.toFixed(1)}" y="${(y+dy).toFixed(1)}" text-anchor="${anchor}" font-size="10.5" font-weight="600" fill="${color}" class="mono">L${r[0]}</text>`;
+    });
+    return s;
+  };
+  g += draw(DENSE,'var(--dense)','middle',-11);
+  g += draw(MST,'var(--mst)','middle',17);
+  g += `<text transform="translate(13,${PAD.t+IH/2}) rotate(-90)" text-anchor="middle" font-size="10.5" fill="var(--muted)">bits per byte</text>`;
+
+  return `<div class="panel">
+    <div class="chart-head"><span class="t">${title}</span><span class="s">${sub}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">${g}</svg>
+    <div class="legend">
+      <span><i style="background:var(--dense)"></i>dense L=10&ndash;16</span>
+      <span><i style="background:var(--mst)"></i>MST L=12/16/24</span>
+      ${leaders?'<span><i style="background:var(--muted)"></i>dense cost at MST\'s bpb</span>':''}
+    </div>
+  </div>`;
+}
+document.getElementById('charts').innerHTML =
+    chart('flops','Active FLOPs per token','log x &middot; lower-left is better',true)
+  + chart('amatr','Active matrix parameters','log x &middot; the paper\'s sparsity axis',true)
+  + chart('total','Total parameters','log x &middot; MST\'s weakest axis',false);
+
+// ---- table ----
+const trainF = r => r[6]*TOK;
+const fmt = n => n.toLocaleString('en-US');
+const sci = n => n.toExponential(3).replace('e+','e');
+document.getElementById('tbody').innerHTML =
+  DENSE.map(r=>`<tr class="d${r[0]===12?' hl':''}"><td>dense L=${r[0]}</td>
+    <td class="mono">${r[BPB].toFixed(6)}</td><td class="mono">${sci(r[6])}</td>
+    <td class="mono">${sci(trainF(r))}</td><td class="mono">${fmt(r[1])}</td>
+    <td class="mono">${fmt(r[4])}</td><td class="mono">${budget(r).toFixed(2)}&times;</td></tr>`).join('')
++ MST.map(r=>{
+    const m = fEq(r[BPB])/r[6];
+    return `<tr class="m${r[0]===16?' hl':''}"><td>MST L=${r[0]}</td>
+    <td class="mono ${m>=1?'pos':'neg'}">${r[BPB].toFixed(6)}</td><td class="mono">${sci(r[6])}</td>
+    <td class="mono">${sci(trainF(r))}</td><td class="mono">${fmt(r[1])}</td>
+    <td class="mono">${fmt(r[4])}</td><td class="mono">${budget(r).toFixed(2)}&times;</td></tr>`;
+  }).join('');
+</script>

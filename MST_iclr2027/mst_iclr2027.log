@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  2 SEP 2026 06:10
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  2 SEP 2026 17:25
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -762,18 +762,14 @@ File: fig_scaling.pdf Graphic file (type pdf)
 Package pdftex.def Info: fig_scaling.pdf  used on input line 501.
 (pdftex.def)             Requested size: 397.48499pt x 162.66687pt.
 
-[7 <./fig_scaling.pdf>] [8] [9] [10] [11]
-Underfull \vbox (badness 5302) has occurred while \output is active []
-
- [12]
-[13]
+[7 <./fig_scaling.pdf>] [8] [9] [10] [11] [12] [13]
 Underfull \vbox (badness 10000) has occurred while \output is active []
 
  [14]
 <fig_analysis.pdf, id=457, 471.80394pt x 277.33574pt>
 File: fig_analysis.pdf Graphic file (type pdf)
 <use fig_analysis.pdf>
-Package pdftex.def Info: fig_analysis.pdf  used on input line 1252.
+Package pdftex.def Info: fig_analysis.pdf  used on input line 1257.
 (pdftex.def)             Requested size: 397.48499pt x 233.65866pt.
 
 [15] [16 <./fig_analysis.pdf>]
@@ -791,20 +787,12 @@ LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 1
 09.
  (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd
 File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
-)) [19]
-Overfull \hbox (3.03532pt too wide) in paragraph at lines 1457--1470
- [] 
- []
-
-[20] [21] (./mst_iclr2027.aux)
+)) [19] [20]
+[21] (./mst_iclr2027.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
  ***********
-
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
 Package rerunfilecheck Info: File `mst_iclr2027.out' has not changed.
 (rerunfilecheck)             Checksum: 26B38718F38B3963065C5B3247DC2B8D;3357.
  ) 
@@ -839,7 +827,7 @@ ts/type1/public/amsfonts/cm/cmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type
 sr/share/texlive/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb></usr/share/texli
 ve/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/f
 onts/type1/urw/times/utmri8a.pfb>
-Output written on mst_iclr2027.pdf (21 pages, 434601 bytes).
+Output written on mst_iclr2027.pdf (21 pages, 434979 bytes).
 PDF statistics:
  701 PDF objects out of 1000 (max. 8388607)
  576 compressed objects within 6 object streams
