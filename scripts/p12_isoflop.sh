@@ -15,9 +15,11 @@
 #   best-performing model is better, and how big is that model?
 #
 # THE BUDGET
-#   C = 6.7e17 active FLOPs, which is MST L=16's existing training budget, so
-#   that run is already a point on the profile and costs nothing to reuse.
-#   Six new runs at 6.7e17 each is 4.0e18 total, about 0.8x of one L=24 run.
+#   C = 6.710562e17 active FLOPs. That is MST L=16's existing training budget to six
+#   figures (10.5 x 111,235,072 scaling params x 5.7455e8 active FLOPs/token), so that
+#   run is already a point on the profile and costs nothing to reuse. Six new runs at
+#   6.71e17 each is 4.0e18 total, about 0.8x of one L=24 run. isoFLOP cost does not
+#   depend on which depths you pick, only on how many.
 #
 #   A second contour at C=4.8e18 (L=24's budget) would reuse MST L=24 the same
 #   way, but costs ~6x an L=24 run. Only worth it if this one is favourable.
@@ -50,14 +52,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-FLOPS="${FLOPS:-6.7e17}"
+FLOPS="${FLOPS:-6.710562e17}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 DENSE_DEPTHS="${DENSE_DEPTHS:-8 10 12 14}"
 # MST needs mst_sub_head_dim (64) to divide sub_dim = D/N, i.e. D a multiple of 256.
-# L=12,16,20 give D=768,1024,1280 -> d=192,256,320, all divisible by 64. L=18 and L=22
+# L=12,16,24 give D=768,1024,1536 -> d=192,256,384, all divisible by 64. L=18 and L=22
 # do NOT (d=288, 352) and have no MST arm at all.
-MST_DEPTHS="${MST_DEPTHS:-12 16 20}"
+#
+# L=20 is deliberately EXCLUDED. It is MST's known off-trend ladder point (1.125x on
+# FLOPs/token against 1.222x at L=16 and 1.284x at L=24), so including it would let a
+# single suspect measurement pull the isoFLOP frontier down. L=12 and L=24 bracket the
+# optimum at this budget from below and above, which is what the profile needs.
+MST_DEPTHS="${MST_DEPTHS:-12 16 24}"
 OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
 LOGFILE="${OUT_BASE}/p12.log"

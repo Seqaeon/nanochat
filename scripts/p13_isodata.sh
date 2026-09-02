@@ -24,9 +24,14 @@
 #   unimpeachable comparison and there is no way around it.
 #
 # THE BUDGET
-#   D = 1.168e9 tokens, which is MST L=16's own compute-optimal budget, so that
-#   run is already a point and costs nothing to reuse. Four dense runs at that
-#   D cost about 4.6e18 total, roughly one L=24 run.
+#   D = 1,167,968,256 tokens, MST L=16's own compute-optimal budget EXACTLY
+#   (10.5 x 111,235,072 scaling params), so that run is already a point and costs
+#   nothing to reuse. The exact figure matters: total_batch_size is auto-computed from
+#   target_tokens and snapped to a power of two, so a rounded budget can land on a
+#   different batch size and stop being the same run.
+#
+#   Cost: dense L=10/12/14/16 at this D is 0.56+0.86+1.29+1.81 = 4.5e18, plus MST L=12
+#   and L=24 at 0.37e18 and 1.73e18. About 6.6e18 total, roughly 1.4x one L=24 run.
 #
 # STATE THE PREDICTION BEFORE LOOKING
 #   At L=8 iso-token, MST read 1.061x against dense's 1.000x. On its own budget
@@ -48,11 +53,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-TOKENS="${TOKENS:-1168000000}"
+TOKENS="${TOKENS:-1167968256}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 DENSE_DEPTHS="${DENSE_DEPTHS:-10 12 14 16}"
-MST_DEPTHS="${MST_DEPTHS:-16 20}"
+# L=20 is deliberately excluded: it is MST's off-trend ladder point (1.125x against
+# 1.222x at L=16 and 1.284x at L=24). L=12/16/24 give an over-trained, a
+# compute-optimal and an under-trained point at this fixed D, which is the spread a
+# fixed-data curve needs.
+MST_DEPTHS="${MST_DEPTHS:-12 16 24}"
 OUT_BASE="${OUT_BASE:-out/p13_isodata}"
 mkdir -p "$OUT_BASE"
 LOGFILE="${OUT_BASE}/p13.log"
