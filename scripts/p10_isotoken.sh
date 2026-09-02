@@ -224,7 +224,7 @@ MST_ISO_VE="--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SUB_DI
 # The control every arm below is read against: the headline SP2_k1 config at this
 # budget. Not optional.
 run ISO_mst_ve "$DEPTH" $MST_ISO_VE \
-    --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-active-params 1
+    --mst-stream-topk 1 --mst-stream-router-noise 1.0 --target-tokens 3657905664
 
 # Attention gated too, no shared stream. 1 of 4 streams active.
 #run ISO_mst_ve_gattn "$DEPTH" $MST_ISO_VE \

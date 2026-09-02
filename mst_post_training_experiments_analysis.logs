@@ -181,6 +181,97 @@ softmax.
   dense ctx= 16384   15.976 ms/token
 
 wrote scratch/paper_bench.json
+=== depth 24  D=1536 d=384 ===
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=   256      13.09 ms       19562 tok/s   (median 13.43, +3%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  8192      24.60 ms      333070 tok/s   (median 25.20, +2%)
+  mst   T= 32768      86.73 ms      377802 tok/s   (median 87.04, +0%)
+  dense T=   256      45.42 ms        5637 tok/s   (median 114.39, +152%)  <-- unstable
+  dense T=  8192      53.25 ms      153833 tok/s   (median 124.07, +133%)  <-- unstable
+  dense T= 32768     123.83 ms      264627 tok/s   (median 145.40, +17%)
+[A5] decode
+  mst   ctx=   256   35.504 ms/token
+  mst   ctx=  8192   35.639 ms/token
+  mst   ctx= 32768   35.526 ms/token
+  dense ctx=   256   10.384 ms/token
+  dense ctx=  8192   10.472 ms/token
+  dense ctx= 32768   10.456 ms/token
+
+=== depth 32  D=2048 d=512 ===
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=   256      17.41 ms       14705 tok/s   (median 17.98, +3%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  8192      42.12 ms      194478 tok/s   (median 42.47, +1%)
+  mst   T= 32768     154.18 ms      212524 tok/s   (median 155.80, +1%)
+  dense T=   256       7.85 ms       32606 tok/s   (median 8.60, +10%)
+  dense T=  8192      53.85 ms      152136 tok/s   (median 55.45, +3%)
+  dense T= 32768     243.56 ms      134540 tok/s   (median 246.49, +1%)
+[A5] decode
+  mst   ctx=   256   47.639 ms/token
+  mst   ctx=  8192   46.371 ms/token
+  mst   ctx= 32768   46.986 ms/token
+  dense ctx=   256   13.429 ms/token
+  dense ctx=  8192   13.201 ms/token
+  dense ctx= 32768   13.518 ms/token
+
+=== depth 40  D=2560 d=640 ===
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=   256      23.21 ms       11031 tok/s   (median 24.17, +4%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=  8192      68.86 ms      118962 tok/s   (median 69.43, +1%)
+  mst   T= 32768     259.06 ms      126486 tok/s   (median 260.93, +1%)
+  dense T=   256      13.09 ms       19552 tok/s   (median 13.64, +4%)
+  dense T=  8192      97.83 ms       83739 tok/s   (median 99.65, +2%)
+  dense T= 32768     433.01 ms       75674 tok/s   (median 435.45, +1%)
+[A5] decode
+  mst   ctx=   256   57.952 ms/token
+  mst   ctx=  8192   57.716 ms/token
+  mst   ctx= 32768   57.482 ms/token
+  dense ctx=   256   17.325 ms/token
+  dense ctx=  8192   17.261 ms/token
+  dense ctx= 32768   17.389 ms/token
+
+wrote scratch/paper_bench.json
 
 
 
