@@ -164,6 +164,7 @@ def run_training_sweep(args):
         "--p29-grad-equalize",         str(getattr(args, 'p29_grad_equalize', 0)),
         "--target-active-params",     str(getattr(args, 'target_active_params', 0)),
         "--compile-regional",         str(getattr(args, 'compile_regional', 0)),
+        "--timing-probe-steps",       str(getattr(args, 'timing_probe_steps', 0)),
         "--remix-basis-gate-rank", str(getattr(args, 'remix_basis_gate_rank', 8)),
         "--cclblock-modulation", str(args.cclblock_modulation),
         "--cclblock-orth-lambda", str(getattr(args, 'cclblock_orth_lambda', 0.0)),
@@ -873,6 +874,7 @@ if __name__ == "__main__":
     parser.add_argument("--p29-grad-equalize",         type=int, default=0, choices=[0, 1], help="29: per-template gradient equalization to prevent template collapse")
     parser.add_argument("--target-active-params",     type=int, default=0, choices=[0, 1], help="use active params for target_tokens budget")
     parser.add_argument("--compile-regional",         type=int, default=0, choices=[0, 1], help="compile each transformer layer separately; compile time stops growing with depth")
+    parser.add_argument("--timing-probe-steps",       type=int, default=0, help="stop each run after N steps, having derived the schedule from the real budget; used to cost a sweep")
     parser.add_argument("--remix-basis-gate-rank", type=int, default=8, help="rank for lowrank basis gate mode")
     # CCL block modulation
     parser.add_argument("--cclblock-modulation", type=str, default="weight",

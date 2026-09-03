@@ -43,9 +43,11 @@
 # ============================================================================
 set -o pipefail
 
-FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=()
+FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
-    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [depth ...]"
+    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [--timer-only] [depth ...]"
+    echo "  --timer-only runs TIMER_STEPS (default 12) steps of every arm and projects the"
+    echo "  full sweep from the measured dt, including startup and final-validation time."
     echo "  depths given positionally replace the built-in list for whichever arms run,"
     echo "  so '--mst-only 24' runs exactly one arm and nothing else."
 }
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --dense-only) ARMS=dense; shift ;;
         --mst-only) ARMS=mst; shift ;;
         --mol-only) ARMS=mol; shift ;;
+        --timer-only) TIMER=1; shift ;;
         -*) echo "unknown arg: $1"; usage; exit 1 ;;
         *) CLI_DEPTHS+=("$1"); shift ;;
     esac
@@ -74,19 +77,49 @@ case "$ARMS" in
     *) echo "--arms must be one of: dense, mst, mol, all (got '$ARMS')"; exit 1 ;;
 esac
 
-FLOPS="${FLOPS:-6.710562e17}"
+# C is set by the CORPUS, not by affordability. One shard of the 300-shard set holds
+# ~252.8M characters, so MAX_SHARDS=300 is roughly 18B tokens, and the protocol is single
+# epoch. Each arm consumes C / (active FLOPs per token), so the cheapest-per-token arm
+# fixes the ceiling:
+#   dense [16,18,20,24] -> C_max 2.79e19      MST [16,24,28,32] -> C_max 1.03e19
+#   dense [12,16,18,24] -> C_max 1.33e19      MST [12,16,24,32] -> C_max 5.73e18
+# 9.0e18 sits at 87% of the binding MST ceiling, leaving margin for the +/-10% in that
+# token estimate. Raise MAX_SHARDS to lift it: 600 shards would roughly double the ceiling.
+#
+# It also buys the scale the paper needs. At the previous 4.823e18, dense L=24 ran at
+# 7.45x its own compute-optimal budget, i.e. a 1.38B model on 13% of its Chinchilla
+# tokens, which is not citable as 1B-scale evidence. At 9.0e18:
+#   dense  L=16 0.42x  L=18 0.81x  L=20 1.44x  L=24 3.99x   (537M .. 1.38B active)
+#   MST    L=16 0.07x  L=24 0.54x  L=28 1.20x  L=32 2.46x   (388M .. 1.62B active)
+# Both arms straddle their vertex, dense between L=18 and L=20, MST between L=24 and L=28.
+# Cost: 8 arms x 9.0e18 = 7.2e19. Run --timer-only before committing.
+FLOPS="${FLOPS:-9.0e18}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
-DENSE_DEPTHS="${DENSE_DEPTHS-8 10 12 14}"
+# Dense L=16/18/20/24 spans 537M to 1.38B active and straddles a vertex between L=18 and
+# L=20. L=12 was dropped when C rose: it is the cheapest-per-token dense arm, so it would
+# have pulled the corpus ceiling down to 1.33e19 for no gain at a scale nobody asks about.
+DENSE_DEPTHS="${DENSE_DEPTHS-16 18 20 24}"
 # MST needs mst_sub_head_dim (64) to divide sub_dim = D/N, i.e. D a multiple of 256.
-# L=12,16,24 give D=768,1024,1536 -> d=192,256,384, all divisible by 64. L=18 and L=22
-# do NOT (d=288, 352) and have no MST arm at all.
+# L=16,24,28,32 give D=1024,1536,1792,2048 -> d=256,384,448,512, all divisible by 64.
+# L=14,18,22,26,30 do NOT and have no MST arm at all.
 #
-# L=20 is deliberately EXCLUDED. It is MST's known off-trend ladder point (1.125x on
-# FLOPs/token against 1.222x at L=16 and 1.284x at L=24), so including it would let a
-# single suspect measurement pull the isoFLOP frontier down. L=12 and L=24 bracket the
-# optimum at this budget from below and above, which is what the profile needs.
-MST_DEPTHS="${MST_DEPTHS-12 16 24}"
+# L=20 is EXCLUDED as MST's known off-trend ladder point: 1.126x on FLOPs/token against
+# 1.223x at L=16 and 1.284x at L=24. No mechanism has been identified. The two candidates
+# were both checked and both are dead: multi-scale windows are assigned PER STREAM
+# (_sub_window_sizes, N=4), so the head count never touches the window schedule; and
+# sub_dim = 64 mod 128 does break tensor-core alignment for MST in a way it never does for
+# dense, but that is a speed effect and the anomaly is in bpb per FLOP. L=12 shares L=20's
+# geometry (3 heads, sub_dim 192) and has never shown the effect, so a single bad run is
+# the likelier explanation than anything structural. Rerunning L=20 on another seed would
+# settle it for the cost of one arm.
+#
+# L=28 (7 heads, sub_dim 448) is in the same geometric class as L=20 and is kept
+# deliberately: with four points its residual is visible, so this profile TESTS the
+# hypothesis rather than assuming it. If L=28 lands off the curve the way L=20 did, drop
+# it and fit 16/24/32, which is clean end to end (4/6/8 heads, all sub_dim a multiple of
+# 128). It is also the 1.22B-active arm, the closest to the scale reviewers name.
+MST_DEPTHS="${MST_DEPTHS-16 24 28 32}"
 # MoL (Ternovtsii & Bilak 2026) as its own arm, in the 1+3of15 topology at d_thin = D/4
 # that reproduces their published parameter counts exactly. Its thin blocks are wrapped in
 # per-block W_down/W_up, so it costs far more per token than MST at equal depth (8.09e8
@@ -102,13 +135,25 @@ if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     MST_DEPTHS="${CLI_DEPTHS[*]}"
     MOL_DEPTHS="${CLI_DEPTHS[*]}"
 fi
+# MoL is parked: its per-block W_down/W_up wrappers make it far slower to train than
+# either baseline at these sizes, so it is excluded from the default sweep rather than
+# deleted. "--arms mol" and "--mol-only" still run it with the depths above.
 case "$ARMS" in
     dense) MST_DEPTHS="";   MOL_DEPTHS="" ;;
     mst)   DENSE_DEPTHS=""; MOL_DEPTHS="" ;;
     mol)   DENSE_DEPTHS=""; MST_DEPTHS=""  ;;
+    all)   MOL_DEPTHS="" ;;
 esac
 OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
+TIMER_STEPS="${TIMER_STEPS:-12}"
+if [ "$TIMER" -eq 1 ]; then
+    # A costing pass must not touch the real sweep: its own out tree, its own state file,
+    # and no mark_done, so a later real run still sees every arm as outstanding.
+    OUT_BASE="${OUT_BASE}/timer"
+    mkdir -p "$OUT_BASE"
+    echo "TIMER-ONLY: ${TIMER_STEPS} steps per arm, writing to ${OUT_BASE}"
+fi
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p12.log}"
 
 # Compiled-kernel caches, following runpod_env.sh and p30/p33/p35. Without these each
@@ -165,6 +210,36 @@ s.setdefault('completed',{})['$1']=datetime.datetime.now().isoformat()
 json.dump(s,open('$STATE','w'),indent=2)"
 }
 
+# --- timer-only projection -------------------------------------------------
+# Per arm: measured wall time covers startup (env, data, compile) + TIMER_STEPS steps +
+# the final eval and save. Splitting off the measured steps leaves the fixed overhead,
+# and the full run is that overhead plus full_iterations x dt. base_train prints
+# "TIMING_PROBE full_iterations=... " before training so the real horizon is known even
+# though the loop stops early.
+TIMER_TOTAL=0
+TIMER_ROWS=()
+project_arm() {                           # project_arm <tag> <log> <t_start> <t_end>
+    local tag="$1" alog="$2"
+    local elapsed
+    elapsed=$(awk "BEGIN{printf \"%.2f\", $4 - $3}")
+    local full dt
+    full=$(grep -oE 'TIMING_PROBE full_iterations=[0-9]+' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+    dt=$(grep -oE 'dt: [0-9.]+ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
+    if [ -z "$full" ] || [ -z "$dt" ]; then
+        log "TIMER $tag: could not parse (full_iterations='${full:-?}' dt='${dt:-?}'); measured ${elapsed}s only"
+        TIMER_ROWS+=("$tag|$elapsed|?|?|?")
+        return
+    fi
+    local overhead proj
+    # clamp: dt is the steady-state step, so the first few steps can exceed it and drive
+    # the residual negative on a fast arm. Overhead is never less than zero.
+    overhead=$(awk "BEGIN{o=$elapsed - $TIMER_STEPS * $dt/1000; if(o<0)o=0; printf \"%.1f\", o}")
+    proj=$(awk "BEGIN{printf \"%.1f\", $overhead + $full * $dt/1000}")
+    TIMER_TOTAL=$(awk "BEGIN{printf \"%.1f\", $TIMER_TOTAL + $proj}")
+    log "TIMER $tag: ${full} steps x ${dt}ms + ${overhead}s overhead = $(awk "BEGIN{printf \"%.2f\", $proj/3600}")h"
+    TIMER_ROWS+=("$tag|$elapsed|$full|$dt|$proj")
+}
+
 COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
@@ -172,6 +247,7 @@ COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
   --research-dim -1 --target-active-params 0 --target-tokens -1 \
   --compile-regional ${COMPILE_REGIONAL:-0} \
+  ${TIMER:+--timing-probe-steps $TIMER_STEPS} \
   --save-every 200 --eval-every -1 --target-active-flops ${FLOPS}"
 [ -n "${MAX_SHARDS:-}" ] && COMMON="$COMMON --max-shards $MAX_SHARDS"
 
@@ -187,8 +263,12 @@ run() {
         local dir="${OUT_BASE}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
         local rc=0
+        local t_start=$(date +%s.%N)
+        local armlog="${dir}.probe.log"
         bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
-             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
+             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" ${TIMER:+| tee "$armlog"} >/dev/null || rc=$?
+        local t_end=$(date +%s.%N)
+        [ "$TIMER" -eq 1 ] && project_arm "$t" "$armlog" "$t_start" "$t_end"
         if [ "$ABORT" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
             ABORT=1
             log "INTERRUPTED $t  (resumes from its last checkpoint on the next run)"
@@ -198,7 +278,9 @@ run() {
         # research_sweep.sh can exit 0 without training anything, because its own
         # per-model state may already believe the models are finished; marking that
         # done would drop a point from the profile with no error anywhere.
-        if [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
+        if [ "$TIMER" -eq 1 ]; then
+            [ "$rc" -eq 0 ] || { FAILED_ARMS+=("$t"); log "FAIL $t (rc=$rc)"; }
+        elif [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
             mark_done "$t"; log "OK $t"
         else
             FAILED_ARMS+=("$t")
@@ -266,6 +348,20 @@ done
 
 echo ""
 echo "============================================================"
+if [ "$TIMER" -eq 1 ]; then
+    printf '  %-24s %10s %8s %10s %10s\n' arm measured steps "dt(ms)" projected
+    for r in "${TIMER_ROWS[@]}"; do
+        IFS='|' read -r a m f d pj <<< "$r"
+        printf '  %-24s %9ss %8s %10s %9sh\n' "$a" "$m" "$f" "$d" \
+            "$(awk "BEGIN{printf \"%.2f\", ${pj:-0}/3600}")"
+    done
+    echo "  ------------------------------------------------------------------"
+    echo "  projected total for the whole sweep: $(awk "BEGIN{printf \"%.2f\", $TIMER_TOTAL/3600}")h"
+    echo "  (startup, ${TIMER_STEPS} measured steps and final validation are all included per arm)"
+    echo "============================================================"
+    [ ${#FAILED_ARMS[@]} -gt 0 ] && { echo "  failed: ${FAILED_ARMS[*]}"; exit 1; }
+    exit 0
+fi
 REMAINING=()
 for a in "${ALL_ARMS[@]}"; do done_already "$a" || REMAINING+=("$a"); done
 log "  arms complete: $(( ${#ALL_ARMS[@]} - ${#REMAINING[@]} )) / ${#ALL_ARMS[@]}"

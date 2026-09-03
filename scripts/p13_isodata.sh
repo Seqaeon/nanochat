@@ -44,9 +44,11 @@
 # ============================================================================
 set -o pipefail
 
-FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=()
+FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
-    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [depth ...]"
+    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [--timer-only] [depth ...]"
+    echo "  --timer-only runs TIMER_STEPS (default 12) steps of every arm and projects the"
+    echo "  full sweep from the measured dt, including startup and final-validation time."
     echo "  depths given positionally replace the built-in list for whichever arms run,"
     echo "  so '--mst-only 24' runs exactly one arm and nothing else."
 }
@@ -62,6 +64,7 @@ while [[ $# -gt 0 ]]; do
         --dense-only) ARMS=dense; shift ;;
         --mst-only) ARMS=mst; shift ;;
         --mol-only) ARMS=mol; shift ;;
+        --timer-only) TIMER=1; shift ;;
         -*) echo "unknown arg: $1"; usage; exit 1 ;;
         *) CLI_DEPTHS+=("$1"); shift ;;
     esac
@@ -99,13 +102,80 @@ if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     MST_DEPTHS="${CLI_DEPTHS[*]}"
     MOL_DEPTHS="${CLI_DEPTHS[*]}"
 fi
+# MoL is parked: its per-block W_down/W_up wrappers make it far slower to train than
+# either baseline at these sizes, so it is excluded from the default sweep rather than
+# deleted. "--arms mol" and "--mol-only" still run it with the depths above.
 case "$ARMS" in
     dense) MST_DEPTHS="";   MOL_DEPTHS="" ;;
     mst)   DENSE_DEPTHS=""; MOL_DEPTHS="" ;;
     mol)   DENSE_DEPTHS=""; MST_DEPTHS=""  ;;
+    all)   MOL_DEPTHS="" ;;
 esac
 OUT_BASE="${OUT_BASE:-out/p13_isodata}"
 mkdir -p "$OUT_BASE"
+TIMER_STEPS="${TIMER_STEPS:-12}"
+if [ "$TIMER" -eq 1 ]; then
+    # A costing pass must not touch the real sweep: its own out tree, its own state file,
+    # and no mark_done, so a later real run still sees every arm as outstanding.
+    OUT_BASE="${OUT_BASE}/timer"
+    mkdir -p "$OUT_BASE"
+    echo "TIMER-ONLY: ${TIMER_STEPS} steps per arm, writing to ${OUT_BASE}"
+fi
+LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p12.log}"
+
+# Compiled-kernel caches, following runpod_env.sh and p30/p33/p35. Without these each
+# arm compiles from an empty cache, and on an ephemeral runner every relaunch pays the
+# full cost again: MST compiles far more kernels than dense (N=4 streams x 4 window
+# scales, per-stream value embeddings, block-diagonal GEMMs), so it is the arm that
+# suffers. Defaulting them under OUT_BASE means pointing OUT_BASE at a persistent
+# volume also persists the caches, and keeps them inside the gitignored out/ tree.
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${OUT_BASE}/.inductor_cache}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${OUT_BASE}/.triton_cache}"
+
+# Inductor's compile-worker pool defaults to min(32, nproc) subprocesses, each holding
+# its own torch import. On a many-core box with a memory ceiling that is enough RSS to
+# get a worker OOM-killed, and the parent then waits on a future that never resolves.
+# MST drives the pool far harder than dense (~1200 kernels at L=24 against ~400), which
+# is why it is the arm that hangs. Cap it: this costs no step time, unlike
+# --compile-regional, which is left off by default because it loses cross-layer fusion.
+export TORCHINDUCTOR_COMPILE_THREADS="${TORCHINDUCTOR_COMPILE_THREADS:-8}"
+mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
+
+# Arm boundaries and verdicts have to reach the log file, not just stdout. Only the
+# sweep command is piped through tee, so without this the log is undelimited training
+# output and the structure survives only in whatever captured stdout, which on a remote
+# runner is a different place from the volume the log is written to.
+log() { echo "$*" | tee -a "$LOGFILE"; }
+STATE="${OUT_BASE}/p12_state.json"
+[ "$FORCE" -eq 1 ] && rm -f "$STATE"
+[ -f "$STATE" ] || echo '{"completed":{}}' > "$STATE"
+
+# Interrupt handling. Without this an INT lands on the foreground process group, kills
+# the arm's torchrun, and the loop reads the nonzero status as "this arm failed" and
+# starts the NEXT multi-hour arm. One Ctrl-C then costs a run rather than stopping one.
+ABORT=0
+ALL_ARMS=()
+FAILED_ARMS=()
+on_signal() {
+    ABORT=1
+    printf '\n>>> interrupt received. Stopping. The current arm keeps its checkpoints\n'
+    printf '>>> and resumes from its last step when this script is re-run.\n'
+}
+trap on_signal INT TERM
+
+done_already() {
+    [ "$FORCE" -eq 1 ] && return 1
+    python3 -c "
+import json,sys
+sys.exit(0 if '$1' in json.load(open('$STATE')).get('completed',{}) else 1)" 2>/dev/null
+}
+mark_done() {
+    python3 -c "
+import json,datetime
+s=json.load(open('$STATE'))
+s.setdefault('completed',{})['$1']=datetime.datetime.now().isoformat()
+json.dump(s,open('$STATE','w'),indent=2)"
+}
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p13.log}"
 
 # Compiled-kernel caches, following runpod_env.sh and p30/p33/p35. Without these each
@@ -162,6 +232,36 @@ s.setdefault('completed',{})['$1']=datetime.datetime.now().isoformat()
 json.dump(s,open('$STATE','w'),indent=2)"
 }
 
+# --- timer-only projection -------------------------------------------------
+# Per arm: measured wall time covers startup (env, data, compile) + TIMER_STEPS steps +
+# the final eval and save. Splitting off the measured steps leaves the fixed overhead,
+# and the full run is that overhead plus full_iterations x dt. base_train prints
+# "TIMING_PROBE full_iterations=... " before training so the real horizon is known even
+# though the loop stops early.
+TIMER_TOTAL=0
+TIMER_ROWS=()
+project_arm() {                           # project_arm <tag> <log> <t_start> <t_end>
+    local tag="$1" alog="$2"
+    local elapsed
+    elapsed=$(awk "BEGIN{printf \"%.2f\", $4 - $3}")
+    local full dt
+    full=$(grep -oE 'TIMING_PROBE full_iterations=[0-9]+' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+    dt=$(grep -oE 'dt: [0-9.]+ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
+    if [ -z "$full" ] || [ -z "$dt" ]; then
+        log "TIMER $tag: could not parse (full_iterations='${full:-?}' dt='${dt:-?}'); measured ${elapsed}s only"
+        TIMER_ROWS+=("$tag|$elapsed|?|?|?")
+        return
+    fi
+    local overhead proj
+    # clamp: dt is the steady-state step, so the first few steps can exceed it and drive
+    # the residual negative on a fast arm. Overhead is never less than zero.
+    overhead=$(awk "BEGIN{o=$elapsed - $TIMER_STEPS * $dt/1000; if(o<0)o=0; printf \"%.1f\", o}")
+    proj=$(awk "BEGIN{printf \"%.1f\", $overhead + $full * $dt/1000}")
+    TIMER_TOTAL=$(awk "BEGIN{printf \"%.1f\", $TIMER_TOTAL + $proj}")
+    log "TIMER $tag: ${full} steps x ${dt}ms + ${overhead}s overhead = $(awk "BEGIN{printf \"%.2f\", $proj/3600}")h"
+    TIMER_ROWS+=("$tag|$elapsed|$full|$dt|$proj")
+}
+
 COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir ${TOKENIZER_DIR:-tokenizer} \
@@ -169,6 +269,7 @@ COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
   --research-dim -1 --target-active-params 0 \
   --compile-regional ${COMPILE_REGIONAL:-0} \
+  ${TIMER:+--timing-probe-steps $TIMER_STEPS} \
   --save-every 200 --eval-every -1 --target-tokens ${TOKENS}"
 [ -n "${MAX_SHARDS:-}" ] && COMMON="$COMMON --max-shards $MAX_SHARDS"
 
@@ -184,8 +285,12 @@ run() {
         local dir="${OUT_BASE}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
         local rc=0
+        local t_start=$(date +%s.%N)
+        local armlog="${dir}.probe.log"
         bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
-             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
+             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" ${TIMER:+| tee "$armlog"} >/dev/null || rc=$?
+        local t_end=$(date +%s.%N)
+        [ "$TIMER" -eq 1 ] && project_arm "$t" "$armlog" "$t_start" "$t_end"
         if [ "$ABORT" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
             ABORT=1
             log "INTERRUPTED $t  (resumes from its last checkpoint on the next run)"
@@ -195,7 +300,9 @@ run() {
         # research_sweep.sh can exit 0 without training anything, because its own
         # per-model state may already believe the models are finished; marking that
         # done would drop a point from the profile with no error anywhere.
-        if [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
+        if [ "$TIMER" -eq 1 ]; then
+            [ "$rc" -eq 0 ] || { FAILED_ARMS+=("$t"); log "FAIL $t (rc=$rc)"; }
+        elif [ "$rc" -eq 0 ] && [ -f "${dir}/depth_${depth}/results_depth_${depth}.tsv" ]; then
             mark_done "$t"; log "OK $t"
         else
             FAILED_ARMS+=("$t")
@@ -262,6 +369,20 @@ done
 
 echo ""
 echo "============================================================"
+if [ "$TIMER" -eq 1 ]; then
+    printf '  %-24s %10s %8s %10s %10s\n' arm measured steps "dt(ms)" projected
+    for r in "${TIMER_ROWS[@]}"; do
+        IFS='|' read -r a m f d pj <<< "$r"
+        printf '  %-24s %9ss %8s %10s %9sh\n' "$a" "$m" "$f" "$d" \
+            "$(awk "BEGIN{printf \"%.2f\", ${pj:-0}/3600}")"
+    done
+    echo "  ------------------------------------------------------------------"
+    echo "  projected total for the whole sweep: $(awk "BEGIN{printf \"%.2f\", $TIMER_TOTAL/3600}")h"
+    echo "  (startup, ${TIMER_STEPS} measured steps and final validation are all included per arm)"
+    echo "============================================================"
+    [ ${#FAILED_ARMS[@]} -gt 0 ] && { echo "  failed: ${FAILED_ARMS[*]}"; exit 1; }
+    exit 0
+fi
 REMAINING=()
 for a in "${ALL_ARMS[@]}"; do done_already "$a" || REMAINING+=("$a"); done
 log "  arms complete: $(( ${#ALL_ARMS[@]} - ${#REMAINING[@]} )) / ${#ALL_ARMS[@]}"

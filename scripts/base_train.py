@@ -691,6 +691,7 @@ parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="e
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
+parser.add_argument("--timing-probe-steps", type=int, default=0, help="stop after this many steps, but compute num_iterations, the LR schedule and the batch size from the real budget first. Used by the profile scripts' --timer-only to cost a sweep without running it: startup, per-step and final-validation time are all real, and the full run is projected from the measured dt (0 = disabled, run to completion)")
 parser.add_argument("--compile-regional", type=int, default=0, choices=[0, 1], help="compile each transformer layer separately instead of the whole model. Compile time then does not grow with depth (MST L=16: 58s vs 126s), at the cost of cross-layer fusion (~7%% slower steps). Use when only bpb is wanted; leave off for reported wall-clock numbers")
 parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory (overrides default)")
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
@@ -1762,6 +1763,9 @@ else:
     raise ValueError("No training horizon specified")
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
+if args.timing_probe_steps > 0:
+    print0(f"TIMING_PROBE full_iterations={num_iterations} probe_steps={args.timing_probe_steps} "
+           f"total_batch_size={total_batch_size}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 print0(f"Total training FLOPs (active):  {num_active_flops_per_token * total_tokens:e}")
@@ -2075,6 +2079,13 @@ if not resuming and device_type == "cuda":
 # Go!
 while True:
     last_step = step == num_iterations # normal end
+
+    # Timing probe: end early, but only after num_iterations, the schedules and the batch
+    # size have been derived from the real budget, so dt is the dt the full run would see.
+    # Ending through last_step (rather than break) keeps the final eval and save, which is
+    # exactly the tail latency the caller is trying to measure.
+    if args.timing_probe_steps > 0 and step >= args.timing_probe_steps:
+        last_step = True
 
     # early stop: force this to be the last step if we hit the token limit
     if args.early_stop_tokens > 0 and step * total_batch_size >= args.early_stop_tokens:
