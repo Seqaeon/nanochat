@@ -46,7 +46,7 @@ set -o pipefail
 FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
     echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [--timer-only] [depth ...]"
-    echo "  --timer-only runs TIMER_STEPS (default 12) steps of every arm and projects the"
+    echo "  --timer-only runs TIMER_STEPS (default 20) steps of every arm and projects the"
     echo "  full sweep from the measured dt, including startup and final-validation time."
     echo "  depths given positionally replace the built-in list for whichever arms run,"
     echo "  so '--mst-only 24' runs exactly one arm and nothing else."
@@ -146,7 +146,7 @@ case "$ARMS" in
 esac
 OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
-TIMER_STEPS="${TIMER_STEPS:-12}"
+TIMER_STEPS="${TIMER_STEPS:-20}"
 if [ "$TIMER" -eq 1 ]; then
     # A costing pass must not touch the real sweep: its own out tree, its own state file,
     # and no mark_done, so a later real run still sees every arm as outstanding.
@@ -222,12 +222,22 @@ project_arm() {                           # project_arm <tag> <log> <t_start> <t
     local tag="$1" alog="$2"
     local elapsed
     elapsed=$(awk "BEGIN{printf \"%.2f\", $4 - $3}")
-    local full dt
-    full=$(grep -oE 'TIMING_PROBE full_iterations=[0-9]+' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+    # base_train emits TIMING_PROBE_RESULT at the end of every probe. Prefer it: the
+    # human step line is printed or not depending on --log-every and where the loop exits.
+    local res
+    res=$(grep -oE 'TIMING_PROBE_RESULT [^|]*' "$alog" 2>/dev/null | tail -1)
+    local full dt timed
+    if [ -n "$res" ]; then
+        dt=$(printf '%s' "$res"   | grep -oE 'dt_ms=[0-9.]+'          | cut -d= -f2)
+        timed=$(printf '%s' "$res"| grep -oE 'timed_steps=[0-9]+'     | cut -d= -f2)
+        full=$(printf '%s' "$res" | grep -oE 'full_iterations=[0-9]+' | cut -d= -f2)
+        [ "${timed:-0}" -lt 1 ] && dt=""     # no post-warmup step was timed
+    fi
+    [ -z "$full" ] && full=$(grep -oE 'TIMING_PROBE full_iterations=[0-9]+' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
     # Fallback: base_train announces the horizon before training even without the probe flag.
     [ -z "$full" ] && full=$(grep -oE 'Calculated number of iterations from target ACTIVE FLOPs: [0-9,]+' "$alog" 2>/dev/null \
                              | tail -1 | grep -oE '[0-9,]+$' | tr -d ',')
-    dt=$(grep -oE 'dt: [0-9.]+ *ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
+    [ -z "$dt" ] && dt=$(grep -oE 'dt: [0-9.]+ *ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
     if [ -z "$full" ] || [ -z "$dt" ]; then
         log "TIMER $tag: could not parse (full_iterations='${full:-?}' dt='${dt:-?}'); measured ${elapsed}s only"
         if [ ! -s "$alog" ]; then

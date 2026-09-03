@@ -2223,6 +2223,17 @@ while True:
         # early-stop triggers before hitting a log_every boundary.
         debiased_at_step = smooth_train_loss / (1 - EMA_BETA**max(step, 1))
         print0(f"step {step:05d}/{num_iterations:05d} (final) | loss: {debiased_at_step:.6f} | early_stop: {int(args.early_stop_tokens > 0)}")
+        # Machine-readable result for --timer-only. Emitted unconditionally at the end of
+        # a probe so the caller never has to scrape a human log line, which turned out to
+        # be printed or not depending on --log-every and where the loop exits.
+        # total_training_time accumulates dt only for step > 10, so this is the mean of
+        # the post-warmup steps: exactly the steady-state figure a projection needs.
+        if args.timing_probe_steps > 0:
+            _timed = max(step - 10, 0)
+            _dt_ms = (total_training_time / _timed * 1000) if _timed > 0 else float("nan")
+            print0(f"TIMING_PROBE_RESULT dt_ms={_dt_ms:.2f} timed_steps={_timed} "
+                   f"ran_steps={step} full_iterations={num_iterations} "
+                   f"total_batch_size={total_batch_size}")
         break
 
     # -------------------------------------------------------------------------
