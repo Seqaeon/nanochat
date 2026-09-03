@@ -278,9 +278,11 @@ run() {
         if [ "$TIMER" -eq 1 ]; then
             # A real pipeline, not a variable that expands to "|": bash parses redirections
             # before expanding, so the old ${TIMER:+| tee ...} became literal filenames.
+            # Deliberately quiet on the terminal: a costing pass should print its TIMER
+            # lines and nothing else. Everything still lands in the arm log and $LOGFILE.
             bash scripts/research_sweep.sh $COMMON --timing-probe-steps "$TIMER_STEPS" \
                  --out-dir "$dir" --seed "$s" "$@" "$depth" 2>&1 \
-                 | tee "$armlog" | tee -a "$LOGFILE" || rc=$?
+                 | tee "$armlog" >> "$LOGFILE" || rc=$?
         else
             bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
                  "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
