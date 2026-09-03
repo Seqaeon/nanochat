@@ -36,9 +36,8 @@ TIMER ISOF_mst_d32_s1: 11062 steps x 3672.67ms + 1358.4s overhead = 11.66h
   ISOF_mst_d28_s1             350.23s     15684    3104.91      14.14h
   ISOF_mst_d32_s1            1431.83s    11062    3672.67     11.66h
   ------------------------------------------------------------------
-  projected total for the whole sweep: 21.99h
+  projected total for the whole sweep: 81.86h
   (startup, 20 measured steps and final validation are all included per arm)
 ============================================================
 
-=== ISOF_mst_d32_s1 (depth 32, C=9.0e18 active FLOPs) ===
-TIMER ISOF_mst_d32_s1: 11062 steps x 3672.67ms + 1358.4s overhead = 11.66h
+
