@@ -273,7 +273,84 @@ softmax.
 
 wrote scratch/paper_bench.json
 
+  mst   T=262144    1245.23 ms      210519 tok/s   (median 1251.31, +0%)
 
+
+running: a4   arms: mst
+
+=== depth 16  D=1024 d=256 ===
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T= 65536      82.74 ms      792060 tok/s   (median 84.90, +3%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=131072     196.28 ms      667787 tok/s   (median 198.40, +1%)
+  mst   T=262144     521.70 ms      502484 tok/s   (median 526.10, +1%)
+
+
+=== depth 24  D=1536 d=384 ===
+[A4] prefill (batch 1)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T= 65536     186.40 ms      351583 tok/s   (median 190.77, +2%)
+/usr/local/lib/python3.12/site-packages/torch/_inductor/lowering.py:7242: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+  mst   T=131072     447.14 ms      293136 tok/s   (median 453.55, +1%)
+  mst   T=262144    1192.39 ms      219848 tok/s   (median 1199.24, +1%)
+
+
+running: a4   arms: dense
+
+=== depth 16  D=1024 d=256 ===
+[A4] prefill (batch 1)
+  dense T= 65536     114.45 ms      572613 tok/s   (median 117.09, +2%)
+  dense T=131072     339.68 ms      385866 tok/s   (median 344.54, +1%)
+  dense T=262144    1108.78 ms      236425 tok/s   (median 1110.95, +0%)
+
+=== depth 18  D=1152 d=288 ===
+[A4] prefill (batch 1)
+  dense T= 65536     158.36 ms      413831 tok/s   (median 162.18, +2%)
+  dense T=131072     475.17 ms      275840 tok/s   (median 477.18, +0%)
+  dense T=262144    1541.10 ms      170102 tok/s   (median 1545.01, +0%)
+
+=== depth 20  D=1280 d=320 ===
+[A4] prefill (batch 1)
+  dense T= 65536     191.91 ms      341497 tok/s   (median 198.03, +3%)
+  dense T=131072     553.01 ms      237017 tok/s   (median 559.78, +1%)
+  dense T=262144    1779.04 ms      147351 tok/s   (median 1781.72, +0%)
+
+=== depth 22  D=1408 d=352 ===
+[A4] prefill (batch 1)
+  dense T= 65536     248.43 ms      263797 tok/s   (median 255.03, +3%)
+  dense T=131072     722.62 ms      181384 tok/s   (median 725.29, +0%)
+  dense T=262144    2326.53 ms      112676 tok/s   (median 2329.93, +0%)
+
+
+
+=== depth 24  D=1536 d=384 ===
+[A4] prefill (batch 1)
+  mst   T=524288    3642.30 ms      143944 tok/s   (median 3655.09, +0%)
 
 
 

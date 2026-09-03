@@ -148,9 +148,9 @@ structural, not incidental: its total-to-active matrix ratio is $3.74$ against
 MST's $1.48$ and is flat across depth; at equal training data MST is above the
 dense curve on FLOPs per token where MoL is below it, at $0.67\times$ its
 parameters; at matched quality MST's prefill overtakes dense beyond
-$T{\approx}190$K and is $1.10\times$ faster at $T{=}262144$, because its windowed
-streams scale as $T^{1.41}$ against dense's $T^{1.70}$, where MoL reports its own
-sparse path losing to dense; and MoL's central mechanism, gating
+$T{\approx}190$K, reaching $1.31\times$ at $T{=}524288$ on $4.3\times$ less peak
+memory, because its windowed streams scale as $T^{1.59}$ against dense's
+$T^{1.85}$, where MoL reports its own sparse path losing to dense; and MoL's central mechanism, gating
 attention, \emph{costs} $1.86\times$ what it saves when transplanted into MST
 (Section~\ref{sec:mol}).
 
@@ -772,9 +772,9 @@ in Section~\ref{sec:results}: MST reaches roughly half dense's hardware
 utilization, and a step-time comparison at equal depth is uninformative because
 the dense arm there carries $1.44\times$ the parameters and $3.22\times$ the
 FLOPs per token. Long-context prefill is different. MST's windowed streams scale
-as $T^{1.41}$ against dense's $T^{1.70}$, so matched \emph{on quality} MST
-overtakes dense beyond $T{\approx}190$K and is $1.10\times$ faster at
-$T{=}262144$ (Table~\ref{tab:longctx}). MoL reports the opposite for its own
+as $T^{1.59}$ against dense's $T^{1.85}$, so matched \emph{on quality} MST
+overtakes dense beyond $T{\approx}190$K and is $1.31\times$ faster at
+$T{=}524288$, on $4.3\times$ less peak memory (Table~\ref{tab:longctx2}). MoL reports the opposite for its own
 sparse path (its Section~5.6): $2.8\times$ slower than its batched fallback on
 two hardware classes, decode slower than dense at every measured context, and
 dense still ahead on prefill at $T\!\leq\!2$K. Both architectures reduce FLOPs;
@@ -1004,15 +1004,24 @@ full-context layers of width \dmodel; MST keeps one full-context \emph{stream} o
 width $\dmodel/\nsub$ in one layer of four, so its quadratic term carries roughly
 a sixteenth of the weight.
 
-The consequence is a crossover rather than a constant gap
-(Table~\ref{tab:longctx}). Matched on quality, MST at $L{=}24$ is $0.72\times$
-dense's prefill speed at $T{=}65536$, $0.90\times$ at $T{=}131072$ and
-$\mathbf{1.10\times}$ at $T{=}262144$; the curves cross near $T{\approx}190$K,
-bracketed by measurements on either side. Matched on FLOPs per token the
-crossover is later, near $T{\approx}336$K; matched on parameters MST is ahead at
-every length measured. This is the one wall-clock axis on which we claim an
-advantage, and it is not an artifact of comparing models at equal depth: the
-dense arm here is the one that reaches MST's \bpb.
+The consequence is a crossover rather than a constant gap, and the gap keeps
+widening past it (Table~\ref{tab:longctx2}). Matched on quality, MST at $L{=}24$
+runs at $0.70\times$ dense's prefill speed at $T{=}65536$, $0.88\times$ at
+$T{=}131072$, $1.10\times$ at $T{=}262144$ and $\mathbf{1.31\times}$ at
+$T{=}524288$; the curves cross near $T{\approx}190$K, bracketed by measurements on
+either side. Matched on FLOPs per token the crossover is later and also reached,
+at $1.11\times$ by $T{=}524288$; matched on parameters MST is ahead at every
+length, reaching $2.06\times$. This is the one wall-clock axis on which we claim
+an advantage, and it is not an artifact of equal-depth comparison: the dense arm
+here is the one that reaches MST's \bpb.
+
+The same asymmetry appears in memory, which we did not anticipate. At
+$T{=}524288$ MST $L{=}24$ peaks at $20.7$\,GB against the quality-matched dense
+arm's $88.5$, a factor of $4.3$. Attention over a $32$- or $127$-token window
+needs a working set that does not grow with $T$, and three of MST's four streams
+are in that regime at every layer, where dense holds full context in one layer of
+four at the full \dmodel. The practical consequence is that the context length at
+which prefill stops fitting on one device is several times further out for MST.
 
 \begin{table}[t]
 \caption{Measured throughput and memory. Weights are randomly initialized;
@@ -1044,7 +1053,10 @@ architecture-level measurements independent of the trained values.
 \caption{Long-context prefill latency (ms, batch 1, H200, \texttt{torch.compile} on).
 Dense $L{=}17$ is the arm that reaches MST $L{=}24$'s \bpb\ (0.7869 against dense's
 0.7988 at $L{=}16$ and 0.7755 at $L{=}18$) and is interpolated geometrically between
-the two measured neighbours. Ratios above $1$ mean MST is faster.}
+the two measured neighbours. Ratios above $1$ mean MST is faster. The output head
+is applied to all $T$ positions here, as \texttt{forward} computes it; autoregressive
+prefill projects only the final position and discards the rest, which is $13$--$16\%$
+of forward compute at these lengths and is near-identical work for both arms.}
 \label{tab:longctx}
 \begin{center}
 \begin{small}
@@ -1069,6 +1081,47 @@ matched params \ \ ($L{=}21$) & $1.17\times$ & $1.41\times$ & $1.71\times$ & \\
 \end{small}
 \end{center}
 \end{table}
+
+\begin{table}[t]
+\caption{Long-context prefill with the \emph{prefill-accurate} head: \texttt{lm\_head}
+is applied to the final position only, matching what autoregressive prefill does
+(\texttt{engine.py} discards the other rows). Latency in ms and peak allocation in GB,
+batch 1, H200, \texttt{torch.compile} on. Dense $L{=}17$ is the quality-matched arm,
+interpolated geometrically between the measured $L{=}16$ and $L{=}18$. Removing the
+discarded head is ratio-neutral: at $T{=}262144$ the matched-quality ratio is
+$1.096\times$ either way (cf.\ Table~\ref{tab:longctx}), so it costs both arms the same
+fraction and only changes what is measurable.}
+\label{tab:longctx2}
+\begin{center}
+\begin{small}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrr}
+\toprule
+ & $T{=}65$K & $T{=}131$K & $T{=}262$K & $T{=}524$K & exponent \\
+\midrule
+\multicolumn{6}{l}{\emph{latency (ms)}} \\
+MST $L{=}16$   &  74.44 & 179.79 &  484.77 & 1499.34 & 1.63 \\
+MST $L{=}20$   & 121.21 & 290.17 &  785.60 & 2388.46 & 1.60 \\
+MST $L{=}24$   & 176.27 & 427.46 & 1152.22 & 3467.01 & 1.59 \\
+dense $L{=}16$ & 104.38 & 318.89 & 1065.36 & 3834.22 & 1.85 \\
+dense $L{=}18$ & 146.69 & 445.98 & 1497.03 & 5392.30 & 1.85 \\
+dense $L{=}20$ & 180.85 & 531.93 & 1731.52 & 6120.20 & 1.82 \\
+dense $L{=}22$ & 234.61 & 698.06 & 2276.74 & 8641.42 & 1.92 \\
+\midrule
+\multicolumn{6}{l}{\emph{MST $L{=}24$ against its matched dense arm (higher is better for MST)}} \\
+matched quality \ ($L{=}17$) & $0.70\times$ & $0.88\times$ & $1.10\times$ & $\mathbf{1.31\times}$ & \\
+matched FLOPs/tok ($L{=}16$) & $0.59\times$ & $0.75\times$ & $0.93\times$ & $\mathbf{1.11\times}$ & \\
+matched params \ \ ($L{=}21$) & $1.15\times$ & $1.41\times$ & $1.70\times$ & $\mathbf{2.06\times}$ & \\
+\midrule
+\multicolumn{6}{l}{\emph{peak allocation (GB)}} \\
+MST $L{=}24$   & 4.7 &  6.9 & 11.5 & \textbf{20.7} & \\
+dense $L{=}17$ & 13.9 & 24.5 & 45.8 & 88.5 & \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
 
 
 \begin{figure}[t]
