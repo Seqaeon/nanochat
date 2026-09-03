@@ -255,10 +255,21 @@ project_arm() {                           # project_arm <tag> <log> <t_start> <t
         if [ ! -s "$alog" ]; then
             log "   arm log ${alog} is missing or empty"
         else
-            log "   arm log ${alog} has $(wc -l < "$alog") lines; last line:"
-            log "   $(tail -1 "$alog" | cut -c1-140)"
-            grep -q 'TIMING_PROBE' "$alog" || log "   no TIMING_PROBE line: --timing-probe-steps did not reach base_train"
-            grep -qE 'dt: [0-9.]+ *ms' "$alog" || log "   no step line: the arm never reached step ${TIMER_STEPS} (log-every is ${LOG_EVERY:-200})"
+            log "   arm log ${alog} ($(wc -l < "$alog") lines)"
+            grep -q 'TIMING_PROBE' "$alog" \
+                || log "   --timing-probe-steps did not reach base_train (no TIMING_PROBE line)"
+            grep -qE 'dt: [0-9.]+ *ms' "$alog" \
+                || log "   the arm never logged a training step"
+            # Surface the failure itself rather than making the caller go and find it.
+            local marks
+            marks=$(grep -nEi 'traceback|error|assert|out of memory|killed|Exception|abort' "$alog" \
+                    | tail -6 | cut -c1-160)
+            if [ -n "$marks" ]; then
+                log "   failure markers in the arm log:"
+                while IFS= read -r l; do log "     $l"; done <<< "$marks"
+            fi
+            log "   last 20 lines of the arm log:"
+            while IFS= read -r l; do log "     $(printf '%s' "$l" | cut -c1-160)"; done < <(tail -20 "$alog")
         fi
         TIMER_ROWS+=("$tag|$elapsed|?|?|?")
         return
@@ -294,6 +305,12 @@ run() {
         log ""; log "=== $t (depth $depth, ${TOKENS} tokens) ==="
         local dir="${OUT_BASE}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
+        # research_compare.py keeps its OWN sweep_state.json inside the arm dir and skips
+        # any model it has already recorded as completed. A probe trains 12 steps and
+        # saves, so the arm is marked complete and every later probe skips training
+        # entirely, leaving a log that stops at the depth banner. A costing pass is
+        # throwaway, so start it from a clean directory every time.
+        [ "$TIMER" -eq 1 ] && rm -rf "$dir"
         local rc=0
         local t_start=$(date +%s.%N)
         local armlog="${dir}.probe.log"
