@@ -1,0 +1,326 @@
+<title>Iso-FLOP Frontier</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --bg:#F3F6F6; --surface:#FFFFFF; --surface-2:#EAEFEF;
+  --ink:#131819; --ink-2:#3A4547; --muted:#667577;
+  --line:#D5DCDC; --line-soft:#E6EBEB;
+  --mst:#BE3F66; --dense:#2C6B8E;
+  --pos:#20734F; --neg:#A93C2E; --warn:#8A6320;
+  --pos-bg:rgba(32,115,79,.11); --neg-bg:rgba(169,60,46,.10); --warn-bg:rgba(138,99,32,.12);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1213; --surface:#161C1D; --surface-2:#1D2425;
+    --ink:#E9EEEE; --ink-2:#C2CCCC; --muted:#8A9B9D;
+    --line:#2A3334; --line-soft:#212829;
+    --mst:#E97493; --dense:#6DB2D6;
+    --pos:#54BE93; --neg:#E5786A; --warn:#D3A44E;
+    --pos-bg:rgba(84,190,147,.14); --neg-bg:rgba(229,120,106,.13); --warn-bg:rgba(211,164,78,.14);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1213; --surface:#161C1D; --surface-2:#1D2425;
+  --ink:#E9EEEE; --ink-2:#C2CCCC; --muted:#8A9B9D;
+  --line:#2A3334; --line-soft:#212829;
+  --mst:#E97493; --dense:#6DB2D6;
+  --pos:#54BE93; --neg:#E5786A; --warn:#D3A44E;
+  --pos-bg:rgba(84,190,147,.14); --neg-bg:rgba(229,120,106,.13); --warn-bg:rgba(211,164,78,.14);
+}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px; margin:0 auto; padding:44px 28px 96px; display:flex; flex-direction:column; gap:38px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
+header{display:flex; flex-direction:column; gap:13px; border-bottom:1px solid var(--line); padding-bottom:24px}
+.eyebrow{font-size:11.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase; color:var(--muted)}
+h1{margin:0; font-size:34px; line-height:1.12; font-weight:700; letter-spacing:-.022em; text-wrap:balance}
+.lede{margin:0; max-width:66ch; color:var(--ink-2)}
+.invariant{display:inline-flex; gap:9px; align-items:baseline; align-self:flex-start;
+  padding:7px 13px; border:1px solid var(--line); border-radius:3px; background:var(--surface)}
+.invariant b{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:600}
+section{display:flex; flex-direction:column; gap:16px}
+h2{margin:0; font-size:13px; font-weight:600; letter-spacing:.11em; text-transform:uppercase; color:var(--muted)}
+h2 .sub{text-transform:none; letter-spacing:0; font-weight:400; color:var(--muted); opacity:.8}
+p{margin:0; max-width:72ch; color:var(--ink-2)}
+.note{font-size:13.5px; color:var(--muted); max-width:78ch}
+.panel{background:var(--surface); border:1px solid var(--line); padding:20px}
+
+.verdict{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line)}
+.v{background:var(--surface); padding:19px; display:flex; flex-direction:column; gap:5px}
+.v .k{font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+.v .n{font-size:31px; font-weight:600; letter-spacing:-.03em; line-height:1.05}
+.v .s{font-size:12.5px; color:var(--muted)}
+.v.win .n{color:var(--pos)} .v.lose .n{color:var(--neg)}
+.v.d .k{color:var(--dense)} .v.m .k{color:var(--mst)}
+
+svg{display:block; width:100%; height:auto; overflow:visible}
+.grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px}
+.ct{font-size:13.5px; font-weight:600; margin-bottom:2px}
+.cs{font-size:11.5px; color:var(--muted); margin-bottom:8px}
+.legend{display:flex; gap:20px; flex-wrap:wrap; font-size:12.5px; color:var(--ink-2); margin-top:12px}
+.legend i{display:inline-block; width:18px; height:2px; vertical-align:middle; margin-right:7px}
+.legend i.vt{width:9px;height:9px;border-radius:50%;background:none;border:2px solid var(--muted)}
+
+.tablewrap{overflow-x:auto; border:1px solid var(--line); background:var(--surface)}
+table{border-collapse:collapse; width:100%; min-width:900px; font-size:13px}
+th,td{padding:8px 12px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line-soft)}
+th:first-child,td:first-child{text-align:left}
+thead th{font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted);
+  font-weight:600; border-bottom:1px solid var(--line); background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:none}
+tr.d td:first-child{color:var(--dense); font-weight:600}
+tr.m td:first-child{color:var(--mst); font-weight:600}
+tr.best{background:var(--pos-bg)}
+.finding{display:grid; grid-template-columns:auto 1fr; gap:13px 17px; align-items:start}
+.finding .n{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600; color:var(--muted);
+  border:1px solid var(--line); padding:2px 7px; border-radius:2px; line-height:1.5}
+.finding .b{display:flex; flex-direction:column; gap:4px}
+.finding .b b{font-weight:600; color:var(--ink)}
+.caution{border-left:3px solid var(--warn); background:var(--warn-bg); padding:14px 18px; font-size:13.5px}
+.caution b{color:var(--ink)}
+footer{border-top:1px solid var(--line); padding-top:20px; font-size:12.5px; color:var(--muted)}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">MST &middot; p12 isoFLOP profile</div>
+  <h1>MST's optimum sits under dense's whole curve</h1>
+  <p class="lede">Seven models trained to the same active training-FLOPs budget, each free to
+  choose its own depth. This is the comparison that depends on no token-budget rule: fix the
+  compute, let each architecture spend it however suits it, and read which one reaches the lower
+  bits per byte. Every arm is plotted against six cost axes, and then against measured step time.</p>
+  <div class="invariant mono"><b>active training FLOPs, all arms</b> 6.7105&times;10<sup>17</sup></div>
+</header>
+
+<section>
+  <h2>At equal compute</h2>
+  <div class="verdict" id="verdict"></div>
+</section>
+
+<section>
+  <h2>Quality against cost <span class="sub">— six axes, same seven runs</span></h2>
+  <div class="grid" id="grid"></div>
+  <div class="legend">
+    <span><i style="background:var(--dense)"></i>dense L=8&ndash;14</span>
+    <span><i style="background:var(--mst)"></i>MST L=12/16/24</span>
+    <span><i class="vt"></i>fitted optimum</span>
+  </div>
+  <p class="note">Quadratic fits in log(x). The dense fit has four points and residuals inside
+  &plusmn;0.00013 bpb on the FLOPs axis; the MST fit has three, so its parabola is exactly
+  determined and its vertex is interpolated rather than corroborated. Lower and further left is
+  better on every panel.</p>
+</section>
+
+<section>
+  <h2>Step time <span class="sub">— what the FLOPs advantage actually costs</span></h2>
+  <div class="grid" id="tgrid"></div>
+  <div class="caution">
+    <b>These are measured step times at a common <code>--device-batch-size 32</code>.</b>
+    Read them alongside the token counts in the table: the isoFLOP budget is fixed while FLOPs
+    per token varies, so a cheaper model processes more tokens to spend the same compute. MST
+    L=16 trains on 1.17e9 tokens against dense L=12's 9.09e8.
+  </div>
+</section>
+
+<section>
+  <h2>Every arm, every axis</h2>
+  <div class="tablewrap"><table>
+    <thead><tr>
+      <th>Arm</th><th>bpb</th><th>Act FLOPs/tok</th><th>Tot FLOPs/tok</th>
+      <th>Act params</th><th>Tot params</th><th>Act matrices</th><th>Tot matrices</th>
+      <th>Tokens</th><th>dt (ms)</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Reading it</h2>
+  <div class="panel finding">
+    <span class="n">01</span>
+    <div class="b"><b>L=24 is not broken. It is the right arm of the parabola.</b>
+    <span>At a fixed compute budget, depth is bought with tokens. Past the optimum the token loss
+    outweighs the capacity gain and bpb rises again. Dense does the same thing: L=14 (0.874479) is
+    worse than L=12 (0.870475). MST L=24 sitting above MST L=16 is the profile working, not a
+    defect in that configuration and not a consequence of the pinned head dimension.</span></div>
+
+    <span class="n">02</span>
+    <div class="b"><b>MST wins on all six cost axes at its optimum, by very different margins.</b>
+    <span>On FLOPs per token and on matrix parameters the win is clear. On total parameters it is
+    marginal, because MST carries the streams it does not activate. That ordering is the paper's
+    thesis stated as a picture: MST moves cost off the compute axis and onto the storage
+    axis.</span></div>
+
+    <span class="n">03</span>
+    <div class="b"><b>The FLOPs win does not yet convert into step time.</b>
+    <span>At its optimum MST spends 908 ms per step against dense's 448, a factor of 2.03, while
+    using 0.78&times; the FLOPs per token. That is the MFU gap showing up in the headline
+    experiment. It does not weaken the isoFLOP result, which is a FLOPs claim and standard for an
+    architecture paper, but a reviewer will ask and the paper should state it.</span></div>
+
+    <span class="n">04</span>
+    <div class="b"><b>The margin is thin and rests on three points.</b>
+    <span>One more MST arm fixes that. L=8 is the cheapest valid depth (sub_dim 128, two heads per
+    stream) and lands on the left arm, where MST currently has a single point.</span></div>
+  </div>
+</section>
+
+<footer>All arms at 6.7105&times;10<sup>17</sup> active training FLOPs via
+<code>--target-active-flops</code>, seed 1. MST is the headline SP2_k1 config with per-stream
+value embeddings, N=4, sub_head_dim 64. d<sub>model</sub> = 64L rounded to a multiple of 128,
+T=2048, vocabulary 32,768. <code>dt</code> is the measured milliseconds per optimizer step at
+<code>--device-batch-size 32</code>, as reported by the run. Token counts are exact:
+training FLOPs divided by active FLOPs per token.</footer>
+</div>
+
+<script>
+// L, actFlops, totFlops, totParams, actParams, totMatrices, actMatrices, trainF, bpb, dt_ms, batch
+const DENSE=[
+ [8 ,2.862643e8, 286264320, 125829648,125829648, 25166336, 25166336,6.710298e17,0.891635, 214.50, 262144],
+ [10,4.816944e8, 481694400, 195953460,195953460, 49152800, 49152800,6.710163e17,0.874374, 316.17, 524288],
+ [12,7.384666e8, 738466560, 286262424,286262424, 84935808, 84935808,6.709641e17,0.870475, 447.88, 524288],
+ [14,1.101014e9,1101014208, 399115836,399115836,134874656,134874656,6.710514e17,0.874479, 646.18, 524288]];
+const MST=[
+ [12,3.184658e8, 382166784, 234405144,223788312, 33078528, 22461696,6.710436e17,0.883328, 616.06, 524288],
+ [16,5.745500e8, 725544960, 413224992,388059168, 77680640, 52514816,6.709891e17,0.868794, 908.24, 524288],
+ [24,1.481481e9,1991089152, 964359216,879424560,259716096,174781440,6.710885e17,0.887706,1821.42,1048576]];
+const AF=1,TF=2,TP=3,AP=4,TM=5,AM=6,TRF=7,B=8,DT=9;
+const tokens = p => p[TRF]/p[AF];   // exact: budget / cost per token
+
+function quadfit(pts, fx, fy){
+  const S=[0,0,0,0,0], T=[0,0,0];
+  for(const p of pts){ const x=Math.log10(fx(p)), y=fy(p);
+    let xk=1; for(let k=0;k<5;k++){ S[k]+=xk; xk*=x; }
+    xk=1; for(let k=0;k<3;k++){ T[k]+=y*xk; xk*=x; } }
+  const A=[[S[0],S[1],S[2],T[0]],[S[1],S[2],S[3],T[1]],[S[2],S[3],S[4],T[2]]];
+  for(let i=0;i<3;i++){
+    let piv=i; for(let r=i+1;r<3;r++) if(Math.abs(A[r][i])>Math.abs(A[piv][i])) piv=r;
+    [A[i],A[piv]]=[A[piv],A[i]];
+    for(let r=0;r<3;r++){ if(r===i) continue; const f=A[r][i]/A[i][i];
+      for(let c=i;c<4;c++) A[r][c]-=f*A[i][c]; } }
+  return {c:A[0][3]/A[0][0], b:A[1][3]/A[1][1], a:A[2][3]/A[2][2]};
+}
+const ev=(f,x)=>f.a*x*x+f.b*x+f.c;
+const vertex=f=>{const x=-f.b/(2*f.a); return {x,y:ev(f,x)};};
+
+// ---------- generic panel ----------
+function chart(title, sub, fx, fy, opts){
+  opts = opts || {};
+  const W=430,H=280,PAD={l:58,r:20,t:16,b:42}, IW=W-PAD.l-PAD.r, IH=H-PAD.t-PAD.b;
+  const all=DENSE.concat(MST);
+  const xs=all.map(p=>Math.log10(fx(p))), ys=all.map(fy);
+  const xr=Math.max(...xs)-Math.min(...xs), yr=Math.max(...ys)-Math.min(...ys);
+  const x0=Math.min(...xs)-xr*0.10, x1=Math.max(...xs)+xr*0.10;
+  const y0=Math.min(...ys)-yr*0.14, y1=Math.max(...ys)+yr*0.14;
+  const X=v=>PAD.l+(v-x0)/(x1-x0)*IW, Y=v=>PAD.t+(y1-v)/(y1-y0)*IH;
+  let g='';
+  for(let i=0;i<=4;i++){
+    const t=y0+(y1-y0)*i/4, yy=Y(t).toFixed(1);
+    g+=`<line x1="${PAD.l}" y1="${yy}" x2="${W-PAD.r}" y2="${yy}" stroke="var(--line-soft)"/>`;
+    g+=`<text x="${PAD.l-9}" y="${(+yy+4).toFixed(1)}" text-anchor="end" font-size="10"
+         fill="var(--muted)" class="mono">${opts.yfmt(t)}</text>`;
+  }
+  for(const p of all){
+    const lx=Math.log10(fx(p));
+    g+=`<line x1="${X(lx).toFixed(1)}" y1="${PAD.t}" x2="${X(lx).toFixed(1)}"
+         y2="${PAD.t+IH}" stroke="var(--line-soft)" opacity=".7"/>`;
+  }
+  for(let i=0;i<=3;i++){
+    const lx=x0+(x1-x0)*i/3;
+    g+=`<text x="${X(lx).toFixed(1)}" y="${PAD.t+IH+16}" text-anchor="middle" font-size="10"
+         fill="var(--muted)" class="mono">${opts.xfmt(10**lx)}</text>`;
+  }
+  g+=`<line x1="${PAD.l}" y1="${PAD.t+IH}" x2="${W-PAD.r}" y2="${PAD.t+IH}" stroke="var(--line)"/>`;
+  g+=`<line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t+IH}" stroke="var(--line)"/>`;
+
+  function series(pts,color,dy){
+    let s='';
+    if(opts.fit!==false){
+      const f=quadfit(pts,fx,fy), v=vertex(f);
+      const lo=Math.min(...pts.map(p=>Math.log10(fx(p))))-xr*0.04;
+      const hi=Math.max(...pts.map(p=>Math.log10(fx(p))))+xr*0.04;
+      let d=''; for(let i=0;i<=70;i++){const x=lo+(hi-lo)*i/70; d+=`${X(x).toFixed(1)},${Y(ev(f,x)).toFixed(1)} `;}
+      s+=`<polyline points="${d.trim()}" fill="none" stroke="${color}" stroke-width="2" opacity=".8"/>`;
+      if(v.x>x0&&v.x<x1&&v.y>y0&&v.y<y1)
+        s+=`<circle cx="${X(v.x).toFixed(1)}" cy="${Y(v.y).toFixed(1)}" r="5.5" fill="none"
+             stroke="${color}" stroke-width="2"/>`;
+    } else {
+      const sorted=[...pts].sort((a,b)=>fx(a)-fx(b));
+      s+=`<polyline points="${sorted.map(p=>`${X(Math.log10(fx(p))).toFixed(1)},${Y(fy(p)).toFixed(1)}`).join(' ')}"
+           fill="none" stroke="${color}" stroke-width="2" opacity=".8"/>`;
+    }
+    for(const p of pts){
+      const x=X(Math.log10(fx(p))), y=Y(fy(p));
+      s+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${color}"
+           stroke="var(--surface)" stroke-width="1.5"/>`;
+      s+=`<text x="${x.toFixed(1)}" y="${(y+dy).toFixed(1)}" text-anchor="middle" font-size="10"
+           font-weight="600" fill="${color}" class="mono">L${p[0]}</text>`;
+    }
+    return s;
+  }
+  g+=series(DENSE,'var(--dense)',-10);
+  g+=series(MST,'var(--mst)',16);
+  g+=`<text transform="translate(13,${PAD.t+IH/2}) rotate(-90)" text-anchor="middle" font-size="10"
+       fill="var(--muted)">${opts.ylab}</text>`;
+  g+=`<text x="${(PAD.l+IW/2).toFixed(0)}" y="${H-4}" text-anchor="middle" font-size="10"
+       fill="var(--muted)">${opts.xlab}</text>`;
+  return `<div class="panel"><div class="ct">${title}</div><div class="cs">${sub}</div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">${g}</svg></div>`;
+}
+const G=v=>(v/1e9).toFixed(2)+'G', M=v=>(v/1e6).toFixed(0)+'M';
+const bpbF=v=>v.toFixed(3), bpb=p=>p[B];
+
+document.getElementById('grid').innerHTML =
+   chart('Active FLOPs per token','the inference-cost axis',p=>p[AF],bpb,
+         {xfmt:G,yfmt:bpbF,xlab:'active FLOPs / token (log)',ylab:'bits per byte'})
+ + chart('Total FLOPs per token','every stream, gated or not',p=>p[TF],bpb,
+         {xfmt:G,yfmt:bpbF,xlab:'total FLOPs / token (log)',ylab:'bits per byte'})
+ + chart('Active matrix parameters','the sparsity axis',p=>p[AM],bpb,
+         {xfmt:M,yfmt:bpbF,xlab:'active matrix params (log)',ylab:'bits per byte'})
+ + chart('Total matrix parameters','what must be stored',p=>p[TM],bpb,
+         {xfmt:M,yfmt:bpbF,xlab:'total matrix params (log)',ylab:'bits per byte'})
+ + chart('Active parameters','including embeddings',p=>p[AP],bpb,
+         {xfmt:M,yfmt:bpbF,xlab:'active params (log)',ylab:'bits per byte'})
+ + chart('Total parameters',"MST's weakest axis",p=>p[TP],bpb,
+         {xfmt:M,yfmt:bpbF,xlab:'total params (log)',ylab:'bits per byte'});
+
+const msF=v=>v.toFixed(0);
+document.getElementById('tgrid').innerHTML =
+   chart('Step time against compute per token','measured dt; lower is better',
+         p=>p[AF],p=>p[DT],{fit:false,xfmt:G,yfmt:msF,
+         xlab:'active FLOPs / token (log)',ylab:'dt, ms per step'})
+ + chart('Step time against active parameters','measured dt; lower is better',
+         p=>p[AP],p=>p[DT],{fit:false,xfmt:M,yfmt:msF,
+         xlab:'active params (log)',ylab:'dt, ms per step'});
+
+// ---------- verdict ----------
+const fd=quadfit(DENSE,p=>p[AF],bpb), fm=quadfit(MST,p=>p[AF],bpb);
+const vd=vertex(fd), vm=vertex(fm);
+const bestD=DENSE.reduce((a,b)=>a[B]<b[B]?a:b), bestM=MST.reduce((a,b)=>a[B]<b[B]?a:b);
+document.getElementById('verdict').innerHTML=`
+  <div class="v m"><span class="k">MST optimum</span><span class="n mono">${vm.y.toFixed(4)}</span>
+    <span class="s">bpb, near L=16 at ${(10**vm.x/1e8).toFixed(2)}e8 FLOPs/tok</span></div>
+  <div class="v d"><span class="k">dense optimum</span><span class="n mono">${vd.y.toFixed(4)}</span>
+    <span class="s">bpb, near L=12 at ${(10**vd.x/1e8).toFixed(2)}e8 FLOPs/tok</span></div>
+  <div class="v win"><span class="k">quality margin</span>
+    <span class="n mono">${(vd.y-vm.y).toFixed(5)}</span>
+    <span class="s">bpb better, at identical training compute</span></div>
+  <div class="v lose"><span class="k">step time</span>
+    <span class="n mono">${(bestM[DT]/bestD[DT]).toFixed(2)}&times;</span>
+    <span class="s">slower per step, best arm against best arm</span></div>`;
+
+// ---------- table ----------
+const sci=n=>n.toExponential(2).replace('e+','e'), num=n=>n.toLocaleString('en-US');
+const row=(p,cls,best)=>`<tr class="${cls}${p[B]===best?' best':''}">
+  <td>${cls==='d'?'dense':'MST'} L=${p[0]}</td>
+  <td class="mono">${p[B].toFixed(6)}</td><td class="mono">${sci(p[AF])}</td>
+  <td class="mono">${sci(p[TF])}</td><td class="mono">${num(p[AP])}</td>
+  <td class="mono">${num(p[TP])}</td><td class="mono">${num(p[AM])}</td>
+  <td class="mono">${num(p[TM])}</td>
+  <td class="mono">${sci(tokens(p))}</td><td class="mono">${p[DT].toFixed(2)}</td></tr>`;
+document.getElementById('tbody').innerHTML =
+  DENSE.map(p=>row(p,'d',bestD[B])).join('') + MST.map(p=>row(p,'m',bestM[B])).join('');
+</script>

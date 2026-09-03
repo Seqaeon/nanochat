@@ -43,9 +43,9 @@
 # ============================================================================
 set -o pipefail
 
-FORCE=0; SEEDS=1; ARMS=both; CLI_DEPTHS=()
+FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=()
 usage() {
-    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|both] [depth ...]"
+    echo "usage: $0 [--force] [--seeds N] [--arms dense|mst|mol|all] [depth ...]"
     echo "  depths given positionally replace the built-in list for whichever arms run,"
     echo "  so '--mst-only 24' runs exactly one arm and nothing else."
 }
@@ -60,6 +60,7 @@ while [[ $# -gt 0 ]]; do
         --arms) ARMS="$2"; shift 2 ;;
         --dense-only) ARMS=dense; shift ;;
         --mst-only) ARMS=mst; shift ;;
+        --mol-only) ARMS=mol; shift ;;
         -*) echo "unknown arg: $1"; usage; exit 1 ;;
         *) CLI_DEPTHS+=("$1"); shift ;;
     esac
@@ -67,9 +68,10 @@ done
 for d in "${CLI_DEPTHS[@]}"; do
     [[ "$d" =~ ^[0-9]+$ ]] || { echo "depth must be a positive integer, got '$d'"; usage; exit 1; }
 done
+[ "$ARMS" = "both" ] && ARMS=all          # accepted for compatibility with earlier invocations
 case "$ARMS" in
-    both|dense|mst) ;;
-    *) echo "--arms must be one of: dense, mst, both (got '$ARMS')"; exit 1 ;;
+    all|dense|mst|mol) ;;
+    *) echo "--arms must be one of: dense, mst, mol, all (got '$ARMS')"; exit 1 ;;
 esac
 
 FLOPS="${FLOPS:-6.710562e17}"
@@ -85,14 +87,26 @@ DENSE_DEPTHS="${DENSE_DEPTHS-8 10 12 14}"
 # single suspect measurement pull the isoFLOP frontier down. L=12 and L=24 bracket the
 # optimum at this budget from below and above, which is what the profile needs.
 MST_DEPTHS="${MST_DEPTHS-12 16 24}"
+# MoL (Ternovtsii & Bilak 2026) as its own arm, in the 1+3of15 topology at d_thin = D/4
+# that reproduces their published parameter counts exactly. Its thin blocks are wrapped in
+# per-block W_down/W_up, so it costs far more per token than MST at equal depth (8.09e8
+# against 5.75e8 at L=16); 8/12/16 therefore brackets the same budget that 12/16/24 brackets
+# for MST. d_thin must be divisible by mol_head_dim 64, which rules out L=10, 14, 18, 22.
+# Per-block value embeddings are ON, matching MST's --mst-per-stream-ve: each arm runs the
+# configuration its own paper proposes, which is the comparison tab:isotoken16 already makes.
+MOL_DEPTHS="${MOL_DEPTHS-8 12 16}"
 # Positional depths override the built-in lists, so a single arm can be launched on its
 # own machine. Applied before the --arms filter so "--mst-only 24" means exactly that.
 if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     DENSE_DEPTHS="${CLI_DEPTHS[*]}"
     MST_DEPTHS="${CLI_DEPTHS[*]}"
+    MOL_DEPTHS="${CLI_DEPTHS[*]}"
 fi
-[ "$ARMS" = "mst" ]   && DENSE_DEPTHS=""
-[ "$ARMS" = "dense" ] && MST_DEPTHS=""
+case "$ARMS" in
+    dense) MST_DEPTHS="";   MOL_DEPTHS="" ;;
+    mst)   DENSE_DEPTHS=""; MOL_DEPTHS="" ;;
+    mol)   DENSE_DEPTHS=""; MST_DEPTHS=""  ;;
+esac
 OUT_BASE="${OUT_BASE:-out/p12_isoflop}"
 mkdir -p "$OUT_BASE"
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/p12.log}"
@@ -199,6 +213,14 @@ run() {
 # (measured neutral at L=8 and, after correcting for its token excess, at L=16), and
 # the control has the lower FLOPs/token, so it is both the cheaper run and the stronger
 # inference-cost position.
+mol_config() {                            # mol_config <depth>
+    local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
+    echo "--use-mol 1 --models base --mol-n-blocks 15 --mol-n-shared 1 --mol-topk 3 \
+      --mol-thin-dim $(( D / 4 )) --mol-head-dim 64 --mol-ffn-mult 4.0 \
+      --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1 \
+      --mol-per-block-ve 1"
+}
+
 mst_config() {                            # mst_config <depth>
     local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
     local SD=$(( D / N_SUBS ))
@@ -217,7 +239,8 @@ mst_config() {                            # mst_config <depth>
 
 echo "============================================================"
 echo "  P12 isoFLOP profile   C = ${FLOPS} active FLOPs"
-echo "  arms: ${ARMS}    dense depths: ${DENSE_DEPTHS:-(none)}    MST depths: ${MST_DEPTHS:-(none)}"
+echo "  arms: ${ARMS}"
+echo "  dense: ${DENSE_DEPTHS:-(none)}   MST: ${MST_DEPTHS:-(none)}   MoL: ${MOL_DEPTHS:-(none)}"
 echo "  out ${OUT_BASE}"
 echo "============================================================"
 
@@ -231,6 +254,14 @@ for d in $MST_DEPTHS; do
         continue
     fi
     run "ISOF_mst_d${d}" "$d" $(mst_config "$d")
+done
+for d in $MOL_DEPTHS; do
+    TD=$(( (((d * ASPECT_RATIO + 127) / 128) * 128) / 4 ))
+    if [ $(( TD % 64 )) -ne 0 ]; then
+        echo "SKIP MoL d${d}: thin_dim ${TD} not divisible by mol_head_dim 64"
+        continue
+    fi
+    run "ISOF_mol_d${d}" "$d" $(mol_config "$d")
 done
 
 echo ""
