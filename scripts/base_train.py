@@ -1764,6 +1764,11 @@ else:
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
 if args.timing_probe_steps > 0:
+    # The loop breaks on last_step BEFORE running the step and before the dt line prints,
+    # so with the default --log-every 200 a short probe would emit no timing at all. Log
+    # every step: the caller needs a steady-state dt, and the last line before the break
+    # is step timing_probe_steps-1, past the warmup steps that inflate the first few.
+    args.log_every = 1
     print0(f"TIMING_PROBE full_iterations={num_iterations} probe_steps={args.timing_probe_steps} "
            f"total_batch_size={total_batch_size}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20

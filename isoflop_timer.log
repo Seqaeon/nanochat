@@ -1,0 +1,19 @@
+TIMER-ONLY: 12 steps per arm, writing to out/p12_isoflop/timer
+============================================================
+  P12 isoFLOP profile   C = 9.0e18 active FLOPs
+  arms: all
+  dense: 16 18 20 24   MST: 16 24 28 32   MoL: (none)
+  out out/p12_isoflop/timer
+============================================================
+
+=== ISOF_dense_d16_s1 (depth 16, C=9.0e18 active FLOPs) ===
+TIMER ISOF_dense_d16_s1: 22183 steps x 996.02ms + 206.3s overhead = 6.19h
+
+=== ISOF_dense_d18_s1 (depth 18, C=9.0e18 active FLOPs) ===
+TIMER ISOF_dense_d18_s1: 16088 steps x 1363.18ms + 215.6s overhead = 6.15h
+
+=== ISOF_dense_d20_s1 (depth 20, C=9.0e18 active FLOPs) ===
+TIMER ISOF_dense_d20_s1: 12143 steps x 1702.08ms + 247.5s overhead = 5.81h
+
+=== ISOF_dense_d24_s1 (depth 24, C=9.0e18 active FLOPs) ===
+TIMER ISOF_dense_d24_s1: 7320 steps x 2623.74ms + 320.1s overhead = 5.42h

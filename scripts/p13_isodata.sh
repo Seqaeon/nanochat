@@ -246,9 +246,20 @@ project_arm() {                           # project_arm <tag> <log> <t_start> <t
     elapsed=$(awk "BEGIN{printf \"%.2f\", $4 - $3}")
     local full dt
     full=$(grep -oE 'TIMING_PROBE full_iterations=[0-9]+' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
-    dt=$(grep -oE 'dt: [0-9.]+ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
+    # Fallback: base_train announces the horizon before training even without the probe flag.
+    [ -z "$full" ] && full=$(grep -oE 'Calculated number of iterations from target ACTIVE FLOPs: [0-9,]+' "$alog" 2>/dev/null \
+                             | tail -1 | grep -oE '[0-9,]+$' | tr -d ',')
+    dt=$(grep -oE 'dt: [0-9.]+ *ms' "$alog" 2>/dev/null | tail -1 | grep -oE '[0-9.]+')
     if [ -z "$full" ] || [ -z "$dt" ]; then
         log "TIMER $tag: could not parse (full_iterations='${full:-?}' dt='${dt:-?}'); measured ${elapsed}s only"
+        if [ ! -s "$alog" ]; then
+            log "   arm log ${alog} is missing or empty"
+        else
+            log "   arm log ${alog} has $(wc -l < "$alog") lines; last line:"
+            log "   $(tail -1 "$alog" | cut -c1-140)"
+            grep -q 'TIMING_PROBE' "$alog" || log "   no TIMING_PROBE line: --timing-probe-steps did not reach base_train"
+            grep -qE 'dt: [0-9.]+ *ms' "$alog" || log "   no step line: the arm never reached step ${TIMER_STEPS} (log-every is ${LOG_EVERY:-200})"
+        fi
         TIMER_ROWS+=("$tag|$elapsed|?|?|?")
         return
     fi
@@ -269,7 +280,6 @@ COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
   --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 \
   --research-dim -1 --target-active-params 0 \
   --compile-regional ${COMPILE_REGIONAL:-0} \
-  ${TIMER:+--timing-probe-steps $TIMER_STEPS} \
   --save-every 200 --eval-every -1 --target-tokens ${TOKENS}"
 [ -n "${MAX_SHARDS:-}" ] && COMMON="$COMMON --max-shards $MAX_SHARDS"
 
@@ -287,8 +297,16 @@ run() {
         local rc=0
         local t_start=$(date +%s.%N)
         local armlog="${dir}.probe.log"
-        bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
-             "$@" "$depth" 2>&1 | tee -a "$LOGFILE" ${TIMER:+| tee "$armlog"} >/dev/null || rc=$?
+        if [ "$TIMER" -eq 1 ]; then
+            # A real pipeline, not a variable that expands to "|": bash parses redirections
+            # before expanding, so the old ${TIMER:+| tee ...} became literal filenames.
+            bash scripts/research_sweep.sh $COMMON --timing-probe-steps "$TIMER_STEPS" \
+                 --out-dir "$dir" --seed "$s" "$@" "$depth" 2>&1 \
+                 | tee "$armlog" | tee -a "$LOGFILE" || rc=$?
+        else
+            bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
+                 "$@" "$depth" 2>&1 | tee -a "$LOGFILE" || rc=$?
+        fi
         local t_end=$(date +%s.%N)
         [ "$TIMER" -eq 1 ] && project_arm "$t" "$armlog" "$t_start" "$t_end"
         if [ "$ABORT" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
