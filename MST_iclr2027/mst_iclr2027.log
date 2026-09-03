@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  2 SEP 2026 17:25
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.6.17)  3 SEP 2026 12:05
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -739,13 +739,13 @@ sr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc}
 
 ]
 LaTeX Font Info:    Trying to load font information for OT1+pcr on input line 1
-60.
+62.
 
 (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ot1pcr.fd
 File: ot1pcr.fd 2001/06/04 font definitions for OT1/pcr.
 ) [2]
 (./fig_architecture.tex) [3] [4]
-Underfull \hbox (badness 1082) in paragraph at lines 313--319
+Underfull \hbox (badness 1082) in paragraph at lines 315--321
 \OT1/ptm/m/n/10 to full con-text, the last sub al-ways un-re-stricted. For $\OM
 L/cmm/m/it/10 N[]\OT1/cmr/m/n/10 4$ \OT1/ptm/m/n/10 at $\OML/cmm/m/it/10 T[]\OT
 1/cmr/m/n/10 2048$ \OT1/ptm/m/n/10 this gives $\OML/cmm/m/it/10 w \OT1/cmr/m/n/
@@ -759,36 +759,47 @@ Underfull \vbox (badness 10000) has occurred while \output is active []
 <fig_scaling.pdf, id=304, 382.5602pt x 156.54968pt>
 File: fig_scaling.pdf Graphic file (type pdf)
 <use fig_scaling.pdf>
-Package pdftex.def Info: fig_scaling.pdf  used on input line 501.
+Package pdftex.def Info: fig_scaling.pdf  used on input line 503.
 (pdftex.def)             Requested size: 397.48499pt x 162.66687pt.
 
-[7 <./fig_scaling.pdf>] [8] [9] [10] [11] [12] [13]
-Underfull \vbox (badness 10000) has occurred while \output is active []
+[7 <./fig_scaling.pdf>] [8] [9] [10]
+Underfull \vbox (badness 1939) has occurred while \output is active []
 
- [14]
-<fig_analysis.pdf, id=457, 471.80394pt x 277.33574pt>
+ [11]
+[12]
+Underfull \vbox (badness 2922) has occurred while \output is active []
+
+ [13]
+[14] [15]
+<fig_analysis.pdf, id=470, 471.80394pt x 277.33574pt>
 File: fig_analysis.pdf Graphic file (type pdf)
 <use fig_analysis.pdf>
-Package pdftex.def Info: fig_analysis.pdf  used on input line 1257.
+Package pdftex.def Info: fig_analysis.pdf  used on input line 1326.
 (pdftex.def)             Requested size: 397.48499pt x 233.65866pt.
-
-[15] [16 <./fig_analysis.pdf>]
+ [16]
 Underfull \vbox (badness 10000) has occurred while \output is active []
 
- [17]
-(./mst_iclr2027.bbl
+ [17 <./fig_analysis.pdf>] (./mst_iclr2027.bbl [18]
 Underfull \hbox (badness 2932) in paragraph at lines 51--54
 []\OT1/ptm/m/n/10 Mikhail S Burt-sev and Anna Rumshisky.  Multi-stream trans-fo
 rm-ers.  \OT1/ptm/m/it/10 arXiv preprint
  []
 
-[18]
 LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 1
 09.
- (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd
+(/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd
 File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
-)) [19] [20]
-[21] (./mst_iclr2027.aux)
+) [19])
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[20] [21] [22] (./mst_iclr2027.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
@@ -797,40 +808,41 @@ Package rerunfilecheck Info: File `mst_iclr2027.out' has not changed.
 (rerunfilecheck)             Checksum: 26B38718F38B3963065C5B3247DC2B8D;3357.
  ) 
 Here is how much of TeX's memory you used:
- 23123 strings out of 476106
- 426095 string characters out of 5793933
- 1957975 words of memory out of 5000000
- 44569 multiletter control sequences out of 15000+600000
+ 23127 strings out of 476106
+ 426134 string characters out of 5793933
+ 1958975 words of memory out of 5000000
+ 44570 multiletter control sequences out of 15000+600000
  598545 words of font info for 113 fonts, out of 8000000 for 9000
  59 hyphenation exceptions out of 8191
  84i,12n,87p,873b,1029s stack positions out of 10000i,1000n,20000p,200000b,200000s
-</usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx6.pfb></usr
-/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx9.pfb></usr/share/
-texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texliv
-e/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex9.pfb></usr/share/texlive/
-texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-
-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fo
-nts/type1/public/amsfonts/cm/cmmi6.pfb></usr/share/texlive/texmf-dist/fonts/typ
-e1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/publ
-ic/amsfonts/cm/cmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsf
-onts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm
-/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pf
-b></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/
-share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/share/te
-xlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/
-texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/share/texlive/texmf-d
-ist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fon
-ts/type1/public/amsfonts/cm/cmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type
-1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1
-/urw/courier/ucrr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/helvetic
-/uhvb8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></u
-sr/share/texlive/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb></usr/share/texli
-ve/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/f
-onts/type1/urw/times/utmri8a.pfb>
-Output written on mst_iclr2027.pdf (21 pages, 434979 bytes).
+</usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></us
+r/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx6.pfb></usr/share
+/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx9.pfb></usr/share/texliv
+e/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texm
+f-dist/fonts/type1/public/amsfonts/cmextra/cmex9.pfb></usr/share/texlive/texmf-
+dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/f
+onts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/ty
+pe1/public/amsfonts/cm/cmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/pub
+lic/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/ams
+fonts/cm/cmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/c
+m/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.
+pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></us
+r/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/
+texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/share/texlive/
+texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-
+dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/share/texlive/texmf-dist/fo
+nts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/typ
+e1/public/amsfonts/cm/cmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type1/publ
+ic/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/c
+ourier/ucrr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/helvetic/uhvb8
+a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/sha
+re/texlive/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb></usr/share/texlive/tex
+mf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/fonts/t
+ype1/urw/times/utmri8a.pfb>
+Output written on mst_iclr2027.pdf (22 pages, 448644 bytes).
 PDF statistics:
- 701 PDF objects out of 1000 (max. 8388607)
- 576 compressed objects within 6 object streams
- 138 named destinations out of 1000 (max. 500000)
+ 716 PDF objects out of 1000 (max. 8388607)
+ 588 compressed objects within 6 object streams
+ 141 named destinations out of 1000 (max. 500000)
  207 words of extra memory for PDF output out of 10000 (max. 10000000)
 

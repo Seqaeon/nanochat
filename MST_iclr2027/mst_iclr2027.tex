@@ -147,8 +147,10 @@ We reimplement it from its published equations and show that the difference is
 structural, not incidental: its total-to-active matrix ratio is $3.74$ against
 MST's $1.48$ and is flat across depth; at equal training data MST is above the
 dense curve on FLOPs per token where MoL is below it, at $0.67\times$ its
-parameters; MST reaches dense wall-clock parity at $\dmodel{=}1536$ where MoL
-reports its own sparse path losing to dense; and MoL's central mechanism, gating
+parameters; at matched quality MST's prefill overtakes dense beyond
+$T{\approx}190$K and is $1.10\times$ faster at $T{=}262144$, because its windowed
+streams scale as $T^{1.41}$ against dense's $T^{1.70}$, where MoL reports its own
+sparse path losing to dense; and MoL's central mechanism, gating
 attention, \emph{costs} $1.86\times$ what it saves when transplanted into MST
 (Section~\ref{sec:mol}).
 
@@ -764,13 +766,20 @@ and MoL $0.962\times$, MST above the dense curve and MoL below it, with MST at
 60.3M total parameters against MoL's 89.7M. This is the only comparison between
 the two that fixes the protocol, and it is the one we rest on.
 
-\paragraph{3. Wall clock.} MST reaches training parity with the dense baseline at
-$\dmodel{=}1536$ (76.1\,ms against 77.2\,ms per step) and is $1.30\times$ faster
-in prefill at $T{=}32768$. MoL's own Section~5.6 reports the opposite for its
-sparse path: $2.8\times$ slower than its batched fallback on two hardware classes,
-decode slower than dense in absolute terms at every measured context, and dense
-still ahead on prefill at $T\!\leq\!2$K. Both architectures reduce FLOPs; only one
-of them currently converts that into time.
+\paragraph{3. Wall clock, on the axis where it is defensible.} At a fixed
+$T{=}2048$ neither architecture converts its FLOP saving into time, and we say so
+in Section~\ref{sec:results}: MST reaches roughly half dense's hardware
+utilization, and a step-time comparison at equal depth is uninformative because
+the dense arm there carries $1.44\times$ the parameters and $3.22\times$ the
+FLOPs per token. Long-context prefill is different. MST's windowed streams scale
+as $T^{1.41}$ against dense's $T^{1.70}$, so matched \emph{on quality} MST
+overtakes dense beyond $T{\approx}190$K and is $1.10\times$ faster at
+$T{=}262144$ (Table~\ref{tab:longctx}). MoL reports the opposite for its own
+sparse path (its Section~5.6): $2.8\times$ slower than its batched fallback on
+two hardware classes, decode slower than dense at every measured context, and
+dense still ahead on prefill at $T\!\leq\!2$K. Both architectures reduce FLOPs;
+ours turns that into time in the long-context regime, and we do not claim it
+anywhere else.
 
 \paragraph{4. Their central mechanism does not transfer, which is the sharpest
 evidence the architectures differ.} MoL's Section~3.1 documents an attention
@@ -950,9 +959,16 @@ verdict.
 
 \subsection{Throughput, memory and hardware utilization}
 
-FLOP counts are not wall-clock. MST trains $1.20\times$ faster than dense while
-reaching less than half its utilization (Table~\ref{tab:speed}): it wins on
-throughput by issuing $2.46\times$ fewer FLOPs, not by using the machine well.
+FLOP counts are not wall-clock, and at equal depth the two are not comparable
+either. Table~\ref{tab:speed} shows MST completing a training step in $420.4$\,ms
+against dense's $504.4$, but the dense arm there carries $1.44\times$ the
+parameters and $3.22\times$ the FLOPs per token and reaches $0.070$\,\bpb\
+better, so the step-time gap says only that a smaller model runs less
+efficiently. The comparable quantity is utilization, and on that MST reaches
+$30.0\%$ against dense's $61.6\%$: it issues $2.46\times$ fewer FLOPs and uses
+the machine half as well. We do not claim faster training. The wall-clock axis on
+which we do claim an advantage is long-context prefill, below, where the arms are
+matched on quality rather than on depth.
 
 \paragraph{The utilization gap has two distinct causes.} Measuring fused
 attention in isolation, with the total attention width held constant and no MST
@@ -975,6 +991,28 @@ projections per layer. Parameter count shrinks with $\nsub$; activation traffic
 does not. The same extra data movement lowers arithmetic intensity, so the memory
 overhead and the utilization gap share a cause rather than one explaining the
 other.
+
+\paragraph{Long-context prefill is where the FLOP advantage becomes time.}
+The step-time comparisons above are at a fixed $T{=}2048$, where MST's per-stream
+dispatch cost is amortized over too little work. Prefill at long context is the
+regime the partition was built for, because multi-scale windows make MST's
+attention grow far more slowly in $T$ than dense's. Measured on an H200, the
+local exponent $\mathrm{d}\log(\text{latency})/\mathrm{d}\log T$ between
+$T{=}131072$ and $T{=}262144$ is $1.41$ for MST at both $L{=}16$ and $L{=}24$,
+against $1.69$--$1.71$ for dense at $L{=}16,18,20,22$. Dense keeps four
+full-context layers of width \dmodel; MST keeps one full-context \emph{stream} of
+width $\dmodel/\nsub$ in one layer of four, so its quadratic term carries roughly
+a sixteenth of the weight.
+
+The consequence is a crossover rather than a constant gap
+(Table~\ref{tab:longctx}). Matched on quality, MST at $L{=}24$ is $0.72\times$
+dense's prefill speed at $T{=}65536$, $0.90\times$ at $T{=}131072$ and
+$\mathbf{1.10\times}$ at $T{=}262144$; the curves cross near $T{\approx}190$K,
+bracketed by measurements on either side. Matched on FLOPs per token the
+crossover is later, near $T{\approx}336$K; matched on parameters MST is ahead at
+every length measured. This is the one wall-clock axis on which we claim an
+advantage, and it is not an artifact of comparing models at equal depth: the
+dense arm here is the one that reaches MST's \bpb.
 
 \begin{table}[t]
 \caption{Measured throughput and memory. Weights are randomly initialized;
@@ -1001,6 +1039,37 @@ Batch 32, $T{=}2048$, \texttt{torch.compile} enabled for both arms as in
 training, minimum over 20 iterations. Weights are randomly initialised: these are
 architecture-level measurements independent of the trained values.
 \end{table}
+
+\begin{table}[t]
+\caption{Long-context prefill latency (ms, batch 1, H200, \texttt{torch.compile} on).
+Dense $L{=}17$ is the arm that reaches MST $L{=}24$'s \bpb\ (0.7869 against dense's
+0.7988 at $L{=}16$ and 0.7755 at $L{=}18$) and is interpolated geometrically between
+the two measured neighbours. Ratios above $1$ mean MST is faster.}
+\label{tab:longctx}
+\begin{center}
+\begin{small}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrrrr}
+\toprule
+ & $T{=}65536$ & $T{=}131072$ & $T{=}262144$ & exponent \\
+\midrule
+MST $L{=}16$      &  82.74 &  196.28 &  521.70 & 1.41 \\
+MST $L{=}24$      & 186.40 &  447.14 & 1192.39 & 1.42 \\
+dense $L{=}16$    & 114.45 &  339.68 & 1108.78 & 1.71 \\
+dense $L{=}18$    & 158.36 &  475.17 & 1541.10 & 1.70 \\
+dense $L{=}20$    & 191.91 &  553.01 & 1779.04 & 1.69 \\
+dense $L{=}22$    & 248.43 &  722.62 & 2326.53 & 1.69 \\
+\midrule
+\multicolumn{5}{l}{\emph{MST $L{=}24$ against its matched dense arm (higher is better for MST)}} \\
+matched quality \ ($L{=}17$)  & $0.72\times$ & $0.90\times$ & $\mathbf{1.10\times}$ & \\
+matched FLOPs/tok ($L{=}16$)  & $0.61\times$ & $0.76\times$ & $0.93\times$ & \\
+matched params \ \ ($L{=}21$) & $1.17\times$ & $1.41\times$ & $1.71\times$ & \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\end{table}
+
 
 \begin{figure}[t]
 \begin{center}

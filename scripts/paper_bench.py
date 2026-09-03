@@ -98,12 +98,45 @@ PER_STREAM_VE = 0
 FINAL_NORM = 1
 
 
-def _arms():
-    """The (label, is_mst) pairs selected by --arms, in a stable order."""
-    return [(n, m) for n, m in (("mst", True), ("dense", False)) if n in ARMS]
+def _arms(depth=None):
+    """The (label, is_mst) pairs selected by --arms, in a stable order.
+
+    MST needs mst_sub_head_dim (64) to divide sub_dim = d_model / n_subs, so d_model
+    must be a multiple of 256 and only depths 8, 12, 16, 20, 24, 28, 32 have an MST
+    arm. Depths 10, 14, 18, 22, 26, 30 are dense-only. Pass `depth` to have the MST
+    arm skipped with a message instead of raising from deep inside the constructor,
+    which matters because the quality-matched dense depths (17, 21) land on exactly
+    those gaps.
+    """
+    arms = [(n, m) for n, m in (("mst", True), ("dense", False)) if n in ARMS]
+    if depth is None:
+        return arms
+    out = []
+    for name, mst in arms:
+        if mst:
+            D = ((depth * ASPECT + 127) // 128) * 128
+            sub = D // N_SUBS
+            if sub % SUB_HEAD_DIM != 0:
+                print(f"  skip mst at depth {depth}: sub_dim {sub} "
+                      f"(d_model {D} / {N_SUBS}) is not divisible by sub_head_dim {SUB_HEAD_DIM}")
+                continue
+        out.append((name, mst))
+    return out
 
 
-def build(depth, mst, device, seq_len=SEQ, compile_model=None):
+class _LastPositionHead(torch.nn.Module):
+    """lm_head applied to the final position only. nn.Module rather than a closure
+    because Module.__setattr__ refuses anything else for a registered child."""
+
+    def __init__(self, head):
+        super().__init__()
+        self.head = head
+
+    def forward(self, h):
+        return self.head(h[:, -1:, :] if h.dim() == 3 else h)
+
+
+def build(depth, mst, device, seq_len=SEQ, compile_model=None, last_logit_only=False):
     """Build and, by default, torch.compile the model.
 
     Compilation is not optional for a fair comparison. base_train.py compiles by
@@ -119,6 +152,15 @@ def build(depth, mst, device, seq_len=SEQ, compile_model=None):
         model = (MST if mst else GPT)(cfg)
     model.to_empty(device=device)
     model.init_weights()
+    if last_logit_only:
+        # Real prefill applies lm_head to the LAST position only, to sample the next
+        # token; computing logits for all T is a training artifact. It is also the whole
+        # memory wall here: mst.py upcasts logits to fp32 and then softcaps them, so at
+        # T=524288 a (1, T, 32768) head costs 34 GB in bf16, 69 GB after .float(), and
+        # another 69 GB for the tanh temporary. Slicing before the projection removes all
+        # of it. It also removes work that is IDENTICAL for both arms and therefore only
+        # dilutes the architectural difference the benchmark exists to measure.
+        model.lm_head = _LastPositionHead(model.lm_head)
     do_compile = COMPILE if compile_model is None else compile_model
     if do_compile:
         model = torch.compile(model)
@@ -209,7 +251,7 @@ def a2_kernel_breakdown(depth, device, batch=4, top=12):
 def a3_train_step(depth, device, batch=4):
     res = {}
     peak_tf = gpu_peak_tflops()
-    for name, mst in _arms():
+    for name, mst in _arms(depth):
         torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
         model, cfg = build(depth, mst, device)
         fpt, _, _ = model.estimate_flops()
@@ -237,7 +279,8 @@ def a3_train_step(depth, device, batch=4):
 
 
 # ---------------------------------------------------------------- A4
-def a4_prefill(depth, device, lengths=DEFAULT_PREFILL_LENGTHS, batch=1):
+def a4_prefill(depth, device, lengths=DEFAULT_PREFILL_LENGTHS, batch=1,
+               last_logit_only=False):
     """Prefill throughput vs sequence length.
 
     One model per arm for the whole sweep, built at the longest length. Building
@@ -248,25 +291,40 @@ def a4_prefill(depth, device, lengths=DEFAULT_PREFILL_LENGTHS, batch=1):
     2048 attends exactly as one built at 2048 would.
     """
     res = {}
-    for name, mst in _arms():
+    for name, mst in _arms(depth):
         res[name] = []
         torch.cuda.empty_cache()
-        model, _ = build(depth, mst, device, seq_len=max(lengths))
+        model, _ = build(depth, mst, device, seq_len=max(lengths),
+                         last_logit_only=last_logit_only)
         for T in lengths:
             try:
                 x = torch.randint(0, VOCAB, (batch, T), device=device)
+                # Peak allocation per (arm, T). Without this an OOM says only that one
+                # arm did not fit, not by how much or why, and the arms differ here for
+                # reasons that are not obvious from parameter counts.
+                torch.cuda.reset_peak_memory_stats()
+                base_gb = torch.cuda.memory_allocated() / 1e9
                 with torch.inference_mode():
                     ms, med = cuda_time(lambda: model(x), warmup=8, iters=20)
+                peak_gb = torch.cuda.max_memory_allocated() / 1e9
                 res[name].append(dict(T=T, ms=ms, ms_median=med,
-                                      tok_per_s=batch * T / (ms * 1e-3)))
+                                      tok_per_s=batch * T / (ms * 1e-3),
+                                      peak_gb=peak_gb, resident_gb=base_gb,
+                                      activation_gb=peak_gb - base_gb))
                 drift = 100 * (med - ms) / ms
                 flag = "  <-- unstable" if drift > 25 else ""
                 print(f"  {name:5s} T={T:6d}  {ms:9.2f} ms  "
                       f"{res[name][-1]['tok_per_s']:10.0f} tok/s"
+                      f"   peak {peak_gb:6.1f} GB (act {peak_gb - base_gb:5.1f})"
                       f"   (median {med:.2f}, +{drift:.0f}%){flag}")
             except torch.cuda.OutOfMemoryError:
-                print(f"  {name:5s} T={T:6d}  OOM")
-                res[name].append(dict(T=T, ms=None, oom=True))
+                # Say how far short it fell, so an OOM is a data point rather than a gap.
+                free, total = torch.cuda.mem_get_info()
+                print(f"  {name:5s} T={T:6d}  OOM  (resident {torch.cuda.memory_allocated()/1e9:.1f} GB, "
+                      f"peak {torch.cuda.max_memory_allocated()/1e9:.1f} GB, "
+                      f"free {free/1e9:.1f} of {total/1e9:.1f} GB)")
+                res[name].append(dict(T=T, ms=None, oom=True,
+                                      peak_gb=torch.cuda.max_memory_allocated()/1e9))
             torch.cuda.empty_cache()
         del model
         torch.cuda.empty_cache()
@@ -286,7 +344,7 @@ def a5_decode(depth, device, contexts=DEFAULT_DECODE_CONTEXTS):
     """
     from nanochat.engine import KVCache
     res = {}
-    for name, mst in _arms():
+    for name, mst in _arms(depth):
         res[name] = []
         model, cfg = build(depth, mst, device, seq_len=max(contexts) + 8,
                            compile_model=False)
@@ -346,6 +404,14 @@ def main():
     ap.add_argument("--prefill-lengths", type=int, nargs="+", default=None,
                     help="A4 sequence lengths only; overrides --lengths. "
                          f"Default {DEFAULT_PREFILL_LENGTHS}.")
+    ap.add_argument("--prefill-last-logit", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="A4 only: apply lm_head to the final position instead of all T, "
+                         "which is what prefill actually does. Removes an fp32 (1,T,32768) "
+                         "logits tensor and its softcap temporary (69 GB each at T=524288), "
+                         "so dense becomes measurable at long T, and removes work identical "
+                         "to both arms that otherwise dilutes the comparison. NOT mixable "
+                         "with numbers measured without it.")
     ap.add_argument("--prefill-batch", type=int, default=1,
                     help="batch size for A4. At batch 1 a fixed per-call "
                          "dispatch cost dominates below T=16384 and the "
@@ -434,7 +500,7 @@ def main():
         if want("a4"):
             print(f"[A4] prefill (batch {args.prefill_batch})")
             r["a4"] = a4_prefill(depth, dev, batch=args.prefill_batch,
-                                 lengths=prefill_lengths)
+                                 lengths=prefill_lengths, last_logit_only=args.prefill_last_logit)
         if want("a5"):
             print("[A5] decode")
             r["a5"] = a5_decode(depth, dev, contexts=decode_contexts)
