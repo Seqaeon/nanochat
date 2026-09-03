@@ -692,6 +692,7 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
 parser.add_argument("--timing-probe-steps", type=int, default=0, help="stop after this many steps, but compute num_iterations, the LR schedule and the batch size from the real budget first. Used by the profile scripts' --timer-only to cost a sweep without running it: startup, per-step and final-validation time are all real, and the full run is projected from the measured dt (0 = disabled, run to completion)")
+parser.add_argument("--compile-mode", type=str, default="default", choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"], help="torch.compile mode. 'reduce-overhead' adds CUDA graphs, which removes per-kernel launch overhead; MST emits ~3x dense's kernels so it is the arm that benefits. Costs memory for the graph pool. Any non-default value changes step time, so do not mix modes within a comparison")
 parser.add_argument("--compile-regional", type=int, default=0, choices=[0, 1], help="compile each transformer layer separately instead of the whole model. Compile time then does not grow with depth (MST L=16: 58s vs 126s), at the cost of cross-layer fusion (~7%% slower steps). Use when only bpb is wanted; leave off for reported wall-clock numbers")
 parser.add_argument("--tokenizer-dir", type=str, default=None, help="explicit tokenizer directory (overrides default)")
 parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use (-1 = all)")
@@ -1556,7 +1557,8 @@ if model_config.use_eet:
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 model = wrap_model(model, parallel_type=args.parallel, compile=args.compile, device=device,
-                   compile_regional=bool(getattr(args, "compile_regional", 0)))
+                   compile_regional=bool(getattr(args, "compile_regional", 0)),
+                   compile_mode=getattr(args, "compile_mode", "default"))
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.

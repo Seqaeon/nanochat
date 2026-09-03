@@ -281,7 +281,7 @@ project_arm() {                           # project_arm <tag> <log> <t_start> <t
             log "   last 20 lines of the arm log:"
             while IFS= read -r l; do log "     $(printf '%s' "$l" | cut -c1-160)"; done < <(tail -20 "$alog")
         fi
-        TIMER_ROWS+=("$tag|$elapsed|?|?|?")
+        TIMER_ROWS+=("$tag|?|?|?|?")
         return
     fi
     local overhead proj
@@ -291,7 +291,7 @@ project_arm() {                           # project_arm <tag> <log> <t_start> <t
     proj=$(awk "BEGIN{printf \"%.1f\", $overhead + $full * $dt/1000}")
     TIMER_TOTAL=$(awk "BEGIN{printf \"%.1f\", $TIMER_TOTAL + $proj}")
     log "TIMER $tag: ${full} steps x ${dt}ms + ${overhead}s overhead = $(awk "BEGIN{printf \"%.2f\", $proj/3600}")h"
-    TIMER_ROWS+=("$tag|$elapsed|$full|$dt|$proj")
+    TIMER_ROWS+=("$tag|$overhead|$full|$dt|$proj")
 }
 
 COMMON="--device-batch-size ${DEVICE_BATCH_SIZE:-32} --total-batch-size -1 \
@@ -417,7 +417,7 @@ done
 echo ""
 echo "============================================================"
 if [ "$TIMER" -eq 1 ]; then
-    printf '  %-24s %10s %8s %10s %10s\n' arm measured steps "dt(ms)" projected
+    printf '  %-24s %11s %8s %10s %10s\n' arm "startup(s)" steps "dt(ms)" projected
     for r in "${TIMER_ROWS[@]}"; do
         IFS='|' read -r a m f d pj <<< "$r"
         printf '  %-24s %9ss %8s %10s %9sh\n' "$a" "$m" "$f" "$d" \
@@ -425,7 +425,7 @@ if [ "$TIMER" -eq 1 ]; then
     done
     echo "  ------------------------------------------------------------------"
     echo "  projected total for the whole sweep: $(awk "BEGIN{printf \"%.2f\", $TIMER_TOTAL/3600}")h"
-    echo "  (startup, ${TIMER_STEPS} measured steps and final validation are all included per arm)"
+    echo "  startup(s) = env setup, compile and final validation; projected = startup + steps x dt"
     echo "============================================================"
     [ ${#FAILED_ARMS[@]} -gt 0 ] && { echo "  failed: ${FAILED_ARMS[*]}"; exit 1; }
     exit 0

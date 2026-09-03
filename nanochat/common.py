@@ -207,10 +207,19 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     return is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size, device
 
-def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_regional=False):
+def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_regional=False,
+               compile_mode="default"):
     """
     Wrap the model for distributed or data parallel training, and optionally compile it.
     Automatically propagates custom methods from the inner model to the wrapper.
+
+    compile_mode is passed straight to torch.compile. "reduce-overhead" adds CUDA
+    graphs, which replay a captured kernel sequence instead of relaunching it. MST emits
+    about 3x dense's kernels (407 against 132 at L=8), so it pays about 3x the launch
+    overhead, and its shapes are static with no data-dependent control flow: the stream
+    router's top-k is tensor-valued throughout. That makes it the cheapest lever on the
+    measured throughput gap. It costs memory for the graph pool and is not compatible
+    with every setup, so it is opt-in.
 
     compile_regional compiles each repeated transformer layer on its own instead of
     capturing the whole model in one graph. Dynamo tracing, AOTAutograd partitioning and
@@ -281,14 +290,16 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_r
         if blocks is None:
             print0("i --compile-regional requested but no repeated block list found; "
                    "falling back to whole-model compile.")
-            model = torch.compile(model)
+            model = torch.compile(model, mode=compile_mode)
         else:
             for i in range(len(blocks)):
-                blocks[i] = torch.compile(blocks[i])
+                blocks[i] = torch.compile(blocks[i], mode=compile_mode)
             print0(f"✓ Regional torch.compile over {len(blocks)} blocks "
                    f"(compile time flat in depth; no cross-layer fusion)")
     elif compile:
-        model = torch.compile(model)
+        if compile_mode != "default":
+            print0(f"✓ torch.compile(mode={compile_mode!r})")
+        model = torch.compile(model, mode=compile_mode)
 
     # 3) Method Propagation
     # We want these methods to be accessible on the wrapper as well

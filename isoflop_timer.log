@@ -1,19 +1,44 @@
-TIMER-ONLY: 12 steps per arm, writing to out/p12_isoflop/timer
-============================================================
-  P12 isoFLOP profile   C = 9.0e18 active FLOPs
-  arms: all
-  dense: 16 18 20 24   MST: 16 24 28 32   MoL: (none)
-  out out/p12_isoflop/timer
 ============================================================
 
 === ISOF_dense_d16_s1 (depth 16, C=9.0e18 active FLOPs) ===
-TIMER ISOF_dense_d16_s1: 22183 steps x 996.02ms + 206.3s overhead = 6.19h
+TIMER ISOF_dense_d16_s1: 22183 steps x 932.60ms + 193.7s overhead = 5.80h
 
 === ISOF_dense_d18_s1 (depth 18, C=9.0e18 active FLOPs) ===
-TIMER ISOF_dense_d18_s1: 16088 steps x 1363.18ms + 215.6s overhead = 6.15h
+TIMER ISOF_dense_d18_s1: 16088 steps x 1261.24ms + 195.4s overhead = 5.69h
 
 === ISOF_dense_d20_s1 (depth 20, C=9.0e18 active FLOPs) ===
-TIMER ISOF_dense_d20_s1: 12143 steps x 1702.08ms + 247.5s overhead = 5.81h
+TIMER ISOF_dense_d20_s1: 12143 steps x 1600.83ms + 245.4s overhead = 5.47h
 
 === ISOF_dense_d24_s1 (depth 24, C=9.0e18 active FLOPs) ===
-TIMER ISOF_dense_d24_s1: 7320 steps x 2623.74ms + 320.1s overhead = 5.42h
+TIMER ISOF_dense_d24_s1: 7320 steps x 2431.16ms + 301.6s overhead = 5.03h
+
+=== ISOF_mst_d16_s1 (depth 16, C=9.0e18 active FLOPs) ===
+TIMER ISOF_mst_d16_s1: 59755 steps x 1141.45ms + 1021.9s overhead = 19.23h
+
+=== ISOF_mst_d24_s1 (depth 24, C=9.0e18 active FLOPs) ===
+TIMER ISOF_mst_d24_s1: 23174 steps x 2197.18ms + 1754.7s overhead = 14.63h
+
+=== ISOF_mst_d28_s1 (depth 28, C=9.0e18 active FLOPs) ===
+TIMER ISOF_mst_d28_s1: 15684 steps x 3104.91ms + 2222.4s overhead = 14.14h
+
+=== ISOF_mst_d32_s1 (depth 32, C=9.0e18 active FLOPs) ===
+TIMER ISOF_mst_d32_s1: 11062 steps x 3672.67ms + 1358.4s overhead = 11.66h
+
+
+============================================================
+  arm                        measured    steps     dt(ms)  projected
+  ISOF_dense_d16_s1           212.31s    22183     932.60      5.80h
+  ISOF_dense_d18_s1           220.59s    16088    1261.24      5.69h
+  ISOF_dense_d20_s1           277.45s    12143    1600.83      5.47h
+  ISOF_dense_d24_s1           350.23s     7320    2431.16      5.03h
+  ISOF_mst_d16_s1             220.59s    59755    1141.45      19.23h
+  ISOF_mst_d24_s1             277.45s    23174    2197.18      14.63h
+  ISOF_mst_d28_s1             350.23s     15684    3104.91      14.14h
+  ISOF_mst_d32_s1            1431.83s    11062    3672.67     11.66h
+  ------------------------------------------------------------------
+  projected total for the whole sweep: 21.99h
+  (startup, 20 measured steps and final validation are all included per arm)
+============================================================
+
+=== ISOF_mst_d32_s1 (depth 32, C=9.0e18 active FLOPs) ===
+TIMER ISOF_mst_d32_s1: 11062 steps x 3672.67ms + 1358.4s overhead = 11.66h

@@ -847,6 +847,18 @@ def _batched_linear(x, weight):
     return y.view(N, B, T, -1).permute(1, 2, 0, 3)
 
 
+def _rope_nd(x, cos, sin):
+    """apply_rotary_emb for a tensor of any rank, rotating the last axis.
+
+    gpt.apply_rotary_emb asserts ndim==4 and concatenates on dim 3, so it cannot see
+    the (B, T, N, n_head, head_dim) stream tensor. The arithmetic here is identical,
+    element for element; only the rank is generalised.
+    """
+    d = x.shape[-1] // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    return torch.cat([x1 * cos + x2 * sin, x1 * (-sin) + x2 * cos], dim=-1)
+
+
 class BatchedMSTLayer(nn.Module):
     """Compile-optimized MST layer: all N sub-transformers processed via batched ops.
 
@@ -1318,16 +1330,27 @@ class BatchedMSTLayer(nn.Module):
         cos_slice = cos[..., :half_hd]
         sin_slice = sin[..., :half_hd]
 
+        # RoPE and QK-norm are identical for every stream: the same cos/sin table, and
+        # rms_norm normalises per row over head_dim. So they run ONCE over all N*n_head
+        # heads instead of N times inside the loop. Splitting the last axis into
+        # (n_head, head_dim) is a pure view because that axis is contiguous, so this
+        # adds no copy, and the per-element arithmetic is unchanged: the loop body and
+        # this produce bit-identical q and k. What moves is the kernel count, 4 RoPE and
+        # 4 norms per layer collapsing to 1 and 1, and that is where MST's non-GEMM
+        # overhead was measured to live (attention itself is 1.6-3.8% of device time).
+        # The loop still issues one flash_attn call per stream, because each stream
+        # carries its own sliding window and flash_attn takes one window_size per call.
+        q = q.view(B, T, N, self.n_head, self.head_dim)
+        k = k.view(B, T, N, self.n_head, self.head_dim)
+        v = v.view(B, T, N, self.n_head, self.head_dim)
+        cos5, sin5 = cos_slice.unsqueeze(2), sin_slice.unsqueeze(2)   # (1, T, 1, 1, hd/2)
+        q = _rope_nd(q, cos5, sin5)
+        k = _rope_nd(k, cos5, sin5)
+        q, k = norm(q), norm(k)
+
         attn_results = []
         for j in range(N):
-            qj = q[:, :, j].view(B, T, self.n_head, self.head_dim)
-            kj = k[:, :, j].view(B, T, self.n_head, self.head_dim)
-            vj = v[:, :, j].view(B, T, self.n_head, self.head_dim)
-
-            # RoPE + QK-norm
-            qj = apply_rotary_emb(qj, cos_slice, sin_slice)
-            kj = apply_rotary_emb(kj, cos_slice, sin_slice)
-            qj, kj = norm(qj), norm(kj)
+            qj, kj, vj = q[:, :, j], k[:, :, j], v[:, :, j]   # each (B, T, n_head, head_dim)
 
             ws = window_sizes[j] if window_sizes is not None else (-1, 0)
             if kv_cache is None:
