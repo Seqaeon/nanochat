@@ -64,10 +64,21 @@
 #   competing against that, not against the softmax. An arm that beats dense on
 #   FLOPs but loses to a plain learned rank-M head has shown nothing.
 #
-# WALL CLOCK IS PART OF THE RESULT
-#   The product head's V*g gather-add is memory bound, not compute bound. A 44x
-#   FLOP reduction that runs 2x slower is not a result. Read the head timing
-#   columns in sch_results.csv, not just the FLOP column.
+# WALL CLOCK IS PART OF THE RESULT, AND THE FLOP COLUMN WILL LIE TO YOU
+#   Both heads write the same N x V logit tensor. The dense head is compute
+#   bound at 768 FLOP/byte, so removing its compute lands on that write and not
+#   on zero. H100 roofline at V=131072: dense 13.3 ms, a FUSED product head
+#   5.1 ms. The FLOP ratio is 96x and the achievable ratio is 2.6x.
+#
+#   Worse, product_gather as currently written is the UNFUSED version: one
+#   index_select per group, each materialising a full N x V tensor, so about 2g
+#   passes over the output. Roofline puts that at 82 ms, 6x SLOWER than dense,
+#   while sch_results.csv happily reports a 96x FLOP reduction.
+#
+#   So read the head timing columns before believing any FLOP ratio here, and
+#   fix the kernel first if the PROD_* arms regress on step time. torch.compile
+#   may fuse the chain on its own; Triton is the fallback. Same lesson as
+#   OPEN_QUESTIONS Q6 (the MST d_h=32 kernel penalty) and Q11.
 #
 #   bash scripts/c05_sch_phase5_alternatives.sh                     # depth 8, all groups
 #   bash scripts/c05_sch_phase5_alternatives.sh --group product 8   # one group

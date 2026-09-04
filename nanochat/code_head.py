@@ -120,6 +120,15 @@ PRODUCT_SOURCES = ("hash", "random", "file")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
+HEAD_TYPES = ("code", "hsoftmax", "monarch")
+PHI_DTYPES = ("bf16", "fp32")
+HOLDOUT_MODES = ("target", "full")
+
+# These tuples are the single source of truth for every ``--sch-*`` choice list.
+# scripts/base_train.py imports them rather than restating them: a hand-copied
+# list silently rejects a mode that the head supports, which is how
+# ``--sch-phi-mode product`` reached a GPU and died in argparse after the model
+# had already been configured for it.
 
 
 # ---------------------------------------------------------------------------
@@ -492,9 +501,28 @@ def product_gather(z, assign):
 
     ``Phi`` is never materialised.  Being one-hot per group makes the product a
     gather and add: each vocabulary entry sums ``g`` looked-up scalars, so the
-    cost is ``V*g`` additions rather than ``V*M`` multiply-accumulates.  Open
-    question Q1 asked whether a fast transform exists for the truncated monomial
-    expansion; for one-hot codes it exists and this is it.
+    ARITHMETIC is ``V*g`` additions rather than ``V*M`` multiply-accumulates.
+    Open question Q1 asked whether a fast transform exists for the truncated
+    monomial expansion; for one-hot codes it exists and this is it.
+
+    WALL CLOCK DOES NOT FOLLOW, AND THIS IMPLEMENTATION IS THE SLOW ONE.
+    Two separate things stand between the FLOP count and a speedup:
+
+    1. Both this and a dense head write the same ``N x V`` logit tensor, 17.2 GB
+       per forward at V=131072 with 65536 tokens.  The dense head is compute
+       bound at 768 FLOP/byte, so removing its arithmetic lands on that write
+       and not on zero.  H100 roofline: dense 13.3 ms against a *fused* gather
+       at 5.1 ms.  The FLOP ratio is 96x; the achievable ratio is 2.6x.
+    2. The loop below is not fused.  Each ``index_select`` materialises a full
+       ``(..., V)`` tensor and each add allocates another, so this makes about
+       ``2g`` passes over the output instead of one: 275 GB instead of 17, which
+       roofline puts at 82 ms, roughly 6x SLOWER than the dense matmul it
+       replaces.  ``flops_per_token`` will still report the 96x reduction.
+
+    So this is correct and cheap in arithmetic, and it is a regression in time
+    until a single-pass kernel accumulates the ``g`` lookups in registers before
+    one write.  ``torch.compile`` may fuse the chain (the sweeps pass
+    ``--compile``); Triton is the fallback.  Benchmark before quoting a ratio.
 
       z       (..., groups * codebook), the output of ``g``
       assign  (V, groups) int32, the codeword of each token
@@ -507,7 +535,9 @@ def product_gather(z, assign):
         # index_select over the last axis is a gather; its backward is a
         # scatter-add, which is what makes the whole head cheap in both passes.
         part = zg[..., j, :].index_select(-1, assign[:, j].long())
-        out = part if out is None else out + part
+        # in place: saves the g extra allocations the adds would make.
+        # Halves the traffic; it does not make this single-pass.
+        out = part if out is None else out.add_(part)
     return out
 
 
@@ -1360,6 +1390,9 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
     logit_act = g("sch_logit_act", "none")
     assert code_mode in CODE_MODES, f"sch_code_mode={code_mode!r} not in {CODE_MODES}"
     assert phi_mode in PHI_MODES, f"sch_phi_mode={phi_mode!r} not in {PHI_MODES}"
+    product_source = g("sch_product_source", "hash")
+    assert product_source in PRODUCT_SOURCES, \
+        f"sch_product_source={product_source!r} not in {PRODUCT_SOURCES}"
     assert g_type in G_TYPES, f"sch_g_type={g_type!r} not in {G_TYPES}"
     assert logit_act in LOGIT_ACTS, f"sch_logit_act={logit_act!r} not in {LOGIT_ACTS}"
 
@@ -1417,7 +1450,7 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
         "phi_density": density if density is not None else 0.0,
         "product_groups": int(g("sch_product_groups", 8)),
         "product_codebook": int(g("sch_product_codebook", 256)),
-        "product_source": g("sch_product_source", "hash"),
+        "product_source": product_source,
         "phi_whiten": bool(int(g("sch_phi_whiten", 0))),
         "mixture_per_phi": bool(int(g("sch_mixture_per_phi", 0))),
         "mixture_topk": int(g("sch_mixture_topk", 0)),
@@ -1455,6 +1488,7 @@ def _expected_monomial_density(bits: int, order: int) -> float:
 def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
     """Factory used by ``GPT.__init__``."""
     head_type = getattr(config, "sch_head_type", "code")
+    assert head_type in HEAD_TYPES, f"sch_head_type={head_type!r} not in {HEAD_TYPES}"
     if head_type == "hsoftmax":
         return HierarchicalSoftmaxHead(config, padded_vocab_size, n_embd)
     if head_type == "monarch":

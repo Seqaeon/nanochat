@@ -34,6 +34,11 @@ torch._dynamo.config.optimize_ddp = False
 import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
+# Single source of truth for the --sch-* choice lists.  Restating them here by
+# hand is how --sch-phi-mode product reached a GPU and died in argparse.
+from nanochat.code_head import (CODE_MODES, G_TYPES, HEAD_TYPES, HOLDOUT_MODES,
+                                INPUT_MODES, LOGIT_ACTS, PHI_DTYPES, PHI_MODES,
+                                PRODUCT_SOURCES)
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, wrap_model
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -705,32 +710,32 @@ parser.add_argument("--p34-dense-attn", type=int, default=0, choices=[0, 1], hel
 # structured-code-output-heads-plan.md). The head is logit(w|h) = phi_k(c(w))^T g(h)
 # with a frozen binary code c(w) and its monomial expansion up to order k.
 parser.add_argument("--use-code-head", type=int, default=0, choices=[0, 1], help="SCH: replace the dense softmax head with a structured code head")
-parser.add_argument("--sch-head-type", type=str, default="code", choices=["code", "hsoftmax"], help="SCH: 'code' = monomial code head; 'hsoftmax' = Huffman hierarchical softmax baseline")
+parser.add_argument("--sch-head-type", type=str, default="code", choices=list(HEAD_TYPES), help="SCH: 'code' = code head (monomial or K-ary product Phi); 'hsoftmax' = Huffman tree baseline; 'monarch' = block-diagonal fully-learned head")
 parser.add_argument("--sch-bits", type=int, default=0, help="SCH: code length B (0 = ceil(log2 V), the minimal/degenerate code)")
 parser.add_argument("--sch-order", type=int, default=2, help="SCH: highest monomial interaction order k (1 = Oda et al. independent bits, B = exact softmax)")
 parser.add_argument("--sch-max-m", type=int, default=0, help="SCH: cap on the expansion width M (0 = uncapped); also sets M directly for non-monomial phi modes")
-parser.add_argument("--sch-phi-mode", type=str, default="monomial", choices=["monomial", "random_binary", "onehot", "learned", "gaussian"], help="SCH: what fills Phi. 'random_binary' isolates structure from binariness; 'learned' is the matched-capacity dense-W-at-width-M control; 'onehot' is VQ-Logits")
-parser.add_argument("--sch-code-mode", type=str, default="binary", choices=["binary", "random", "ecc", "frequency", "file"], help="SCH: code assignment arm")
+parser.add_argument("--sch-phi-mode", type=str, default="monomial", choices=list(PHI_MODES), help="SCH: what fills Phi. 'product' is the K-ary product code (M = g*K at order 1, gather-add cost V*g); 'random_binary' isolates structure from binariness; 'learned' is the matched-capacity dense-W-at-width-M control; 'onehot' is the g=1 corner (VQ-Logits)")
+parser.add_argument("--sch-code-mode", type=str, default="binary", choices=list(CODE_MODES), help="SCH: code assignment arm")
 parser.add_argument("--sch-code-path", type=str, default="", help="SCH: .pt holding a (V, B) uint8 code matrix (semantic codes from scripts/code_assign.py)")
 parser.add_argument("--sch-code-ecc-bits", type=int, default=0, help="SCH: parity bits appended to the base code; sweeps the ECC-vs-semantic tension on one axis")
 parser.add_argument("--sch-code-seed", type=int, default=1234, help="SCH: seed for code assignment and monomial subsampling")
 parser.add_argument("--sch-phi-density", type=float, default=0.0, help="SCH: row density for phi-mode=random_binary (0 = match the monomial arm's density)")
-parser.add_argument("--sch-phi-dtype", type=str, default="bf16", choices=["bf16", "fp32"], help="SCH: storage dtype of the frozen Phi. Use fp32 for the Phase 0 rank gate: bf16 rounding puts a noise floor ~1e-3 of the top singular value, which reads as spurious rank")
+parser.add_argument("--sch-phi-dtype", type=str, default="bf16", choices=list(PHI_DTYPES), help="SCH: storage dtype of the frozen Phi. Use fp32 for the Phase 0 rank gate: bf16 rounding puts a noise floor ~1e-3 of the top singular value, which reads as spurious rank")
 parser.add_argument("--sch-phi-normalize", type=int, default=1, choices=[0, 1], help="SCH: rescale Phi to unit mean row norm (pure reparameterisation, needed for stability at order 3+)")
 parser.add_argument("--sch-phi-center", type=int, default=0, choices=[0, 1], help="SCH: mean-centre Phi columns (ablation)")
-parser.add_argument("--sch-g-type", type=str, default="linear", choices=["linear", "mlp"], help="SCH: g. A LINEAR g caps logit rank at min(M, d), which makes orders 3 and 4 rank-identical at d=512 and fakes ladder saturation. Run mlp for the ladder sweep")
+parser.add_argument("--sch-g-type", type=str, default="linear", choices=list(G_TYPES), help="SCH: g. A LINEAR g caps logit rank at min(M, d), which makes orders 3 and 4 rank-identical at d=512 and fakes ladder saturation. Run mlp for the ladder sweep")
 parser.add_argument("--sch-g-hidden", type=int, default=0, help="SCH: hidden width of the MLP g (0 = n_embd)")
 parser.add_argument("--sch-g-layers", type=int, default=2, help="SCH: depth of the MLP g")
 parser.add_argument("--sch-g-out-std", type=float, default=0.001, help="SCH: init std of g's final layer (matches lm_head's)")
 parser.add_argument("--sch-mixture", type=int, default=1, help="SCH: m code heads mixed by log-sum-exp; m>1 escapes the rank bound entirely (Phase 2 mitigation 1)")
 parser.add_argument("--sch-residual-rank", type=int, default=0, help="SCH: dense residual hybrid rank r; buys r rank for rV params (Phase 2 mitigation 3)")
-parser.add_argument("--sch-logit-act", type=str, default="none", choices=["none", "sigsoftmax", "monotonic"], help="SCH: pointwise nonlinearity on code logits (Phase 2 mitigation 2)")
+parser.add_argument("--sch-logit-act", type=str, default="none", choices=list(LOGIT_ACTS), help="SCH: pointwise nonlinearity on code logits (Phase 2 mitigation 2)")
 parser.add_argument("--sch-bias", type=int, default=0, choices=[0, 1], help="SCH: learned per-token bias. V params and +1 rank, but it BREAKS zero-shot vocabulary extension (a new token has no bias)")
-parser.add_argument("--sch-input-mode", type=str, default="table", choices=["table", "linear", "expanded", "nonlinear", "tied"], help="SCH Phase 3: input-side arm. 'linear' is expected to collapse at exactly rank B and is run for that reason")
+parser.add_argument("--sch-input-mode", type=str, default="table", choices=list(INPUT_MODES), help="SCH Phase 3: input-side arm. 'linear' is expected to collapse at exactly rank B and is run for that reason")
 parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: hidden width for --sch-input-mode nonlinear (0 = 4 * n_embd)")
 parser.add_argument("--sch-product-groups", type=int, default=8, help="SCH: g, digits in the K-ary product code (--sch-phi-mode product)")
 parser.add_argument("--sch-product-codebook", type=int, default=256, help="SCH: K, symbols per digit; M = g*K at order 1")
-parser.add_argument("--sch-product-source", type=str, default="hash", help="SCH: hash | random | file (assignment from scripts/code_assign.py)")
+parser.add_argument("--sch-product-source", type=str, default="hash", choices=list(PRODUCT_SOURCES), help="SCH: hash | random | file (assignment from scripts/code_assign.py)")
 parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: whiten Phi; same span, condition number 1, pure reparameterisation")
 parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: give each mixture component its own Phi (union of subspaces)")
 parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: components evaluated per token (0 = all); cost tracks k not K")
@@ -739,7 +744,7 @@ parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: Monarch 
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
 parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: never hold out ids below this (byte fallbacks and special tokens)")
-parser.add_argument("--sch-holdout-mode", type=str, default="target", choices=["target", "full"], help="SCH: 'target' masks held-out ids as prediction targets only (isolates the output head, the claim under test); 'full' also rewrites them in the inputs, so the model never sees them at all")
+parser.add_argument("--sch-holdout-mode", type=str, default="target", choices=list(HOLDOUT_MODES), help="SCH: 'target' masks held-out ids as prediction targets only (isolates the output head, the claim under test); 'full' also rewrites them in the inputs, so the model never sees them at all")
 parser.add_argument("--sch-decile-metrics", type=int, default=1, choices=[0, 1], help="SCH: report validation bpb per token-frequency decile at the end of training (the money plot)")
 parser.add_argument("--sch-rank-probe", type=int, default=0, help="SCH: contexts to use for the end-of-training logit-rank SVD (0 = skip; 50000 is the Phase 0 setting)")
 parser.add_argument("--sch-eval-steps", type=int, default=100, help="SCH: validation batches used by the end-of-training diagnostics")

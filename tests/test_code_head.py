@@ -721,3 +721,137 @@ def test_monarch_head_trains():
     loss.backward()
     assert torch.isfinite(loss)
     assert m.lm_head.w2.grad is not None and m.lm_head.w2.grad.abs().sum() > 0
+
+
+# ===========================================================================
+# CLI wiring.  A flag that the head supports but argparse rejects costs a whole
+# sweep arm: --sch-phi-mode product reached a GPU and died in argparse *after*
+# torchrun had spun up.  Grepping --help for the flag NAME does not catch that,
+# because the name is present and only the choices list is stale.  These tests
+# parse real argument vectors instead.
+# ===========================================================================
+
+import subprocess
+import sys as _sys
+
+
+def _base_train_parser():
+    """Build base_train's parser without running base_train.
+
+    The parser block is self-contained between its construction and
+    ``parse_args``, so it can be exec'd on its own. Importing the module would
+    start training.
+    """
+    import argparse as _argparse
+    src = open("scripts/base_train.py").read().splitlines()
+    start = next(i for i, l in enumerate(src) if l.startswith("parser = argparse.ArgumentParser"))
+    end = next(i for i, l in enumerate(src) if l.startswith("args = parser.parse_args"))
+    ns = {"argparse": _argparse}
+    exec("import nanochat.code_head as _ch\n" +
+         "from nanochat.code_head import *\n" +
+         "\n".join(src[start:end]), ns)
+    return ns["parser"]
+
+
+def test_every_canonical_mode_is_accepted_by_the_cli():
+    """The choice lists must be the tuples in code_head, not copies of them."""
+    from nanochat.code_head import (CODE_MODES, G_TYPES, HEAD_TYPES, HOLDOUT_MODES,
+                                    INPUT_MODES, LOGIT_ACTS, PHI_DTYPES, PHI_MODES,
+                                    PRODUCT_SOURCES)
+    parser = _base_train_parser()
+    flag_for = {
+        "--sch-head-type": HEAD_TYPES, "--sch-phi-mode": PHI_MODES,
+        "--sch-code-mode": CODE_MODES, "--sch-phi-dtype": PHI_DTYPES,
+        "--sch-g-type": G_TYPES, "--sch-logit-act": LOGIT_ACTS,
+        "--sch-input-mode": INPUT_MODES, "--sch-holdout-mode": HOLDOUT_MODES,
+        "--sch-product-source": PRODUCT_SOURCES,
+    }
+    for flag, values in flag_for.items():
+        for v in values:
+            ns, _ = parser.parse_known_args([flag, v])
+            assert getattr(ns, flag[2:].replace("-", "_")) == v, f"{flag}={v} not accepted"
+
+
+def _sweep_arms(path):
+    """Extract every ``run`` invocation from a sweep script, exactly.
+
+    Line based, following backslash continuations, rather than a regex over the
+    whole file. A regex that guesses where the invocation ends swallows the
+    surrounding ``done``/``else``/``echo`` lines, and because those arrive as
+    unknown *positionals* ``parse_known_args`` accepts them without complaint,
+    so the test passes while proving nothing.
+    """
+    lines = open(path).read().splitlines()
+    arms, i = [], 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith("run "):
+            buf = stripped
+            while buf.endswith("\\"):
+                i += 1
+                buf = buf[:-1] + " " + lines[i].strip()
+            buf = (buf.replace("$PROBE", "--sch-phi-dtype fp32 --sch-rank-probe 4096")
+                      .replace('"$MODEL_DIM"', "512").replace('"$G"', "4")
+                      .replace('"$K"', "64").replace('"$CODEF"', "codes.pt")
+                      .replace("$RANK_CONTEXTS", "4096").replace('"$DEPTH"', "8"))
+            toks = buf.split()
+            assert toks[0] == "run" and toks[2] == "8", f"unexpected run line: {buf[:80]}"
+            tag = toks[1].strip('"')
+            flags = [t for t in toks[3:] if t not in ("--models", "base")]
+            arms.append((tag, flags))
+        i += 1
+    return arms
+
+
+def test_every_c05_arm_parses_with_nothing_left_over():
+    """Every flag combination the Phase 5 sweep emits must reach base_train.
+
+    This is the check that would have caught ``--sch-phi-mode product`` dying in
+    argparse on a GPU. It asserts the leftover list is EMPTY: a stale choices
+    list raises SystemExit, and a misspelt flag lands in ``unknown``, and both
+    must fail.
+    """
+    parser = _base_train_parser()
+    arms = _sweep_arms("scripts/c05_sch_phase5_alternatives.sh")
+    assert len(arms) >= 20, f"only found {len(arms)} arms; the extractor has drifted"
+    for tag, flags in arms:
+        try:
+            _ns, unknown = parser.parse_known_args(flags)
+        except SystemExit:
+            pytest.fail(f"c05 arm {tag} is rejected by base_train: {' '.join(flags)}")
+        assert not unknown, f"c05 arm {tag} passes flags base_train does not define: {unknown}"
+
+
+def test_every_c00_arm_still_parses():
+    """The Phase 0 sweep must not regress when Phase 5 flags are added."""
+    parser = _base_train_parser()
+    for tag, flags in _sweep_arms("scripts/c00_sch_phase0_rank.sh"):
+        try:
+            _ns, unknown = parser.parse_known_args(flags)
+        except SystemExit:
+            pytest.fail(f"c00 arm {tag} is rejected by base_train: {' '.join(flags)}")
+        assert not unknown, f"c00 arm {tag} passes undefined flags: {unknown}"
+
+
+def test_new_flags_reach_research_compare_and_the_sweep_whitelist():
+    """base_train accepting a flag is not enough: it arrives through two hops.
+
+    research_compare must both DECLARE the flag (so the sweep can set it) and
+    EMIT it into the base_train command line (so the value survives the hop).
+    Declaring without emitting silently pins every arm to the default, which
+    looks like a working sweep producing identical configurations.
+    """
+    import re
+    parser = _base_train_parser()
+    sch_flags = {a for act in parser._actions for a in act.option_strings if a.startswith("--sch-")}
+    compare = open("scripts/research_compare.py").read()
+    sweep = open("scripts/research_sweep.sh").read()
+    whitelist = set(re.findall(r"--sch-[a-z0-9-]+", sweep))
+
+    declared = set(re.findall(r'parser\.add_argument\("(--sch-[a-z0-9-]+)"', compare))
+    # emission is a bare list element: `"--flag", str(...)` with no add_argument
+    emitted = set(re.findall(r'^\s*"(--sch-[a-z0-9-]+)",\s', compare, re.M))
+
+    assert not sch_flags - declared, f"not declared in research_compare.py: {sorted(sch_flags - declared)}"
+    assert not sch_flags - emitted, f"declared but never emitted to base_train: {sorted(sch_flags - emitted)}"
+    assert not sch_flags - whitelist, f"not in the research_sweep.sh whitelist: {sorted(sch_flags - whitelist)}"
