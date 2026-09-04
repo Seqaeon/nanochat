@@ -250,11 +250,11 @@ if has product; then
 #    run PROD_g8_K256_mlp "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
 #        --sch-product-groups 8 --sch-product-codebook 256 --sch-bias 1 \
 #        --sch-g-type mlp --sch-g-hidden "$MODEL_DIM" $PROBE
-#    # The null control. If a random assignment matches a fitted one, the code is
-#    # not doing the work and only the width is.
-#    run PROD_g8_K64_random "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-#        --sch-product-groups 8 --sch-product-codebook 64 --sch-product-source random \
-#        --sch-bias 1 $PROBE
+    # The null control. If a random assignment matches a fitted one, the code is
+    # not doing the work and only the width is.
+    run PROD_g8_K64_random "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+        --sch-product-groups 8 --sch-product-codebook 64 --sch-product-source random \
+        --sch-bias 1 $PROBE
     # COST-MATCHED CONTROLS at M=512. Under --sch-product-impl dense all three
     # cost exactly 4*V*M, so bpb differences are attributable to the SUBSPACE and
     # to nothing else. This is the comparison the whole product hypothesis rests
