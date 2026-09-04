@@ -65,6 +65,23 @@
 #   competing against that, not against the softmax. An arm that beats dense on
 #   FLOPs but loses to a plain learned rank-M head has shown nothing.
 #
+# WHY THE PRODUCT ARMS RUN --sch-product-impl dense
+#   MEASURED, not predicted: the gather path is 4.76x SLOWER than the matmul it
+#   replaces (CPU, N=2048, V=32768, g=8, K=64), and the matmul does 64x more
+#   arithmetic. On a GPU it is worse: the backward of index_select is an
+#   index_add scattering V values into K slots per position, which at V=32768
+#   and K=64 is 512-way atomic contention per slot. A first attempt at this
+#   sweep ran at 3.36 s/step and 0.23 MFU because of it.
+#
+#   So the quality question and the cost question are separated here. The dense
+#   impl materialises the one-hot Phi (33 MB at V=32768 M=512) and runs a normal
+#   GEMM, costing 4*V*M like any other frozen Phi. That makes every product arm
+#   COST-MATCHED to a monomial or random-binary arm at the same M, which is
+#   exactly the comparison that answers "does a K-ary partition span a better
+#   subspace than a binary one". The V*g cost claim needs a fused kernel and is
+#   tracked separately in OPEN_QUESTIONS Q8; the (kernel) group below measures
+#   the gather so the gap is on the record rather than assumed.
+#
 # WALL CLOCK IS PART OF THE RESULT, AND THE FLOP COLUMN WILL LIE TO YOU
 #   Both heads write the same N x V logit tensor. The dense head is compute
 #   bound at 768 FLOP/byte, so removing its compute lands on that write and not
@@ -91,7 +108,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="baseline product mixture monarch tree free"
+RUN_GROUPS="baseline product mixture monarch tree free"   # "kernel" is opt-in: it is slow on purpose
 SEEDS=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -238,6 +255,15 @@ if has product; then
     run PROD_g8_K64_random "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
         --sch-product-groups 8 --sch-product-codebook 64 --sch-product-source random \
         --sch-bias 1 $PROBE
+    # COST-MATCHED CONTROLS at M=512. Under --sch-product-impl dense all three
+    # cost exactly 4*V*M, so bpb differences are attributable to the SUBSPACE and
+    # to nothing else. This is the comparison the whole product hypothesis rests
+    # on: a K-ary partition against a binary monomial one at identical width and
+    # identical price.
+    run PROD_ctrl_monomial_M512 "$DEPTH" --models base --use-code-head 1 \
+        --sch-order 3 --sch-max-m 512 --sch-bias 1 $PROBE
+    run PROD_ctrl_randbin_M512  "$DEPTH" --models base --use-code-head 1 \
+        --sch-phi-mode random_binary --sch-max-m 512 --sch-bias 1 $PROBE
 
     if [ -n "$PROXY_CKPT" ]; then
         for GK in "4 64" "8 64" "8 256"; do
@@ -260,6 +286,18 @@ if has product; then
         echo "      the assignment to its output embedding. The hash arms above are"
         echo "      the control, not a substitute."
     fi
+fi
+
+# ---------------------------------------------------------------- kernel
+# The gather path, run on purpose so the cost gap is measured rather than
+# asserted. Expect it to be SLOW: it exists to put a number on Q8, not to
+# produce a bpb. Identical model to PROD_g8_K64, so any bpb difference between
+# the two is a bug and the step-time difference is the whole point.
+if has kernel; then
+    echo ""; echo "### KERNEL: the V*g gather path. Expected slower. Read step time, not bpb."
+    run KERN_g8_K64_gather "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+        --sch-product-groups 8 --sch-product-codebook 64 --sch-product-impl gather \
+        --sch-bias 1 $PROBE
 fi
 
 # ---------------------------------------------------------------- mixture
@@ -344,11 +382,17 @@ echo "  not against BASE_dense. c00 put a plain learned rank-120 head at"
 echo "  1.2281 bpb for 66% of dense FLOPs. An arm that beats dense on FLOPs"
 echo "  but loses to that has shown nothing."
 echo ""
-echo "  PRODUCT: read PROD_g*_K64 across g at fixed K. If bpb keeps improving"
-echo "           while the FLOP column barely moves, the gather-add is doing"
-echo "           what the cost model says. Then check PROD_g8_K64_random: if"
-echo "           it matches the hash and fitted arms, only the width matters"
-echo "           and the code assignment is decoration."
+echo "  PRODUCT: the arms are cost-matched (impl=dense, 4*V*M), so read them as"
+echo "           a QUALITY comparison at fixed price. PROD_g8_K64 against"
+echo "           PROD_ctrl_monomial_M512 and PROD_ctrl_randbin_M512 at M=512 is"
+echo "           the whole hypothesis: same width, same FLOPs, different"
+echo "           subspace. Then PROD_g8_K64_random: if it matches the hash and"
+echo "           fitted arms, only the width matters and the code is decoration."
+echo ""
+echo "  KERNEL:  run --group kernel to put a number on the gather. It should"
+echo "           match PROD_g8_K64 on bpb exactly and lose badly on step time."
+echo "           That gap is OPEN_QUESTIONS Q8 and it is what stands between"
+echo "           the arithmetic claim and a wall-clock claim."
 echo ""
 echo "  MONARCH: the diagnostic arm. Fully learned, so if MON_M1024 lands near"
 echo "           BASE_dense then c00's deficit was freezing, and if it lands"

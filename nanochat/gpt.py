@@ -649,6 +649,7 @@ class GPTConfig:
     sch_product_groups: int = 8                     # g: digits in the K-ary product code (phi_mode=product)
     sch_product_codebook: int = 256                 # K: symbols per digit; M = g*K at order 1, no interactions
     sch_product_source: str = 'hash'                # hash | random | file (k-means assignment from code_assign.py)
+    sch_product_impl: str = 'dense'                 # dense = materialise the one-hot Phi and GEMM (fast); gather = V*g arithmetic but needs a fused kernel (Q8)
     sch_phi_whiten: int = 0                         # Phi (Phi^T Phi)^-1/2: same span, cond 1, pure reparameterisation
     sch_mixture_per_phi: int = 0                    # each mixture component gets its OWN Phi (union of subspaces)
     sch_mixture_topk: int = 0                       # components evaluated per token (0 = all); cost tracks k, not K
@@ -749,7 +750,7 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_phi_center", "sch_g_type", "sch_g_hidden", "sch_g_layers", "sch_g_out_std",
     "sch_mixture", "sch_residual_rank", "sch_logit_act", "sch_bias",
     "sch_input_mode", "sch_input_hidden",
-    "sch_product_groups", "sch_product_codebook", "sch_product_source",
+    "sch_product_groups", "sch_product_codebook", "sch_product_source", "sch_product_impl",
     "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_monarch_m1",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",

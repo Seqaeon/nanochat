@@ -535,6 +535,7 @@ def run_training_sweep(args):
         "--sch-product-groups", str(getattr(args, 'sch_product_groups', 8)),
         "--sch-product-codebook", str(getattr(args, 'sch_product_codebook', 256)),
         "--sch-product-source", str(getattr(args, 'sch_product_source', 'hash')),
+        "--sch-product-impl", str(getattr(args, 'sch_product_impl', 'dense')),
         "--sch-phi-whiten", str(getattr(args, 'sch_phi_whiten', 0)),
         "--sch-mixture-per-phi", str(getattr(args, 'sch_mixture_per_phi', 0)),
         "--sch-mixture-topk", str(getattr(args, 'sch_mixture_topk', 0)),
@@ -1297,6 +1298,7 @@ if __name__ == "__main__":
     parser.add_argument("--sch-product-groups", type=int, default=8, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-product-codebook", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-product-source", type=str, default="hash", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-product-impl", type=str, default="dense", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

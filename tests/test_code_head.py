@@ -602,11 +602,17 @@ def test_product_head_matches_a_dense_head_of_the_same_shape():
 
 
 def test_product_head_flops_scale_with_groups_not_with_M():
-    """V*g, not V*M.  This is the entire economic claim of the product code."""
-    head_a = _phase5(use_code_head=1, sch_phi_mode='product',
+    """V*g, not V*M: the entire economic claim of the product code.
+
+    Only true of the `gather` implementation, which is why it is named here.
+    The default `dense` impl materialises Phi and pays 4*V*M like any other
+    frozen head, because the gather measures 4.76x slower than the matmul it
+    replaces until a fused kernel exists (OPEN_QUESTIONS Q8).
+    """
+    head_a = _phase5(use_code_head=1, sch_phi_mode='product', sch_product_impl='gather',
                      sch_product_groups=2, sch_product_codebook=64).lm_head
-    head_b = _phase5(use_code_head=1, sch_phi_mode='product',
-                                  sch_product_groups=2, sch_product_codebook=256).lm_head
+    head_b = _phase5(use_code_head=1, sch_phi_mode='product', sch_product_impl='gather',
+                     sch_product_groups=2, sch_product_codebook=256).lm_head
     V = head_a.vocab_size
     # M quadruples; the Phi term must not move at all.
     assert head_b.width == 4 * head_a.width
@@ -937,3 +943,54 @@ def test_head_flops_are_reportable_on_the_meta_device():
         f = m.lm_head.flops_per_token()
         assert isinstance(f, int) and f > 0, f"{kw} reported {f}"
         assert m.estimate_flops()[0] > 0
+
+
+def test_the_two_product_implementations_compute_the_same_function():
+    """`gather` and `dense` differ only in how `g(h) Phi^T` is evaluated.
+
+    If they ever disagree, the fast path is not the thing the slow path's cost
+    model describes, and every FLOP number for the product head is fiction.
+    """
+    kw = dict(use_code_head=1, sch_phi_mode='product', sch_product_groups=4,
+              sch_product_codebook=16, sch_product_source='random', sch_code_seed=11)
+    a = build(**kw, sch_product_impl='dense')
+    b = build(**kw, sch_product_impl='gather')
+    b.load_state_dict(a.state_dict(), strict=False)
+    b.lm_head._build_phi()
+    x = torch.randint(0, V, (2, 8))
+    torch.testing.assert_close(a(x).float(), b(x).float(), rtol=1e-2, atol=1e-2)
+
+
+def test_product_flops_follow_the_implementation_actually_used():
+    """The dense path pays 4*V*M like any frozen Phi; only the gather pays 4*V*g.
+
+    Reporting the gather's arithmetic while running the matmul would overstate
+    the head's efficiency by M/g, which is 8x at g=8 K=64.
+    """
+    kw = dict(use_code_head=1, sch_phi_mode='product', sch_product_groups=4,
+              sch_product_codebook=16)
+    dense = build(**kw, sch_product_impl='dense').lm_head
+    gather = build(**kw, sch_product_impl='gather').lm_head
+    g_cost = sum(g.flops_per_token() for g in dense.g)
+    assert dense.flops_per_token() - g_cost == 4 * dense.vocab_size * dense.width
+    assert gather.flops_per_token() - g_cost == 4 * gather.vocab_size * 4
+
+
+def test_the_default_product_implementation_is_the_fast_one():
+    """A sweep must not silently pick the path measured 4.76x slower."""
+    head = build(use_code_head=1, sch_phi_mode='product',
+                 sch_product_groups=4, sch_product_codebook=16).lm_head
+    assert head.product_impl == "dense"
+
+
+def test_product_phi_is_rebuilt_from_the_restored_assignment():
+    """Phi is derived, `assign` is persisted; a resume must not keep the default."""
+    kw = dict(use_code_head=1, sch_phi_mode='product', sch_product_groups=4,
+              sch_product_codebook=16, sch_product_source='random')
+    a = build(**kw, sch_code_seed=1)
+    b = build(**kw, sch_code_seed=2)
+    assert not torch.equal(a.lm_head.assign, b.lm_head.assign)
+    b.load_state_dict(a.state_dict())
+    assert torch.equal(a.lm_head.assign, b.lm_head.assign)
+    x = torch.randint(0, V, (2, 8))
+    torch.testing.assert_close(a(x), b(x))

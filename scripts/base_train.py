@@ -38,7 +38,7 @@ from nanochat.gpt import GPT, GPTConfig, Linear
 # hand is how --sch-phi-mode product reached a GPU and died in argparse.
 from nanochat.code_head import (CODE_MODES, G_TYPES, HEAD_TYPES, HOLDOUT_MODES,
                                 INPUT_MODES, LOGIT_ACTS, PHI_DTYPES, PHI_MODES,
-                                PRODUCT_SOURCES)
+                                PRODUCT_IMPLS, PRODUCT_SOURCES)
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, wrap_model
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -736,6 +736,7 @@ parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: hidden
 parser.add_argument("--sch-product-groups", type=int, default=8, help="SCH: g, digits in the K-ary product code (--sch-phi-mode product)")
 parser.add_argument("--sch-product-codebook", type=int, default=256, help="SCH: K, symbols per digit; M = g*K at order 1")
 parser.add_argument("--sch-product-source", type=str, default="hash", choices=list(PRODUCT_SOURCES), help="SCH: hash | random | file (assignment from scripts/code_assign.py)")
+parser.add_argument("--sch-product-impl", type=str, default="dense", choices=list(PRODUCT_IMPLS), help="SCH: 'dense' materialises the one-hot Phi and runs a GEMM (fast, costs 4*V*M); 'gather' is the V*g arithmetic path and is MEASURABLY SLOWER until a fused kernel exists (OPEN_QUESTIONS Q8)")
 parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: whiten Phi; same span, condition number 1, pure reparameterisation")
 parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: give each mixture component its own Phi (union of subspaces)")
 parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: components evaluated per token (0 = all); cost tracks k not K")
@@ -1285,6 +1286,7 @@ def build_model_meta(depth):
         sch_product_groups=int(getattr(args, 'sch_product_groups', 8)),
         sch_product_codebook=int(getattr(args, 'sch_product_codebook', 256)),
         sch_product_source=str(getattr(args, 'sch_product_source', 'hash')),
+        sch_product_impl=str(getattr(args, 'sch_product_impl', 'dense')),
         sch_phi_whiten=int(getattr(args, 'sch_phi_whiten', 0)),
         sch_mixture_per_phi=int(getattr(args, 'sch_mixture_per_phi', 0)),
         sch_mixture_topk=int(getattr(args, 'sch_mixture_topk', 0)),

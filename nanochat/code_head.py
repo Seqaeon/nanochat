@@ -117,6 +117,7 @@ MAX_PHI_WIDTH = 65536
 CODE_MODES = ("binary", "random", "ecc", "frequency", "file")
 PHI_MODES = ("monomial", "random_binary", "onehot", "learned", "gaussian", "product")
 PRODUCT_SOURCES = ("hash", "random", "file")
+PRODUCT_IMPLS = ("dense", "gather")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
@@ -525,16 +526,26 @@ def product_gather(z, assign):
     ``--compile``); Triton is the fallback.  Benchmark before quoting a ratio.
 
       z       (..., groups * codebook), the output of ``g``
-      assign  (V, groups) int32, the codeword of each token
+      assign  (V, groups) int64, the codeword of each token
+
+    MEASURED SLOWER THAN THE MATMUL IT REPLACES.  Do not use this path for a
+    training sweep; ``product_impl='dense'`` is the default for that reason.
+    On CPU at N=2048, V=32768, g=8, K=64 this is 4.76x the time of the dense
+    ``z @ Phi^T``, which performs 64x more arithmetic, and on a GPU it is worse
+    still: the backward of ``index_select`` is an ``index_add`` scattering V
+    values into K slots per position, so at V=32768 and K=64 every slot takes
+    512-way atomic contention.  The forward is also g separate passes over a
+    full ``(..., V)`` tensor rather than one.
+
+    Kept because the arithmetic claim is real and only the kernel is missing:
+    see OPEN_QUESTIONS Q8.  Benchmark any replacement against the dense path.
     """
-    V, groups = assign.shape
+    groups = assign.shape[1]
     K = z.shape[-1] // groups
     zg = z.view(*z.shape[:-1], groups, K)
     out = None
     for j in range(groups):
-        # index_select over the last axis is a gather; its backward is a
-        # scatter-add, which is what makes the whole head cheap in both passes.
-        part = zg[..., j, :].index_select(-1, assign[:, j].long())
+        part = zg[..., j, :].index_select(-1, assign[:, j])
         # in place: saves the g extra allocations the adds would make.
         # Halves the traffic; it does not make this single-pass.
         out = part if out is None else out.add_(part)
@@ -670,6 +681,7 @@ class StructuredCodeHead(nn.Module):
         self.order = cfg["order"]
         self.width = cfg["width"]          # M
         self.phi_mode = cfg["phi_mode"]
+        self.product_impl = cfg["product_impl"]
         self.n_mixture = cfg["mixture"]
         self.logit_act = cfg["logit_act"]
 
@@ -729,14 +741,23 @@ class StructuredCodeHead(nn.Module):
             self.phi_learned = nn.Parameter(torch.empty(padded_vocab_size, M))
             self.register_buffer("phi", torch.empty(0), persistent=False)
         elif self.phi_mode == "product":
-            # Phi is never materialised: one-hot per group turns the V x M
-            # product into a gather and add over g digits.  Only the assignment
-            # is stored, and it is the thing worth checkpointing.
+            # Only the assignment is checkpointed; Phi is derived from it.
+            # int64 because index_select requires it and converting V values on
+            # every forward is pure waste.
             self.phi_learned = None
-            self.register_buffer("phi", torch.empty(0), persistent=False)
             self.register_buffer("assign",
                                  torch.empty(padded_vocab_size, cfg["product_groups"],
-                                             dtype=torch.int32), persistent=True)
+                                             dtype=torch.int64), persistent=True)
+            # The gather path does not materialise Phi; the dense path does,
+            # because the one-hot matmul on tensor cores beats the gather by a
+            # wide margin until a fused kernel exists (see product_gather).
+            # V x M in bf16 is 33 MB at V=32768 M=512 and 537 MB at V=131072
+            # M=2048, which is affordable; the gather's g full-width
+            # intermediates are not.
+            self.register_buffer("phi",
+                                 torch.empty(0) if self.product_impl == "gather"
+                                 else torch.empty(padded_vocab_size, M, dtype=phi_dtype),
+                                 persistent=False)
         else:
             self.phi_learned = None
             self.register_buffer("phi",
@@ -808,8 +829,8 @@ class StructuredCodeHead(nn.Module):
             A = build_product_codes(self.vocab_size, cfg["product_groups"],
                                     cfg["product_codebook"], cfg["product_source"],
                                     cfg["code_seed"], cfg["code_path"])
-            self.assign.copy_(A.to(self.assign.device))
-            self._materialized = True
+            self.assign.copy_(A.to(dtype=torch.int64, device=self.assign.device))
+            self._build_phi()
             self._init_learned_parts()
             return
         device = self.codes.device
@@ -846,6 +867,19 @@ class StructuredCodeHead(nn.Module):
     def _build_phi(self):
         """(Re)build the frozen Phi from ``self.codes``."""
         if self.phi_mode == "learned":
+            self._materialized = True
+            return
+        if self.phi_mode == "product":
+            # Derived from `assign`, which IS persisted, so a resumed run must
+            # rebuild Phi from the restored assignment rather than from the
+            # config default.  The gather path has no Phi to rebuild.
+            if self.product_impl == "dense":
+                phi = torch.zeros(self.vocab_size, self.width, dtype=self.phi_dtype)
+                rows = torch.arange(self.vocab_size)
+                A = self.assign.detach().cpu().long()
+                for j in range(self.cfg["product_groups"]):
+                    phi[rows, j * self.cfg["product_codebook"] + A[:, j]] = 1
+                self.phi = phi.to(device=self.assign.device, dtype=self.phi_dtype)
             self._materialized = True
             return
         device = self.codes.device
@@ -908,9 +942,11 @@ class StructuredCodeHead(nn.Module):
     # -- forward ------------------------------------------------------------
     def _phi_matmul(self, z, m: int = 0):
         if self.phi_mode == "product":
-            # No matmul at all: Phi is one-hot per group, so this is g gathers
-            # and g-1 adds, costing V*g instead of V*M.
-            return product_gather(z, self.assign)
+            if self.product_impl == "gather":
+                # g gathers and g-1 adds: V*g arithmetic instead of V*M, and
+                # measurably slower than the matmul until it is fused. Q8.
+                return product_gather(z, self.assign)
+            return F.linear(z.to(dtype=self.phi.dtype), self.phi)
         if self.phi_learned is not None:
             # Cast the weight, exactly as nanochat's Linear does for lm_head, so
             # the learned-W control and the dense baseline pay the same cast.
@@ -1012,11 +1048,13 @@ class StructuredCodeHead(nn.Module):
         # Only the routed components run, so cost tracks k rather than K.
         active = self.mixture_topk
         f = sum(g.flops_per_token() for g in self.g) * active // max(self.n_mixture, 1)
-        if self.phi_mode == "product":
+        if self.phi_mode == "product" and self.product_impl == "gather":
             # A gather and add, not a matmul: g lookups and g-1 adds per
             # vocabulary entry forward, and a scatter-add of the same shape in
             # the backward.  2 * V * groups per pass, no weight gradient because
-            # the assignment is frozen.
+            # the assignment is frozen.  This is the ARITHMETIC; the wall clock
+            # does not follow it without a fused kernel (Q8), so a sweep run on
+            # this path must publish step times beside this column.
             f += active * 4 * V * self.cfg["product_groups"]
         elif self.phi_learned is not None:
             f += active * 6 * V * M
@@ -1034,7 +1072,8 @@ class StructuredCodeHead(nn.Module):
         return (f"V={self.vocab_size}, B={self.bits}, order={self.order}, M={self.width}, "
                 f"phi={self.phi_mode}, code={self.cfg['code_mode']}, g={self.cfg['g_type']}, "
                 + (f"prod={self.cfg['product_groups']}x{self.cfg['product_codebook']}"
-                   f"/{self.cfg['product_source']}, " if self.phi_mode == "product" else "")
+                   f"/{self.cfg['product_source']}/{self.cfg['product_impl']}, "
+                   if self.phi_mode == "product" else "")
                 + (f"whiten=1, " if self.cfg["phi_whiten"] else "")
                 + f"mixture={self.n_mixture}"
                 + (f"(top{self.mixture_topk}"
@@ -1429,6 +1468,8 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
         width = groups * codebook
         assert width <= MAX_PHI_WIDTH, f"M={width} exceeds MAX_PHI_WIDTH={MAX_PHI_WIDTH}"
         density = 1.0 / codebook
+        impl = g("sch_product_impl", "dense")
+        assert impl in PRODUCT_IMPLS, f"sch_product_impl={impl!r} not in {PRODUCT_IMPLS}"
     elif phi_mode == "monomial":
         assert 1 <= order <= bits_total, \
             f"sch_order={order} must be in [1, B={bits_total}]"
@@ -1466,6 +1507,7 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
         "product_groups": int(g("sch_product_groups", 8)),
         "product_codebook": int(g("sch_product_codebook", 256)),
         "product_source": product_source,
+        "product_impl": g("sch_product_impl", "dense"),
         "phi_whiten": bool(int(g("sch_phi_whiten", 0))),
         "mixture_per_phi": bool(int(g("sch_mixture_per_phi", 0))),
         "mixture_topk": int(g("sch_mixture_topk", 0)),
