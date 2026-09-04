@@ -804,6 +804,7 @@ class StructuredCodeHead(nn.Module):
         self.active_vocab = int(getattr(config, "vocab_size", padded_vocab_size))
         self._phi_scale = 1.0
         self._materialized = False
+        self._aux_loss = None
         # Name differs across torch versions (the private form predates 2.2).
         hook_api = getattr(self, "register_load_state_dict_post_hook", None) or \
             getattr(self, "_register_load_state_dict_post_hook")
@@ -850,7 +851,19 @@ class StructuredCodeHead(nn.Module):
         for g in self.g:
             g.init_weights(out_std=cfg["g_out_std"])
         if self.router is not None:
-            torch.nn.init.zeros_(self.router.weight)   # uniform mixture at init
+            if self.mixture_topk >= self.n_mixture:
+                torch.nn.init.zeros_(self.router.weight)   # uniform mixture at init
+            else:
+                # Hard routing cannot start from a symmetric router. With zero
+                # weights every token's router logits are identical and topk
+                # breaks the tie by index, so component 0 receives ALL tokens
+                # and components 1..K-1 receive none, forever: they get no
+                # gradient, so the router never learns to prefer them. That
+                # shows up first as DDP refusing to step ("parameters that were
+                # not used in producing loss") and would otherwise show up as a
+                # mixture that silently behaves like a single component.
+                torch.nn.init.normal_(self.router.weight, mean=0.0,
+                                      std=self.n_embd ** -0.5)
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
         if self.res_emb is not None:
@@ -989,6 +1002,7 @@ class StructuredCodeHead(nn.Module):
         # log-sum-exp is nonlinear in the component logits, so the rank of the
         # resulting log-prob matrix is not bounded by M.
         route = F.linear(x, self.router.weight.to(dtype=x.dtype)).float()
+        self._aux_loss = self._load_balance(route) if self.mixture_topk < self.n_mixture else None
         if self.mixture_topk >= self.n_mixture:
             log_pi = torch.log_softmax(route, dim=-1)
             comps = []
@@ -996,6 +1010,23 @@ class StructuredCodeHead(nn.Module):
                 comps.append(self._mixture_term(x, m) + log_pi[..., m:m + 1])
             return torch.logsumexp(torch.stack(comps, dim=-2), dim=-2)
         return self._sparse_mixture(x, route)
+
+    def _load_balance(self, route):
+        """Switch-Transformer load-balancing term, ``K * sum_m f_m * P_m``.
+
+        ``f_m`` is the fraction of tokens routed to component ``m`` and ``P_m``
+        the mean router probability for it. Minimised at a uniform assignment,
+        where it equals 1. Without it, top-1 routing concentrates: the component
+        that happens to win early gets all the gradient, gets better, and wins
+        more, and the sweep measures a single frozen subspace while paying for K.
+        """
+        flat = route.reshape(-1, self.n_mixture)
+        probs = torch.softmax(flat, dim=-1)
+        top1 = flat.argmax(dim=-1)
+        frac = torch.zeros(self.n_mixture, device=flat.device, dtype=probs.dtype)
+        frac.scatter_add_(0, top1, torch.ones_like(top1, dtype=probs.dtype))
+        frac = frac / max(flat.shape[0], 1)
+        return self.n_mixture * (frac * probs.mean(dim=0)).sum()
 
     def _mixture_term(self, x, m: int):
         lg = self._component_logits(x, m).float()

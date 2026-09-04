@@ -994,3 +994,62 @@ def test_product_phi_is_rebuilt_from_the_restored_assignment():
     assert torch.equal(a.lm_head.assign, b.lm_head.assign)
     x = torch.randint(0, V, (2, 8))
     torch.testing.assert_close(a(x), b(x))
+
+
+def test_hard_routing_does_not_collapse_onto_one_component():
+    """A zero-initialised router plus top-1 is a dead architecture.
+
+    With zero weights every token's router logits are identical and `topk`
+    breaks the tie by index, so component 0 receives ALL tokens and 1..K-1
+    receive none, forever: they get no gradient, so the router never learns to
+    prefer them. It surfaced as DDP refusing to step ("Parameter indices which
+    did not receive grad: 31 32 33") and would otherwise have been a mixture
+    that silently behaved like a single component while paying for four.
+    """
+    m = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                sch_mixture_per_phi=1, sch_mixture_topk=1)
+    head = m.lm_head
+    x = torch.randn(64, head.n_embd)
+    route = F.linear(x, head.router.weight.float())
+    used = route.argmax(dim=-1).unique().numel()
+    assert used > 1, ("the router sends every token to one component at init; "
+                      "hard routing needs a symmetry-broken router")
+
+
+def test_every_parameter_of_a_sparsely_routed_head_receives_gradient():
+    """The exact condition DDP checks with find_unused_parameters=False.
+
+    A component that receives no token contributes no gradient to its `g`
+    weights. Load balancing plus a symmetry-broken router should keep all of
+    them alive on a batch of realistic size.
+    """
+    m = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                sch_mixture_per_phi=1, sch_mixture_topk=1)
+    m.train()
+    x = torch.randint(0, V, (4, 32))
+    m(x, x).backward()
+    missing = [n for n, p in m.lm_head.named_parameters()
+               if p.requires_grad and p.grad is None]
+    assert not missing, f"no gradient reached: {missing}"
+
+
+def test_the_load_balance_term_is_minimal_at_a_uniform_assignment():
+    m = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                sch_mixture_per_phi=1, sch_mixture_topk=1)
+    head = m.lm_head
+    n = 4096
+    uniform = torch.zeros(n, 4)
+    uniform[torch.arange(n), torch.arange(n) % 4] = 8.0     # balanced, confident
+    collapsed = torch.zeros(n, 4)
+    collapsed[:, 0] = 8.0                                    # everything to one
+    assert head._load_balance(uniform) < head._load_balance(collapsed)
+    # perfectly uniform routing gives K * sum_m (1/K)(1/K) = 1
+    assert abs(float(head._load_balance(uniform)) - 1.0) < 0.05
+
+
+def test_ddp_asks_for_unused_parameter_detection_when_routing_is_sparse():
+    """common.wrap_model must see the sparse head, not just MoE and MST."""
+    import inspect
+    from nanochat import common
+    src = inspect.getsource(common.wrap_model)
+    assert "has_sparse_head" in src and "sch_mixture_topk" in src

@@ -255,7 +255,15 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_r
         has_eet = getattr(cfg, 'use_eet', False) if cfg else False
         has_sparse_mst = (getattr(cfg, 'use_mst', False) and getattr(cfg, 'mst_routing_mode', '') == 'topk_hard') if cfg else False
         has_remix = getattr(cfg, 'use_remix_linear', False) if cfg else False
-        find_unused = bool(has_moe or has_eet or has_sparse_mst or has_remix)
+        # A sparsely routed code head evaluates only the top-k of its K
+        # components, so a component that receives no token in a micro-batch
+        # produces no gradient for its g weights and DDP refuses to step.
+        # Load balancing makes that rare but cannot make it impossible.
+        has_sparse_head = bool(
+            getattr(cfg, 'use_code_head', False)
+            and 0 < int(getattr(cfg, 'sch_mixture_topk', 0)) < int(getattr(cfg, 'sch_mixture', 1))
+        ) if cfg else False
+        find_unused = bool(has_moe or has_eet or has_sparse_mst or has_remix or has_sparse_head)
         # SCH: a structured code head carries a frozen Phi buffer that is up to
         # V x M (842 MB at V=131072, M=3213). DDP's default broadcast_buffers
         # would re-broadcast it from rank 0 on every forward, which would dwarf

@@ -740,6 +740,7 @@ parser.add_argument("--sch-product-impl", type=str, default="dense", choices=lis
 parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: whiten Phi; same span, condition number 1, pure reparameterisation")
 parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: give each mixture component its own Phi (union of subspaces)")
 parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: components evaluated per token (0 = all); cost tracks k not K")
+parser.add_argument("--sch-mixture-aux", type=float, default=0.01, help="SCH: load-balance weight for sparse mixture routing. 0 lets top-1 collapse onto a single component while paying for K")
 parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: Monarch inner factor m1 (0 = sqrt(M))")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
@@ -1290,6 +1291,7 @@ def build_model_meta(depth):
         sch_phi_whiten=int(getattr(args, 'sch_phi_whiten', 0)),
         sch_mixture_per_phi=int(getattr(args, 'sch_mixture_per_phi', 0)),
         sch_mixture_topk=int(getattr(args, 'sch_mixture_topk', 0)),
+        sch_mixture_aux=float(getattr(args, 'sch_mixture_aux', 0.01)),
         sch_monarch_m1=int(getattr(args, 'sch_monarch_m1', 0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET

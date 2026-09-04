@@ -539,6 +539,7 @@ def run_training_sweep(args):
         "--sch-phi-whiten", str(getattr(args, 'sch_phi_whiten', 0)),
         "--sch-mixture-per-phi", str(getattr(args, 'sch_mixture_per_phi', 0)),
         "--sch-mixture-topk", str(getattr(args, 'sch_mixture_topk', 0)),
+        "--sch-mixture-aux", str(getattr(args, 'sch_mixture_aux', 0.01)),
         "--sch-monarch-m1", str(getattr(args, 'sch_monarch_m1', 0)),
         "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
         "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
@@ -1302,6 +1303,7 @@ if __name__ == "__main__":
     parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-mixture-aux", type=float, default=0.01, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

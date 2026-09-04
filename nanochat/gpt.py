@@ -653,6 +653,7 @@ class GPTConfig:
     sch_phi_whiten: int = 0                         # Phi (Phi^T Phi)^-1/2: same span, cond 1, pure reparameterisation
     sch_mixture_per_phi: int = 0                    # each mixture component gets its OWN Phi (union of subspaces)
     sch_mixture_topk: int = 0                       # components evaluated per token (0 = all); cost tracks k, not K
+    sch_mixture_aux: float = 0.01                   # load-balance weight for sparse routing; 0 lets top-1 collapse to one component
     sch_monarch_m1: int = 0                         # Monarch inner factor (0 = sqrt(M)); cost is d*M + V*m1
 
 
@@ -751,7 +752,8 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_mixture", "sch_residual_rank", "sch_logit_act", "sch_bias",
     "sch_input_mode", "sch_input_hidden",
     "sch_product_groups", "sch_product_codebook", "sch_product_source", "sch_product_impl",
-    "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_monarch_m1",
+    "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_mixture_aux",
+    "sch_monarch_m1",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
@@ -11402,6 +11404,14 @@ class GPT(nn.Module):
                     loss = loss + div_lambda * torch.stack(div_terms).mean()
 
             # Phase 24: sliced-weight routing balance loss
+            # SCH: load balancing for a sparsely routed code head. Without it
+            # top-1 routing concentrates on whichever component wins early, and
+            # the sweep pays for K subspaces while using one.
+            sch_aux = float(getattr(self.config, 'sch_mixture_aux', 0.0))
+            if (sch_aux > 0.0 and loss_reduction == 'mean' and self.use_code_head
+                    and getattr(self.lm_head, '_aux_loss', None) is not None):
+                loss = loss + sch_aux * self.lm_head._aux_loss.to(dtype=loss.dtype)
+
             p24_balance_coeff = float(getattr(self.config, 'p24_sliced_weight_balance_coeff', 0.0))
             if p24_balance_coeff > 0.0 and loss_reduction == 'mean':
                 bal_terms = []

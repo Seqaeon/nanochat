@@ -306,6 +306,15 @@ fi
 # refuses that configuration rather than running it.
 if has mixture; then
     echo ""; echo "### MIXTURE: per-component Phi, top-1 routing. Cost of one, reach of K."
+    # Sparse routing needs two things that dense mixtures do not, both now on by
+    # default. The router cannot start symmetric: with zero weights every token's
+    # logits tie and topk breaks the tie by index, so component 0 takes every
+    # token and 1..K-1 are permanently dead. That failed as a DDP error
+    # ("Parameter indices which did not receive grad: 31 32 33"). And --sch-mixture-aux
+    # (Switch load balancing, default 0.01) keeps them alive afterwards; without
+    # it top-1 concentrates on whichever component wins early and the arm pays
+    # for K subspaces while using one.
+    #
     # order 3 TRUNCATED to M=120, not order 2. At B=15 the full order-2 width IS
     # 120, so every component would draw the same monomial set and the arm would
     # be a no-op; the head refuses that rather than running it. Truncating order
@@ -393,6 +402,11 @@ echo "  KERNEL:  run --group kernel to put a number on the gather. It should"
 echo "           match PROD_g8_K64 on bpb exactly and lose badly on step time."
 echo "           That gap is OPEN_QUESTIONS Q8 and it is what stands between"
 echo "           the arithmetic claim and a wall-clock claim."
+echo ""
+echo "  MIXTURE: check the router actually spread. MIX_k8_shared_phi is the"
+echo "           control: same K, same routing, one shared Phi. If it matches"
+echo "           MIX_k8_top1 then the union of subspaces bought nothing and"
+echo "           only the log-sum-exp mixing mattered."
 echo ""
 echo "  MONARCH: the diagnostic arm. Fully learned, so if MON_M1024 lands near"
 echo "           BASE_dense then c00's deficit was freezing, and if it lands"
