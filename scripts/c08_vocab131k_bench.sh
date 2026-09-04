@@ -59,14 +59,18 @@ set -o pipefail
 
 FORCE=0
 SEEDS=1
+RUN_DENSE=1
+RUN_SCH=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --force)  FORCE=1; shift ;;
-        --seeds)  SEEDS="$2"; shift 2 ;;
-        [0-9]*)   DEPTHS+=("$1"); shift ;;
+        --force)      FORCE=1; shift ;;
+        --seeds)      SEEDS="$2"; shift 2 ;;
+        --dense-only) RUN_DENSE=1; RUN_SCH=0; shift ;;
+        --sch-only)   RUN_DENSE=0; RUN_SCH=1; shift ;;
+        [0-9]*)       DEPTHS+=("$1"); shift ;;
         *) echo "unknown arg: $1"
-           echo "usage: $0 [--force] [--seeds N] [DEPTH ...]"; exit 1 ;;
+           echo "usage: $0 [--force] [--seeds N] [--dense-only] [--sch-only] [DEPTH ...]"; exit 1 ;;
     esac
 done
 [ ${#DEPTHS[@]} -eq 0 ] && DEPTHS=(8)
@@ -171,8 +175,8 @@ echo "  TARGET TOKENS: ${TARGET_TOKENS}   (pinned from the dense arm)"
 echo "  out ${OUT_BASE}"
 echo "============================================================"
 
-run BASE_dense "$DEPTH" --models base --sch-rank-probe $RANK_CONTEXTS
-run "MON_M${M}" "$DEPTH" --models base --use-code-head 1 \
+[ "$RUN_DENSE" -eq 1 ] && run BASE_dense "$DEPTH" --models base --sch-rank-probe $RANK_CONTEXTS
+[ "$RUN_SCH"   -eq 1 ] && run "MON_M${M}" "$DEPTH" --models base --use-code-head 1 \
     --sch-head-type monarch --sch-max-m "$M" $PROBE
 
 done

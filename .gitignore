@@ -17,6 +17,7 @@ wandb/
 out/
 data/
 tokenizer/
+tokenizer_131k/
 *.pt
 *.pth
 *.ckpt
