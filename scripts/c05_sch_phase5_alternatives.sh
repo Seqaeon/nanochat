@@ -324,8 +324,16 @@ if has mixture; then
         --sch-mixture 4 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 $PROBE
     run MIX_k8_top1 "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
         --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 $PROBE
+    # k>1 is inherently k log-softmax outputs plus the running combination, so it
+    # cannot be made as cheap as k=1. Measured full-width (N x V) allocations per
+    # forward+backward: dense baseline 22, top-1 18, top-2 37, and a DENSE
+    # mixture over K=4 components 79. One such tensor is 34 GB in fp32 at 262144
+    # tokens and V=32768, which is how the first attempt reached 106 GB on a
+    # 140 GB card. Gradient accumulation keeps the total batch identical, so
+    # shrinking the device batch here does not change what is being compared.
     run MIX_k8_top2 "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
-        --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 2 --sch-bias 1 $PROBE
+        --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 2 --sch-bias 1 \
+        --device-batch-size "${MIX_TOP2_DBS:-32}" $PROBE
     # The control that isolates the union from the mixing. Same K, same routing,
     # but ONE shared Phi: this is what c00's mixture already was.
     run MIX_k8_shared_phi "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \

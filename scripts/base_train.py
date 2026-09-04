@@ -2177,8 +2177,17 @@ while True:
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
     _can_sample = getattr(orig_model, 'supports_kv_cache_generation', True)
+    # A tree head owns its own loss and never materialises a logit vector: that
+    # is the entire point of O(d log V). Generation needs one, so it is not a
+    # missing feature to be fixed but a property of the method, and the run must
+    # not be thrown away at the last step because of it.
+    _head_emits_logits = not getattr(getattr(orig_model, 'lm_head', None), 'custom_loss', False)
+    _can_sample = _can_sample and _head_emits_logits
     if args.sample_every > 0 and master_process and not _can_sample and (last_step or (step > 0 and step % args.sample_every == 0)):
-        print0("[sample] skipped: this architecture does not implement KV-cache generation")
+        print0("[sample] skipped: "
+               + ("this head computes its loss without a logit vector, so it cannot generate"
+                  if not _head_emits_logits
+                  else "this architecture does not implement KV-cache generation"))
     if args.sample_every > 0 and master_process and _can_sample and (last_step or (step > 0 and step % args.sample_every == 0)):
         model.eval()
         prompts = [

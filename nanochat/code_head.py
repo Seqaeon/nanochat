@@ -983,8 +983,13 @@ class StructuredCodeHead(nn.Module):
         return logits
 
     def _mask_padding(self, logits):
+        """Mask the padded vocabulary rows before a self-normalising softmax.
+
+        Masks in place when the caller owns the tensor. The clone is a full
+        ``(..., V)`` copy, 34 GB in fp32 at 262144 tokens and V=32768, and it is
+        only needed when someone else may still be holding the input.
+        """
         if self.active_vocab < self.vocab_size:
-            logits = logits.clone()
             logits[..., self.active_vocab:] = float("-inf")
         return logits
 
@@ -1004,11 +1009,16 @@ class StructuredCodeHead(nn.Module):
         route = F.linear(x, self.router.weight.to(dtype=x.dtype)).float()
         self._aux_loss = self._load_balance(route) if self.mixture_topk < self.n_mixture else None
         if self.mixture_topk >= self.n_mixture:
+            # Accumulate with logaddexp instead of stacking. A (..., V) tensor is
+            # 34 GB in fp32 at 262144 tokens and V=32768, so `torch.stack` over K
+            # components asks for K times that in one allocation, and the dense
+            # baseline only ever holds one.
             log_pi = torch.log_softmax(route, dim=-1)
-            comps = []
+            out = None
             for m in range(self.n_mixture):
-                comps.append(self._mixture_term(x, m) + log_pi[..., m:m + 1])
-            return torch.logsumexp(torch.stack(comps, dim=-2), dim=-2)
+                term = self._mixture_term(x, m) + log_pi[..., m:m + 1]
+                out = term if out is None else torch.logaddexp(out, term)
+            return out
         return self._sparse_mixture(x, route)
 
     def _load_balance(self, route):
@@ -1029,6 +1039,8 @@ class StructuredCodeHead(nn.Module):
         return self.n_mixture * (frac * probs.mean(dim=0)).sum()
 
     def _mixture_term(self, x, m: int):
+        # `.float()` on a bf16 head output already copies, so `lg` is owned here
+        # and `_mask_padding` may write into it.
         lg = self._component_logits(x, m).float()
         if self.logit_act == "sigsoftmax":
             lg = lg + F.logsigmoid(lg)
@@ -1042,26 +1054,48 @@ class StructuredCodeHead(nn.Module):
         the K subspaces rather than any one of them.  Dispatch is a gather on the
         flattened token axis, the same shape of trick the MoE blocks in this repo
         use, so the saving is real rather than a mask over wasted work.
+
+        MEMORY IS THE BINDING CONSTRAINT HERE, NOT COMPUTE.  One ``(N, V)`` fp32
+        tensor is 34 GB at N=262144 and V=32768, which is already what the dense
+        baseline holds.  A first version allocated three of those per slot (a
+        ``-inf`` fill, a broadcast add, and a logaddexp result) and died on
+        `loss.backward()` with 106 GB resident on a 140 GB card.
+
+        ``k=1`` now holds exactly one, matching the dense baseline: the
+        renormalised router weight over a single element is identically 0, so
+        there is nothing to weight and nothing to combine, and the components
+        partition the token axis so the buffer needs no fill.  ``k>1`` is
+        inherently ``k`` log-softmax outputs plus the running combination, so it
+        needs a smaller ``--device-batch-size``; gradient accumulation keeps the
+        total batch identical and the comparison valid.
         """
         shape = x.shape[:-1]
         flat = x.reshape(-1, x.shape[-1])
+        n = flat.shape[0]
         k = self.mixture_topk
         top_v, top_i = route.reshape(-1, self.n_mixture).topk(k, dim=-1)
-        log_pi = torch.log_softmax(top_v, dim=-1)          # renormalised over the k kept
+        # With k=1 the renormalised router weight is log_softmax of a single
+        # element, which is exactly 0, so the whole mixture collapses to "each
+        # token uses its own component" and needs no weighting and no combining.
+        log_pi = None if k == 1 else torch.log_softmax(top_v, dim=-1)
         out = None
         for slot in range(k):
             idx = top_i[:, slot]
-            wgt = log_pi[:, slot]
-            acc = torch.full((flat.shape[0], self.vocab_size), float("-inf"),
-                             device=flat.device, dtype=torch.float32)
+            # Uninitialised, not -inf filled: the components partition the token
+            # axis, so every row is written exactly once. Asserted below.
+            acc = torch.empty(n, self.vocab_size, device=flat.device, dtype=torch.float32)
+            covered = 0
             for m in range(self.n_mixture):
                 sel = (idx == m).nonzero(as_tuple=True)[0]
                 if sel.numel() == 0:
                     continue
+                covered += sel.numel()
                 acc.index_copy_(0, sel, self._mixture_term(flat.index_select(0, sel), m))
-            acc = acc + wgt.unsqueeze(-1)
+            assert covered == n, f"routing left {n - covered} tokens unassigned"
+            if log_pi is not None:
+                acc += log_pi[:, slot].unsqueeze(-1)          # in place
             out = acc if out is None else torch.logaddexp(out, acc)
-        return out.reshape(*shape, self.vocab_size)
+        return out.view(*shape, self.vocab_size)
 
     # -- accounting ---------------------------------------------------------
     def flops_per_token(self) -> int:

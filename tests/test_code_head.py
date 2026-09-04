@@ -787,6 +787,7 @@ def _sweep_arms(path):
     unknown *positionals* ``parse_known_args`` accepts them without complaint,
     so the test passes while proving nothing.
     """
+    import re
     lines = open(path).read().splitlines()
     arms, i = [], 0
     while i < len(lines):
@@ -796,6 +797,9 @@ def _sweep_arms(path):
             while buf.endswith("\\"):
                 i += 1
                 buf = buf[:-1] + " " + lines[i].strip()
+            # Expand "${VAR:-default}" to its default, the value the sweep uses
+            # when the environment does not override it.
+            buf = re.sub(r'"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}"', r"\1", buf)
             buf = (buf.replace("$PROBE", "--sch-phi-dtype fp32 --sch-rank-probe 4096")
                       .replace('"$MODEL_DIM"', "512").replace('"$G"', "4")
                       .replace('"$K"', "64").replace('"$CODEF"', "codes.pt")
@@ -1053,3 +1057,129 @@ def test_ddp_asks_for_unused_parameter_detection_when_routing_is_sparse():
     from nanochat import common
     src = inspect.getsource(common.wrap_model)
     assert "has_sparse_head" in src and "sch_mixture_topk" in src
+
+
+def _count_full_width_tensors(model, x, vocab):
+    """How many tensors of at least (tokens x V) a forward+backward creates.
+
+    This is the quantity that decides whether a head fits. Peak RSS is the
+    honest measure but it is noisy across processes; counting full-width
+    allocations is deterministic and tracks it closely, because at 262144 tokens
+    and V=32768 each one is 34 GB in fp32.
+    """
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    class _Count(TorchDispatchMode):
+        def __init__(self, thresh):
+            self.thresh, self.n = thresh, 0
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            out = func(*args, **(kwargs or {}))
+            for t in (out if isinstance(out, (tuple, list)) else [out]):
+                if isinstance(t, torch.Tensor) and t.numel() >= self.thresh:
+                    self.n += 1
+            return out
+
+    counter = _Count(x.numel() * vocab)
+    model.train()
+    with counter:
+        model(x, x).backward()
+    return counter.n
+
+
+def _wide_ops(model, x, vocab):
+    """Record ops that produce a tensor of at least (tokens x V) elements.
+
+    Peak RSS is what actually OOMs, but at test scale the allocator absorbs the
+    difference and the measurement is noise (4.66 against 4.65 buffers for the
+    fixed and broken versions). The ops that create full-width tensors are
+    deterministic, and naming them is a sharper statement than a byte count:
+    with k=1 there is nothing to weight and nothing to combine, so a full-width
+    `full`, `add` or `logaddexp` in this path is the bug returning.
+    """
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    class _Rec(TorchDispatchMode):
+        def __init__(self, thresh):
+            self.thresh, self.ops = thresh, []
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            out = func(*args, **(kwargs or {}))
+            for t in (out if isinstance(out, (tuple, list)) else [out]):
+                if isinstance(t, torch.Tensor) and t.numel() >= self.thresh:
+                    self.ops.append(func.overloadpacket.__name__)
+            return out
+
+    rec = _Rec(x.numel() * vocab)
+    model.train()
+    with rec:
+        model(x, x).backward()
+    return rec.ops
+
+
+def test_top1_routing_allocates_one_full_width_buffer_and_no_combining():
+    """The sparse mixture OOMed at 106 GB on a 140 GB card before this.
+
+    It held three full-width buffers per slot where the dense baseline holds
+    one: a `-inf` fill, a broadcast add for the router weight, and a logaddexp
+    result. With k=1 none of the three is needed. The renormalised router weight
+    over a single element is identically 0, there is only one slot to combine,
+    and the components partition the token axis so the buffer needs no fill.
+    One such tensor is 34 GB in fp32 at 262144 tokens and V=32768.
+    """
+    x = torch.randint(0, V, (2, 32))
+    m = build(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+              sch_mixture_per_phi=1, sch_mixture_topk=1, sch_bias=1)
+    ops = _wide_ops(m, x, V)
+    assert "logaddexp" not in ops, "k=1 has one slot; there is nothing to combine"
+    assert "full" not in ops, ("the routed components partition the token axis, so "
+                               "the output buffer is written everywhere and needs no fill")
+    assert ops.count("empty") <= 1, f"more than one full-width buffer allocated: {ops}"
+
+
+def test_wider_routing_is_heavier_and_the_sweep_compensates():
+    """k>1 is inherently k log-softmax outputs plus the running combination.
+
+    It cannot be made as cheap as k=1, so the sweep gives it a smaller device
+    batch rather than letting it OOM. Gradient accumulation keeps the total
+    batch identical, so the comparison is unaffected.
+    """
+    x = torch.randint(0, V, (2, 32))
+    kw = dict(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+              sch_mixture_per_phi=1, sch_bias=1)
+    assert "logaddexp" in _wide_ops(build(**kw, sch_mixture_topk=2), x, V), \
+        "k=2 must combine two slots; if it does not, the routing is not doing what it claims"
+    sweep = open("scripts/c05_sch_phase5_alternatives.sh").read()
+    assert "--device-batch-size" in sweep and "MIX_TOP2_DBS" in sweep, \
+        "the top-2 arm needs a smaller device batch; the sweep script must set one"
+
+
+def test_a_tree_head_survives_the_end_of_run_diagnostics():
+    """hsoftmax trained to completion and then died on the last step.
+
+    `base_train` generates a sample after the final step, and `run_all_diagnostics`
+    runs a rank SVD, an anisotropy probe and a head-cost benchmark. All of those
+    need a logit vector, which a tree head never materialises: that is the point
+    of O(d log V), not a missing feature. Throwing away a finished run over it is
+    the expensive kind of bug, so every such probe is skipped rather than fatal.
+    """
+    from nanochat.code_metrics import run_all_diagnostics
+    m = build(use_code_head=1, sch_head_type='hsoftmax')
+    assert getattr(m.lm_head, 'custom_loss', False)
+
+    def loader():
+        while True:
+            x = torch.randint(0, V, (2, 16))
+            yield x, x
+
+    metrics = run_all_diagnostics(m, loader, token_bytes=torch.ones(V), vocab_size=V,
+                                  steps=2, decile=False, rank_contexts=4096)
+    assert isinstance(metrics, dict)
+    for probe in ("rank_effective_rank", "anisotropy", "head_ms"):
+        assert probe not in metrics, f"{probe} cannot be computed without logits"
+
+
+def test_base_train_does_not_try_to_generate_from_a_logit_less_head():
+    src = open("scripts/base_train.py").read()
+    assert "_head_emits_logits" in src and "custom_loss" in src, \
+        "the sample-generation guard must know about heads that emit no logits"

@@ -414,6 +414,19 @@ def run_all_diagnostics(model, build_val_loader, token_bytes, vocab_size, steps=
 
     model.eval()
     metrics = {}
+    # A tree head computes its loss without ever materialising a logit vector,
+    # which is the whole point of O(d log V). Every probe below that needs one
+    # (the rank SVD, anisotropy, the held-out-vocabulary rank) is therefore not
+    # applicable rather than failing, and the run must not be discarded at the
+    # last step over it. The per-token loss path still works, so the decile
+    # metrics do run.
+    head = getattr(model, "lm_head", None)
+    emits_logits = not getattr(head, "custom_loss", False)
+    if not emits_logits and rank_contexts:
+        print0("[SCH] this head computes its loss without a logit vector; "
+               "skipping the rank, anisotropy and held-out-rank probes")
+        rank_contexts = 0
+
     freqs = load_freq_table(vocab_size, tokenizer_dir)
     if freqs is None:
         if decile:
@@ -450,13 +463,15 @@ def run_all_diagnostics(model, build_val_loader, token_bytes, vocab_size, steps=
             metrics["bpb_holdout"] = res["subset_in"]["bpb"]
             metrics["bpb_seen"] = res["subset_out"]["bpb"]
             metrics["holdout_eval_tokens"] = res["subset_in"]["tokens"]
-            metrics.update(measure_holdout_rank(model, build_val_loader(), steps, holdout_mask))
+            if emits_logits:
+                metrics.update(measure_holdout_rank(model, build_val_loader(), steps, holdout_mask))
 
     if rank_contexts and rank_contexts > 0:
         metrics.update({f"rank_{k}": v for k, v in
                         measure_logit_rank(model, build_val_loader(), steps, vocab_size,
                                            n_rows=min(rank_contexts, 16384)).items()})
-    metrics.update(measure_anisotropy(model, build_val_loader(), steps))
+    if emits_logits:
+        metrics.update(measure_anisotropy(model, build_val_loader(), steps))
 
     head = model.lm_head
     metrics["head_params"] = int(sum(p.numel() for p in head.parameters()))
@@ -472,7 +487,8 @@ def run_all_diagnostics(model, build_val_loader, token_bytes, vocab_size, steps=
         metrics["phi_width_M"] = head.width
         metrics["code_bits_B"] = head.bits
         metrics["code_order_k"] = head.order
-    metrics.update(measure_head_cost(model, model.config.n_embd))
+    if emits_logits:
+        metrics.update(measure_head_cost(model, model.config.n_embd))
     model.train()
     return metrics
 
