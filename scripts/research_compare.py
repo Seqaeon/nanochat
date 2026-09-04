@@ -532,6 +532,13 @@ def run_training_sweep(args):
         "--sch-bias", str(getattr(args, 'sch_bias', 0)),
         "--sch-input-mode", str(getattr(args, 'sch_input_mode', 'table')),
         "--sch-input-hidden", str(getattr(args, 'sch_input_hidden', 0)),
+        "--sch-product-groups", str(getattr(args, 'sch_product_groups', 8)),
+        "--sch-product-codebook", str(getattr(args, 'sch_product_codebook', 256)),
+        "--sch-product-source", str(getattr(args, 'sch_product_source', 'hash')),
+        "--sch-phi-whiten", str(getattr(args, 'sch_phi_whiten', 0)),
+        "--sch-mixture-per-phi", str(getattr(args, 'sch_mixture_per_phi', 0)),
+        "--sch-mixture-topk", str(getattr(args, 'sch_mixture_topk', 0)),
+        "--sch-monarch-m1", str(getattr(args, 'sch_monarch_m1', 0)),
         "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
         "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
         "--sch-holdout-min-id", str(getattr(args, 'sch_holdout_min_id', 256)),
@@ -1287,6 +1294,13 @@ if __name__ == "__main__":
     parser.add_argument("--sch-bias", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-input-mode", type=str, default='table', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-product-groups", type=int, default=8, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-product-codebook", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-product-source", type=str, default="hash", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

@@ -622,7 +622,7 @@ class GPTConfig:
     # version is that order 1 is Oda et al. 2017 (logit rank <= B), order B is the
     # exact softmax, and everything between is unexplored.
     use_code_head: bool = False                     # master switch for the code output head
-    sch_head_type: str = 'code'                     # code | hsoftmax (Huffman hierarchical softmax baseline)
+    sch_head_type: str = 'code'                     # code | hsoftmax (Huffman tree) | monarch (block-diagonal, fully learned)
     sch_bits: int = 0                               # B, code length (0 = ceil(log2 V), the minimal/degenerate code)
     sch_order: int = 2                              # k, highest monomial interaction order kept
     sch_max_m: int = 0                              # cap on M (0 = uncapped); also sets M directly for non-monomial phi modes
@@ -645,6 +645,14 @@ class GPTConfig:
     sch_bias: int = 0                               # learned per-token bias (V params, +1 rank, BREAKS zero-shot vocab extension)
     sch_input_mode: str = 'table'                   # table | linear | expanded | nonlinear | tied - Phase 3 input-side arms
     sch_input_hidden: int = 0                       # hidden width for sch_input_mode=nonlinear (0 = 4 * n_embd)
+    # --- Phase 5 alternatives (see output-head-efficiency-directions.md) -----
+    sch_product_groups: int = 8                     # g: digits in the K-ary product code (phi_mode=product)
+    sch_product_codebook: int = 256                 # K: symbols per digit; M = g*K at order 1, no interactions
+    sch_product_source: str = 'hash'                # hash | random | file (k-means assignment from code_assign.py)
+    sch_phi_whiten: int = 0                         # Phi (Phi^T Phi)^-1/2: same span, cond 1, pure reparameterisation
+    sch_mixture_per_phi: int = 0                    # each mixture component gets its OWN Phi (union of subspaces)
+    sch_mixture_topk: int = 0                       # components evaluated per token (0 = all); cost tracks k, not K
+    sch_monarch_m1: int = 0                         # Monarch inner factor (0 = sqrt(M)); cost is d*M + V*m1
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -741,6 +749,8 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_phi_center", "sch_g_type", "sch_g_hidden", "sch_g_layers", "sch_g_out_std",
     "sch_mixture", "sch_residual_rank", "sch_logit_act", "sch_bias",
     "sch_input_mode", "sch_input_hidden",
+    "sch_product_groups", "sch_product_codebook", "sch_product_source",
+    "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_monarch_m1",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",

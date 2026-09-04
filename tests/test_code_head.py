@@ -543,3 +543,181 @@ def test_random_binary_control_matches_the_monomial_density():
     d_mono = float((mono.phi > 0).float().mean())
     d_rand = float((rand.phi > 0).float().mean())
     assert abs(d_mono - d_rand) < 0.03
+
+
+# ===========================================================================
+# Phase 5 alternatives: product codes, sparse per-Phi mixtures, Monarch,
+# whitening.  See output-head-efficiency-directions.md.
+# ===========================================================================
+
+def _phase5(**kw):
+    """Phase 5 arms use the same tiny model as the rest of the file."""
+    return build(**kw)
+
+
+def test_product_gather_equals_the_explicit_one_hot_matmul():
+    """The fast path must be the matmul it replaces, not an approximation of it.
+
+    ``product_gather`` never materialises Phi.  If it drifted from the one-hot
+    matmul the head would still train and still look reasonable, so this pins it
+    numerically rather than structurally.
+    """
+    from nanochat.code_head import build_product_codes, product_gather
+    V, g, K = 64, 3, 8
+    assign = build_product_codes(V, g, K, source="random", seed=5)
+    z = torch.randn(2, 7, g * K)
+    fast = product_gather(z, assign)
+    phi = torch.zeros(V, g * K)
+    for j in range(g):
+        phi[torch.arange(V), j * K + assign[:, j].long()] = 1.0
+    torch.testing.assert_close(fast, z @ phi.t(), rtol=1e-5, atol=1e-5)
+
+
+def test_a_k_ary_digit_buys_k_basis_functions_where_a_bit_buys_one():
+    """The counting argument the whole product-code proposal rests on.
+
+    c00's ladder plateaued because monomials of B bits stay inside the partition
+    lattice those B bits generate.  A K-ary digit contributes K columns at order
+    1, so M grows with the alphabet instead of with the interaction order.
+    """
+    from nanochat.code_head import build_product_codes, full_phi_width
+    V = 4096
+    binary_M = full_phi_width(minimal_bits(V), 1)          # 12 bits -> M = 12
+    g, K = 4, 64
+    assign = build_product_codes(V, g, K, source="hash")
+    product_M = g * K                                      # 4 digits -> M = 256
+    assert binary_M == 12 and product_M == 256
+    # and the digits actually use their alphabet, otherwise M is a fiction
+    for j in range(g):
+        assert assign[:, j].unique().numel() == K
+
+
+def test_product_head_matches_a_dense_head_of_the_same_shape():
+    m = _phase5(use_code_head=1, sch_phi_mode='product',
+                             sch_product_groups=4, sch_product_codebook=64)
+    x = torch.randint(0, 512, (2, 8))
+    logits = m(x)
+    assert logits.shape == (2, 8, 512)
+    assert torch.isfinite(logits).all()
+
+
+def test_product_head_flops_scale_with_groups_not_with_M():
+    """V*g, not V*M.  This is the entire economic claim of the product code."""
+    head_a = _phase5(use_code_head=1, sch_phi_mode='product',
+                     sch_product_groups=2, sch_product_codebook=64).lm_head
+    head_b = _phase5(use_code_head=1, sch_phi_mode='product',
+                                  sch_product_groups=2, sch_product_codebook=256).lm_head
+    V = head_a.vocab_size
+    # M quadruples; the Phi term must not move at all.
+    assert head_b.width == 4 * head_a.width
+    phi_a = head_a.flops_per_token() - sum(g.flops_per_token() for g in head_a.g)
+    phi_b = head_b.flops_per_token() - sum(g.flops_per_token() for g in head_b.g)
+    assert phi_a == phi_b == 4 * V * 2
+
+
+def test_product_assignment_survives_a_checkpoint_round_trip():
+    """The assignment is the only thing that must persist; Phi does not exist."""
+    kw = dict(use_code_head=1, sch_phi_mode='product',
+              sch_product_groups=4, sch_product_codebook=64,
+              sch_product_source='random', sch_code_seed=99)
+    a = build(**kw)
+    sd = a.state_dict()
+    assert 'lm_head.assign' in sd, "the assignment must be persistent"
+    assert not any(k.endswith('lm_head.phi') for k in sd), "Phi must never be stored"
+    b = build(**kw)
+    b.load_state_dict(sd)
+    x = torch.randint(0, 512, (2, 8))
+    torch.testing.assert_close(a(x), b(x))
+
+
+def test_colliding_product_codes_are_refused_at_construction():
+    """Two tokens sharing a full codeword are indistinguishable at any order."""
+    with pytest.raises(AssertionError, match="cells"):
+        _phase5(use_code_head=1, sch_phi_mode='product',
+                             sch_product_groups=1, sch_product_codebook=4)
+
+
+def test_whitening_preserves_the_column_space_exactly():
+    """Whitening must be a reparameterisation, or it is not a clean experiment.
+
+    ``Phi (Phi^T Phi)^{-1/2}`` spans the same subspace, so with a linear g the
+    function class is unchanged and any bpb movement in the sweep is an
+    optimisation effect and nothing else.
+    """
+    from nanochat.code_head import _whiten_phi
+    torch.manual_seed(0)
+    phi = torch.rand(200, 12).round()
+    w = _whiten_phi(phi)
+    # orthonormal columns
+    torch.testing.assert_close(w.T @ w, torch.eye(12), rtol=1e-4, atol=1e-4)
+    # identical column space: projectors agree
+    def proj(A):
+        Q, _ = torch.linalg.qr(A.double())
+        return Q @ Q.T
+    torch.testing.assert_close(proj(phi), proj(w), rtol=1e-6, atol=1e-6)
+
+
+def test_whitening_does_not_change_the_rank_ceiling():
+    plain = _phase5(use_code_head=1, sch_order=2, sch_phi_dtype='fp32').lm_head
+    white = _phase5(use_code_head=1, sch_order=2, sch_phi_dtype='fp32',
+                                 sch_phi_whiten=1).lm_head
+    assert plain.rank_ceiling() == white.rank_ceiling()
+
+
+def test_per_component_phi_gives_the_components_different_subspaces():
+    """Without this the mixture can only reweight one fixed subspace."""
+    # Truncated, so reseeding actually draws a different monomial subset.
+    shared = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=3,
+                     sch_phi_dtype='fp32').lm_head
+    per = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=3,
+                  sch_mixture_per_phi=1, sch_phi_dtype='fp32').lm_head
+    assert shared.phi.dim() == 2
+    assert per.phi.shape[0] == 3
+    assert not torch.equal(per.phi[0], per.phi[1]), \
+        "per-component Phi must actually differ, else the union is a single subspace"
+
+
+def test_per_component_phi_refuses_the_configuration_that_would_be_a_no_op():
+    """A full monomial expansion has one span; reseeding it changes nothing."""
+    with pytest.raises(AssertionError, match="no-op"):
+        _phase5(use_code_head=1, sch_order=2, sch_mixture=3, sch_mixture_per_phi=1)
+
+
+def test_topk_routing_costs_k_components_not_all_of_them():
+    base = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                   sch_mixture_per_phi=1).lm_head
+    top1 = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                   sch_mixture_per_phi=1, sch_mixture_topk=1).lm_head
+    assert base.mixture_topk == 4 and top1.mixture_topk == 1
+    # The router always scores all K components, so only the component work
+    # scales with k. Compare that part exactly rather than fudging a tolerance.
+    router = 6 * base.router.weight.numel()
+    assert (top1.flops_per_token() - router) * 4 == base.flops_per_token() - router
+
+
+def test_sparse_mixture_returns_normalised_log_probabilities():
+    m = _phase5(use_code_head=1, sch_order=2, sch_max_m=20, sch_mixture=4,
+                sch_mixture_per_phi=1, sch_mixture_topk=2)
+    assert m.lm_head.self_normalized
+    lp = m(torch.randint(0, 512, (2, 8)))
+    total = lp.float().logsumexp(dim=-1)
+    torch.testing.assert_close(total, torch.zeros_like(total), rtol=1e-4, atol=1e-4)
+
+
+def test_monarch_head_is_cheaper_than_dense_and_fully_learned():
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128)
+    head = m.lm_head
+    V, d = head.vocab_size, head.n_embd
+    assert head.flops_per_token() < 6 * V * d, "a Monarch head that is not cheaper is pointless"
+    # every parameter trains: there is no frozen factor and so no alignment risk
+    assert all(p.requires_grad for p in head.parameters())
+    assert head.m1 * head.m2 == head.width and V % head.m2 == 0
+
+
+def test_monarch_head_trains():
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128)
+    x = torch.randint(0, 512, (2, 8))
+    loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert m.lm_head.w2.grad is not None and m.lm_head.w2.grad.abs().sum() > 0

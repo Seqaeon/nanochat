@@ -970,17 +970,45 @@ the machine half as well. We do not claim faster training. The wall-clock axis o
 which we do claim an advantage is long-context prefill, below, where the arms are
 matched on quality rather than on depth.
 
-\paragraph{The utilization gap has two distinct causes.} Measuring fused
-attention in isolation, with the total attention width held constant and no MST
-code in the loop, gives 171.9, 283.9 and 365.7 TFLOP/s at $d_h = 32$, $64$ and
-$128$ (Figure~\ref{fig:kernels}). A partition into $\nsub$ streams forces
-$d_h = 128/\nsub$, so at $\nsub{=}4$ a $2.13\times$ penalty on the attention
-portion is intrinsic to the architecture given current kernels. The remainder is
-ours: the layer issues $\nsub$ separate attention calls, one per stream, where a
-single call over $\nsub n_h$ heads would compute the same thing whenever the
-streams share a window, since attention is independent across heads. At $L{=}24$
-that is 96 launches per forward pass where 24 would do. We report the measured
-kernel penalty and do not claim to have eliminated the implementation cost.
+\paragraph{The utilization gap decomposes, and only part of it is ours to fix.}
+We measured the block-diagonal penalty directly rather than inferring it from
+FLOP counts, racing five alternatives against \texttt{cuBLAS} on the exact FFN
+shapes at $L{=}24$, $\nsub{=}4$ and $M{=}16384$ on an H200. Two candidate
+explanations die immediately: it is not bandwidth, since MST sits at
+302\,FLOP/byte against the device's roofline ridge of 206 and both arms are
+compute-bound, and it is not wave quantization, since MST emits the same 6144
+output tiles as dense at 99\% wave efficiency.
+
+The mechanism is the depth of the K loop. Partitioning drops $K$ from \dmodel\ to
+$\dmodel/\nsub$, so each output tile runs three K-steps where dense runs twelve
+and the same prologue and epilogue amortize over a quarter of the work. The
+measurement tracks that monotonically: the FFN up-projection, with 3 K-steps
+against dense's 12, reaches $0.707\times$ dense's throughput, and the
+down-projection, with 12 against 48, reaches $0.772\times$.
+
+\textbf{The penalty is irreducible with available kernels.} Against
+\texttt{torch.bmm} on the current layout we measured Inductor's
+\texttt{max-autotune} at $0.776$/$0.793\times$, an explicit sweep of Triton
+configurations over block shape, pipeline stages and warps at
+$0.701$/$0.809\times$, \texttt{grouped\_mm} at $0.815$/$0.693\times$, a
+per-stream loop at $0.855$/$0.918\times$, and a pre-transposed weight at
+$0.949$/$1.008\times$. Inductor's autotuner selects \texttt{cuBLAS} over all 19
+of its own Triton candidates. A hand-written kernel would have to beat NVIDIA's
+tuned kernels on their own shapes, so we do not claim one is forthcoming.
+
+\textbf{What this leaves is a decomposition.} The GEMM penalty is $0.739$ while
+model-level utilization is $0.462$, so 62\% of the gap is the shape of the
+matrices and 38\% is our own non-GEMM overhead: the layout permutations,
+per-stream normalizations and rotary application, the router, and the transition.
+The two halves differ in kind. The first is a property of running $\nsub$ narrow
+GEMMs and does not improve with better software; it also worsens with larger
+GPUs, measuring $0.948$ on a 20-SM device against $0.739$ on a 132-SM one, since
+it is an occupancy effect. The second is implementation, and hoisting the shared
+rotary and QK-norm work out of the per-stream loop already recovered 3.5\%.
+Closing it entirely would move utilization from $0.462$ to $0.739$ and the
+equal-compute wall clock from $2.71\times$ to $1.69\times$. We report the split
+rather than the aggregate because the two admit different remedies, and we do not
+claim to have removed the second.
 
 \paragraph{Memory.} MST's peak memory is $8\%$ \emph{higher} than dense despite
 $3.2\times$ fewer per-layer parameters. The cause is the batched formulation

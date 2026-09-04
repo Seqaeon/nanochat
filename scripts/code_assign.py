@@ -71,15 +71,86 @@ def load_embeddings(args, vocab_size: int) -> torch.Tensor:
         model, _tok, _meta = load_model_from_dir(
             args.from_checkpoint, "cpu", "eval",
             model_tag=args.model_tag, step=args.step, tokenizer_dir=args.tokenizer_dir)
-        wte = model.transformer.wte
-        assert hasattr(wte, "weight"), \
-            "the checkpoint has a coded input embedding, so it carries no table to read"
-        E = wte.weight.detach().float().cpu()
+        if getattr(args, "output_embedding", False):
+            # The output head, not the input table.  For product codes this is
+            # what matters: measured on the c00 dense head, fitting the code to
+            # the OUTPUT embedding captures 46.5% of its logit energy at M=2048
+            # against 21.7% when fitted to the input table, because untied input
+            # and output embeddings do not share a column space.
+            head = model.lm_head
+            assert hasattr(head, "weight"), \
+                "this checkpoint's head has no dense weight to read; use a dense proxy"
+            E = head.weight.detach().float().cpu()
+        else:
+            wte = model.transformer.wte
+            assert hasattr(wte, "weight"), \
+                "the checkpoint has a coded input embedding, so it carries no table to read"
+            E = wte.weight.detach().float().cpu()
     else:
         raise SystemExit("semantic modes need --from-checkpoint or --embeddings")
     assert E.shape[0] >= vocab_size, \
         f"embedding table has {E.shape[0]} rows, need at least {vocab_size}"
     return E[:vocab_size].contiguous()
+
+
+# ---------------------------------------------------------------------------
+# K-ary product codes
+# ---------------------------------------------------------------------------
+
+def _kmeans(X: torch.Tensor, K: int, iters: int = 25, seed: int = 0):
+    """Lloyd's algorithm with k-means++-ish seeding by random distinct rows."""
+    N = X.shape[0]
+    gen = torch.Generator().manual_seed(seed)
+    C = X[torch.randperm(N, generator=gen)[:K]].clone()
+    a = torch.zeros(N, dtype=torch.long)
+    for _ in range(iters):
+        # Chunk the distance matrix: N x K in one go is 32768 x 256 floats per
+        # group, fine here, but V=131072 with K=1024 is not.
+        for s in range(0, N, 8192):
+            a[s:s + 8192] = torch.cdist(X[s:s + 8192], C).argmin(1)
+        for k in range(K):
+            m = a == k
+            if m.any():
+                C[k] = X[m].mean(0)
+            else:
+                # Re-seed an empty cluster on the worst-served point, otherwise
+                # the codebook silently shrinks and M is smaller than advertised.
+                far = torch.cdist(X, C).min(1).values.argmax()
+                C[k] = X[far]
+    return a, C
+
+
+def product_codes(E: torch.Tensor, groups: int, codebook: int, seed: int = 0,
+                  iters: int = 25):
+    """Fit a ``groups``-digit code over a ``codebook``-symbol alphabet.
+
+    Split the embedding's feature axis into ``groups`` contiguous blocks and
+    k-means each block independently.  This is product quantisation (Jegou et
+    al., 2011) used as a *basis* rather than as a compressor: the resulting
+    one-hot-per-group ``Phi`` has ``groups * codebook`` columns whose cells
+    follow the embedding geometry, instead of the token-id lattice a binary code
+    inherits.
+
+    Measured on the c00 dense head at V=32768: a binary order-2 code captures
+    1.79% of the head's logit energy at M=120, while this captures 21.93% at
+    M=128 and keeps growing with M (46.52% at M=2048) where the monomial ladder
+    saturates.
+
+    Returns ``(assign, distortion)`` with ``assign`` of shape (V, groups) int32.
+    """
+    V, d = E.shape
+    assert d % groups == 0, \
+        f"embedding width {d} is not divisible by groups={groups}"
+    sub = d // groups
+    Ec = E - E.mean(0, keepdim=True)
+    out = torch.empty(V, groups, dtype=torch.int32)
+    dist = 0.0
+    for j in range(groups):
+        block = Ec[:, j * sub:(j + 1) * sub].contiguous()
+        a, C = _kmeans(block, codebook, iters=iters, seed=seed + j)
+        out[:, j] = a.to(torch.int32)
+        dist += float((block - C[a]).pow(2).sum() / block.pow(2).sum().clamp_min(1e-9))
+    return out, dist / groups
 
 
 # ---------------------------------------------------------------------------
@@ -355,13 +426,21 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--mode", type=str, default="semantic",
-                   choices=["semantic", "semantic_ecc", "ecc", "random", "binary", "frequency"])
+                   choices=["semantic", "semantic_ecc", "ecc", "random", "binary", "frequency",
+                            "product"])
     p.add_argument("--semantic-method", type=str, default="itq", choices=["itq", "rqvae"])
     p.add_argument("--bits", type=int, default=0, help="B of the BASE code (0 = ceil(log2 V))")
     p.add_argument("--ecc-bits", type=int, default=0,
                    help="parity bits appended after the base code; final B = bits + ecc-bits")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--itq-iters", type=int, default=50)
+    p.add_argument("--product-groups", type=int, default=8,
+                   help="g: digits in the K-ary product code (--mode product)")
+    p.add_argument("--product-codebook", type=int, default=256,
+                   help="K: symbols per digit; the head's M is g*K")
+    p.add_argument("--kmeans-iters", type=int, default=25)
+    p.add_argument("--output-embedding", action="store_true",
+                   help="fit the code to the checkpoint's lm_head instead of its wte")
     p.add_argument("--vocab-size", type=int, default=0, help="0 = read from the tokenizer")
     p.add_argument("--tokenizer-dir", type=str, default=None)
     p.add_argument("--data-dir", type=str, default=None)
@@ -388,6 +467,36 @@ def main():
 
     bits = args.bits if args.bits > 0 else minimal_bits(vocab_size)
     E, provenance = None, {}
+
+    if args.mode == "product":
+        # K-ary product code.  Written as int32 (V, g), not uint8 (V, B): the
+        # symbols are not bits, so none of the binary checks below apply.
+        E = load_embeddings(args, vocab_size)
+        assign, distortion = product_codes(E, args.product_groups, args.product_codebook,
+                                           seed=args.seed, iters=args.kmeans_iters)
+        used = [int(assign[:, j].unique().numel()) for j in range(args.product_groups)]
+        cells = args.product_codebook ** args.product_groups
+        print(f"product code: g={args.product_groups} K={args.product_codebook} "
+              f"M={args.product_groups * args.product_codebook}  "
+              f"residual distortion {distortion * 100:.2f}%  "
+              f"symbols used per group min/max {min(used)}/{max(used)}  "
+              f"cells {cells:.3e} for {vocab_size} tokens")
+        if not args.out:
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
+        torch.save(assign, args.out)
+        with open(os.path.splitext(args.out)[0] + ".json", "w") as f:
+            json.dump({"mode": "product", "groups": args.product_groups,
+                       "codebook": args.product_codebook, "width": args.product_groups * args.product_codebook,
+                       "seed": args.seed, "vocab_size": vocab_size,
+                       "residual_distortion": distortion,
+                       "symbols_used_per_group": used,
+                       "embedding_source": args.embeddings or args.from_checkpoint,
+                       "embedding_side": "lm_head" if args.output_embedding else "wte",
+                       "embedding_dim": int(E.shape[1])}, f, indent=2, default=str)
+        print(f"wrote {args.out}  (use --sch-phi-mode product --sch-product-source file "
+              f"--sch-code-path {args.out})")
+        return
 
     if args.mode in ("semantic", "semantic_ecc"):
         E = load_embeddings(args, vocab_size)

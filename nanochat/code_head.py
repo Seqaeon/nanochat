@@ -115,7 +115,8 @@ from nanochat.common import print0
 MAX_PHI_WIDTH = 65536
 
 CODE_MODES = ("binary", "random", "ecc", "frequency", "file")
-PHI_MODES = ("monomial", "random_binary", "onehot", "learned", "gaussian")
+PHI_MODES = ("monomial", "random_binary", "onehot", "learned", "gaussian", "product")
+PRODUCT_SOURCES = ("hash", "random", "file")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
@@ -436,6 +437,80 @@ def build_phi_random_binary(V: int, M: int, density: float, seed: int,
     return phi.to(device)
 
 
+def build_product_codes(vocab_size: int, groups: int, codebook: int,
+                        source: str = "hash", seed: int = 1234,
+                        path: str = "") -> torch.Tensor:
+    """Assign every token a K-ary codeword of length ``groups``.
+
+    A binary digit contributes exactly one column to ``Phi``, so ``B`` digits buy
+    ``M = B`` basis functions at order 1 and the only way to widen is interaction
+    order, which multiplies columns *inside* the partition lattice the same ``B``
+    digits already generate.  That is the ladder plateau measured in c00: order 3
+    to order 4 costs 2.7x the FLOPs and buys nothing.
+
+    A K-ary digit contributes ``K`` columns, one per symbol, so ``g`` digits give
+    ``M = g*K`` at order 1 with no interactions at all.  ``phi_mode='onehot'`` is
+    the ``g=1`` corner of this and LightRNN (Li et al., 2016) is the ``g=2``
+    corner; the general case is what this builds.
+
+    Sources:
+      ``hash``    deterministic per-group hash of the token id.  Cheap control,
+                  and the K-ary analogue of ``code_mode='binary'``.
+      ``random``  independent uniform symbols.  The null control.
+      ``file``    load an assignment fitted to an embedding, from
+                  ``scripts/code_assign.py --mode product``.  This is the arm
+                  that is supposed to work: the partitions come from k-means on
+                  a token embedding, so the cells follow the geometry instead of
+                  the token ids.
+    """
+    assert source in PRODUCT_SOURCES, f"product source {source!r} not in {PRODUCT_SOURCES}"
+    assert groups >= 1 and codebook >= 2
+    if source == "file":
+        assert path, "sch_phi_mode=product with source=file needs --sch-code-path"
+        A = torch.load(path, map_location="cpu")
+        if isinstance(A, dict):
+            A = A["assign"]
+        A = A.long()
+        assert A.shape == (vocab_size, groups), \
+            f"assignment file has shape {tuple(A.shape)}, expected {(vocab_size, groups)}"
+        assert int(A.max()) < codebook, \
+            f"assignment file uses {int(A.max()) + 1} symbols, head built for {codebook}"
+        return A.to(torch.int32)
+    if source == "random":
+        gen = torch.Generator().manual_seed(seed + 5003)
+        return torch.randint(0, codebook, (vocab_size, groups),
+                             generator=gen, dtype=torch.int32)
+    # hash: mix the token id per group with a cheap odd multiplier, then reduce.
+    ids = torch.arange(vocab_size, dtype=torch.int64)
+    mult = torch.tensor([2654435761 + 2 * j for j in range(groups)], dtype=torch.int64)
+    A = ((ids.unsqueeze(1) * mult.unsqueeze(0)) >> 11) % codebook
+    return A.to(torch.int32)
+
+
+def product_gather(z, assign):
+    """``g(h) @ Phi^T`` when ``Phi`` is one-hot within each group.
+
+    ``Phi`` is never materialised.  Being one-hot per group makes the product a
+    gather and add: each vocabulary entry sums ``g`` looked-up scalars, so the
+    cost is ``V*g`` additions rather than ``V*M`` multiply-accumulates.  Open
+    question Q1 asked whether a fast transform exists for the truncated monomial
+    expansion; for one-hot codes it exists and this is it.
+
+      z       (..., groups * codebook), the output of ``g``
+      assign  (V, groups) int32, the codeword of each token
+    """
+    V, groups = assign.shape
+    K = z.shape[-1] // groups
+    zg = z.view(*z.shape[:-1], groups, K)
+    out = None
+    for j in range(groups):
+        # index_select over the last axis is a gather; its backward is a
+        # scatter-add, which is what makes the whole head cheap in both passes.
+        part = zg[..., j, :].index_select(-1, assign[:, j].long())
+        out = part if out is None else out + part
+    return out
+
+
 def build_phi_onehot(V: int, M: int, seed: int, dtype=torch.float32,
                      device="cpu") -> torch.Tensor:
     """VQ-Logits-style scatter: each token points at one of M codebook vectors.
@@ -513,6 +588,31 @@ class CodeProjection(nn.Module):
 # The head
 # ---------------------------------------------------------------------------
 
+def _whiten_phi(phi):
+    """``Phi (Phi^T Phi)^{-1/2}``: same column space, orthonormal columns.
+
+    For a *linear* ``g`` this is provably a reparameterisation.  If
+    ``Phi_w = Phi R`` for invertible ``R`` then ``g(h) Phi_w^T = g(h) R^T Phi^T``
+    and ``g(h) R^T = h (R W_g)^T``, so the function class is identical and only
+    the optimisation geometry changes.  That is exactly what makes it a clean
+    experiment: any movement in final bpb is an optimisation effect and nothing
+    else, which separates the conditioning hypothesis from the alignment one in
+    a single run.  Measured ``cond(Phi^T Phi)`` after row normalisation is 396 at
+    order 2 and 3225 at order 3; whitening sets it to 1.
+    """
+    single = phi.dim() == 2
+    P = phi.unsqueeze(0) if single else phi
+    out = []
+    for k in range(P.shape[0]):
+        A = P[k].double()
+        G = A.T @ A
+        ev, U = torch.linalg.eigh(G)
+        inv_sqrt = U @ torch.diag(ev.clamp_min(1e-10).rsqrt()) @ U.T
+        out.append((A @ inv_sqrt).to(phi.dtype))
+    W = torch.stack(out, 0)
+    return W[0] if single else W
+
+
 class StructuredCodeHead(nn.Module):
     """Drop-in replacement for ``lm_head`` computing ``g(h) Phi^T``.
 
@@ -560,6 +660,35 @@ class StructuredCodeHead(nn.Module):
         # does not apply to it at all -- this is the one mitigation that escapes
         # the ceiling rather than raising it.
         self.router = nn.Linear(n_embd, self.n_mixture, bias=False) if self.n_mixture > 1 else None
+        # Sparse routing over components.  0 or >= n_mixture means the dense
+        # mixture (every component computed, cost K * 4VM).  With top-k the cost
+        # is k/K of that, which is what makes a *union* of subspaces affordable:
+        # reach up to K*M dimensions at the per-token price of k.
+        tk = cfg["mixture_topk"]
+        self.mixture_topk = self.n_mixture if tk <= 0 else min(tk, self.n_mixture)
+        # Per-component Phi.  Without this every component draws from the SAME
+        # M-dimensional subspace and the mixture can only reweight it; the
+        # log-sum-exp still escapes the rank bound, but the reach does not grow.
+        self.per_phi = bool(cfg["mixture_per_phi"]) and self.n_mixture > 1
+        if self.per_phi:
+            # Guard against a silent no-op.  Distinct components need distinct
+            # column spaces or the "union of subspaces" is one subspace and the
+            # arm measures nothing while costing full price.  For the *full*
+            # monomial expansion the span is fixed by the code, so reseeding
+            # returns the same set of monomials; only a truncated expansion, or
+            # a mode whose Phi is drawn at random, actually differs.
+            assert self.phi_mode not in ("learned", "product"), (
+                f"sch_mixture_per_phi is not supported with phi_mode={self.phi_mode!r}: "
+                f"a learned Phi already places its own subspace, and a product code "
+                f"stores one assignment")
+            if self.phi_mode == "monomial":
+                assert 0 < cfg["max_m"] < full_phi_width(self.bits, self.order), (
+                    f"sch_mixture_per_phi with the full order-{self.order} monomial "
+                    f"expansion is a no-op: every component would get the same "
+                    f"M={self.width} basis. Set --sch-max-m below "
+                    f"{full_phi_width(self.bits, self.order)} so the components draw "
+                    f"different monomial subsets, or use a random Phi mode.")
+        self.n_phi = self.n_mixture if self.per_phi else 1
 
         # Phi: frozen. Non-persistent, rebuilt from `codes` (see init_weights).
         phi_dtype = torch.bfloat16 if cfg["phi_dtype"] == "bf16" else torch.float32
@@ -569,13 +698,29 @@ class StructuredCodeHead(nn.Module):
             # identical g, but a *learned* real-valued output embedding.
             self.phi_learned = nn.Parameter(torch.empty(padded_vocab_size, M))
             self.register_buffer("phi", torch.empty(0), persistent=False)
+        elif self.phi_mode == "product":
+            # Phi is never materialised: one-hot per group turns the V x M
+            # product into a gather and add over g digits.  Only the assignment
+            # is stored, and it is the thing worth checkpointing.
+            self.phi_learned = None
+            self.register_buffer("phi", torch.empty(0), persistent=False)
+            self.register_buffer("assign",
+                                 torch.empty(padded_vocab_size, cfg["product_groups"],
+                                             dtype=torch.int32), persistent=True)
         else:
             self.phi_learned = None
-            self.register_buffer("phi", torch.empty(padded_vocab_size, M, dtype=phi_dtype),
+            self.register_buffer("phi",
+                                 torch.empty(self.n_phi, padded_vocab_size, M, dtype=phi_dtype)
+                                 if self.per_phi else
+                                 torch.empty(padded_vocab_size, M, dtype=phi_dtype),
                                  persistent=False)
         # The code matrix is the thing worth checkpointing: V x B uint8.
-        self.register_buffer("codes", torch.empty(padded_vocab_size, self.bits, dtype=torch.uint8),
-                             persistent=True)
+        if self.phi_mode != "product":
+            self.register_buffer("codes",
+                                 torch.empty(padded_vocab_size, self.bits, dtype=torch.uint8),
+                                 persistent=True)
+        else:
+            self.register_buffer("codes", torch.empty(0, dtype=torch.uint8), persistent=False)
 
         # Per-token bias.  Costs V parameters and adds one rank, and it makes
         # zero-shot vocabulary extension impossible (a token added after
@@ -628,8 +773,16 @@ class StructuredCodeHead(nn.Module):
         then ``to_empty()``-ed, so any tensor computed in the constructor would
         be a meta tensor and any buffer would hold garbage.
         """
-        device = self.codes.device
         cfg = self.cfg
+        if self.phi_mode == "product":
+            A = build_product_codes(self.vocab_size, cfg["product_groups"],
+                                    cfg["product_codebook"], cfg["product_source"],
+                                    cfg["code_seed"], cfg["code_path"])
+            self.assign.copy_(A.to(self.assign.device))
+            self._materialized = True
+            self._init_learned_parts()
+            return
+        device = self.codes.device
         freqs = load_freq_table(self.vocab_size, cfg["tokenizer_dir"]) \
             if cfg["code_mode"] == "frequency" else None
         C = build_codes(self.vocab_size, cfg["bits"], cfg["code_mode"], cfg["code_seed"],
@@ -639,7 +792,10 @@ class StructuredCodeHead(nn.Module):
             f"built for; sch_code_path files must agree with sch_bits + sch_code_ecc_bits")
         self.codes.copy_(C.to(device))
         self._build_phi()
+        self._init_learned_parts()
 
+    def _init_learned_parts(self):
+        cfg = self.cfg
         for g in self.g:
             g.init_weights(out_std=cfg["g_out_std"])
         if self.router is not None:
@@ -669,37 +825,46 @@ class StructuredCodeHead(nn.Module):
         # the AND products are exact in bf16 anyway. Centring is the exception:
         # it produces genuine fractions, so it stages in fp32.
         build_dtype = torch.float32 if self.cfg["phi_center"] else self.phi_dtype
-        if self.phi_mode == "monomial":
-            groups = enumerate_monomials(self.bits, self.order, self.cfg["max_m"],
-                                         self.cfg["mono_seed"])
-            phi = build_phi_monomial(self.codes.cpu(), groups, dtype=build_dtype)
-        elif self.phi_mode == "random_binary":
-            phi = build_phi_random_binary(V, M, self.cfg["phi_density"],
-                                          self.cfg["code_seed"] + 31, dtype=build_dtype)
-        elif self.phi_mode == "onehot":
-            phi = build_phi_onehot(V, M, self.cfg["code_seed"] + 61, dtype=build_dtype)
-        elif self.phi_mode == "gaussian":
-            gen = torch.Generator().manual_seed(self.cfg["code_seed"] + 97)
-            phi = (torch.randn(V, M, generator=gen) / math.sqrt(M)).to(build_dtype)
-        else:  # pragma: no cover - guarded in resolve_sch_config
-            raise ValueError(self.phi_mode)
+        mats = [self._build_one_phi(V, M, build_dtype, k) for k in range(self.n_phi)]
+        phi = torch.stack(mats, 0) if self.per_phi else mats[0]
 
         if self.cfg["phi_center"]:
-            phi = phi - phi.mean(dim=0, keepdim=True)
+            phi = phi - phi.mean(dim=-2, keepdim=True)
+        if self.cfg["phi_whiten"]:
+            phi = _whiten_phi(phi)
         if self.cfg["phi_normalize"]:
             # Pure reparameterisation (absorbed into g), and rank-preserving, but
             # without it the row norms grow like sqrt(M) and the initial logits
             # blow up at order 3 and above. The row norms are accumulated in
             # fp32 over column chunks so a bf16 Phi does not bias the scale.
-            acc = torch.zeros(V, dtype=torch.float32)
+            acc = torch.zeros(phi.shape[:-1], dtype=torch.float32)
             step = max(1, 2 ** 22 // max(V, 1))
             for s in range(0, M, step):
-                acc += phi[:, s:s + step].float().pow(2).sum(dim=1)
+                acc += phi[..., s:s + step].float().pow(2).sum(dim=-1)
             rms = acc.mean().clamp_min(1e-8).sqrt()
             self._phi_scale = float(1.0 / rms)
             phi.mul_(self._phi_scale)   # in place: a full-precision copy is 1.7 GB at V=131k
         self.phi = phi.to(device=device, dtype=self.phi_dtype)
         self._materialized = True
+
+    def _build_one_phi(self, V, M, build_dtype, k: int):
+        """Build component ``k``'s Phi.  Distinct seeds give distinct subspaces."""
+        off = 1013 * k
+        if self.phi_mode == "monomial":
+            # Different monomial subsets per component, so the components span
+            # genuinely different corners of the lattice rather than the same one.
+            groups = enumerate_monomials(self.bits, self.order, self.cfg["max_m"],
+                                         self.cfg["mono_seed"] + off)
+            return build_phi_monomial(self.codes.cpu(), groups, dtype=build_dtype)
+        if self.phi_mode == "random_binary":
+            return build_phi_random_binary(V, M, self.cfg["phi_density"],
+                                           self.cfg["code_seed"] + 31 + off, dtype=build_dtype)
+        if self.phi_mode == "onehot":
+            return build_phi_onehot(V, M, self.cfg["code_seed"] + 61 + off, dtype=build_dtype)
+        if self.phi_mode == "gaussian":
+            gen = torch.Generator().manual_seed(self.cfg["code_seed"] + 97 + off)
+            return (torch.randn(V, M, generator=gen) / math.sqrt(M)).to(build_dtype)
+        raise ValueError(self.phi_mode)  # pragma: no cover - guarded in resolve_sch_config
 
     def _post_load(self, module, incompatible_keys):
         """Rebuild Phi after ``load_state_dict`` restores a (possibly different)
@@ -711,17 +876,22 @@ class StructuredCodeHead(nn.Module):
             print0(f"[SCH] warning: could not rebuild Phi after load_state_dict: {e}")
 
     # -- forward ------------------------------------------------------------
-    def _phi_matmul(self, z):
+    def _phi_matmul(self, z, m: int = 0):
+        if self.phi_mode == "product":
+            # No matmul at all: Phi is one-hot per group, so this is g gathers
+            # and g-1 adds, costing V*g instead of V*M.
+            return product_gather(z, self.assign)
         if self.phi_learned is not None:
             # Cast the weight, exactly as nanochat's Linear does for lm_head, so
             # the learned-W control and the dense baseline pay the same cast.
             return F.linear(z, self.phi_learned.to(dtype=z.dtype))
         # Cast the *activation* instead: Phi is frozen and up to V x M, so
         # casting it every forward would copy hundreds of MB per step.
-        return F.linear(z.to(dtype=self.phi.dtype), self.phi)
+        phi = self.phi[m] if self.per_phi else self.phi
+        return F.linear(z.to(dtype=phi.dtype), phi)
 
     def _component_logits(self, x, m: int):
-        logits = self._phi_matmul(self.g[m](x))
+        logits = self._phi_matmul(self.g[m](x), m)
         if self.res_emb is not None:
             r = F.linear(x, self.res_down.weight.to(dtype=x.dtype))
             logits = logits + F.linear(r, self.res_emb.to(dtype=logits.dtype)).to(logits.dtype)
@@ -752,16 +922,49 @@ class StructuredCodeHead(nn.Module):
         # Mixture of code heads.  log P = log sum_m pi_m(h) P_m(w|h); the
         # log-sum-exp is nonlinear in the component logits, so the rank of the
         # resulting log-prob matrix is not bounded by M.
-        log_pi = torch.log_softmax(
-            F.linear(x, self.router.weight.to(dtype=x.dtype)).float(), dim=-1)
-        comps = []
-        for m in range(self.n_mixture):
-            lg = self._component_logits(x, m).float()
-            if self.logit_act == "sigsoftmax":
-                lg = lg + F.logsigmoid(lg)
-            lg = self._mask_padding(lg)
-            comps.append(torch.log_softmax(lg, dim=-1) + log_pi[..., m:m + 1])
-        return torch.logsumexp(torch.stack(comps, dim=-2), dim=-2)
+        route = F.linear(x, self.router.weight.to(dtype=x.dtype)).float()
+        if self.mixture_topk >= self.n_mixture:
+            log_pi = torch.log_softmax(route, dim=-1)
+            comps = []
+            for m in range(self.n_mixture):
+                comps.append(self._mixture_term(x, m) + log_pi[..., m:m + 1])
+            return torch.logsumexp(torch.stack(comps, dim=-2), dim=-2)
+        return self._sparse_mixture(x, route)
+
+    def _mixture_term(self, x, m: int):
+        lg = self._component_logits(x, m).float()
+        if self.logit_act == "sigsoftmax":
+            lg = lg + F.logsigmoid(lg)
+        return torch.log_softmax(self._mask_padding(lg), dim=-1)
+
+    def _sparse_mixture(self, x, route):
+        """Top-k routing over components, each with its own Phi.
+
+        Only the selected components are evaluated, so the per-token cost is
+        ``k/K`` of the dense mixture while the reachable set is the *union* of
+        the K subspaces rather than any one of them.  Dispatch is a gather on the
+        flattened token axis, the same shape of trick the MoE blocks in this repo
+        use, so the saving is real rather than a mask over wasted work.
+        """
+        shape = x.shape[:-1]
+        flat = x.reshape(-1, x.shape[-1])
+        k = self.mixture_topk
+        top_v, top_i = route.reshape(-1, self.n_mixture).topk(k, dim=-1)
+        log_pi = torch.log_softmax(top_v, dim=-1)          # renormalised over the k kept
+        out = None
+        for slot in range(k):
+            idx = top_i[:, slot]
+            wgt = log_pi[:, slot]
+            acc = torch.full((flat.shape[0], self.vocab_size), float("-inf"),
+                             device=flat.device, dtype=torch.float32)
+            for m in range(self.n_mixture):
+                sel = (idx == m).nonzero(as_tuple=True)[0]
+                if sel.numel() == 0:
+                    continue
+                acc.index_copy_(0, sel, self._mixture_term(flat.index_select(0, sel), m))
+            acc = acc + wgt.unsqueeze(-1)
+            out = acc if out is None else torch.logaddexp(out, acc)
+        return out.reshape(*shape, self.vocab_size)
 
     # -- accounting ---------------------------------------------------------
     def flops_per_token(self) -> int:
@@ -776,11 +979,19 @@ class StructuredCodeHead(nn.Module):
         column instead of hiding in it.
         """
         V, M = self.vocab_size, self.width
-        f = sum(g.flops_per_token() for g in self.g)
-        if self.phi_learned is not None:
-            f += self.n_mixture * 6 * V * M
+        # Only the routed components run, so cost tracks k rather than K.
+        active = self.mixture_topk
+        f = sum(g.flops_per_token() for g in self.g) * active // max(self.n_mixture, 1)
+        if self.phi_mode == "product":
+            # A gather and add, not a matmul: g lookups and g-1 adds per
+            # vocabulary entry forward, and a scatter-add of the same shape in
+            # the backward.  2 * V * groups per pass, no weight gradient because
+            # the assignment is frozen.
+            f += active * 4 * V * self.cfg["product_groups"]
+        elif self.phi_learned is not None:
+            f += active * 6 * V * M
         else:
-            f += self.n_mixture * 4 * V * M
+            f += active * 4 * V * M
         if self.router is not None:
             f += 6 * self.router.weight.numel()
         if self.res_emb is not None:
@@ -792,7 +1003,13 @@ class StructuredCodeHead(nn.Module):
     def extra_repr(self):
         return (f"V={self.vocab_size}, B={self.bits}, order={self.order}, M={self.width}, "
                 f"phi={self.phi_mode}, code={self.cfg['code_mode']}, g={self.cfg['g_type']}, "
-                f"mixture={self.n_mixture}, residual_rank={self.residual_rank}, "
+                + (f"prod={self.cfg['product_groups']}x{self.cfg['product_codebook']}"
+                   f"/{self.cfg['product_source']}, " if self.phi_mode == "product" else "")
+                + (f"whiten=1, " if self.cfg["phi_whiten"] else "")
+                + f"mixture={self.n_mixture}"
+                + (f"(top{self.mixture_topk}"
+                   f"{',per-phi' if self.per_phi else ''})" if self.n_mixture > 1 else "")
+                + f", bias={int(self.bias is not None)}, residual_rank={self.residual_rank}, "
                 f"act={self.logit_act}, rank_ceiling={self.rank_ceiling()}")
 
     def rank_ceiling(self) -> int | float:
@@ -806,6 +1023,10 @@ class StructuredCodeHead(nn.Module):
         if self.self_normalized:
             return float("inf")
         base = self.width if self.cfg["g_type"] == "mlp" else min(self.width, self.n_embd)
+        if self.phi_mode == "product":
+            # One-hot per group means the g group blocks each contain the
+            # all-ones vector, so g-1 of those directions are redundant.
+            base = min(base, self.width - (self.cfg["product_groups"] - 1))
         return base + self.residual_rank
 
 
@@ -946,6 +1167,83 @@ class HierarchicalSoftmaxHead(nn.Module):
         return int(6 * max(depth, 1) * self.n_embd)
 
 
+class MonarchHead(nn.Module):
+    """Monarch-factorised output head: two block-diagonal factors with a
+    transpose between them.
+
+    The code head freezes ``Phi`` and pays for it in alignment.  This attacks the
+    same FLOP bill from the other side: keep the map fully *learned*, so there is
+    no alignment question at all, and make it cheap structurally instead.
+
+        z  = W1 h                        (d -> m1*m2, dense but small)
+        Z  = z.view(m1, m2).T            (m2, m1)
+        y_i = B_i Z[i]                   for each of m2 blocks, m1 -> V/m2
+        out = concat(y_0..y_{m2-1})      (V,)
+
+    Cost is ``d*M + V*m1`` instead of ``V*d``, with ``M = m1*m2``.  At V=131072,
+    d=768, M=1024, m1=32 that is 5.0M MACs against 100.7M, a 20x reduction, and
+    every parameter is trained.  Monarch (Dao et al., 2022) is the general class;
+    this is the rectangular instance that fits an output layer.
+
+    ``m2`` must divide ``V``.  The head reports the factorisation it chose.
+    """
+
+    custom_loss = False
+    self_normalized = False
+
+    def __init__(self, config, padded_vocab_size: int, n_embd: int):
+        super().__init__()
+        V = self.vocab_size = padded_vocab_size
+        self.n_embd = n_embd
+        M = int(getattr(config, "sch_max_m", 0)) or 1024
+        m1 = int(getattr(config, "sch_monarch_m1", 0))
+        if m1 <= 0:
+            m1 = max(1, int(round(math.sqrt(M))))
+        # m2 must divide V and m1*m2 must be the width we advertise.
+        m2 = max(1, M // m1)
+        while m2 > 1 and V % m2 != 0:
+            m2 -= 1
+        assert m2 >= 1 and V % m2 == 0, f"could not factor V={V} for M={M}"
+        self.m1, self.m2, self.width = m1, m2, m1 * m2
+        self.block_out = V // m2
+        self.w1 = nn.Linear(n_embd, self.width, bias=False)
+        # Block-diagonal second factor, stored stacked: (m2, block_out, m1).
+        self.w2 = nn.Parameter(torch.empty(m2, self.block_out, m1))
+        self.bias = nn.Parameter(torch.empty(V)) if int(getattr(config, "sch_bias", 0)) else None
+
+    def init_weights(self):
+        s = 3 ** 0.5 * self.n_embd ** -0.5
+        torch.nn.init.uniform_(self.w1.weight, -s, s)
+        torch.nn.init.normal_(self.w2, mean=0.0, std=0.001)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
+
+    def forward(self, x):
+        shape = x.shape[:-1]
+        # Cast the weight to the activation dtype, as nanochat's Linear does.
+        z = F.linear(x, self.w1.weight.to(dtype=x.dtype)).view(*shape, self.m1, self.m2)
+        z = z.transpose(-1, -2)                              # (..., m2, m1)
+        # (m2, block_out, m1) x (..., m2, m1) -> (..., m2, block_out)
+        y = torch.einsum("obi,...oi->...ob", self.w2.to(dtype=z.dtype), z)
+        out = y.reshape(*shape, self.vocab_size)
+        if self.bias is not None:
+            out = out + self.bias.to(dtype=out.dtype)
+        return out
+
+    def rank_ceiling(self) -> int:
+        return min(self.width, self.n_embd) + 1
+
+    def flops_per_token(self) -> int:
+        f = 6 * (self.w1.weight.numel() + self.w2.numel())
+        if self.bias is not None:
+            f += 2 * self.vocab_size
+        return int(f)
+
+    def extra_repr(self):
+        return (f"V={self.vocab_size}, M={self.width}, m1={self.m1}, m2={self.m2}, "
+                f"block_out={self.block_out}, rank_ceiling={self.rank_ceiling()}")
+
+
 # ---------------------------------------------------------------------------
 # Input side (Phase 3)
 # ---------------------------------------------------------------------------
@@ -1071,7 +1369,19 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
     order = int(g("sch_order", 2))
     max_m = int(g("sch_max_m", 0))
 
-    if phi_mode == "monomial":
+    if phi_mode == "product":
+        # K-ary product code: M = groups * codebook at order 1, no interactions.
+        groups = int(g("sch_product_groups", 8))
+        codebook = int(g("sch_product_codebook", 256))
+        assert groups >= 1 and codebook >= 2, "sch_product_groups>=1, sch_product_codebook>=2"
+        assert codebook ** groups >= padded_vocab_size, (
+            f"a {groups}-digit code over {codebook} symbols has {codebook ** groups} cells "
+            f"for {padded_vocab_size} tokens; collisions make tokens indistinguishable at "
+            f"any order, so raise sch_product_groups or sch_product_codebook")
+        width = groups * codebook
+        assert width <= MAX_PHI_WIDTH, f"M={width} exceeds MAX_PHI_WIDTH={MAX_PHI_WIDTH}"
+        density = 1.0 / codebook
+    elif phi_mode == "monomial":
         assert 1 <= order <= bits_total, \
             f"sch_order={order} must be in [1, B={bits_total}]"
         width = full_phi_width(bits_total, order)
@@ -1105,6 +1415,12 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
         "width": width,
         "phi_mode": phi_mode,
         "phi_density": density if density is not None else 0.0,
+        "product_groups": int(g("sch_product_groups", 8)),
+        "product_codebook": int(g("sch_product_codebook", 256)),
+        "product_source": g("sch_product_source", "hash"),
+        "phi_whiten": bool(int(g("sch_phi_whiten", 0))),
+        "mixture_per_phi": bool(int(g("sch_mixture_per_phi", 0))),
+        "mixture_topk": int(g("sch_mixture_topk", 0)),
         "phi_dtype": g("sch_phi_dtype", "bf16"),
         "phi_normalize": bool(int(g("sch_phi_normalize", 1))),
         "phi_center": bool(int(g("sch_phi_center", 0))),
@@ -1141,6 +1457,8 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
     head_type = getattr(config, "sch_head_type", "code")
     if head_type == "hsoftmax":
         return HierarchicalSoftmaxHead(config, padded_vocab_size, n_embd)
+    if head_type == "monarch":
+        return MonarchHead(config, padded_vocab_size, n_embd)
     assert head_type == "code", f"unknown sch_head_type={head_type!r}"
     return StructuredCodeHead(config, padded_vocab_size, n_embd)
 
@@ -1150,6 +1468,7 @@ def describe_head(head: nn.Module) -> str:
     if isinstance(head, HierarchicalSoftmaxHead):
         return f"[SCH] head=hsoftmax V={head.vocab_size} d={head.n_embd}"
     params = sum(p.numel() for p in head.parameters())
-    return (f"[SCH] head=code {head.extra_repr()} | head params {params:,} "
+    kind = "monarch" if isinstance(head, MonarchHead) else "code"
+    return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "
             f"| head FLOPs/token {head.flops_per_token():,} "
             f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")

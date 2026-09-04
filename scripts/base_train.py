@@ -728,6 +728,13 @@ parser.add_argument("--sch-logit-act", type=str, default="none", choices=["none"
 parser.add_argument("--sch-bias", type=int, default=0, choices=[0, 1], help="SCH: learned per-token bias. V params and +1 rank, but it BREAKS zero-shot vocabulary extension (a new token has no bias)")
 parser.add_argument("--sch-input-mode", type=str, default="table", choices=["table", "linear", "expanded", "nonlinear", "tied"], help="SCH Phase 3: input-side arm. 'linear' is expected to collapse at exactly rank B and is run for that reason")
 parser.add_argument("--sch-input-hidden", type=int, default=0, help="SCH: hidden width for --sch-input-mode nonlinear (0 = 4 * n_embd)")
+parser.add_argument("--sch-product-groups", type=int, default=8, help="SCH: g, digits in the K-ary product code (--sch-phi-mode product)")
+parser.add_argument("--sch-product-codebook", type=int, default=256, help="SCH: K, symbols per digit; M = g*K at order 1")
+parser.add_argument("--sch-product-source", type=str, default="hash", help="SCH: hash | random | file (assignment from scripts/code_assign.py)")
+parser.add_argument("--sch-phi-whiten", type=int, default=0, help="SCH: whiten Phi; same span, condition number 1, pure reparameterisation")
+parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: give each mixture component its own Phi (union of subspaces)")
+parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: components evaluated per token (0 = all); cost tracks k not K")
+parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: Monarch inner factor m1 (0 = sqrt(M))")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1270,6 +1277,13 @@ def build_model_meta(depth):
         sch_bias=int(getattr(args, 'sch_bias', 0)),
         sch_input_mode=getattr(args, 'sch_input_mode', 'table'),
         sch_input_hidden=int(getattr(args, 'sch_input_hidden', 0)),
+        sch_product_groups=int(getattr(args, 'sch_product_groups', 8)),
+        sch_product_codebook=int(getattr(args, 'sch_product_codebook', 256)),
+        sch_product_source=str(getattr(args, 'sch_product_source', 'hash')),
+        sch_phi_whiten=int(getattr(args, 'sch_phi_whiten', 0)),
+        sch_mixture_per_phi=int(getattr(args, 'sch_mixture_per_phi', 0)),
+        sch_mixture_topk=int(getattr(args, 'sch_mixture_topk', 0)),
+        sch_monarch_m1=int(getattr(args, 'sch_monarch_m1', 0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
