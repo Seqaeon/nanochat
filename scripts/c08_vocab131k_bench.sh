@@ -87,7 +87,7 @@ TOK131="${TOKENIZER_DIR_131K:-tokenizer_131k}"
 # refuses a directory whose vocab_size is not 131072, because a sweep pinned to
 # one vocabulary must not silently run at another.
 if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 --tokenizer-dir "$TOK131" \
-        ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+        --data-dir "${DATA_DIR:-data}" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
     echo "could not prepare the tokenizer at '${TOK131}'; nothing was run."
     exit 1
 fi

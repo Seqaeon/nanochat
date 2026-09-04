@@ -1479,3 +1479,50 @@ def test_ensure_tokenizer_refuses_the_wrong_vocabulary():
         capture_output=True, text=True, cwd=os.getcwd())
     assert r.returncode != 0, "a 32768 tokenizer must not satisfy a 131072 request"
     assert "expected 131,072" in (r.stdout + r.stderr)
+
+
+def test_tokenizer_corpus_defaults_scale_with_the_vocabulary():
+    """tok_train's max_chars and doc_cap were chosen for vocab_size=32768.
+
+    Byte-pair frequency is roughly Zipfian, so the rank-131072 pair occurs about
+    4x less often than the rank-32768 one. Reusing the same corpus slice would
+    estimate the tail merges from proportionally less evidence, which is how a
+    131k run ends up with a tokenizer that is not 131k.
+    """
+    from scripts.ensure_tokenizer import BASE_DOC_CAP, BASE_MAX_CHARS, BASE_VOCAB, scaled_defaults
+    assert scaled_defaults(BASE_VOCAB) == (BASE_MAX_CHARS, BASE_DOC_CAP)
+    chars, cap = scaled_defaults(4 * BASE_VOCAB)
+    assert chars == 4 * BASE_MAX_CHARS and cap == 4 * BASE_DOC_CAP
+    # never scale DOWN: a smaller vocabulary still needs a usable corpus
+    assert scaled_defaults(BASE_VOCAB // 8) == (BASE_MAX_CHARS, BASE_DOC_CAP)
+
+
+def test_an_empty_corpus_is_refused_before_the_training_run(tmp_path):
+    """`list_parquet_files` creates the directory and returns [] when it is
+    missing, so `tok_train` trains on 0 sequences, writes a 265-token tokenizer
+    and exits 0. Catching that afterwards costs a full training run; catching it
+    first costs nothing. It must also not leave the stray directory behind.
+    """
+    import subprocess
+    import sys
+    missing = tmp_path / "no_corpus_here"
+    out = tmp_path / "tok"
+    r = subprocess.run(
+        [sys.executable, "-m", "scripts.ensure_tokenizer", "--vocab-size", "131072",
+         "--tokenizer-dir", str(out), "--data-dir", str(missing)],
+        capture_output=True, text=True, cwd=os.getcwd())
+    assert r.returncode != 0
+    assert "no parquet shards" in (r.stdout + r.stderr)
+    assert not out.exists() or not list(out.iterdir()), "it trained anyway"
+    assert not missing.exists(), "it created the missing data directory as a side effect"
+
+
+def test_a_wrong_size_tokenizer_is_rebuilt_rather_than_skipped():
+    """Skipping it and failing the size check afterwards is an unbreakable loop:
+    every re-run finds the same bad file, skips training, and fails again."""
+    import inspect
+    from scripts import ensure_tokenizer
+    src = inspect.getsource(ensure_tokenizer.ensure)
+    assert "have != vocab_size" in src, \
+        "training must be gated on the size of what is already there, not just its presence"
+    assert "trained" in src, "a retrain must also invalidate the frequency table"

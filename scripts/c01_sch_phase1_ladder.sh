@@ -331,7 +331,7 @@ if has vocab; then
     # run at the wrong vocabulary.
     if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 \
             --tokenizer-dir "${TOKENIZER_DIR_131K}" \
-            ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+            --data-dir "${DATA_DIR:-data}" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
         echo "SKIP  V=131072 arms: could not prepare '${TOKENIZER_DIR_131K}'."
     else
         V131="--tokenizer-dir ${TOKENIZER_DIR_131K}"

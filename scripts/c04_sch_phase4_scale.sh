@@ -110,7 +110,7 @@ if has gate; then
     # corpus, and bits per byte rather than token perplexity for comparison.
     if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 \
             --tokenizer-dir "${TOKENIZER_DIR_131K}" \
-            ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+            --data-dir "${DATA_DIR:-data}" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
         echo "MISSING: could not prepare the 131k tokenizer at '${TOKENIZER_DIR_131K}'."
         MISSING=1
     fi
