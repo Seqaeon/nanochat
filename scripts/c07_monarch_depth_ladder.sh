@@ -37,13 +37,33 @@
 #   arm would silently stop being the thing c06 validated. The script refuses that
 #   rather than running it. Past depth 16, set M to the next power of two >= d.
 #
-# THE BUDGET IS THE ONE THING THAT CAN SILENTLY RUIN THIS
-#   Your dense legs were trained on some token budget. This script computes the
-#   dense-equivalent budget at each depth and pins it. VERIFY THE PRINTED NUMBER
-#   AGAINST YOUR DENSE LEG'S "Total number of training tokens" LINE BEFORE
-#   TRUSTING ANY GAP. If they differ, the ladder is measuring the budget, not the
-#   architecture, and it will look like a depth trend.
-#   Override with TARGET_TOKENS_<depth> or TARGET_TOKENS if they do differ.
+# WHY THE BUDGET IS PINNED, WHICH IS NOT OPTIONAL AND IS NOT PARANOIA
+#   base_train sizes the horizon from `transformer_matrices + lm_head` (chosen
+#   empirically in dev/LOG.md: the Kaplan-style count held the ratio near 10.5
+#   across 1e18 to 1e19 FLOPs where the all-parameter count drifted 3.0 to 4.0).
+#   That rule was fit on models where head size is a FUNCTION OF d. It stops
+#   meaning anything the moment the head is the thing being varied, because the
+#   budget then shrinks as a reward for making the head smaller.
+#
+#   Unpinned, this arm would train on a fraction of its dense counterpart's data:
+#
+#     depth   dense budget      MON_M1024 budget    ratio
+#         4    121,111,872          47,138,112     0.389x
+#         8    440,407,296         281,105,664     0.638x
+#        12  1,156,067,136         911,437,632     0.788x
+#        16  2,466,272,256       2,136,314,880     0.866x
+#
+#   Read the ratio column. The shortfall SHRINKS with depth, so an unpinned
+#   ladder would show the gap closing with scale for a reason that has nothing to
+#   do with the architecture. That is precisely the effect Q10 exists to measure,
+#   and the confound points the same way as the hoped-for result.
+#
+#   Excluding the head instead of pinning does NOT work here: it gives both arms
+#   264,246,528 at depth 8, which matches neither the dense legs (440,401,920)
+#   nor anything else, and would strand every existing dense run.
+#
+#   VERIFY THE PRINTED NUMBER against your dense leg's "Total number of training
+#   tokens" line before trusting any gap. Override with TARGET_TOKENS_<depth>.
 #
 #   bash scripts/c07_monarch_depth_ladder.sh 8 12 16
 #   M=2048 bash scripts/c07_monarch_depth_ladder.sh 20        # past depth 16
