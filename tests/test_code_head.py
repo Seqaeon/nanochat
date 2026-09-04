@@ -1338,3 +1338,35 @@ def test_the_report_reads_settings_from_the_launch_args_not_todays_defaults(tmp_
                                          {"sch_phi_mode": "product",
                                           "sch_product_impl": "gather"}))
     assert new_run["sch_product_impl"] == "gather"
+
+
+@pytest.mark.parametrize("kw", [
+    {},                                                          # dense
+    dict(use_code_head=1, sch_order=2),                          # monomial code
+    dict(use_code_head=1, sch_phi_mode='product',
+         sch_product_groups=4, sch_product_codebook=16),         # product code
+    dict(use_code_head=1, sch_head_type='monarch', sch_max_m=128),
+    dict(use_code_head=1, sch_head_type='hsoftmax'),
+    dict(use_code_head=1, sch_order=3, sch_max_m=20, sch_mixture=4,
+         sch_mixture_per_phi=1, sch_mixture_topk=1),              # routed mixture
+])
+def test_every_head_type_survives_the_diagnostics_pass(kw):
+    """One head that lacks one attribute must not kill the whole sweep report.
+
+    `hasattr(head, "rank_ceiling")` was used as a stand-in for "this is a
+    monomial code head". It stopped being one as soon as a second head type had
+    a ceiling: MonarchHead has a width but no bits and no interaction order, and
+    `run_all_diagnostics` died on `head.bits` after the model had already been
+    loaded and the probes had already run.
+    """
+    from nanochat.code_metrics import run_all_diagnostics
+    m = build(**kw)
+
+    def loader():
+        while True:
+            x = torch.randint(0, V, (2, 16))
+            yield x, x
+
+    metrics = run_all_diagnostics(m, loader, token_bytes=torch.ones(V), vocab_size=V,
+                                  steps=2, decile=False, rank_contexts=2048)
+    assert isinstance(metrics, dict) and metrics.get("head_params") is not None

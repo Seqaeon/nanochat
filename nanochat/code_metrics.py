@@ -482,11 +482,16 @@ def run_all_diagnostics(model, build_val_loader, token_bytes, vocab_size, steps=
         # baseline rows too, so the cost table is one column, not two.
         metrics["head_flops_per_token"] = int(6 * vocab_size * model.config.n_embd)
         metrics["rank_ceiling"] = model.config.n_embd + 1
+    # Read each attribute on its own. Using rank_ceiling as a proxy for "this is
+    # a monomial code head" broke the moment a second head type had one:
+    # MonarchHead reports a ceiling and a width but has no code, no bits and no
+    # interaction order, and the whole diagnostics pass died on head.bits.
     if hasattr(head, "rank_ceiling"):
         metrics["rank_ceiling"] = head.rank_ceiling()
-        metrics["phi_width_M"] = head.width
-        metrics["code_bits_B"] = head.bits
-        metrics["code_order_k"] = head.order
+    for key, attr in (("phi_width_M", "width"), ("code_bits_B", "bits"),
+                      ("code_order_k", "order")):
+        if hasattr(head, attr):
+            metrics[key] = getattr(head, attr)
     if emits_logits:
         metrics.update(measure_head_cost(model, model.config.n_embd))
     model.train()
