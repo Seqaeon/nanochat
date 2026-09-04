@@ -324,13 +324,15 @@ fi
 # occurrences, which is the data-scarcity regime where codes are supposed to win.
 if has vocab; then
     echo ""; echo "### VOCAB: the same rungs at V=131072 (bits per byte, not perplexity)"
-    if [ ! -f "${TOKENIZER_DIR_131K}/tokenizer.pkl" ]; then
-        echo "SKIP  V=131072 arms: no tokenizer at '${TOKENIZER_DIR_131K}'."
-        echo "      Section 8 requires a separate tokenizer trained per vocabulary size"
-        echo "      on the same corpus. Build it with:"
-        echo "        python -m scripts.tok_train --vocab-size 131072 --tokenizer-dir ${TOKENIZER_DIR_131K}"
-        echo "        python -m scripts.tok_eval  --tokenizer-dir ${TOKENIZER_DIR_131K}"
-        echo "        python -m scripts.code_assign --build-freq-table --tokenizer-dir ${TOKENIZER_DIR_131K}"
+    # Builds the tokenizer, its token_bytes and its frequency table if any are
+    # missing, and is a no-op otherwise. Section 8 requires a separate tokenizer
+    # per vocabulary size on the same corpus; ensure_tokenizer also refuses a
+    # directory whose vocab_size is not 131072, so these arms cannot silently
+    # run at the wrong vocabulary.
+    if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 \
+            --tokenizer-dir "${TOKENIZER_DIR_131K}" \
+            ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+        echo "SKIP  V=131072 arms: could not prepare '${TOKENIZER_DIR_131K}'."
     else
         V131="--tokenizer-dir ${TOKENIZER_DIR_131K}"
         run V131_dense    "$DEPTH" --models base $V131

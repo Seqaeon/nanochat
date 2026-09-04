@@ -81,15 +81,14 @@ TOK131="${TOKENIZER_DIR_131K:-tokenizer_131k}"
 # separate tokenizer trained per vocabulary size on the same corpus; padding a
 # 32k tokenizer up to 131k would hand the head 98k rows that never receive a
 # gradient and make its job artificially easy.
-if [ ! -f "${TOK131}/tokenizer.pkl" ]; then
-    echo "No tokenizer at '${TOK131}'. Build it first (the loader tokenises on the"
-    echo "fly, so no corpus re-processing is needed):"
-    echo ""
-    echo "  python -m scripts.tok_train  --vocab-size 131072 --tokenizer-dir ${TOK131}"
-    echo "  python -m scripts.tok_eval   --tokenizer-dir ${TOK131}"
-    echo "  python -m scripts.code_assign --build-freq-table --tokenizer-dir ${TOK131}"
-    echo ""
-    echo "Then re-run this script. Override the location with TOKENIZER_DIR_131K."
+# Builds the tokenizer, its token_bytes and its frequency table if any are
+# missing, and is a no-op otherwise. The loader tokenises on the fly, so nothing
+# has to be re-processed to disk; only the tokenizer itself is new. It also
+# refuses a directory whose vocab_size is not 131072, because a sweep pinned to
+# one vocabulary must not silently run at another.
+if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 --tokenizer-dir "$TOK131" \
+        ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+    echo "could not prepare the tokenizer at '${TOK131}'; nothing was run."
     exit 1
 fi
 mkdir -p "$OUT_BASE"

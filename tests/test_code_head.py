@@ -11,6 +11,7 @@ All tests run on CPU with tiny models and finish in seconds.
 """
 
 import math
+import os
 
 import pytest
 import torch
@@ -1443,3 +1444,38 @@ def test_a_learned_phi_head_reports_itself_as_having_no_code():
     b.load_state_dict(a.state_dict(), strict=False)
     x = torch.randint(0, V, (2, 8))
     torch.testing.assert_close(a(x), b(x))
+
+
+def test_sweeps_build_the_tokenizer_instead_of_instructing_the_user():
+    """A sweep that stops to print build commands wastes the queue it was given.
+
+    All three V=131072 sweeps call `ensure_tokenizer`, which builds the
+    tokenizer, its token_bytes and its frequency table if any are missing and is
+    a no-op otherwise.
+    """
+    for path in ("scripts/c01_sch_phase1_ladder.sh",
+                 "scripts/c04_sch_phase4_scale.sh",
+                 "scripts/c08_vocab131k_bench.sh"):
+        src = open(path).read()
+        assert "scripts.ensure_tokenizer" in src, f"{path} does not build the tokenizer"
+        # the old behaviour was to print the commands and stop
+        body = "\n".join(l for l in src.splitlines() if l.strip().startswith("echo"))
+        assert "scripts.tok_train" not in body, \
+            f"{path} still tells the user to run tok_train by hand"
+
+
+def test_ensure_tokenizer_refuses_the_wrong_vocabulary():
+    """Running a pinned sweep at the wrong vocab size is worse than not running.
+
+    The freq table and token_bytes make a directory look ready, so the size
+    check is the only thing standing between a mislabelled directory and a
+    sweep whose every number is against a different tokenizer.
+    """
+    import subprocess
+    import sys
+    r = subprocess.run(
+        [sys.executable, "-m", "scripts.ensure_tokenizer",
+         "--vocab-size", "131072", "--tokenizer-dir", "tokenizer"],
+        capture_output=True, text=True, cwd=os.getcwd())
+    assert r.returncode != 0, "a 32768 tokenizer must not satisfy a 131072 request"
+    assert "expected 131,072" in (r.stdout + r.stderr)

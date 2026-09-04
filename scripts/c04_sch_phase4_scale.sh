@@ -105,19 +105,13 @@ if has gate; then
     echo ""
     echo "### PREFLIGHT"
     MISSING=0
-    if [ ! -f "${TOKENIZER_DIR_131K}/tokenizer.pkl" ]; then
-        echo "MISSING: no 131k tokenizer at '${TOKENIZER_DIR_131K}'."
-        echo "  Section 8 requires a separate tokenizer per vocabulary size, trained on the"
-        echo "  same corpus, and bits per byte rather than token perplexity for comparison."
-        echo "  Build it with:"
-        echo "    python -m scripts.tok_train --vocab-size 131072 --tokenizer-dir ${TOKENIZER_DIR_131K}"
-        echo "    python -m scripts.tok_eval  --tokenizer-dir ${TOKENIZER_DIR_131K}"
-        MISSING=1
-    fi
-    if [ ! -f "${TOKENIZER_DIR_131K}/freq_table.pt" ]; then
-        echo "MISSING: no freq_table.pt at '${TOKENIZER_DIR_131K}'."
-        echo "  The frequency deciles and the Huffman baseline both read it. Build it with:"
-        echo "    python -m scripts.code_assign --build-freq-table --tokenizer-dir ${TOKENIZER_DIR_131K}"
+    # Builds the tokenizer, token_bytes and freq_table if missing; no-op if not.
+    # Section 8 requires a separate tokenizer per vocabulary size on the same
+    # corpus, and bits per byte rather than token perplexity for comparison.
+    if ! python3 -m scripts.ensure_tokenizer --vocab-size 131072 \
+            --tokenizer-dir "${TOKENIZER_DIR_131K}" \
+            ${DATA_DIR:+--data-dir "$DATA_DIR"} ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+        echo "MISSING: could not prepare the 131k tokenizer at '${TOKENIZER_DIR_131K}'."
         MISSING=1
     fi
     if [ "$MISSING" -eq 1 ]; then
