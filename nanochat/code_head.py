@@ -1300,6 +1300,36 @@ class HierarchicalSoftmaxHead(nn.Module):
         self.avg_depth = float(self.mask.sum(dim=1).float().mean().item())
         torch.nn.init.normal_(self.node_emb, mean=0.0, std=0.001)
 
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        """Resize the path buffers to the checkpoint before copying into them.
+
+        The Huffman depth is a property of the token-frequency distribution, not
+        of the config, so the constructor can only guess a bound and
+        ``init_weights`` reallocates when the real tree is deeper. A checkpoint
+        therefore carries whatever depth that run happened to produce (38 with a
+        real frequency table at V=32768, against the constructor's bound of 30),
+        and a freshly built model is back at the bound. Without this the load
+        fails on a shape mismatch and a completed run cannot be re-measured.
+        """
+        for name in ("nodes", "dirs", "mask"):
+            key = prefix + name
+            if key not in state_dict:
+                continue
+            want = state_dict[key].shape
+            cur = getattr(self, name)
+            if tuple(cur.shape) != tuple(want):
+                setattr(self, name, torch.empty(want, dtype=cur.dtype, device=cur.device))
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
+        # avg_depth is derived from the mask, so it has to follow it or the FLOP
+        # column would report the constructor's guess for a restored run.
+        try:
+            if self.mask.numel() and not self.mask.is_meta:
+                self.avg_depth = float(self.mask.sum(dim=1).float().mean().item())
+        except (NotImplementedError, RuntimeError):   # pragma: no cover - meta device
+            pass
+
     def forward(self, x):
         raise NotImplementedError(
             "hierarchical softmax cannot materialise a full logit vector cheaply; "

@@ -1249,3 +1249,32 @@ def test_the_load_balance_term_actually_reaches_the_loss():
     off = build(**kw, sch_mixture_aux=0.0)(x, x)
     on = build(**kw, sch_mixture_aux=0.5)(x, x)
     assert on > off + 0.1, "the load-balance term is not reaching the loss"
+
+
+def test_a_deeper_huffman_tree_still_loads():
+    """The tree depth is a property of the data, not of the config.
+
+    The constructor can only guess a bound, `init_weights` reallocates when the
+    real Huffman tree is deeper, and the checkpoint then carries that depth: 38
+    with a real frequency table at V=32768 against a bound of 30. A freshly
+    built model is back at the bound, so without resizing on load a finished run
+    cannot be re-measured at all.
+    """
+    a = build(use_code_head=1, sch_head_type='hsoftmax')
+    h = a.lm_head
+    old = h.nodes.shape[1]
+    for name, dtype in (("nodes", torch.int64), ("dirs", torch.float32), ("mask", torch.bool)):
+        t = torch.zeros(h.vocab_size, old + 12, dtype=dtype)
+        t[:, :old] = getattr(h, name)
+        setattr(h, name, t)
+    h.avg_depth = float(h.mask.sum(dim=1).float().mean())
+    sd = a.state_dict()
+
+    b = build(use_code_head=1, sch_head_type='hsoftmax')
+    assert b.lm_head.nodes.shape[1] == old, "the fresh model should start at the bound"
+    b.load_state_dict(sd)
+    assert b.lm_head.nodes.shape[1] == old + 12
+    # avg_depth drives flops_per_token, so it has to follow the restored mask
+    assert b.lm_head.avg_depth == pytest.approx(a.lm_head.avg_depth)
+    x = torch.randint(0, V, (2, 8))
+    torch.testing.assert_close(a(x, x), b(x, x))

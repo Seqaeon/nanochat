@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Structured Output Heads (SCH) vs Dense Baseline</title>
+<h2 class="sr-only">Scatter plots comparing SCH variants (Phase 0 & Phase 5) against the dense baseline power-law fit across total params, active params, active FLOPs, and total training FLOPs.</h2>
+
+<style>
+:root {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #555555;
+  --color-text-tertiary: #888888;
+  --color-border-primary: #e0e0e0;
+  --color-border-secondary: #eaeaea;
+  --color-border-tertiary: #d0d0d0;
+  --color-accent: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-primary: #121212;
+    --color-bg-secondary: #1e1e1e;
+    --color-text-primary: #f0f0f0;
+    --color-text-secondary: #aaaaaa;
+    --color-text-tertiary: #777777;
+    --color-border-primary: #2d2d2d;
+    --color-border-secondary: #242424;
+    --color-border-tertiary: #3a3a3a;
+    --color-accent: #3b82f6;
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 1.5rem 2rem;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+
+.section { display: flex; flex-direction: column; gap: 16px; }
+.header-wrap { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--color-border-tertiary); }
+.header-title { font-size: 20px; font-weight: 700; color: var(--color-text-primary); margin: 0; }
+.header-sub { font-size: 13px; color: var(--color-text-secondary); margin: 0; }
+
+/* Filter bar */
+.filter-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px 0; }
+.filter-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-tertiary); margin-right: 4px; }
+.filter-btn {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.filter-btn:hover { background: var(--color-border-primary); color: var(--color-text-primary); }
+.filter-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+/* Charts layout */
+.chart-row { display: flex; flex-direction: column; gap: 32px; } 
+.chart-wrap {
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.chart-header { display: flex; justify-content: space-between; align-items: baseline; }
+.chart-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-primary); }
+.chart-box { position: relative; width: 100%; height: 680px; } 
+
+.leg-container {
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.leg-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-tertiary); }
+.leg-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 11px; color: var(--color-text-secondary); }
+.leg-item {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; transition: background 0.1s;
+}
+.leg-item:hover { background: var(--color-border-primary); }
+.leg-item.dimmed { opacity: 0.35; }
+.fit-info { font-size: 11px; color: var(--color-text-tertiary); margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; line-height: 1.4; }
+
+/* Table styling */
+.table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 16px;
+}
+table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--color-border-secondary); }
+th { font-weight: 600; color: var(--color-text-secondary); background: rgba(0,0,0,0.02); }
+tr:hover td { background: rgba(0,0,0,0.03); }
+.badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div style="display: flex; flex-direction: column; gap: 2rem;">
+
+  <div class="section">
+    <div class="header-wrap">
+      <h1 class="header-title">Structured Output Heads (SCH) vs Dense Baseline</h1>
+      <p class="header-sub">Pareto evaluation of 32 structured output heads (C00 Phase 0 &amp; C05 Phase 5) relative to the dense transformer scaling law.</p>
+    </div>
+
+    <!-- Filter Pills -->
+    <div class="filter-bar" id="filter-bar">
+      <span class="filter-label">Filter Group:</span>
+      <button class="filter-btn active" data-group="all">All (32)</button>
+      <button class="filter-btn" data-group="Baselines">Baselines (4)</button>
+      <button class="filter-btn" data-group="Product Codes">Product Codes (5)</button>
+      <button class="filter-btn" data-group="Subspace Controls">Controls (2)</button>
+      <button class="filter-btn" data-group="Mixtures">Mixtures (4)</button>
+      <button class="filter-btn" data-group="Monarch Heads">Monarch (3)</button>
+      <button class="filter-btn" data-group="Tree">Tree (1)</button>
+      <button class="filter-btn" data-group="Free Upgrades">Free Upgrades (4)</button>
+      <button class="filter-btn" data-group="Ladders">Ladders C00 (5)</button>
+      <button class="filter-btn" data-group="Gates">Gates C00 (4)</button>
+    </div>
+
+    <!-- Legend -->
+    <div class="leg-container">
+      <div class="leg-title">Variant Legend (Click to toggle visibility)</div>
+      <div class="leg-row" id="leg-sch"></div>
+    </div>
+    
+    <!-- Charts -->
+    <div class="chart-row">
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-label">Total Parameters vs Validation BPP</div>
+        </div>
+        <div class="chart-box"><canvas id="sch-c1" role="img" aria-label="SCH variants vs dense baseline: total params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-sch-c1"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-label">Active Parameters vs Validation BPP</div>
+        </div>
+        <div class="chart-box"><canvas id="sch-c2" role="img" aria-label="SCH variants vs dense baseline: active params vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-sch-c2"></div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-label">Active FLOPs / Token vs Validation BPP</div>
+        </div>
+        <div class="chart-box"><canvas id="sch-c3" role="img" aria-label="SCH variants vs dense baseline: active FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-sch-c3"></div>
+      </div>
+      
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-label">Total Active Training FLOPs vs Validation BPP</div>
+        </div>
+        <div class="chart-box"><canvas id="sch-c4" role="img" aria-label="SCH variants vs dense baseline: total training FLOPs vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-sch-c4"></div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-label">Measured Step Latency (dt ms) vs Validation BPP</div>
+        </div>
+        <div class="chart-box"><canvas id="sch-c5" role="img" aria-label="SCH variants: step latency vs val bpp"></canvas></div>
+        <div class="fit-info" id="fit-info-sch-c5"></div>
+      </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="table-wrap">
+      <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; margin-bottom: 8px; color: var(--color-text-primary);">
+        Full Experimental Results Table
+      </div>
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Label</th>
+            <th>Group</th>
+            <th>Total Params</th>
+            <th>Active Params</th>
+            <th>Active FLOPs/tok</th>
+            <th>Train FLOPs</th>
+            <th>Val BPP</th>
+            <th>Step dt (ms)</th>
+            <th>Delta vs Dense Fit</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// ============================================================================
+// 1. DENSE BASELINE REFERENCE DATA
+// Multi-depth dense models (d12 to d30) setting the Chinchilla scaling curve.
+// ============================================================================
+const DENSE = [
+  { id: "dense_d12", total: 286261730, active: 286261730, flops: 7.596959e8, total_training_flops: 8.537080e17, bpp: 0.865386 },
+  { id: "dense_d14", total: 399114882, active: 399114882, flops: 1.128533e9, total_training_flops: 1.898570e18, bpp: 0.831186 },
+  { id: "dense_d16", total: 536871738, active: 536871738, flops: 1.585452e9, total_training_flops: 3.817042e18, bpp: 0.798786 },
+  { id: "dense_d18", total: 701891594, active: 701891594, flops: 2.179995e9, total_training_flops: 7.268479e18, bpp: 0.775486 },
+  { id: "dense_d20", total: 896533746, active: 896533746, flops: 2.886213e9, total_training_flops: 1.291815e19, bpp: 0.752986 },
+  { id: "dense_d22", total: 1123157490, active: 1123157490, flops: 3.763086e9, total_training_flops: 2.208863e19, bpp: 0.733786 },
+  { id: "dense_d24", total: 1384122122, active: 1384122122, flops: 4.775225e9, total_training_flops: 3.594180e19, bpp: 0.716886 },
+  { id: "dense_d26", total: 1681786938, active: 1681786938, flops: 5.991051e9, total_training_flops: 5.683668e19, bpp: 0.700586 },
+  { id: "dense_d28", total: 2018511234, active: 2018511234, flops: 7.365736e9, total_training_flops: 8.660963e19, bpp: 0.686986 },
+  { id: "dense_d30", total: 2396654306, active: 2396654306, flops: 8.977137e9, total_training_flops: 1.291290e20, bpp: 0.674386 },
+];
+
+// ============================================================================
+// 2. SCH EXPERIMENTAL VARIANTS (Phase 0 & Phase 5)
+// Every variant is assigned a distinct, high-contrast, harmonious color.
+// ============================================================================
+const SCH_VARIANTS = [
+  // --- Baselines (c00 & c05) ---
+  { id:'base_dense_s1', label:'BASE Dense s1', group:'Baselines', total: 36700296, active: 36700296, flops: 7.785754e7, total_training_flops: 9.429367e15, bpp: 1.159570, dt: 178.63, color:'#E64A19' },
+  { id:'dense_softmax_s1', label:'DENSE Softmax s1 (c00)', group:'Baselines', total: 36700296, active: 36700296, flops: 7.785754e7, total_training_flops: 9.429367e15, bpp: 1.159345, dt: null, color:'#FF7043' },
+  { id:'base_learned_w_s1', label:'BASE Learned W s1', group:'Baselines', total: 32274568, active: 32274568, flops: 5.130317e7, total_training_flops: 6.213354e15, bpp: 1.227149, dt: 172.96, color:'#00897B' },
+  { id:'ctrl_learned_w_s1', label:'CTRL Learned W s1 (c00)', group:'Baselines', total: 32274568, active: 32274568, flops: 5.130317e7, total_training_flops: 6.213354e15, bpp: 1.228142, dt: null, color:'#26A69A' },
+
+  // --- Monomials & Code Gates (c00 & c05) ---
+  { id:'gate_order1_bmin_s1', label:'GATE Order1 Bmin s1', group:'Gates', total: 28315528, active: 28315528, flops: 2.951501e7, total_training_flops: 3.574578e15, bpp: 2.272603, dt: null, color:'#D32F2F' },
+  { id:'gate_order2_bmin_s1', label:'GATE Order2 Bmin s1', group:'Gates', total: 28342408, active: 28342408, flops: 4.343885e7, total_training_flops: 5.260902e15, bpp: 1.943665, dt: null, color:'#C2185B' },
+  { id:'base_code_order2_s1', label:'BASE Code Order2 s1', group:'Gates', total: 28342408, active: 28342408, flops: 4.343885e7, total_training_flops: 5.260902e15, bpp: 1.940130, dt: 167.85, color:'#880E4F' },
+  { id:'ctrl_random_binary_s1', label:'CTRL Random Binary s1', group:'Gates', total: 28342408, active: 28342408, flops: 4.343885e7, total_training_flops: 5.260902e15, bpp: 2.072326, dt: null, color:'#78909C' },
+
+  // --- Interaction Ladders (c00) ---
+  { id:'ladder_k1_lin_s1', label:'LADDER k1 Lin s1', group:'Ladders', total: 28315528, active: 28315528, flops: 2.951501e7, total_training_flops: 3.574578e15, bpp: 2.272887, dt: null, color:'#FBC02D' },
+  { id:'ladder_k2_lin_s1', label:'LADDER k2 Lin s1', group:'Ladders', total: 28342408, active: 28342408, flops: 4.343885e7, total_training_flops: 5.260902e15, bpp: 1.948433, dt: null, color:'#FFA000' },
+  { id:'ladder_k3_lin_s1', label:'LADDER k3 Lin s1', group:'Ladders', total: 28458888, active: 28458888, flops: 1.037755e8, total_training_flops: 1.256830e16, bpp: 1.832297, dt: null, color:'#FB8C00' },
+  { id:'ladder_k3_mlp_s1', label:'LADDER k3 Mlp s1', group:'Ladders', total: 28524424, active: 28524424, flops: 1.041687e8, total_training_flops: 1.261593e16, bpp: 1.876434, dt: null, color:'#F4511E' },
+  { id:'ladder_k4_mlp_s1', label:'LADDER k4 Mlp s1', group:'Ladders', total: 28873864, active: 28873864, flops: 2.851786e8, total_training_flops: 3.453813e16, bpp: 1.866191, dt: null, color:'#BF360C' },
+
+  // --- Product Codes (c05) ---
+  { id:'prod_g2_k512_s1', label:'PROD g2 K512 s1', group:'Product Codes', total: 28606600, active: 28606600, flops: 2.942643e7, total_training_flops: 3.563851e15, bpp: 1.584860, dt: 1493.96, color:'#00BCD4' },
+  { id:'prod_g4_k64_s1', label:'PROD g4 K64 s1', group:'Product Codes', total: 28409992, active: 28409992, flops: 2.850893e7, total_training_flops: 3.452731e15, bpp: 1.879863, dt: 1734.56, color:'#26C6DA' },
+  { id:'prod_g8_k64_s1', label:'PROD g8 K64 s1', group:'Product Codes', total: 28475528, active: 28475528, flops: 2.942643e7, total_training_flops: 3.563851e15, bpp: 1.721664, dt: 3358.12, color:'#0097A7' },
+  { id:'prod_g8_k256_s1', label:'PROD g8 K256 s1', group:'Product Codes', total: 28868744, active: 28868744, flops: 2.991726e8, total_training_flops: 3.623295e16, bpp: 1.448154, dt: 263.06, color:'#00E5FF' },
+  { id:'prod_g8_k64_random_s1', label:'PROD g8 K64 Random s1', group:'Product Codes', total: 28475528, active: 28475528, flops: 9.548672e7, total_training_flops: 1.156445e16, bpp: 1.543687, dt: 139.14, color:'#4DD0E1' },
+
+  // --- Subspace Controls M512 (c05) ---
+  { id:'prod_ctrl_monomial_m512_s1', label:'PROD CTRL Monomial M512 s1', group:'Subspace Controls', total: 28475528, active: 28475528, flops: 9.548672e7, total_training_flops: 1.156445e16, bpp: 1.719563, dt: 141.26, color:'#8D6E63' },
+  { id:'prod_ctrl_randbin_m512_s1', label:'PROD CTRL Randbin M512 s1', group:'Subspace Controls', total: 28475528, active: 28475528, flops: 9.548672e7, total_training_flops: 1.156445e16, bpp: 1.581076, dt: 138.97, color:'#BCAAA4' },
+
+  // --- Mixture of Subspaces (c05) ---
+  { id:'mix_k4_top1_s1', label:'MIX k4 Top1 s1', group:'Mixtures', total: 28468360, active: 28468360, flops: 4.351053e7, total_training_flops: 5.269583e15, bpp: 1.765224, dt: 235.95, color:'#BA68C8' },
+  { id:'mix_k8_top1_s1', label:'MIX k8 Top1 s1', group:'Mixtures', total: 28592264, active: 28592264, flops: 4.351667e7, total_training_flops: 5.270327e15, bpp: 1.767482, dt: 372.98, color:'#9C27B0' },
+  { id:'mix_k8_top2_s1', label:'MIX k8 Top2 s1', group:'Mixtures', total: 28592264, active: 28592264, flops: 5.942963e7, total_training_flops: 7.197554e15, bpp: 1.758720, dt: 900.74, color:'#7B1FA2' },
+  { id:'mix_k8_shared_phi_s1', label:'MIX k8 Shared Phi s1', group:'Mixtures', total: 28592264, active: 28592264, flops: 4.351667e7, total_training_flops: 5.270327e15, bpp: 1.766390, dt: 372.24, color:'#4A148C' },
+
+  // --- Monarch Matrix Heads (c05) ---
+  { id:'mon_m256_s1', label:'MON M256 s1', group:'Monarch Heads', total: 28934280, active: 28934280, flops: 3.113037e7, total_training_flops: 3.770215e15, bpp: 1.361970, dt: 135.67, color:'#43A047' },
+  { id:'mon_m1024_s1', label:'MON M1024 s1', group:'Monarch Heads', total: 29655176, active: 29655176, flops: 3.545574e7, total_training_flops: 4.294064e15, bpp: 1.255895, dt: 136.19, color:'#2E7D32' },
+  { id:'mon_m1024_m1_8_s1', label:'MON M1024 m1 8 s1', group:'Monarch Heads', total: 28868744, active: 28868744, flops: 3.073715e7, total_training_flops: 3.722593e15, bpp: 1.380214, dt: 134.75, color:'#66BB6A' },
+
+  // --- Tree / Hierarchical Softmax (c05) ---
+  { id:'tree_hsoftmax_s1', label:'TREE Hsoftmax s1', group:'Tree', total: 36700040, active: 36700040, flops: 2.755236e7, total_training_flops: 3.336880e15, bpp: 1.281261, dt: 139.92, color:'#1E88E5' },
+
+  // --- Free Upgrades (c05) ---
+  { id:'free_order2_bias_s1', label:'FREE Order2 Bias s1', group:'Free Upgrades', total: 28375176, active: 28375176, flops: 4.350438e7, total_training_flops: 5.268839e15, bpp: 1.762916, dt: 129.61, color:'#F06292' },
+  { id:'free_order2_whiten_s1', label:'FREE Order2 Whiten s1', group:'Free Upgrades', total: 28342408, active: 28342408, flops: 4.343885e7, total_training_flops: 5.260902e15, bpp: 1.893914, dt: 130.21, color:'#EC407A' },
+  { id:'free_order2_both_s1', label:'FREE Order2 Both s1', group:'Free Upgrades', total: 28375176, active: 28375176, flops: 4.350438e7, total_training_flops: 5.268839e15, bpp: 1.720965, dt: 144.99, color:'#E91E63' },
+  { id:'free_order3_both_s1', label:'FREE Order3 Both s1', group:'Free Upgrades', total: 28491656, active: 28491656, flops: 1.038410e8, total_training_flops: 1.257624e16, bpp: 1.555945, dt: 159.28, color:'#AD1457' },
+];
+
+const M = (v, scale = 1e6) => v / scale;
+
+// Track active filter & hidden IDs
+let currentGroupFilter = 'all';
+const hiddenVariantIds = new Set();
+const chartInstances = {};
+
+// ============================================================================
+// 3. HOVER CROSSHAIR PLUGIN
+// Evaluates the closed-form dense baseline power-law fit at any hovered x
+// and shows synced tooltip delta against the dense baseline.
+// ============================================================================
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterEvent(chart, args) {
+    const cfg = chart.$crosshair;
+    if (!cfg) return;
+    const e = args.event;
+    if (e.type === 'mousemove') {
+      const area = chart.chartArea;
+      if (e.x < area.left || e.x > area.right || e.y < area.top || e.y > area.bottom) {
+        if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+        return;
+      }
+      const x = chart.scales.x.getValueForPixel(e.x);
+      chart.$hoverX = x;
+      renderCrosshairTooltip(chart, cfg, x, e.x, e.y);
+      args.changed = true;
+    } else if (e.type === 'mouseout') {
+      if (chart.$hoverX != null) { chart.$hoverX = null; cfg.tip.style.display = 'none'; args.changed = true; }
+    }
+  },
+  afterDraw(chart) {
+    const x = chart.$hoverX;
+    const cfg = chart.$crosshair;
+    if (x == null || !cfg) return;
+    const { ctx, chartArea, scales } = chart;
+    const px = scales.x.getPixelForValue(x);
+    if (px < chartArea.left || px > chartArea.right) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(px, chartArea.top);
+    ctx.lineTo(px, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(136,135,128,0.55)';
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    cfg.curves.forEach(c => {
+      const y = c.evalFn(x);
+      if (y == null || !isFinite(y) || y < scales.y.min || y > scales.y.max) return;
+      const py = scales.y.getPixelForValue(y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+Chart.register(crosshairPlugin);
+
+function renderCrosshairTooltip(chart, cfg, x, px, py) {
+  const rows = cfg.curves.map(c => ({ ...c, y: c.evalFn(x) })).filter(r => r.y != null && isFinite(r.y));
+  if (!rows.length) { cfg.tip.style.display = 'none'; return; }
+  const baseline = rows[0];
+  let html = `<div style="font-weight:600;color:var(--color-text-primary,#111);margin-bottom:4px;font-family:ui-monospace,monospace;">${cfg.xLabel ? cfg.xLabel + ': ' : ''}${cfg.formatX(x)}</div>`;
+  rows.forEach((r, i) => {
+    html += `<div style="display:flex;align-items:center;gap:6px;color:var(--color-text-secondary,#555);font-family:ui-monospace,monospace;">
+      <span style="width:8px;height:8px;border-radius:50%;background:${r.color};flex:none;display:inline-block;"></span>
+      ${r.label}: <strong>${cfg.formatY(r.y)}</strong>
+    </div>`;
+  });
+  cfg.tip.innerHTML = html;
+  cfg.tip.style.display = 'block';
+
+  const area = chart.chartArea;
+  const tw = cfg.tip.offsetWidth;
+  const midX = (area.left + area.right) / 2;
+  let left = (px > midX) ? (area.left + 10) : Math.max(area.left + 10, area.right - tw - 10);
+  const top = area.top + 10;
+
+  cfg.tip.style.left = left + 'px';
+  cfg.tip.style.top = top + 'px';
+}
+
+function attachCrosshair(chart, curves, formatX, formatY, xLabel) {
+  const wrapper = chart.canvas.parentElement;
+  let tip = wrapper.querySelector('.chart-crosshair-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'chart-crosshair-tip';
+    tip.style.cssText = 'position:absolute;pointer-events:none;z-index:5;background:var(--color-bg-primary,#fff);border:0.5px solid var(--color-border-tertiary,#ccc);border-radius:6px;padding:6px 9px;font-size:11px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:none;white-space:nowrap;';
+    wrapper.appendChild(tip);
+  }
+  chart.$crosshair = { curves, formatX, formatY, xLabel, tip, wrapper };
+}
+
+// ============================================================================
+// 4. POWER LAW FITTING
+// Fits bpp = a * x^b (OLS in log-log space)
+// ============================================================================
+function fitPowerLaw(keyFn, data) {
+  const valid = (data || DENSE).filter(d => keyFn(d) > 0 && d.bpp > 0);
+  const lx = valid.map(d => Math.log(keyFn(d)));
+  const ly = valid.map(d => Math.log(d.bpp));
+  const n = lx.length;
+  const mx = lx.reduce((s,v) => s+v, 0) / n;
+  const my = ly.reduce((s,v) => s+v, 0) / n;
+  const cov  = lx.reduce((s,v,i) => s + (v-mx)*(ly[i]-my), 0);
+  const varx = lx.reduce((s,v)   => s + (v-mx)**2, 0);
+  const b = cov / varx;
+  const a = Math.exp(my - b * mx);
+  const ssres = valid.reduce((s,d,i) => s + (ly[i] - Math.log(a) - b * lx[i])**2, 0);
+  const sstot = ly.reduce((s,v) => s + (v - my)**2, 0);
+  const r2 = 1 - ssres / sstot;
+  return { a, b, r2 };
+}
+
+// Dense baseline extrapolated power-law curve spanning all data
+function baseCurveDS(keyFn, variants, scale = 1e6) {
+  const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
+  const xMin = Math.min(...allX);
+  const xMax = Math.max(...allX);
+  const logSpan = Math.log(xMax / xMin);
+  const pad = 0.35;
+  const x0 = xMin * Math.exp(-pad * logSpan);
+  const x1 = xMax * Math.exp( pad * logSpan);
+  const { a, b } = fitPowerLaw(keyFn);
+  const N = 120;
+  const pts = Array.from({length: N}, (_, i) => {
+    const x = x0 * Math.pow(x1/x0, i/(N-1));
+    return { x: M(x, scale), y: a * Math.pow(x, b) };
+  });
+  return {
+    type: 'line',
+    label: 'Dense baseline (power fit)',
+    data: pts,
+    tension: 0,
+    borderColor: '#888780', backgroundColor: 'transparent',
+    borderWidth: 1.5, borderDash: [5,3],
+    pointRadius: 0, pointHoverRadius: 0,
+    order: 10,
+  };
+}
+
+// Measured DENSE points
+function baseDotDS(keyFn, scale = 1e6) {
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp, id: d.id }));
+  return {
+    label: 'Dense (measured d12-d30)',
+    data: pts,
+    showLine: false,
+    backgroundColor: '#888780', borderColor: '#888780',
+    pointStyle: 'circle', pointRadius: 4, pointHoverRadius: 6,
+    order: 9,
+  };
+}
+
+// Single variant point
+function varDS(v, keyFn, scale = 1e6) {
+  const xVal = keyFn(v);
+  if (!xVal || v.bpp == null || isNaN(v.bpp)) return null;
+  return {
+    label: v.label,
+    data: [{ x: M(xVal, scale), y: v.bpp, id: v.id, raw: v }],
+    backgroundColor: v.color, borderColor: v.color,
+    pointStyle: 'circle', pointRadius: 7.5, pointHoverRadius: 10.5,
+    pointBorderColor: 'rgba(255,255,255,0.7)', pointBorderWidth: 1.5,
+    order: 1,
+  };
+}
+
+// ============================================================================
+// 5. CHART FACTORY
+// ============================================================================
+function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
+  const isFlops = xLabel.includes('FLOPs');
+  const scale = (isFlops || isDt) ? 1.0 : 1e6;
+
+  const validVariants = variants.filter(v => keyFn(v) != null && !isNaN(keyFn(v)) && v.bpp != null && !isNaN(v.bpp));
+  const datasets = [];
+
+  let da = 0, db = 0, dr2 = 0;
+  if (!isDt) {
+    datasets.push(baseCurveDS(keyFn, validVariants, scale));
+    datasets.push(baseDotDS(keyFn, scale));
+    const fit = fitPowerLaw(keyFn);
+    da = fit.a; db = fit.b; dr2 = fit.r2;
+  }
+
+  validVariants.forEach(v => {
+    const ds = varDS(v, keyFn, scale);
+    if (ds) datasets.push(ds);
+  });
+
+  const infoEl = document.getElementById(`fit-info-${canvasId}`);
+  if (infoEl) {
+    if (!isDt) {
+      let varSymbol = 'x';
+      if (xLabel.includes('total params')) varSymbol = 'N<sub>total</sub>';
+      else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
+      else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
+      else if (xLabel.includes('training FLOPs')) varSymbol = 'FLOPs<sub>train</sub>';
+      infoEl.innerHTML = `Dense baseline scaling fit: <strong>bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup></strong> (R² = ${dr2.toFixed(4)}). Points plotted: ${validVariants.length} SCH variants.`;
+    } else {
+      infoEl.innerHTML = `Step Latency (steady-state median forward+backward+opt dt in ms). Points plotted: ${validVariants.length} SCH variants with measured dt.`;
+    }
+  }
+
+  if (chartInstances[canvasId]) {
+    chartInstances[canvasId].destroy();
+  }
+
+  const chart = new Chart(document.getElementById(canvasId), {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top:8, right:12, bottom: 4, left: 4 } },
+      scales: {
+        x: {
+          type: isDt ? 'linear' : 'logarithmic',
+          title: { display: true, text: isDt ? 'Steady-state step latency (ms)' : (isFlops ? xLabel : `${xLabel} (Millions)`), font: { size: 11, weight: 'bold' }, color: '#888780' },
+          ticks: {
+            font:{ size: 10 }, color:'#888780', maxTicksLimit: 7,
+            callback(v) {
+              if (isDt) return v + ' ms';
+              if (isFlops) {
+                const exponent = Math.round(Math.log10(v));
+                if (Math.abs(v - Math.pow(10, exponent)) / v < 0.05) {
+                  return '10^' + exponent;
+                }
+                return null;
+              } else {
+                const m = v;
+                const nice = [10, 20, 30, 50, 80, 100, 200, 300, 500, 1000, 2000, 3000];
+                const r = Math.round(m);
+                if (nice.includes(r) && Math.abs(m-r)/r < 0.02) return r >= 1000 ? (r/1000)+'B' : r+'M';
+                return null;
+              }
+            }
+          },
+          grid: { color:'rgba(136,135,128,0.12)' },
+        },
+        y: {
+          title: { display: true, text: 'Validation Loss (bpp / nats/byte)', font: { size: 11, weight: 'bold' }, color: '#888780' },
+          ticks: { font:{ size: 10 }, color:'#888780', callback: v => v.toFixed(2), stepSize: 0.2 },
+          grid: { color:'rgba(136,135,128,0.12)' },
+          min: 0.60, max: 2.35,
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(20,20,20,0.92)',
+          titleFont: { size: 11, family: 'ui-monospace, monospace' },
+          bodyFont: { size: 11, family: 'ui-monospace, monospace' },
+          padding: 10,
+          callbacks: {
+            label: ctx => {
+              const r = ctx.raw;
+              const name = r.id ? `[${r.id}] ` : '';
+              let xFormatted = isFlops ? `${r.x.toExponential(2)} FLOPs` : (isDt ? `${r.x.toFixed(1)} ms` : `${r.x.toFixed(1)}M`);
+              let denseFitAtX = (!isDt && da > 0) ? (da * Math.pow(r.x * scale, db)) : null;
+              let deltaStr = denseFitAtX ? ` | vs Dense Fit: ${r.y >= denseFitAtX ? '+' : ''}${(r.y - denseFitAtX).toFixed(4)}` : '';
+              let dtStr = (r.raw && r.raw.dt != null) ? ` | dt: ${r.raw.dt.toFixed(1)}ms` : '';
+              return `${name}${ctx.dataset.label}: (${xFormatted}, ${r.y.toFixed(4)} bpp${deltaStr}${dtStr})`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!isDt) {
+    const curves = [
+      { label: 'Dense baseline fit', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
+    ];
+    const formatX = v => isFlops ? `${v.toExponential(2)} FLOPs` : (v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`);
+    const formatY = v => `${v.toFixed(4)} bpp`;
+    attachCrosshair(chart, curves, formatX, formatY, xLabel);
+  }
+
+  chartInstances[canvasId] = chart;
+}
+
+// ============================================================================
+// 6. BUILD LEGEND & FILTERING
+// ============================================================================
+function buildLegend() {
+  const el = document.getElementById('leg-sch');
+  const baseItem = `<span class="leg-item" style="cursor:default;"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="2" stroke-dasharray="4,3"/></svg>Dense baseline (extrapolated power fit)</span>`;
+  const denseMeasItem = `<span class="leg-item" style="cursor:default;"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#888780"/></svg>Dense measured (d12-d30)</span>`;
+  
+  const items = SCH_VARIANTS.map(v => {
+    const isHidden = hiddenVariantIds.has(v.id);
+    const isFilteredOut = (currentGroupFilter !== 'all' && v.group !== currentGroupFilter);
+    const dimmedClass = (isHidden || isFilteredOut) ? 'dimmed' : '';
+    return `<span class="leg-item ${dimmedClass}" data-id="${v.id}" title="Click to toggle ${v.label}">
+      <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="${v.color}" stroke="rgba(255,255,255,0.7)" stroke-width="1"/></svg>
+      ${v.label}
+    </span>`;
+  }).join('');
+  
+  el.innerHTML = baseItem + denseMeasItem + items;
+
+  // Add click toggles
+  el.querySelectorAll('.leg-item[data-id]').forEach(item => {
+    item.addEventListener('click', () => {
+      const vid = item.getAttribute('data-id');
+      if (hiddenVariantIds.has(vid)) {
+        hiddenVariantIds.delete(vid);
+      } else {
+        hiddenVariantIds.add(vid);
+      }
+      renderAll();
+    });
+  });
+}
+
+function setupFilters() {
+  const bar = document.getElementById('filter-bar');
+  bar.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      bar.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentGroupFilter = btn.getAttribute('data-group');
+      renderAll();
+    });
+  });
+}
+
+// ============================================================================
+// 7. DATA TABLE POPULATION
+// ============================================================================
+function buildTable(activeVariants) {
+  const tbody = document.getElementById('table-body');
+  const { a: da_flp, b: db_flp } = fitPowerLaw(d => d.flops);
+  
+  let html = '';
+  // Show Dense baseline reference row
+  html += `<tr style="background: rgba(136,135,128,0.08); font-weight: 600;">
+    <td>dense_d4 (est)</td>
+    <td>DENSE Scaling Law @ Depth 4</td>
+    <td><span class="badge" style="background:#888780; color:#fff;">Dense Reference</span></td>
+    <td>36,700,296</td>
+    <td>36,700,296</td>
+    <td>7.79e+07</td>
+    <td>9.43e+15</td>
+    <td>${(da_flp * Math.pow(7.785754e7, db_flp)).toFixed(4)}</td>
+    <td>~178.6 ms</td>
+    <td>0.0000</td>
+  </tr>`;
+
+  activeVariants.forEach(v => {
+    const denseFitVal = (da_flp * Math.pow(v.flops, db_flp));
+    const delta = (v.bpp - denseFitVal);
+    const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(4);
+    const deltaColor = delta > 0.3 ? '#e11d48' : (delta > 0 ? '#ea580c' : '#16a34a');
+    
+    html += `<tr>
+      <td>${v.id}</td>
+      <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${v.color};margin-right:6px;"></span><strong>${v.label}</strong></td>
+      <td><span class="badge" style="background:${v.color}22; color:${v.color}; border: 1px solid ${v.color}55;">${v.group}</span></td>
+      <td>${v.total.toLocaleString()}</td>
+      <td>${v.active.toLocaleString()}</td>
+      <td>${v.flops.toExponential(2)}</td>
+      <td>${v.total_training_flops.toExponential(2)}</td>
+      <td><strong>${v.bpp.toFixed(6)}</strong></td>
+      <td>${v.dt != null ? v.dt.toFixed(2) + ' ms' : '<span style="color:#999;">—</span>'}</td>
+      <td style="color:${deltaColor}; font-weight:600;">${deltaStr}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = html;
+}
+
+// ============================================================================
+// 8. RENDER ALL COMPONENTS
+// ============================================================================
+function renderAll() {
+  const filteredVariants = SCH_VARIANTS.filter(v => {
+    if (hiddenVariantIds.has(v.id)) return false;
+    if (currentGroupFilter !== 'all' && v.group !== currentGroupFilter) return false;
+    return true;
+  });
+
+  buildLegend();
+  buildTable(filteredVariants);
+
+  makeChart('sch-c1', filteredVariants, d => d.total, 'total params');
+  makeChart('sch-c2', filteredVariants, d => d.active, 'active params');
+  makeChart('sch-c3', filteredVariants, d => d.flops, 'active FLOPs');
+  makeChart('sch-c4', filteredVariants, d => d.total_training_flops, 'total training FLOPs');
+  
+  // 5th chart: dt vs bpp for runs with dt
+  const dtVariants = filteredVariants.filter(v => v.dt != null && !isNaN(v.dt));
+  makeChart('sch-c5', dtVariants, d => d.dt, 'step dt (ms)', true);
+}
+
+// Initialize
+setupFilters();
+renderAll();
+</script>
+
+</body>
+</html>

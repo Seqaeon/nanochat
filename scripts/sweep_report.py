@@ -188,6 +188,12 @@ def measure(tag, ckpt_dir, args, device, ref):
         row["order"] = getattr(cfg, "sch_order", "")
         row["mixture"] = getattr(cfg, "sch_mixture", 1)
         row["topk"] = getattr(cfg, "sch_mixture_topk", 0)
+        # Without this the FLOPs column is uninterpretable: two product arms at
+        # the same M differ by 70x depending on whether Phi was materialised and
+        # multiplied (4*V*M) or gathered (4*V*g). Same function either way, so
+        # bpb stays comparable and cost does not.
+        row["product_impl"] = getattr(cfg, "sch_product_impl", "")
+        row["bias"] = getattr(cfg, "sch_bias", 0)
     row["M"] = getattr(head, "width", "")
     row["head_params"] = sum(p.numel() for p in head.parameters())
     if hasattr(head, "flops_per_token"):
@@ -352,7 +358,7 @@ def report(rows, failed, out_path, ref):
         title += f"   (capture measured against {ref['tag']})"
     print0(title)
     print0("=" * 108)
-    hdr = (f"{'arm':26s} {'head':9s} {'M':>6s} {'bpb':>8s} {'vs dense':>9s} "
+    hdr = (f"{'arm':26s} {'head':9s} {'impl':>6s} {'M':>6s} {'bpb':>8s} {'vs dense':>9s} "
            f"{'FLOPs/tok':>11s} {'vs dense':>9s} {'rank':>7s} {'ceil':>7s} "
            f"{'capture':>8s} {'resid':>7s}")
     print0(hdr)
@@ -363,7 +369,8 @@ def report(rows, failed, out_path, ref):
         dfl = f"{fl / d_fl0:.3f}x" if (fl and d_fl0) else ""
         ceil = r.get("rank_ceiling")
         ceil_s = "inf" if ceil == float("inf") else num(ceil, ".0f")
-        print0(f"{r['arm'][:26]:26s} {r['head']:9s} {str(r.get('M', '')):>6s} "
+        impl = str(r.get("product_impl", ""))[:6]
+        print0(f"{r['arm'][:26]:26s} {r['head']:9s} {impl:>6s} {str(r.get('M', '')):>6s} "
                f"{num(bpb, '.5f'):>8s} {dbpb:>9s} "
                f"{num(fl, '.4e'):>11s} {dfl:>9s} "
                f"{num(r.get('rank_effective_rank'), '.0f'):>7s} {ceil_s:>7s} "
@@ -378,6 +385,14 @@ def report(rows, failed, out_path, ref):
     print0("  context-dependent contrast lives, and it is the honest number.")
     if any(isinstance(r.get("rank_effective_rank"), (int, float)) for r in rows):
         print0(f"  Ranks are against the ~{RANK_THRESHOLD} empirical head-rank threshold.")
+    impls = {r.get("product_impl") for r in rows if r.get("product_impl")}
+    if len(impls) > 1:
+        print0("")
+        print0(f"  WARNING: this sweep mixes product implementations {sorted(impls)}.")
+        print0("  `gather` costs 4*V*g and `dense` costs 4*V*M, up to 70x apart at the same M,")
+        print0("  so the FLOPs column is NOT comparable across those arms. bpb still is: the")
+        print0("  two implementations compute the same function. Re-run the cost comparison on")
+        print0("  one implementation before reading anything off the FLOPs axis.")
     if failed:
         print0("")
         print0(f"  {len(failed)} arm(s) failed to measure:")
