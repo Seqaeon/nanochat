@@ -1134,6 +1134,10 @@ class HierarchicalSoftmaxHead(nn.Module):
         # impossible with positive weights, but ceil(log2 V) * 3 is a safe bound
         # for the Huffman depth of a Zipf distribution) and trim after build.
         self.node_emb = nn.Parameter(torch.empty(max(padded_vocab_size - 1, 1), n_embd))
+        # Average root-to-leaf path length, which is what the head actually costs.
+        # Until the Huffman tree is built the balanced-tree depth is the right
+        # estimate, and it is a plain float so it survives the meta device.
+        self.avg_depth = float(minimal_bits(padded_vocab_size))
         depth_bound = max(2 * minimal_bits(padded_vocab_size), 8)
         self.register_buffer("nodes", torch.empty(padded_vocab_size, depth_bound, dtype=torch.int64))
         self.register_buffer("dirs", torch.empty(padded_vocab_size, depth_bound, dtype=torch.float32))
@@ -1162,6 +1166,9 @@ class HierarchicalSoftmaxHead(nn.Module):
         self.nodes.copy_(nodes.to(device))
         self.dirs.copy_(dirs.to(device))
         self.mask.copy_(mask.to(device))
+        # Huffman is shorter than a balanced tree on a Zipf distribution, so this
+        # is the number the FLOP column should carry, not ceil(log2 V).
+        self.avg_depth = float(self.mask.sum(dim=1).float().mean().item())
         torch.nn.init.normal_(self.node_emb, mean=0.0, std=0.001)
 
     def forward(self, x):
@@ -1193,8 +1200,10 @@ class HierarchicalSoftmaxHead(nn.Module):
         return out.sum() / valid.float().sum().clamp_min(1.0)
 
     def flops_per_token(self) -> int:
-        depth = int(self.mask.sum(dim=1).float().mean().item()) if self.mask.numel() else 1
-        return int(6 * max(depth, 1) * self.n_embd)
+        # Read the cached Python float, never the buffer. Reading `mask` here
+        # fails outright on the meta device and, before `init_weights` has run,
+        # silently reports the average of uninitialised memory on a real one.
+        return int(6 * max(self.avg_depth, 1.0) * self.n_embd)
 
 
 class MonarchHead(nn.Module):
@@ -1407,10 +1416,16 @@ def resolve_sch_config(config, padded_vocab_size: int) -> dict:
         groups = int(g("sch_product_groups", 8))
         codebook = int(g("sch_product_codebook", 256))
         assert groups >= 1 and codebook >= 2, "sch_product_groups>=1, sch_product_codebook>=2"
-        assert codebook ** groups >= padded_vocab_size, (
-            f"a {groups}-digit code over {codebook} symbols has {codebook ** groups} cells "
-            f"for {padded_vocab_size} tokens; collisions make tokens indistinguishable at "
-            f"any order, so raise sch_product_groups or sch_product_codebook")
+        if codebook ** groups < padded_vocab_size:
+            min_g = math.ceil(math.log(padded_vocab_size) / math.log(codebook))
+            min_k = math.ceil(padded_vocab_size ** (1.0 / groups))
+            raise AssertionError(
+                f"a {groups}-digit code over {codebook} symbols has {codebook ** groups} "
+                f"cells for {padded_vocab_size} tokens. Collisions make tokens "
+                f"indistinguishable at any interaction order, which puts a hard floor "
+                f"under the loss. At V={padded_vocab_size} either raise "
+                f"sch_product_groups to >= {min_g} at K={codebook}, or raise "
+                f"sch_product_codebook to >= {min_k} at g={groups}.")
         width = groups * codebook
         assert width <= MAX_PHI_WIDTH, f"M={width} exceeds MAX_PHI_WIDTH={MAX_PHI_WIDTH}"
         density = 1.0 / codebook
@@ -1500,7 +1515,11 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
 def describe_head(head: nn.Module) -> str:
     """One-line startup summary, printed by GPT.__init__."""
     if isinstance(head, HierarchicalSoftmaxHead):
-        return f"[SCH] head=hsoftmax V={head.vocab_size} d={head.n_embd}"
+        return (f"[SCH] head=hsoftmax V={head.vocab_size} d={head.n_embd}, "
+                f"avg_depth={head.avg_depth:.2f} | head params "
+                f"{sum(p.numel() for p in head.parameters()):,} "
+                f"| head FLOPs/token {head.flops_per_token():,} "
+                f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
     params = sum(p.numel() for p in head.parameters())
     kind = "monarch" if isinstance(head, MonarchHead) else "code"
     return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "

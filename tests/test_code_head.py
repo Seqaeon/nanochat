@@ -855,3 +855,85 @@ def test_new_flags_reach_research_compare_and_the_sweep_whitelist():
     assert not sch_flags - declared, f"not declared in research_compare.py: {sorted(sch_flags - declared)}"
     assert not sch_flags - emitted, f"declared but never emitted to base_train: {sorted(sch_flags - emitted)}"
     assert not sch_flags - whitelist, f"not in the research_sweep.sh whitelist: {sorted(sch_flags - whitelist)}"
+
+
+@pytest.mark.parametrize("vocab,depth", [(32768, 8), (32768, 4), (131072, 12)])
+def test_every_c05_arm_builds_at_the_real_vocabulary_size(vocab, depth):
+    """Construct every sweep arm at the vocabulary the sweep actually uses.
+
+    The rest of this file builds models at V=512, which is fine for behaviour
+    but blind to every assertion that depends on V. `--sch-product-groups 2
+    --sch-product-codebook 64` has 4096 cells: legal at V=512, impossible at
+    V=32768, and it reached a GPU and died in `resolve_sch_config` after
+    torchrun had already started.
+
+    Building on the meta device allocates nothing, so this costs milliseconds
+    and exercises every shape assertion and config check in the constructor.
+    """
+    import contextlib
+    import io as _io
+    from nanochat.gpt import GPT, GPTConfig
+
+    parser = _base_train_parser()
+    d = ((depth * 64 + 127) // 128) * 128
+    runtime_only = ("sch_rank_probe", "sch_decile_metrics", "sch_eval_steps",
+                    "sch_holdout_tokens", "sch_holdout_seed", "sch_holdout_min_id",
+                    "sch_holdout_mode")
+    for tag, flags in _sweep_arms("scripts/c05_sch_phase5_alternatives.sh"):
+        ns, _ = parser.parse_known_args(flags)
+        kw = {k: v for k, v in vars(ns).items()
+              if (k.startswith("sch_") or k == "use_code_head") and k not in runtime_only}
+        cfg = GPTConfig(sequence_len=2048, vocab_size=vocab, n_layer=depth,
+                        n_head=max(1, d // 128), n_kv_head=max(1, d // 128),
+                        n_embd=d, **kw)
+        cfg._tokenizer_dir = None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                with torch.device("meta"):
+                    GPT(cfg)
+        except Exception as exc:
+            pytest.fail(f"c05 arm {tag} does not build at V={vocab} depth={depth}: "
+                        f"{type(exc).__name__}: {exc}")
+
+
+def test_an_illegal_product_code_says_what_to_change_it_to():
+    """A refusal that does not name the fix costs a second round trip."""
+    from nanochat.code_head import resolve_sch_config
+
+    class _Cfg:
+        vocab_size = 32768
+        use_code_head = 1
+        sch_phi_mode = "product"
+        sch_product_groups = 2
+        sch_product_codebook = 64
+
+    with pytest.raises(AssertionError) as e:
+        resolve_sch_config(_Cfg(), 32768)
+    msg = str(e.value)
+    assert "sch_product_groups to >= 3" in msg, msg
+    assert "sch_product_codebook to >= 182" in msg, msg
+
+
+def test_head_flops_are_reportable_on_the_meta_device():
+    """`GPT.__init__` runs under `torch.device('meta')` in base_train.
+
+    A `flops_per_token` that reads a buffer fails there outright, and on a real
+    device before `init_weights` it averages uninitialised memory and reports a
+    plausible wrong number instead of raising.
+    """
+    import contextlib
+    import io as _io
+    from nanochat.gpt import GPT, GPTConfig
+    for kw in ({"sch_head_type": "hsoftmax"},
+               {"sch_head_type": "monarch", "sch_max_m": 256},
+               {"sch_phi_mode": "product", "sch_product_groups": 4,
+                "sch_product_codebook": 64}):
+        cfg = GPTConfig(sequence_len=128, vocab_size=32768, n_layer=2, n_head=4,
+                        n_kv_head=4, n_embd=512, use_code_head=1, **kw)
+        cfg._tokenizer_dir = None
+        with contextlib.redirect_stdout(_io.StringIO()):
+            with torch.device("meta"):
+                m = GPT(cfg)
+        f = m.lm_head.flops_per_token()
+        assert isinstance(f, int) and f > 0, f"{kw} reported {f}"
+        assert m.estimate_flops()[0] > 0

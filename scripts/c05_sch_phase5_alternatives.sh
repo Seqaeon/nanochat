@@ -25,7 +25,8 @@
 #   different side.
 #
 # THE FIVE GROUPS
-#   (product)  K-ary product codes. A binary digit contributes ONE column to Phi,
+#   (product)  K-ary product codes. Read PROD_g2_K512 against PROD_g16_K64:
+#              same M=1024, 8x apart in gather cost. A binary digit contributes ONE column to Phi,
 #              so B digits buy M = B at order 1 and the only way to widen is
 #              interaction order, which multiplies columns inside the lattice the
 #              same B digits already generate. That is the c00 plateau. A K-ary
@@ -208,12 +209,22 @@ fi
 # fallback would look like a fitted result and would not be one.
 if has product; then
     echo ""; echo "### PRODUCT: K-ary codes. M = g*K at order 1, cost V*g not V*M."
-    run PROD_g2_K64   "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-        --sch-product-groups 2  --sch-product-codebook 64  --sch-bias 1 $PROBE
+    # A g-digit code over K symbols has K^g cells and needs at least V of them, so
+    # (g, K) pairs are not free to choose. At V=32768 the smallest g at K=64 is 3,
+    # and g must divide the model width for the fitted arms, so the K=64 sweep
+    # starts at g=4. g=2 (the LightRNN corner) needs K >= 512 to stay legal
+    # through V=262144. An illegal pair is refused at construction rather than
+    # trained with colliding tokens, which would put a hard floor under the loss.
+    run PROD_g2_K512  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+        --sch-product-groups 2  --sch-product-codebook 512 --sch-bias 1 $PROBE
     run PROD_g4_K64   "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
         --sch-product-groups 4  --sch-product-codebook 64  --sch-bias 1 $PROBE
     run PROD_g8_K64   "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
         --sch-product-groups 8  --sch-product-codebook 64  --sch-bias 1 $PROBE
+    # Matched to PROD_g2_K512 at M=1024 with 8x the gather cost, so the pair
+    # separates "many cheap digits" from "few rich digits" at fixed width.
+    run PROD_g16_K64  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+        --sch-product-groups 16 --sch-product-codebook 64  --sch-bias 1 $PROBE
     run PROD_g8_K256  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
         --sch-product-groups 8  --sch-product-codebook 256 --sch-bias 1 $PROBE
     # The MLP-g slice, for the same reason c00 needed one: a linear g caps the
