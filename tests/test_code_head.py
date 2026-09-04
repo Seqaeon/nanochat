@@ -804,15 +804,29 @@ def _sweep_arms(path):
     env = {"DEPTH": "8", "MODEL_DIM": str(((8 * 64 + 127) // 128) * 128)}
     # Top-level VAR="..." assignments, minus anything with a command substitution.
     for m in re.finditer(r'^(\w+)="([^"$`]*(?:\$\{?\w+[^"`]*)*)"$', src, re.M):
-        env[m.group(1)] = m.group(2)
+        # Resolve ${VAR:-default} inside the value itself. `M1S="${M1S:-32 64}"`
+        # is the common idiom, and storing it raw makes `for m1 in $M1S` iterate
+        # over the literal string.
+        val = m.group(2)
+        for _ in range(8):
+            nxt = re.sub(r'\$\{(\w+):-([^{}]*)\}', r"\2", val)
+            if nxt == val:
+                break
+            val = nxt
+        env[m.group(1)] = val
 
     def expand(text, loop=None):
         for _ in range(8):
             nxt = re.sub(r'\$\{(\w+):-([^{}]*)\}', r"\2", text)      # ${VAR:-default}
+            def sub(text, name, val):
+                # Word boundary: "$M" must not match inside "$M1S", which is how
+                # --sch-monarch-m1 once came out as "10241S".
+                return re.sub(r"\$\{%s\}|\$%s(?![A-Za-z0-9_])" % (name, name),
+                              val.replace("\\", "\\\\"), text)
             if loop:
-                nxt = nxt.replace("${%s}" % loop[0], loop[1]).replace("$" + loop[0], loop[1])
+                nxt = sub(nxt, loop[0], loop[1])
             for k, v in env.items():
-                nxt = nxt.replace("${%s}" % k, v).replace("$" + k, v)
+                nxt = sub(nxt, k, v)
             if nxt == text:
                 break
             text = nxt
@@ -826,6 +840,11 @@ def _sweep_arms(path):
         # expanding it every arm inside reads `--sch-max-m "$M"` and the test
         # passes by never checking anything real.
         m = re.match(r"for\s+([A-Za-z_]\w*)\s+in\s+([^;]+);\s*do\s*$", stripped)
+        if m and m.group(2).strip().startswith("$"):
+            # `for m1 in $M1S; do` gets its values from a variable.
+            name = m.group(2).strip().lstrip("$").strip("{}")
+            m = re.match(r"for\s+([A-Za-z_]\w*)\s+in\s+([^;]+);\s*do\s*$",
+                         f"for {m.group(1)} in {env.get(name, '')}; do")
         if m:
             # shlex, not split(): the values may be quoted tuples, as in
             # `for GK in "4 64" "8 64"; do set -- $GK; G=$1; K=$2`.
@@ -837,6 +856,10 @@ def _sweep_arms(path):
         a = re.match(r'(\w+)="([^"]*)"$', stripped)
         if a and loop_vals:
             inner[a.group(1)] = a.group(2)
+        # A run guarded by a condition is still a run: `[ ... ] && run TAG ...`
+        guarded = re.match(r"^\[.*?\]\s*&&\s*(run\s.*)$", stripped)
+        if guarded:
+            stripped = guarded.group(1)
         if stripped.startswith("run "):
             buf = stripped
             while buf.endswith("\\"):
@@ -925,7 +948,10 @@ def test_new_flags_reach_research_compare_and_the_sweep_whitelist():
 
 
 @pytest.mark.parametrize("script", ["scripts/c05_sch_phase5_alternatives.sh",
-                                    "scripts/c06_head_lowrank_ladder.sh"])
+                                    "scripts/c06_head_lowrank_ladder.sh",
+                                    "scripts/c07_monarch_depth_ladder.sh",
+                                    "scripts/c08_vocab131k_bench.sh",
+                                    "scripts/c09_monarch_m1_sweep.sh"])
 @pytest.mark.parametrize("vocab,depth", [(32768, 8), (32768, 4), (131072, 12)])
 def test_every_sweep_arm_builds_at_the_real_vocabulary_size(vocab, depth, script):
     """Construct every sweep arm at the vocabulary the sweep actually uses.

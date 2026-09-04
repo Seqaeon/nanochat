@@ -1436,9 +1436,19 @@ class MonarchHead(nn.Module):
         z = z.transpose(-1, -2)                              # (..., m2, m1)
         # (m2, block_out, m1) x (..., m2, m1) -> (..., m2, block_out)
         y = torch.einsum("obi,...oi->...ob", self.w2.to(dtype=z.dtype), z)
+        # `reshape` copies here and cannot avoid it: bmm requires the batch axis
+        # first, so the result is (m2, N, block_out) while the caller needs
+        # (N, m2, block_out), and those two orders cannot share memory. That copy
+        # is a second full (N, V) tensor, 34 GB at V=131072 with 131072 tokens,
+        # and it is why this head needs a smaller device batch than dense for the
+        # same model. Removing it needs a fused grouped-GEMM kernel that writes
+        # the output transposed; see OPEN_QUESTIONS Q11.
         out = y.reshape(*shape, self.vocab_size)
         if self.bias is not None:
-            out = out + self.bias.to(dtype=out.dtype)
+            # In place. `out` is the fresh tensor that reshape just copied into,
+            # so nobody else holds it, and the alternative allocates a THIRD
+            # full-width tensor for what is a per-token constant.
+            out += self.bias.to(dtype=out.dtype)
         return out
 
     def rank_ceiling(self) -> int:
