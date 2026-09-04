@@ -117,6 +117,44 @@ def quality(row):
 # Subspace capture
 # ---------------------------------------------------------------------------
 
+def read_user_config(ckpt_dir: str, step=None) -> dict:
+    """The args the run was actually launched with, from its own meta_*.json.
+
+    Two things depend on this and both bit on the first real use. The probes
+    need the run's data and tokenizer directories, and defaulting them to None
+    makes every arm without cached metrics die on "No dataset parquet files
+    found". And the sch_* settings must be read from what RAN, not from a
+    freshly constructed GPTConfig: a field added since the run is absent from
+    the checkpoint, so the dataclass default silently fills in and the report
+    describes the current code rather than the experiment.
+    """
+    metas = sorted(glob(os.path.join(ckpt_dir, "*", "meta_*.json")))
+    if not metas:
+        return {}
+    path = metas[-1]
+    if step is not None:
+        want = [m for m in metas if f"{step:06d}" in os.path.basename(m)]
+        if want:
+            path = want[0]
+    with open(path) as f:
+        return (json.load(f) or {}).get("user_config", {}) or {}
+
+
+def inherit(args, user_cfg):
+    """CLI wins, then the run's own setting if it still resolves, then None."""
+    out = {}
+    for key in ("data_dir", "tokenizer_dir"):
+        chosen = getattr(args, key, None)
+        if chosen is None:
+            candidate = user_cfg.get(key)
+            if candidate and os.path.exists(candidate):
+                chosen = candidate
+        out[key] = chosen
+    out["max_shards"] = (args.max_shards if args.max_shards is not None
+                         else user_cfg.get("max_shards"))
+    return out
+
+
 def head_basis(model) -> torch.Tensor | None:
     """The (V, M) matrix whose column space the head can reach, or None.
 
@@ -173,9 +211,11 @@ def capture_of(basis: torch.Tensor, Wc: torch.Tensor, total, Wr, total_res):
 # ---------------------------------------------------------------------------
 
 def measure(tag, ckpt_dir, args, device, ref):
+    user_cfg = read_user_config(ckpt_dir, args.step)
+    env = inherit(args, user_cfg)
     model, tokenizer, meta = load_model_from_dir(
         ckpt_dir, device, phase="eval", model_tag="base",
-        step=args.step, tokenizer_dir=args.tokenizer_dir)
+        step=args.step, tokenizer_dir=env["tokenizer_dir"])
     cfg = model.config
     head = model.lm_head
     vocab_size = tokenizer.get_vocab_size()
@@ -184,34 +224,40 @@ def measure(tag, ckpt_dir, args, device, ref):
     row["head"] = (getattr(cfg, "sch_head_type", "code")
                    if getattr(cfg, "use_code_head", False) else "dense")
     if getattr(cfg, "use_code_head", False):
-        row["phi_mode"] = getattr(cfg, "sch_phi_mode", "")
-        row["order"] = getattr(cfg, "sch_order", "")
-        row["mixture"] = getattr(cfg, "sch_mixture", 1)
-        row["topk"] = getattr(cfg, "sch_mixture_topk", 0)
+        # From the launch args, not the rebuilt config: a flag added after the
+        # run is missing from the checkpoint, and reading it off a fresh
+        # GPTConfig would report the current default as though the run had used
+        # it. "?" says "this run predates the flag", which is the truth.
+        def ran(key, default="?"):
+            return user_cfg.get(key, default)
+        row["phi_mode"] = ran("sch_phi_mode")
+        row["order"] = ran("sch_order")
+        row["mixture"] = ran("sch_mixture")
+        row["topk"] = ran("sch_mixture_topk")
         # Without this the FLOPs column is uninterpretable: two product arms at
-        # the same M differ by 70x depending on whether Phi was materialised and
-        # multiplied (4*V*M) or gathered (4*V*g). Same function either way, so
-        # bpb stays comparable and cost does not.
-        row["product_impl"] = getattr(cfg, "sch_product_impl", "")
-        row["bias"] = getattr(cfg, "sch_bias", 0)
+        # the same M differ by up to 70x depending on whether Phi was
+        # materialised and multiplied (4*V*M) or gathered (4*V*g). Same function
+        # either way, so bpb stays comparable and cost does not.
+        row["product_impl"] = ran("sch_product_impl") if row["phi_mode"] == "product" else ""
+        row["bias"] = ran("sch_bias")
     row["M"] = getattr(head, "width", "")
     row["head_params"] = sum(p.numel() for p in head.parameters())
     if hasattr(head, "flops_per_token"):
         row["head_flops"] = head.flops_per_token()
     est = model.estimate_flops()
-    row["flops_per_token"] = float(est[0] if isinstance(est, tuple) else est)
+    row["flops_recomputed"] = float(est[0] if isinstance(est, tuple) else est)
     if hasattr(head, "rank_ceiling"):
         row["rank_ceiling"] = head.rank_ceiling()
 
     metrics = cached_metrics(ckpt_dir)
     if not args.cached or not metrics:
-        token_bytes = get_token_bytes(device=device, tokenizer_dir=args.tokenizer_dir)
+        token_bytes = get_token_bytes(device=device, tokenizer_dir=env["tokenizer_dir"])
         seq_len = args.seq_len or meta["model_config"]["sequence_len"]
 
         def build_val_loader():
             return tokenizing_distributed_data_loader_bos_bestfit(
                 tokenizer, args.batch_size, seq_len, split="val", device=device,
-                data_dir=args.data_dir, max_shards=args.max_shards)
+                data_dir=env["data_dir"], max_shards=env["max_shards"])
 
         holdout = os.path.join(ckpt_dir, "sch_holdout_ids.pt")
         holdout_ids = torch.load(holdout, weights_only=True, map_location="cpu") \
@@ -220,9 +266,16 @@ def measure(tag, ckpt_dir, args, device, ref):
             model, build_val_loader=build_val_loader, token_bytes=token_bytes,
             vocab_size=vocab_size, steps=args.steps, decile=not args.no_decile,
             rank_contexts=args.rank_contexts, holdout_ids=holdout_ids,
-            tokenizer_dir=args.tokenizer_dir, device=device)
+            tokenizer_dir=env["tokenizer_dir"], device=device)
         metrics = {**metrics, **fresh}
     row.update({k: v for k, v in metrics.items() if not isinstance(v, (list, dict))})
+    # The recorded cost is what the run actually paid; the recomputed one is what
+    # today's code would pay. A gap means the sweep straddles a code change, and
+    # then the FLOPs column is not comparable across arms.
+    if not isinstance(row.get("flops_per_token"), (int, float)):
+        row["flops_per_token"] = row["flops_recomputed"]
+    recorded, fresh = row["flops_per_token"], row["flops_recomputed"]
+    row["flops_drift"] = fresh / recorded if recorded else 1.0
 
     if ref is not None:
         basis = head_basis(model)
@@ -248,9 +301,10 @@ def build_reference(arms, args, device, no_subspace):
     from scripts.code_head_subspace import learned_direction_count
     for tag, ckpt in arms:
         try:
+            tok_dir = inherit(args, read_user_config(ckpt, args.step))["tokenizer_dir"]
             model, _tok, _meta = load_model_from_dir(ckpt, device, phase="eval",
                                                      model_tag="base", step=args.step,
-                                                     tokenizer_dir=args.tokenizer_dir)
+                                                     tokenizer_dir=tok_dir)
         except Exception:
             continue
         if getattr(model.config, "use_code_head", False) or not hasattr(model.lm_head, "weight"):
@@ -303,6 +357,9 @@ def main():
     if not arms:
         raise SystemExit(f"no completed arms under {args.sweep_dir}")
     print0(f"[report] {len(arms)} arm(s) under {args.sweep_dir}")
+    probe = inherit(args, read_user_config(arms[0][1], args.step))
+    print0(f"[report] data_dir={probe['data_dir']!r} tokenizer_dir={probe['tokenizer_dir']!r} "
+           f"max_shards={probe['max_shards']!r} (inherited from the runs unless overridden)")
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     _ddp, _rank, _local, _world, device = compute_init(device_type)
@@ -385,6 +442,17 @@ def report(rows, failed, out_path, ref):
     print0("  context-dependent contrast lives, and it is the honest number.")
     if any(isinstance(r.get("rank_effective_rank"), (int, float)) for r in rows):
         print0(f"  Ranks are against the ~{RANK_THRESHOLD} empirical head-rank threshold.")
+    drifted = [r for r in rows
+               if isinstance(r.get("flops_drift"), float) and abs(r["flops_drift"] - 1.0) > 0.01]
+    if drifted:
+        print0("")
+        print0(f"  WARNING: {len(drifted)} arm(s) would cost a different number of FLOPs under")
+        print0("  today's code than they did when they ran. The sweep straddles a code change,")
+        print0("  so the FLOPs column is not comparable across arms. bpb still is.")
+        for r in sorted(drifted, key=lambda r: -abs(r["flops_drift"] - 1.0))[:6]:
+            print0(f"    {r['arm'][:30]:30s} ran {r['flops_per_token']:.3e}, "
+                   f"today {r['flops_recomputed']:.3e}  ({r['flops_drift']:.2f}x)")
+
     impls = {r.get("product_impl") for r in rows if r.get("product_impl")}
     if len(impls) > 1:
         print0("")

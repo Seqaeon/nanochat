@@ -1278,3 +1278,63 @@ def test_a_deeper_huffman_tree_still_loads():
     assert b.lm_head.avg_depth == pytest.approx(a.lm_head.avg_depth)
     x = torch.randint(0, V, (2, 8))
     torch.testing.assert_close(a(x, x), b(x, x))
+
+
+# ---------------------------------------------------------------------------
+# sweep_report: it must describe the runs, not the current code
+# ---------------------------------------------------------------------------
+
+def _fake_run(tmp_path, tag, user_config):
+    """A checkpoint directory shaped the way base_train writes one."""
+    import json
+    d = tmp_path / tag / "depth_4" / "ckpt_base" / "base"
+    d.mkdir(parents=True)
+    (d / "model_000462.pt").write_bytes(b"")
+    with open(d / "meta_000462.json", "w") as f:
+        json.dump({"step": 462, "user_config": user_config}, f)
+    return str(d.parent)
+
+
+def test_the_report_inherits_the_directories_the_run_used(tmp_path):
+    """Defaulting data_dir to None kills every arm without cached metrics with
+    "No dataset parquet files found", which is not a missing dataset but a
+    missing argument. The run recorded what it used; read it."""
+    from scripts.sweep_report import inherit, read_user_config
+    data = tmp_path / "shards"
+    data.mkdir()
+    ck = _fake_run(tmp_path, "ARM_s1", {"data_dir": str(data), "tokenizer_dir": "tokenizer",
+                                        "max_shards": 300})
+    cfg = read_user_config(ck)
+    assert cfg["max_shards"] == 300
+
+    class A:
+        data_dir = tokenizer_dir = None
+        max_shards = None
+    env = inherit(A(), cfg)
+    assert env["data_dir"] == str(data), "the run's own data directory must be used"
+    assert env["max_shards"] == 300
+
+    class B:
+        data_dir = "/explicit"
+        tokenizer_dir = None
+        max_shards = 7
+    assert inherit(B(), cfg)["data_dir"] == "/explicit", "an explicit flag must win"
+
+    # a directory that no longer resolves must not be handed to the loader
+    gone = read_user_config(_fake_run(tmp_path, "ARM2_s1", {"data_dir": "/no/such/path"}))
+    assert inherit(A(), gone)["data_dir"] is None
+
+
+def test_the_report_reads_settings_from_the_launch_args_not_todays_defaults(tmp_path):
+    """A flag added after a run is absent from its checkpoint. Reading it off a
+    freshly built GPTConfig reports the current default as though the run had
+    used it, which is how `impl` came to say "dense" for arms whose recorded
+    FLOPs were the gather cost."""
+    from scripts.sweep_report import read_user_config
+    old_run = read_user_config(_fake_run(tmp_path, "OLD_s1", {"sch_phi_mode": "product"}))
+    assert old_run.get("sch_product_impl", "?") == "?", \
+        "a run predating the flag must report '?', not the current default"
+    new_run = read_user_config(_fake_run(tmp_path, "NEW_s1",
+                                         {"sch_phi_mode": "product",
+                                          "sch_product_impl": "gather"}))
+    assert new_run["sch_product_impl"] == "gather"
