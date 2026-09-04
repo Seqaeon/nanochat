@@ -240,21 +240,21 @@ if has product; then
         --sch-product-groups 8  --sch-product-codebook 64  --sch-bias 1 $PROBE
     # Matched to PROD_g2_K512 at M=1024 with 8x the gather cost, so the pair
     # separates "many cheap digits" from "few rich digits" at fixed width.
-    run PROD_g16_K64  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-        --sch-product-groups 16 --sch-product-codebook 64  --sch-bias 1 $PROBE
-    run PROD_g8_K256  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-        --sch-product-groups 8  --sch-product-codebook 256 --sch-bias 1 $PROBE
-    # The MLP-g slice, for the same reason c00 needed one: a linear g caps the
-    # rank at min(M, d), so g=8 K=256 (M=2048) and g=8 K=64 (M=512) are
-    # rank-identical at d<=512 and the alphabet sweep would fake saturation.
-    run PROD_g8_K256_mlp "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-        --sch-product-groups 8 --sch-product-codebook 256 --sch-bias 1 \
-        --sch-g-type mlp --sch-g-hidden "$MODEL_DIM" $PROBE
-    # The null control. If a random assignment matches a fitted one, the code is
-    # not doing the work and only the width is.
-    run PROD_g8_K64_random "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
-        --sch-product-groups 8 --sch-product-codebook 64 --sch-product-source random \
-        --sch-bias 1 $PROBE
+#    run PROD_g16_K64  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+#        --sch-product-groups 16 --sch-product-codebook 64  --sch-bias 1 $PROBE
+#    run PROD_g8_K256  "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+#        --sch-product-groups 8  --sch-product-codebook 256 --sch-bias 1 $PROBE
+#    # The MLP-g slice, for the same reason c00 needed one: a linear g caps the
+#    # rank at min(M, d), so g=8 K=256 (M=2048) and g=8 K=64 (M=512) are
+#    # rank-identical at d<=512 and the alphabet sweep would fake saturation.
+#    run PROD_g8_K256_mlp "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+#        --sch-product-groups 8 --sch-product-codebook 256 --sch-bias 1 \
+#        --sch-g-type mlp --sch-g-hidden "$MODEL_DIM" $PROBE
+#    # The null control. If a random assignment matches a fitted one, the code is
+#    # not doing the work and only the width is.
+#    run PROD_g8_K64_random "$DEPTH" --models base --use-code-head 1 --sch-phi-mode product \
+#        --sch-product-groups 8 --sch-product-codebook 64 --sch-product-source random \
+#        --sch-bias 1 $PROBE
     # COST-MATCHED CONTROLS at M=512. Under --sch-product-impl dense all three
     # cost exactly 4*V*M, so bpb differences are attributable to the SUBSPACE and
     # to nothing else. This is the comparison the whole product hypothesis rests
