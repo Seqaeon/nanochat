@@ -11353,7 +11353,16 @@ class GPT(nn.Module):
 
         if targets is not None:
             # training: given the targets, compute and return the loss
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            if self.use_code_head and getattr(self.lm_head, 'self_normalized', False):
+                # `logits` are already log-probabilities. F.cross_entropy would
+                # log_softmax them again, which is the identity on a normalised
+                # vector and costs a second full (V-wide) tensor saved for
+                # backward: 34 GB at 262144 tokens and V=32768. nll_loss skips it
+                # and is exactly equal.
+                loss = F.nll_loss(logits.view(-1, logits.size(-1)), targets.view(-1),
+                                  ignore_index=-1, reduction=loss_reduction)
+            else:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
 
             # Design 10: Auxiliary context objective
             # Reads _last_ctx stored on each RemixedBlock during this forward pass.

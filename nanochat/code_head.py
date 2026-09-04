@@ -813,8 +813,18 @@ class StructuredCodeHead(nn.Module):
     # -- properties the caller branches on ---------------------------------
     @property
     def self_normalized(self) -> bool:
-        """True when forward() already returns normalised log-probabilities."""
-        return self.n_mixture > 1 or self.logit_act == "sigsoftmax"
+        """True when forward() already returns normalised log-probabilities.
+
+        A *hard* top-1 mixture is not one of those. Each token uses exactly one
+        component, so ``log P = log_softmax(that component's logits)``, which is
+        precisely the normalisation ``F.cross_entropy`` is about to perform.
+        Doing it inside the head as well costs a second full ``(N, V)`` fp32
+        tensor saved for backward, 34 GB at 262144 tokens and V=32768, for a
+        mathematically identical result. Returning raw logits instead makes the
+        k=1 path hold exactly what the dense baseline holds.
+        """
+        return (self.n_mixture > 1 and self.mixture_topk > 1) \
+            or self.logit_act == "sigsoftmax"
 
     # -- construction -------------------------------------------------------
     def init_weights(self):
@@ -1077,20 +1087,32 @@ class StructuredCodeHead(nn.Module):
         # With k=1 the renormalised router weight is log_softmax of a single
         # element, which is exactly 0, so the whole mixture collapses to "each
         # token uses its own component" and needs no weighting and no combining.
-        log_pi = None if k == 1 else torch.log_softmax(top_v, dim=-1)
+        # k=1 emits RAW logits and lets the caller's cross-entropy do the single
+        # normalisation; k>1 has to combine normalised components, so it cannot.
+        raw = (k == 1)
+        log_pi = None if raw else torch.log_softmax(top_v, dim=-1)
         out = None
         for slot in range(k):
             idx = top_i[:, slot]
             # Uninitialised, not -inf filled: the components partition the token
             # axis, so every row is written exactly once. Asserted below.
-            acc = torch.empty(n, self.vocab_size, device=flat.device, dtype=torch.float32)
+            # Match the components' own dtype on the raw path. Promoting each
+            # component's (n_m, V) slice to fp32 before the copy costs one full
+            # (N, V) fp32 tensor in transients, and the caller is about to call
+            # .float() on the result anyway, so it is a conversion done twice.
+            # The dense baseline returns bf16 from its matmul for the same reason.
+            acc_dtype = flat.dtype if raw else torch.float32
+            acc = torch.empty(n, self.vocab_size, device=flat.device, dtype=acc_dtype)
             covered = 0
             for m in range(self.n_mixture):
                 sel = (idx == m).nonzero(as_tuple=True)[0]
                 if sel.numel() == 0:
                     continue
                 covered += sel.numel()
-                acc.index_copy_(0, sel, self._mixture_term(flat.index_select(0, sel), m))
+                sub = flat.index_select(0, sel)
+                term = self._component_logits(sub, m) if raw \
+                    else self._mixture_term(sub, m)
+                acc.index_copy_(0, sel, term.to(dtype=acc_dtype))
             assert covered == n, f"routing left {n - covered} tokens unassigned"
             if log_pi is not None:
                 acc += log_pi[:, slot].unsqueeze(-1)          # in place
@@ -1154,7 +1176,10 @@ class StructuredCodeHead(nn.Module):
         nonlinearity is in play.  Printed at startup so a sweep row can be read
         against the ~1000 empirical threshold without recomputing it by hand.
         """
-        if self.self_normalized:
+        if self.self_normalized or (self.n_mixture > 1 and self.per_phi):
+            # Per-component Phi with routing reaches a UNION of subspaces, so the
+            # logit matrix over a batch is not confined to any one of them and
+            # the bound does not apply, hard routing included.
             return float("inf")
         base = self.width if self.cfg["g_type"] == "mlp" else min(self.width, self.n_embd)
         if self.phi_mode == "product":

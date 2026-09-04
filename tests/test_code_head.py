@@ -797,13 +797,19 @@ def _sweep_arms(path):
             while buf.endswith("\\"):
                 i += 1
                 buf = buf[:-1] + " " + lines[i].strip()
-            # Expand "${VAR:-default}" to its default, the value the sweep uses
-            # when the environment does not override it.
-            buf = re.sub(r'"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}"', r"\1", buf)
+            # Expand ${VAR:-default} to its default, the value the sweep uses
+            # when the environment does not override it. Applied innermost-first
+            # until it stabilises, because these nest: ${A:-${B:-32}}.
+            for _ in range(8):
+                nxt = re.sub(r'\$\{[A-Za-z_][A-Za-z0-9_]*:-([^{}]*)\}', r"\1", buf)
+                if nxt == buf:
+                    break
+                buf = nxt
             buf = (buf.replace("$PROBE", "--sch-phi-dtype fp32 --sch-rank-probe 4096")
                       .replace('"$MODEL_DIM"', "512").replace('"$G"', "4")
                       .replace('"$K"', "64").replace('"$CODEF"', "codes.pt")
                       .replace("$RANK_CONTEXTS", "4096").replace('"$DEPTH"', "8"))
+            buf = buf.replace('"', "")
             toks = buf.split()
             assert toks[0] == "run" and toks[2] == "8", f"unexpected run line: {buf[:80]}"
             tag = toks[1].strip('"')
@@ -1149,9 +1155,14 @@ def test_wider_routing_is_heavier_and_the_sweep_compensates():
               sch_mixture_per_phi=1, sch_bias=1)
     assert "logaddexp" in _wide_ops(build(**kw, sch_mixture_topk=2), x, V), \
         "k=2 must combine two slots; if it does not, the routing is not doing what it claims"
-    sweep = open("scripts/c05_sch_phase5_alternatives.sh").read()
-    assert "--device-batch-size" in sweep and "MIX_TOP2_DBS" in sweep, \
-        "the top-2 arm needs a smaller device batch; the sweep script must set one"
+    # Every routed arm graph-breaks on `nonzero` and runs eager while the dense
+    # baseline is compiled and fused. Measured memory slope in batch size, in
+    # units of one (N x V) fp32 buffer: dense 4.16, top-1 5.29, top-2 9.87.
+    for tag, flags in _sweep_arms("scripts/c05_sch_phase5_alternatives.sh"):
+        if not tag.startswith("MIX_"):
+            continue
+        assert "--device-batch-size" in flags, \
+            f"{tag} routes tokens and must run a smaller device batch than dense"
 
 
 def test_a_tree_head_survives_the_end_of_run_diagnostics():
@@ -1183,3 +1194,58 @@ def test_base_train_does_not_try_to_generate_from_a_logit_less_head():
     src = open("scripts/base_train.py").read()
     assert "_head_emits_logits" in src and "custom_loss" in src, \
         "the sample-generation guard must know about heads that emit no logits"
+
+
+def test_a_hard_top1_mixture_is_not_self_normalised():
+    """Each token uses exactly one component, so there is nothing to mix.
+
+    `log P = log_softmax(that component's logits)` is precisely what
+    `F.cross_entropy` is about to compute. Normalising inside the head as well
+    is mathematically a no-op and costs a second full-width fp32 tensor saved
+    for backward, 34 GB at 262144 tokens and V=32768. That was two thirds of an
+    OOM that reported 99.5 GB allocated on a 140 GB card.
+    """
+    top1 = build(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+                 sch_mixture_per_phi=1, sch_mixture_topk=1).lm_head
+    top2 = build(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+                 sch_mixture_per_phi=1, sch_mixture_topk=2).lm_head
+    assert not top1.self_normalized, "hard top-1 emits raw logits"
+    assert top2.self_normalized, "k>1 must combine normalised components"
+    # The union of subspaces escapes the rank bound at either k.
+    assert top1.rank_ceiling() == float("inf")
+
+
+def test_a_self_normalised_head_is_not_normalised_twice():
+    """`cross_entropy` log_softmaxes its input; on log-probs that is the identity
+    and costs a full-width tensor saved for backward. `nll_loss` skips it."""
+    import inspect
+    from nanochat.gpt import GPT
+    src = inspect.getsource(GPT.forward)
+    assert "F.nll_loss" in src and "self_normalized" in src
+
+    # sch_mixture_aux off: the load-balance term is added to the total loss, so
+    # leaving it on would make this compare CE against CE + 0.01 * aux.
+    m = build(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+              sch_mixture_per_phi=1, sch_mixture_topk=2, sch_bias=1, sch_mixture_aux=0.0)
+    x = torch.randint(0, V, (2, 16))
+    lp = m(x).view(-1, V).float()
+    # exactly nll_loss, since that is what the model now uses
+    torch.testing.assert_close(m(x, x), F.nll_loss(lp, x.view(-1)), rtol=1e-5, atol=1e-5)
+    # and cross_entropy agrees to within the drift of re-normalising: the head's
+    # log-probs come through bf16 components, so logsumexp is near zero and not
+    # exactly zero. That residual is the reason to skip the second normalisation,
+    # not a reason to distrust it.
+    torch.testing.assert_close(m(x, x), F.cross_entropy(lp, x.view(-1)),
+                               rtol=5e-3, atol=5e-2)
+
+
+def test_the_load_balance_term_actually_reaches_the_loss():
+    """It is added in GPT.forward, not inside the head, so it can silently not
+    be wired. A mixture that pays for K components and balances none of them
+    collapses onto one."""
+    kw = dict(use_code_head=1, sch_order=3, sch_max_m=60, sch_mixture=4,
+              sch_mixture_per_phi=1, sch_mixture_topk=1, sch_bias=1)
+    x = torch.randint(0, V, (2, 16))
+    off = build(**kw, sch_mixture_aux=0.0)(x, x)
+    on = build(**kw, sch_mixture_aux=0.5)(x, x)
+    assert on > off + 0.1, "the load-balance term is not reaching the loss"

@@ -306,8 +306,20 @@ fi
 # refuses that configuration rather than running it.
 if has mixture; then
     echo ""; echo "### MIXTURE: per-component Phi, top-1 routing. Cost of one, reach of K."
-    # Sparse routing needs two things that dense mixtures do not, both now on by
-    # default. The router cannot start symmetric: with zero weights every token's
+    # EVERY ARM HERE RUNS A SMALLER DEVICE BATCH, on purpose.
+    #   Routing dispatches tokens with `nonzero`, which is data dependent, so the
+    #   head graph-breaks and runs eager while the dense baseline is compiled and
+    #   fused. Measured memory slope in batch size, in units of one (N x V) fp32
+    #   buffer: dense 4.16, top-1 5.05, top-2 9.57. One such buffer is 34 GB at
+    #   262144 tokens and V=32768, so even 1.2x is the difference between fitting
+    #   and not: a first attempt OOMed with 99.5 GB allocated on a 140 GB card
+    #   because the head normalised its output and cross-entropy normalised it
+    #   again, holding three full-width tensors where dense holds two.
+    #   Gradient accumulation keeps the total batch identical, so this changes
+    #   nothing about what is being compared. Raise MIX_DBS if you have headroom.
+    #
+    # Sparse routing also needs two things that dense mixtures do not, both now
+    # on by default. The router cannot start symmetric: with zero weights every token's
     # logits tie and topk breaks the tie by index, so component 0 takes every
     # token and 1..K-1 are permanently dead. That failed as a DDP error
     # ("Parameter indices which did not receive grad: 31 32 33"). And --sch-mixture-aux
@@ -321,23 +333,19 @@ if has mixture; then
     # 3 (full width 575) to 120 gives each component a different 120-subset at
     # the same M as c00's order-2 arm, so the comparison stays matched.
     run MIX_k4_top1 "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
-        --sch-mixture 4 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 $PROBE
+        --sch-mixture 4 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 \
+        --device-batch-size "${MIX_DBS:-32}" $PROBE
     run MIX_k8_top1 "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
-        --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 $PROBE
-    # k>1 is inherently k log-softmax outputs plus the running combination, so it
-    # cannot be made as cheap as k=1. Measured full-width (N x V) allocations per
-    # forward+backward: dense baseline 22, top-1 18, top-2 37, and a DENSE
-    # mixture over K=4 components 79. One such tensor is 34 GB in fp32 at 262144
-    # tokens and V=32768, which is how the first attempt reached 106 GB on a
-    # 140 GB card. Gradient accumulation keeps the total batch identical, so
-    # shrinking the device batch here does not change what is being compared.
+        --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 1 --sch-bias 1 \
+        --device-batch-size "${MIX_DBS:-32}" $PROBE
     run MIX_k8_top2 "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
         --sch-mixture 8 --sch-mixture-per-phi 1 --sch-mixture-topk 2 --sch-bias 1 \
-        --device-batch-size "${MIX_TOP2_DBS:-32}" $PROBE
+        --device-batch-size "${MIX_TOP2_DBS:-${MIX_DBS:-32}}" $PROBE
     # The control that isolates the union from the mixing. Same K, same routing,
     # but ONE shared Phi: this is what c00's mixture already was.
     run MIX_k8_shared_phi "$DEPTH" --models base --use-code-head 1 --sch-order 3 --sch-max-m 120 \
-        --sch-mixture 8 --sch-mixture-topk 1 --sch-bias 1 $PROBE
+        --sch-mixture 8 --sch-mixture-topk 1 --sch-bias 1 \
+        --device-batch-size "${MIX_DBS:-32}" $PROBE
 fi
 
 # ---------------------------------------------------------------- monarch
