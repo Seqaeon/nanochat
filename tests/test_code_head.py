@@ -786,35 +786,85 @@ def _sweep_arms(path):
     surrounding ``done``/``else``/``echo`` lines, and because those arrive as
     unknown *positionals* ``parse_known_args`` accepts them without complaint,
     so the test passes while proving nothing.
+
+    Shell variables are read from the script rather than hardcoded here. An
+    earlier version pinned ``$PROBE`` to c00's definition, so when c06 added
+    ``--sch-bias 1`` to its own PROBE the test silently validated a flag set no
+    arm actually uses.
     """
     import re
-    lines = open(path).read().splitlines()
-    arms, i = [], 0
+    import shlex
+    src = open(path).read()
+    lines = src.splitlines()
+
+    # The extractor pins $DEPTH to 8, so anything derived from it is pinned to
+    # match. MODEL_DIM is computed with shell arithmetic the parser cannot read,
+    # and the scripts all define it the same way.
+    env = {"DEPTH": "8", "MODEL_DIM": str(((8 * 64 + 127) // 128) * 128)}
+    # Top-level VAR="..." assignments, minus anything with a command substitution.
+    for m in re.finditer(r'^(\w+)="([^"$`]*(?:\$\{?\w+[^"`]*)*)"$', src, re.M):
+        env[m.group(1)] = m.group(2)
+
+    def expand(text, loop=None):
+        for _ in range(8):
+            nxt = re.sub(r'\$\{(\w+):-([^{}]*)\}', r"\2", text)      # ${VAR:-default}
+            if loop:
+                nxt = nxt.replace("${%s}" % loop[0], loop[1]).replace("$" + loop[0], loop[1])
+            for k, v in env.items():
+                nxt = nxt.replace("${%s}" % k, v).replace("$" + k, v)
+            if nxt == text:
+                break
+            text = nxt
+        return text
+
+    arms, i, loop_vals = [], 0, None
+    positional, inner = [], {}
     while i < len(lines):
         stripped = lines[i].strip()
+        # `for M in 16 18 32; do ... done` emits one arm per value. Without
+        # expanding it every arm inside reads `--sch-max-m "$M"` and the test
+        # passes by never checking anything real.
+        m = re.match(r"for\s+([A-Za-z_]\w*)\s+in\s+([^;]+);\s*do\s*$", stripped)
+        if m:
+            # shlex, not split(): the values may be quoted tuples, as in
+            # `for GK in "4 64" "8 64"; do set -- $GK; G=$1; K=$2`.
+            loop_vals = (m.group(1), shlex.split(m.group(2)))
+            positional = re.findall(r"(\w+)=\$(\d)", src[src.index(lines[i]):][:400])
+        elif stripped == "done":
+            loop_vals, positional = None, []
+        # Assignments made inside the loop body, which the run line then uses.
+        a = re.match(r'(\w+)="([^"]*)"$', stripped)
+        if a and loop_vals:
+            inner[a.group(1)] = a.group(2)
         if stripped.startswith("run "):
             buf = stripped
             while buf.endswith("\\"):
                 i += 1
                 buf = buf[:-1] + " " + lines[i].strip()
-            # Expand ${VAR:-default} to its default, the value the sweep uses
-            # when the environment does not override it. Applied innermost-first
-            # until it stabilises, because these nest: ${A:-${B:-32}}.
-            for _ in range(8):
-                nxt = re.sub(r'\$\{[A-Za-z_][A-Za-z0-9_]*:-([^{}]*)\}', r"\1", buf)
-                if nxt == buf:
-                    break
-                buf = nxt
-            buf = (buf.replace("$PROBE", "--sch-phi-dtype fp32 --sch-rank-probe 4096")
-                      .replace('"$MODEL_DIM"', "512").replace('"$G"', "4")
-                      .replace('"$K"', "64").replace('"$CODEF"', "codes.pt")
-                      .replace("$RANK_CONTEXTS", "4096").replace('"$DEPTH"', "8"))
-            buf = buf.replace('"', "")
-            toks = buf.split()
-            assert toks[0] == "run" and toks[2] == "8", f"unexpected run line: {buf[:80]}"
-            tag = toks[1].strip('"')
-            flags = [t for t in toks[3:] if t not in ("--models", "base")]
-            arms.append((tag, flags))
+            for val in (loop_vals[1] if loop_vals else [None]):
+                one = buf
+                if val is not None:
+                    # `set -- $GK; G=$1; K=$2` binds the tuple's fields by position.
+                    parts = val.split()
+                    for name, idx in positional:
+                        if int(idx) <= len(parts):
+                            one = (one.replace("${%s}" % name, parts[int(idx) - 1])
+                                      .replace("$" + name, parts[int(idx) - 1]))
+                    for k, v in inner.items():
+                        vv = v
+                        for name, idx in positional:
+                            if int(idx) <= len(parts):
+                                vv = (vv.replace("${%s}" % name, parts[int(idx) - 1])
+                                        .replace("$" + name, parts[int(idx) - 1]))
+                        one = one.replace("${%s}" % k, vv).replace("$" + k, vv)
+                one = expand(one, (loop_vals[0], val) if val is not None else None)
+                one = one.replace('"$DEPTH"', "8").replace("$DEPTH", "8").replace('"', "")
+                toks = one.split()
+                assert toks[0] == "run" and toks[2] == "8", f"unexpected run line: {one[:90]}"
+                flags = [x for x in toks[3:] if x not in ("--models", "base")]
+                assert not any(x.startswith("$") for x in flags), \
+                    f"unexpanded shell variable in {toks[1]}: {flags}"
+                arms.append((toks[1], flags))
         i += 1
     return arms
 
@@ -873,8 +923,10 @@ def test_new_flags_reach_research_compare_and_the_sweep_whitelist():
     assert not sch_flags - whitelist, f"not in the research_sweep.sh whitelist: {sorted(sch_flags - whitelist)}"
 
 
+@pytest.mark.parametrize("script", ["scripts/c05_sch_phase5_alternatives.sh",
+                                    "scripts/c06_head_lowrank_ladder.sh"])
 @pytest.mark.parametrize("vocab,depth", [(32768, 8), (32768, 4), (131072, 12)])
-def test_every_c05_arm_builds_at_the_real_vocabulary_size(vocab, depth):
+def test_every_sweep_arm_builds_at_the_real_vocabulary_size(vocab, depth, script):
     """Construct every sweep arm at the vocabulary the sweep actually uses.
 
     The rest of this file builds models at V=512, which is fine for behaviour
@@ -895,7 +947,7 @@ def test_every_c05_arm_builds_at_the_real_vocabulary_size(vocab, depth):
     runtime_only = ("sch_rank_probe", "sch_decile_metrics", "sch_eval_steps",
                     "sch_holdout_tokens", "sch_holdout_seed", "sch_holdout_min_id",
                     "sch_holdout_mode")
-    for tag, flags in _sweep_arms("scripts/c05_sch_phase5_alternatives.sh"):
+    for tag, flags in _sweep_arms(script):
         ns, _ = parser.parse_known_args(flags)
         kw = {k: v for k, v in vars(ns).items()
               if (k.startswith("sch_") or k == "use_code_head") and k not in runtime_only}
@@ -908,7 +960,7 @@ def test_every_c05_arm_builds_at_the_real_vocabulary_size(vocab, depth):
                 with torch.device("meta"):
                     GPT(cfg)
         except Exception as exc:
-            pytest.fail(f"c05 arm {tag} does not build at V={vocab} depth={depth}: "
+            pytest.fail(f"{script} arm {tag} does not build at V={vocab} depth={depth}: "
                         f"{type(exc).__name__}: {exc}")
 
 
