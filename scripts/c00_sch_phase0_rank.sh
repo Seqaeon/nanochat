@@ -223,7 +223,11 @@ echo "                 while LADDER_k3_mlp measures 575. If both measure the sam
 echo "                 thing, the MLP g is not doing its job and the whole ladder"
 echo "                 sweep in c01 would be uninterpretable."
 echo ""
-echo "  Re-measure any arm afterwards with:"
+echo "  MEASURE EVERY ARM AT ONCE:"
+echo "    python -m scripts.sweep_report ${OUT_BASE}/d${DEPTH}"
+echo "    add --cached to harvest what the runs already wrote instead of recomputing."
+echo ""
+echo "  Or re-measure a single arm with:"
 echo "    python -m scripts.code_head_diagnostics --checkpoint-dir ${OUT_BASE}/d${DEPTH}/<TAG>"
 echo "============================================================"
 
