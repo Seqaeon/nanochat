@@ -844,6 +844,13 @@ class StructuredCodeHead(nn.Module):
             self._build_phi()
             self._init_learned_parts()
             return
+        if self.phi_mode == "learned":
+            # Nothing here reads `codes`: the output is bit-identical under any
+            # code mode or seed. Leaving it unbuilt keeps the checkpoint honest
+            # about what the arm actually is.
+            self._materialized = True
+            self._init_learned_parts()
+            return
         device = self.codes.device
         freqs = load_freq_table(self.vocab_size, cfg["tokenizer_dir"]) \
             if cfg["code_mode"] == "frequency" else None
@@ -1156,8 +1163,14 @@ class StructuredCodeHead(nn.Module):
         return int(f)
 
     def extra_repr(self):
-        return (f"V={self.vocab_size}, B={self.bits}, order={self.order}, M={self.width}, "
-                f"phi={self.phi_mode}, code={self.cfg['code_mode']}, g={self.cfg['g_type']}, "
+        # A learned Phi uses no code at all, so reporting B, the interaction
+        # order and the code mode for it is a lie the startup line was telling on
+        # every low-rank control arm. Only the modes that read `codes` name them.
+        coded = self.phi_mode in ("monomial", "random_binary", "onehot")
+        code_bits = (f"B={self.bits}, order={self.order}, " if coded else "")
+        code_mode = (f"code={self.cfg['code_mode']}, " if coded else "")
+        return (f"V={self.vocab_size}, {code_bits}M={self.width}, "
+                f"phi={self.phi_mode}, {code_mode}g={self.cfg['g_type']}, "
                 + (f"prod={self.cfg['product_groups']}x{self.cfg['product_codebook']}"
                    f"/{self.cfg['product_source']}/{self.cfg['product_impl']}, "
                    if self.phi_mode == "product" else "")

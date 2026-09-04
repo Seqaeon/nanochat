@@ -1422,3 +1422,24 @@ def test_every_head_type_survives_the_diagnostics_pass(kw):
     metrics = run_all_diagnostics(m, loader, token_bytes=torch.ones(V), vocab_size=V,
                                   steps=2, decile=False, rank_contexts=2048)
     assert isinstance(metrics, dict) and metrics.get("head_params") is not None
+
+
+def test_a_learned_phi_head_reports_itself_as_having_no_code():
+    """`phi_mode=learned` is a plain factored softmax: h -> (M x d) -> (V x M).
+
+    Nothing in it reads `codes`, and the startup line said `B=15, order=2,
+    code=binary` anyway, which describes an arm that does not exist. The
+    low-rank control is the one arm that must not look like a code head, because
+    it is the baseline the code heads are measured against.
+    """
+    head = build(use_code_head=1, sch_phi_mode='learned', sch_max_m=16).lm_head
+    text = head.extra_repr()
+    for absent in ("B=", "order=", "code="):
+        assert absent not in text, f"{absent!r} should not appear for a learned Phi: {text}"
+    assert "phi=learned" in text and "M=16" in text
+    # and it really is code-independent
+    a = build(use_code_head=1, sch_phi_mode='learned', sch_max_m=16, sch_code_mode='binary')
+    b = build(use_code_head=1, sch_phi_mode='learned', sch_max_m=16, sch_code_mode='random')
+    b.load_state_dict(a.state_dict(), strict=False)
+    x = torch.randint(0, V, (2, 8))
+    torch.testing.assert_close(a(x), b(x))
