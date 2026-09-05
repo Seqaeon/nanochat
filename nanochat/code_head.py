@@ -1244,7 +1244,16 @@ class StructuredCodeHead(nn.Module):
             # One-hot per group means the g group blocks each contain the
             # all-ones vector, so g-1 of those directions are redundant.
             base = min(base, self.width - (self.cfg["product_groups"] - 1))
-        return base + self.residual_rank
+        if self.cfg["g_type"] == "mlp":
+            # A nonlinear g lifts the logit matrix off the d-dimensional bound,
+            # so the residual's rank genuinely adds on top of M.
+            return base + min(self.residual_rank, self.n_embd)
+        # With a linear g every path is linear in h, so the logit matrix is V x d
+        # whatever the budget is spent on. The residual reallocates rank between
+        # the two paths; it cannot create more than d of it. Without this clamp a
+        # head reports more rank than a dense softmax has and the number stops
+        # being comparable to anything.
+        return min(self.n_embd, base + self.residual_rank)
 
 
 # ---------------------------------------------------------------------------
@@ -1542,7 +1551,10 @@ class MonarchHead(nn.Module):
         return flat.view(*shape, self.vocab_size)
 
     def rank_ceiling(self) -> int:
-        return min(self.width, self.n_embd) + 1 + self.residual_rank
+        # Same clamp as StructuredCodeHead: everything here is linear in h, so the
+        # logit matrix is V x d and the residual buys directions the block-diagonal
+        # factor cannot reach rather than extra ones. The +1 is the bias.
+        return min(self.n_embd, min(self.width, self.n_embd) + self.residual_rank) + 1
 
     def flops_per_token(self) -> int:
         f = 6 * (self.w1.weight.numel() + self.w2.numel())

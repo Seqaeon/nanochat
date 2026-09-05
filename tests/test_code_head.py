@@ -784,9 +784,21 @@ def test_monarch_residual_adds_rank_and_is_paid_for_in_flops():
     withr = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
                     sch_residual_rank=8).lm_head
     r, V, d = 8, withr.vocab_size, withr.n_embd
-    assert withr.rank_ceiling() == plain.rank_ceiling() + r
     assert withr.flops_per_token() == plain.flops_per_token() + 6 * (r * d + V * r)
     assert withr.flops_per_token() < 6 * V * d, "the residual ate the whole saving"
+    # Every path is linear in h, so the logit matrix is V x d and no split of the
+    # budget can push the rank past d. A head reporting more rank than a dense
+    # softmax has is reporting a number that means nothing.
+    assert withr.rank_ceiling() == min(d, min(withr.width, d) + r) + 1
+    assert withr.rank_ceiling() <= d + 1
+
+    # It does add where there is room: M below d leaves rank for the residual.
+    narrow = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=32,
+                     sch_residual_rank=8).lm_head
+    plain_narrow = _phase5(use_code_head=1, sch_head_type='monarch',
+                           sch_max_m=32).lm_head
+    assert narrow.width < d
+    assert narrow.rank_ceiling() == plain_narrow.rank_ceiling() + 8
 
 
 def test_monarch_residual_trains_and_reaches_every_word():
