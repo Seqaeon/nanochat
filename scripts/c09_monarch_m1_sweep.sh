@@ -44,12 +44,12 @@
 #   sweeps or across device-batch settings. The Monarch head needs roughly twice
 #   dense's head memory (an unavoidable `clone`: bmm returns (m2, N, block_out)
 #   and the caller needs (N, m2, block_out), and those orders cannot share
-#   memory), so DEVICE_BATCH is set low enough for the heaviest arm and the dense
+#   memory), so DEVICE_BATCH_SIZE is set low enough for the heaviest arm and the dense
 #   anchor uses the same value. Gradient accumulation holds the total batch, so
 #   dt covers the same tokens for every arm.
 #
 #   bash scripts/c09_monarch_m1_sweep.sh              # V=131072 depth 8
-#   DEVICE_BATCH=16 bash scripts/c09_monarch_m1_sweep.sh
+#   DEVICE_BATCH_SIZE=16 bash scripts/c09_monarch_m1_sweep.sh
 #   M1S="32 128" bash scripts/c09_monarch_m1_sweep.sh --sch-only
 #   VOCAB=32768 TOKENIZER_DIR=tokenizer bash scripts/c09_monarch_m1_sweep.sh 4
 # ============================================================================
@@ -82,7 +82,7 @@ OUT_BASE="${OUT_BASE:-out/c09_monarch_m1}"
 RANK_CONTEXTS="${RANK_CONTEXTS:-16384}"
 # One value for every arm. Halved from the 64 that fits dense, because the
 # Monarch head holds two full (N, V) tensors where dense holds one.
-DEVICE_BATCH="${DEVICE_BATCH:-32}"
+DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-32}"
 
 if [ "$VOCAB" -eq 131072 ]; then
     TOK="${TOKENIZER_DIR:-${TOKENIZER_DIR_131K:-tokenizer_131k}}"
@@ -126,7 +126,7 @@ STATE="${OUT_BASE}/c09_state_d${DEPTH}.json"
 
 TARGET_TOKENS="${TARGET_TOKENS:-$(python3 -m scripts.code_head_budget --depth "$DEPTH" --ratio "${RATIO:-10.5}" --tokenizer-dir "$TOK")}"
 
-COMMON="--device-batch-size $DEVICE_BATCH --total-batch-size -1 \
+COMMON="--device-batch-size $DEVICE_BATCH_SIZE --total-batch-size -1 \
   --use-onecycle 0 --log-every ${LOG_EVERY:-200} --skip-core \
   --data-dir ${DATA_DIR:-data} --tokenizer-dir $TOK \
   --sequence-len ${SEQ_LEN:-2048} --target-tokens $TARGET_TOKENS \
@@ -146,7 +146,7 @@ run() {
         local t="${tag}_s${s}"
         if done_already "$t"; then echo "SKIP  $t (already completed)"; continue; fi
         echo ""
-        echo "--- $t  (depth $depth, V=${VOCAB}, device-batch ${DEVICE_BATCH}) ---"
+        echo "--- $t  (depth $depth, V=${VOCAB}, device-batch ${DEVICE_BATCH_SIZE}) ---"
         local dir="${OUT_BASE}/d${depth}/${t}"
         [ "$FORCE" -eq 1 ] && rm -rf "$dir"
         if bash scripts/research_sweep.sh $COMMON --out-dir "$dir" --seed "$s" \
@@ -160,7 +160,7 @@ run() {
 
 echo "============================================================"
 echo "  C09: Monarch m1 sweep, V=${VOCAB}, depth ${DEPTH}, d=${MODEL_DIM}, M=${M}"
-echo "  m1 values: ${M1S}    device-batch ${DEVICE_BATCH} (same for every arm)"
+echo "  m1 values: ${M1S}    device-batch ${DEVICE_BATCH_SIZE} (same for every arm)"
 echo "  target tokens ${TARGET_TOKENS}"
 echo "  out ${OUT_BASE}"
 echo "============================================================"
