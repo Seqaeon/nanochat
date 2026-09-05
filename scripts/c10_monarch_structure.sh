@@ -229,10 +229,12 @@ PLAN=""
 [ "$RUN_Q12" -eq 1 ]     && for p in $PERMS; do PLAN="$PLAN MON_perm_${p}"; done
 [ "$RUN_Q13" -eq 1 ]     && for r in $RANKS; do PLAN="$PLAN MON_res_${r}"; done
 [ "$RUN_SPLIT" -eq 1 ] && for m1 in $SPLIT_M1S; do
-    PLAN="$PLAN MON_split_m1_${m1}_r_$(python3 -c "
+    _r=$(python3 -c "
 budget = 6*($MODEL_DIM*$M + $VOCAB*$M1) + 6*${REF_RANK:-$(echo $RANKS | awk '{print $NF}')}*($MODEL_DIM + $VOCAB)
-r = (budget - 6*($MODEL_DIM*$M + $VOCAB*$m1)) / (6.0*($MODEL_DIM + $VOCAB))
-print(max(0, round(r)))")"
+mon = 6*($MODEL_DIM*$M + $VOCAB*$m1)
+print(-1 if mon > budget else max(0, round((budget - mon) / (6.0*($MODEL_DIM + $VOCAB)))))")
+    [ "$_r" -lt 0 ] && PLAN="$PLAN (m1=${m1} over budget, will skip)" \
+                    || PLAN="$PLAN MON_split_m1_${m1}_r_${_r}"
 done
 [ "$RUN_LOWRANK" -eq 1 ] && for r in $RANKS; do
     PLAN="$PLAN LOWRANK_M$(python3 -c "print(int(($MODEL_DIM*$M + $VOCAB*$M1) / ($MODEL_DIM + $VOCAB)) + $r)")_vs_r${r}"
@@ -283,8 +285,17 @@ if [ "$RUN_SPLIT" -eq 1 ]; then
     for m1 in $SPLIT_M1S; do
         R2=$(python3 -c "
 budget = 6*($MODEL_DIM*$M + $VOCAB*$M1) + 6*$REF_RANK*($MODEL_DIM + $VOCAB)
-r = (budget - 6*($MODEL_DIM*$M + $VOCAB*$m1)) / (6.0*($MODEL_DIM + $VOCAB))
-print(max(0, round(r)))")
+mon = 6*($MODEL_DIM*$M + $VOCAB*$m1)
+print(-1 if mon > budget else max(0, round((budget - mon) / (6.0*($MODEL_DIM + $VOCAB)))))")
+        # Clamping r at 0 is not enough: past some m1 the block factor alone costs
+        # more than the whole budget, and the arm would run 1.5x over while still
+        # being labelled iso-cost. That is the exact failure the derived rank exists
+        # to prevent, so it is refused rather than silently rounded away.
+        if [ "$R2" -lt 0 ]; then
+            echo "SKIP  m1=${m1}: the Monarch factor alone exceeds the head budget;"
+            echo "      no residual rank makes this arm iso-cost. Raise REF_RANK or drop it."
+            continue
+        fi
         run "MON_split_m1_${m1}_r_${R2}" --models base --use-code-head 1 \
             --sch-head-type monarch --sch-max-m "$M" --sch-monarch-m1 "$m1" \
             --sch-residual-rank "$R2" $PROBE
