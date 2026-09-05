@@ -70,6 +70,7 @@ RUN_Q12=1
 RUN_Q13=1
 RUN_LOWRANK=0
 RUN_BASE=1
+RUN_SPLIT=0
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -84,10 +85,13 @@ while [[ $# -gt 0 ]]; do
         # not, so it is a flag rather than a line to comment out.
         --no-base)      RUN_BASE=0; shift ;;
         --lowrank-only) RUN_BASE=0; RUN_Q12=0; RUN_Q13=0; RUN_LOWRANK=1; shift ;;
+        --split-sweep)  RUN_SPLIT=1; shift ;;
+        --split-only)   RUN_BASE=0; RUN_Q12=0; RUN_Q13=0; RUN_SPLIT=1; shift ;;
         [0-9]*)       DEPTHS+=("$1"); shift ;;
         *) echo "unknown arg: $1"
            echo "usage: $0 [--force] [--seeds N] [--with-dense] [--with-lowrank]"
-           echo "       [--q12-only|--q13-only|--lowrank-only] [--no-base] [DEPTH ...]"
+           echo "       [--q12-only|--q13-only|--lowrank-only|--split-only]"
+           echo "       [--split-sweep] [--no-base] [DEPTH ...]"
            exit 1 ;;
     esac
 done
@@ -97,6 +101,7 @@ M="${M:-1024}"
 M1="${M1:-128}"
 PERMS="${PERMS:-freq random}"
 RANKS="${RANKS:-32}"
+SPLIT_M1S="${SPLIT_M1S:-32 64 256}"
 VOCAB="${VOCAB:-131072}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 OUT_BASE="${OUT_BASE:-out/c10_monarch_structure}"
@@ -223,6 +228,12 @@ PLAN=""
 [ "$RUN_DENSE" -eq 1 ]   && PLAN="$PLAN BASE_dense"
 [ "$RUN_Q12" -eq 1 ]     && for p in $PERMS; do PLAN="$PLAN MON_perm_${p}"; done
 [ "$RUN_Q13" -eq 1 ]     && for r in $RANKS; do PLAN="$PLAN MON_res_${r}"; done
+[ "$RUN_SPLIT" -eq 1 ] && for m1 in $SPLIT_M1S; do
+    PLAN="$PLAN MON_split_m1_${m1}_r_$(python3 -c "
+budget = 6*($MODEL_DIM*$M + $VOCAB*$M1) + 6*${REF_RANK:-$(echo $RANKS | awk '{print $NF}')}*($MODEL_DIM + $VOCAB)
+r = (budget - 6*($MODEL_DIM*$M + $VOCAB*$m1)) / (6.0*($MODEL_DIM + $VOCAB))
+print(max(0, round(r)))")"
+done
 [ "$RUN_LOWRANK" -eq 1 ] && for r in $RANKS; do
     PLAN="$PLAN LOWRANK_M$(python3 -c "print(int(($MODEL_DIM*$M + $VOCAB*$M1) / ($MODEL_DIM + $VOCAB)) + $r)")_vs_r${r}"
 done
@@ -247,6 +258,36 @@ fi
 if [ "$RUN_Q13" -eq 1 ]; then
     for r in $RANKS; do
         run "MON_res_${r}" $MON --sch-residual-rank "$r"
+    done
+fi
+
+# Q15: the private/shared split, at fixed cost and fixed per-token capacity.
+#
+# The cost-matched low-rank control has rank R = (d*M + V*m1)/(d + V) + r, and since
+# V >> d that is essentially m1 + r. So low-rank and Monarch+residual hand each word
+# the SAME number of directions; the only difference is whether they are block-private
+# or global. Holding the head budget fixed therefore gives
+#
+#     r(m1) = [ budget - 6(d*M + V*m1) ] / [ 6(d + V) ]   ~   r_ref + (m1_ref - m1)
+#
+# which sweeps the split from all-shared (the low-rank control, m1 = 0) to all-private
+# (r ~ 0) with cost and capacity both pinned. That axis exists because the measured
+# edge over low-rank tracks how SMALL a share of the budget the Monarch factor takes:
+# 21% of the head at depth 4 was worth +0.0419 bpb, 51% at depth 12 worth +0.0016.
+#
+# It also reopens c09. That sweep found m1=128 far better than m1=32, but it ran at
+# r=0, where m1 was the only capacity there was. m1 and r are substitutes, so an
+# optimum measured without a residual does not transfer to a head that has one.
+if [ "$RUN_SPLIT" -eq 1 ]; then
+    REF_RANK="${REF_RANK:-$(echo $RANKS | awk '{print $NF}')}"
+    for m1 in $SPLIT_M1S; do
+        R2=$(python3 -c "
+budget = 6*($MODEL_DIM*$M + $VOCAB*$M1) + 6*$REF_RANK*($MODEL_DIM + $VOCAB)
+r = (budget - 6*($MODEL_DIM*$M + $VOCAB*$m1)) / (6.0*($MODEL_DIM + $VOCAB))
+print(max(0, round(r)))")
+        run "MON_split_m1_${m1}_r_${R2}" --models base --use-code-head 1 \
+            --sch-head-type monarch --sch-max-m "$M" --sch-monarch-m1 "$m1" \
+            --sch-residual-rank "$R2" $PROBE
     done
 fi
 
