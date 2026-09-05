@@ -40,6 +40,7 @@ from nanochat.code_head import (CODE_MODES, G_TYPES, HEAD_TYPES, HOLDOUT_MODES,
                                 INPUT_MODES, LOGIT_ACTS, MONARCH_PERMS, PHI_DTYPES,
                                 PHI_MODES,
                                 PRODUCT_IMPLS, PRODUCT_SOURCES)
+from nanochat.inductor_compat import guard_triton_block_size
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, wrap_model
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -1482,6 +1483,12 @@ if resuming:
     eet_ever_routed = meta_data.get("eet_ever_routed", False)
 
 # -----------------------------------------------------------------------------
+# Inductor can hand a fused pointwise kernel a block size larger than its own
+# documented maximum and then assert on it. Clamping is a no-op unless that
+# happens; see nanochat/inductor_compat.py, including why it needs
+# TORCHINDUCTOR_COMPILE_THREADS=1 (or a sitecustomize) to reach compile workers.
+guard_triton_block_size()
+
 # FP8 training initialization and management (this has to be done before torch.compile)
 
 # Convert Linear layers to Float8Linear if --fp8 is set
