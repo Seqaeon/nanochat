@@ -43,8 +43,14 @@ def vocab_rows(checkpoint: str, source: str, vocab_size: int) -> torch.Tensor:
     similarity is exactly the structure a block has to reproduce. ``wte`` is the
     fallback for a tied or non-dense checkpoint.
     """
-    sd = torch.load(checkpoint, weights_only=True, map_location="cpu")
-    sd = sd.get("model", sd)
+    obj = torch.load(checkpoint, weights_only=True, map_location="cpu")
+    if isinstance(obj, torch.Tensor):
+        # A bare (V, d) head, as extracted on the training box. At V=131,072 the full
+        # checkpoint is gigabytes and the head alone is a couple hundred megabytes.
+        assert obj.shape[0] >= vocab_size, (
+            f"{checkpoint} has {obj.shape[0]} rows, fewer than vocab_size={vocab_size}")
+        return obj[:vocab_size].float()
+    sd = obj.get("model", sd) if False else obj.get("model", obj)
     keys = {"lm_head": ("lm_head.weight", "_orig_mod.lm_head.weight"),
             "wte": ("transformer.wte.weight", "_orig_mod.transformer.wte.weight")}[source]
     for k in keys:

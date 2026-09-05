@@ -112,13 +112,30 @@ def main():
     ap.add_argument("--capacity", type=int, default=160, help="per-word budget m1 + r")
     ap.add_argument("--blocks", type=int, default=8, help="m2")
     ap.add_argument("--splits", type=int, nargs="*", default=None, help="m1 values to try")
+    ap.add_argument("--freq-table", default=None,
+                    help="freq_table.pt. Weights each word by how often it occurs, "
+                         "which is what the loss does and plain Frobenius does not. "
+                         "Improves calibration (measured/oracle 0.67 -> 0.88 at the "
+                         "one config with a training number) but does not fix the "
+                         "oracle's overvaluation of large m1, which is an "
+                         "optimization gap it cannot see.")
     ap.add_argument("--iters", type=int, default=25)
     ap.add_argument("--seed", type=int, default=1234)
     args = ap.parse_args()
 
     W = load_head(args.checkpoint)
-    U = W - W.mean(dim=0, keepdim=True)          # drop the softmax-invariant direction
-    V, d = U.shape
+    V, d = W.shape
+    if args.freq_table:
+        ft = torch.load(args.freq_table, weights_only=True, map_location="cpu").float()
+        if ft.numel() < V:
+            ft = torch.cat([ft, torch.zeros(V - ft.numel())])
+        # sqrt(p) on the rows makes the optimal subspace minimise the p-weighted
+        # error, which is the first-order stand-in for what the loss measures.
+        w = (ft[:V] / ft[:V].sum()).sqrt()
+        U = (W - (W * w[:, None]).sum(0) / w.sum()) * w[:, None]
+        print(f"[oracle] frequency-weighted over {int((w > 0).sum()):,} seen tokens")
+    else:
+        U = W - W.mean(dim=0, keepdim=True)      # drop the softmax-invariant direction
     c, m2 = args.capacity, args.blocks
     print(f"head {V:,} x {d}   per-word capacity {c}   blocks {m2}   "
           f"block_out {V // m2:,}\n")
