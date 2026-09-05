@@ -730,6 +730,125 @@ def test_monarch_head_trains():
     assert m.lm_head.w2.grad is not None and m.lm_head.w2.grad.abs().sum() > 0
 
 
+# ---------------------------------------------------------------------------
+# Q12 / Q13: the two structural moves on the Monarch head.
+# ---------------------------------------------------------------------------
+
+
+def test_monarch_permutation_is_a_permutation_that_spares_the_padding():
+    """A real token moved past vocab_size would be silently dropped by the slice.
+
+    GPT.forward does ``logits[..., :vocab_size]`` before the loss, so the
+    permutation has to stay inside the real vocabulary and leave the padding tail
+    alone. This is the failure that produces a plausible-looking bpb rather than a
+    crash, which is why it is asserted rather than assumed.
+    """
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                sch_monarch_perm='random')
+    head = m.lm_head
+    V, padded = m.config.vocab_size, head.vocab_size
+    assert head.permutes_vocab
+    torch.testing.assert_close(head.vocab_perm[head.inv_perm], torch.arange(padded))
+    assert head.vocab_perm[:V].max() < V, "a real token escaped into the padding tail"
+    assert torch.equal(head.vocab_perm[V:], torch.arange(V, padded))
+
+
+def test_monarch_permutation_loss_matches_unpermuted_logits():
+    """The loss path permutes targets, every other path unpermutes logits.
+
+    Those are two different pieces of code and an inverted index in either one
+    still trains, just against the wrong words. Pinning them against each other is
+    the only cheap way to catch that: the loss computed from the head's own
+    permuted logits must equal the loss computed from the vocabulary-ordered
+    logits every other consumer sees.
+    """
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                sch_monarch_perm='random')
+    x = torch.randint(0, m.config.vocab_size, (2, 8))
+    loss = m(x, x)
+    logits = m(x)                              # no targets: vocabulary order
+    manual = torch.nn.functional.cross_entropy(
+        logits.view(-1, logits.size(-1)).float(), x.view(-1))
+    torch.testing.assert_close(loss.float(), manual, rtol=1e-5, atol=1e-5)
+
+
+def test_monarch_permutation_none_is_exactly_the_old_head():
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128)
+    assert not m.lm_head.permutes_vocab
+    assert torch.equal(m.lm_head.vocab_perm, torch.arange(m.lm_head.vocab_size))
+
+
+def test_monarch_residual_adds_rank_and_is_paid_for_in_flops():
+    """A rank knob that does not show up in flops_per_token silently fakes a win."""
+    plain = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128).lm_head
+    withr = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                    sch_residual_rank=8).lm_head
+    r, V, d = 8, withr.vocab_size, withr.n_embd
+    assert withr.rank_ceiling() == plain.rank_ceiling() + r
+    assert withr.flops_per_token() == plain.flops_per_token() + 6 * (r * d + V * r)
+    assert withr.flops_per_token() < 6 * V * d, "the residual ate the whole saving"
+
+
+def test_monarch_residual_trains_and_reaches_every_word():
+    """The point of the residual is that its directions are shared, not per block.
+
+    A gradient on res_emb alone would pass even if the term were wired into one
+    block, so this checks that a loss on a single word moves res_down, the shared
+    factor every word reads through.
+    """
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                sch_residual_rank=8)
+    x = torch.randint(0, 512, (2, 8))
+    loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert m.lm_head.res_emb.grad.abs().sum() > 0
+    assert m.lm_head.res_down.weight.grad.abs().sum() > 0
+
+
+def test_monarch_permutation_and_residual_compose():
+    m = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                sch_monarch_perm='random', sch_residual_rank=8)
+    x = torch.randint(0, m.config.vocab_size, (2, 8))
+    loss = m(x, x)
+    logits = m(x)
+    manual = torch.nn.functional.cross_entropy(
+        logits.view(-1, logits.size(-1)).float(), x.view(-1))
+    torch.testing.assert_close(loss.float(), manual, rtol=1e-5, atol=1e-5)
+
+
+def test_monarch_permutation_survives_to_empty():
+    """base_train builds on meta and then to_empty()s, which fills every buffer
+    with garbage. A garbage permutation does not crash: it trains against the
+    wrong words and returns a plausible bpb, so init_weights must rebuild it."""
+    cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=D, vocab_size=V,
+                    sequence_len=64, use_code_head=True, sch_head_type='monarch',
+                    sch_max_m=128, sch_monarch_perm='random')
+    cfg._tokenizer_dir = None
+    with torch.device("meta"):
+        m = GPT(cfg)
+    m.to_empty(device="cpu")
+    m.init_weights(verify=False)
+    perm = m.lm_head.vocab_perm
+    padded = m.lm_head.vocab_size
+    torch.testing.assert_close(torch.sort(perm).values, torch.arange(padded))
+    torch.testing.assert_close(perm[m.lm_head.inv_perm], torch.arange(padded))
+    assert perm[:V].max() < V
+
+
+def test_monarch_permutation_survives_a_checkpoint_round_trip():
+    """The permutation is frozen structure: a resumed run that rebuilds it from a
+    config default instead of the checkpoint would score against different words."""
+    src = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                  sch_monarch_perm='random')
+    dst = _phase5(use_code_head=1, sch_head_type='monarch', sch_max_m=128,
+                  sch_monarch_perm='random', sch_code_seed=999)
+    assert not torch.equal(src.lm_head.vocab_perm, dst.lm_head.vocab_perm)
+    dst.load_state_dict(src.state_dict())
+    assert torch.equal(dst.lm_head.vocab_perm, src.lm_head.vocab_perm)
+    assert torch.equal(dst.lm_head.inv_perm, src.lm_head.inv_perm)
+
+
 # ===========================================================================
 # CLI wiring.  A flag that the head supports but argparse rejects costs a whole
 # sweep arm: --sch-phi-mode product reached a GPU and died in argparse *after*

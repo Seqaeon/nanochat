@@ -655,6 +655,8 @@ class GPTConfig:
     sch_mixture_topk: int = 0                       # components evaluated per token (0 = all); cost tracks k, not K
     sch_mixture_aux: float = 0.01                   # load-balance weight for sparse routing; 0 lets top-1 collapse to one component
     sch_monarch_m1: int = 0                         # Monarch inner factor (0 = sqrt(M)); cost is d*M + V*m1
+    sch_monarch_perm: str = 'none'                  # none | random (control) | freq | file. Which words share a Monarch block; costs nothing
+    sch_monarch_perm_path: str = ''                 # .pt holding a permutation of range(vocab_size) (scripts/build_vocab_permutation.py)
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -753,7 +755,7 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_input_mode", "sch_input_hidden",
     "sch_product_groups", "sch_product_codebook", "sch_product_source", "sch_product_impl",
     "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_mixture_aux",
-    "sch_monarch_m1",
+    "sch_monarch_m1", "sch_monarch_perm", "sch_monarch_perm_path",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
@@ -11350,6 +11352,19 @@ class GPT(nn.Module):
         # log-prob vector is the identity.
         if not (self.use_code_head and getattr(self.lm_head, 'self_normalized', False)):
             logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
+        # A permuted-vocabulary head returns logits in block-position order rather
+        # than token order. The loss path permutes the *targets* instead of the
+        # logits, which is a gather of N integers rather than a second (N, V)
+        # tensor; every other consumer (generation, rank probes) gets vocabulary
+        # order restored, at one gather on a path that is not the bottleneck.
+        if self.use_code_head and getattr(self.lm_head, 'permutes_vocab', False):
+            inv = self.lm_head.inv_perm[:self.config.vocab_size]
+            if targets is not None:
+                # -1 is the ignore index and must survive the gather untouched.
+                targets = torch.where(targets < 0, targets, inv[targets.clamp_min(0)])
+            else:
+                logits = logits.index_select(-1, inv)
 
         if targets is not None:
             # training: given the targets, compute and return the loss

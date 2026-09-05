@@ -121,14 +121,17 @@ tr:hover td { background: rgba(0,0,0,0.03); }
   <div class="section">
     <div class="header-wrap">
       <h1 class="header-title">Structured Output Heads (SCH) vs Dense Baseline</h1>
-      <p class="header-sub">Scaling evaluation of the Monarch M1024 Depth Ladder (D4, D8, D12, D16) relative to the dense transformer scaling law.</p>
+      <p class="header-sub">Multi-vocabulary scaling evaluation of Monarch M1024 vs Dense Baselines across V=32,768 and V=131,072.</p>
     </div>
 
     <!-- Filter Pills -->
     <div class="filter-bar" id="filter-bar">
-      <span class="filter-label">Filter Group:</span>
-      <button class="filter-btn active" data-group="all">All Points (4)</button>
-      <button class="filter-btn" data-group="Monarch M1024">Monarch M1024 (4)</button>
+      <span class="filter-label">Filter View:</span>
+      <button class="filter-btn active" data-group="all">All Points &amp; Curves</button>
+      <button class="filter-btn" data-group="131k">V=131k Comparison (Dense vs MON)</button>
+      <button class="filter-btn" data-group="Dense (131k)">Dense (131k)</button>
+      <button class="filter-btn" data-group="Monarch (131k)">Monarch (131k)</button>
+      <button class="filter-btn" data-group="Monarch (32k)">Monarch (32k)</button>
     </div>
 
     <!-- Legend -->
@@ -197,6 +200,7 @@ tr:hover td { background: rgba(0,0,0,0.03); }
             <th>Train FLOPs</th>
             <th>Val BPP</th>
             <th>Step dt (ms)</th>
+            <th>MFU (%)</th>
             <th>Delta vs Dense Fit</th>
           </tr>
         </thead>
@@ -233,13 +237,29 @@ const DENSE = [
 // ============================================================================
 const SCH_VARIANTS = [
   // ==========================================================================
-  // ACTIVE: Monarch M1024 Depth Ladder (D4, D8, D12, D16)
-  // Evaluates Q10 depth scaling behavior against the dense baseline curve.
+  // 1. ACTIVE: Monarch M1024 Depth Ladder @ V=32,768 (D4, D8, D12, D16)
   // ==========================================================================
-  //{ id:'mon_m1024_d4_s1', label:'MON M1024 D4 s1', group:'Monarch M1024', total: 29655176, active: 29655176, flops: 3.545574e7, total_training_flops: 4.294064e15, bpp: 1.255895, dt: 136.19, color:'#2E7D32' },
- // { id:'mon_m1024_d8_s1', label:'MON M1024 D8 s1', group:'Monarch M1024', total: 110658064, active: 110658064, flops: 1.951037e8, total_training_flops: 8.592406e16, bpp: 1.047892, dt: 199.54, color:'#2E7D32' },
-  { id:'mon_m1024_d12_s1', label:'MON M1024 D12 s1', group:'Monarch M1024', total: 262964376, active: 262964376, flops: 5.985472e8, total_training_flops: 6.919535e17, bpp: 0.933627, dt: 419.03, color:'#2E7D32' },
-  { id:'mon_m1024_d16_s1', label:'MON M1024 D16 s1', group:'Monarch M1024', total: 505448480, active: 505448480, flops: 1.359032e9, total_training_flops: 3.351714e18, bpp: 0.858752, dt: 800.32, color:'#2E7D32' },
+  { id:'mon_m1024_d4_s1', label:'MON M1024 D4 (32k)', group:'Monarch (32k)', total: 29655176, active: 29655176, flops: 3.545574e7, total_training_flops: 4.294064e15, bpp: 1.255895, dt: 136.19, bf16_mfu: null, color:'#2E7D32' },
+  { id:'mon_m1024_d8_s1', label:'MON M1024 D8 (32k)', group:'Monarch (32k)', total: 110658064, active: 110658064, flops: 1.951037e8, total_training_flops: 8.592406e16, bpp: 1.047892, dt: 199.54, bf16_mfu: null, color:'#2E7D32' },
+  { id:'mon_m1024_d12_s1', label:'MON M1024 D12 (32k)', group:'Monarch (32k)', total: 262964376, active: 262964376, flops: 5.985472e8, total_training_flops: 6.919535e17, bpp: 0.933627, dt: 419.03, bf16_mfu: null, color:'#2E7D32' },
+  { id:'mon_m1024_d16_s1', label:'MON M1024 D16 (32k)', group:'Monarch (32k)', total: 505448480, active: 505448480, flops: 1.359032e9, total_training_flops: 3.351714e18, bpp: 0.858752, dt: 800.32, bf16_mfu: null, color:'#2E7D32' },
+
+  // ==========================================================================
+  // 2. ACTIVE: Dense Baseline @ V=131,072 (c08 & c08_d12)
+  // ==========================================================================
+  { id:'dense_v131k_d4_s1', label:'DENSE V131k D4', group:'Dense (131k)', total: 137363592, active: 137363592, flops: 2.288525e8, total_training_flops: 8.818869e16, bpp: 1.053475, dt: 245.76, bf16_mfu: 24.68, color:'#1976D2' },
+  { id:'dense_v131k_d8_s1', label:'DENSE V131k D8', group:'Dense (131k)', total: 427819536, active: 427819536, flops: 5.882542e8, total_training_flops: 5.699502e17, bpp: 0.902908, dt: 432.41, bf16_mfu: 36.06, color:'#1976D2' },
+  { id:'dense_v131k_d12_s1', label:'DENSE V131k D12', group:'Dense (131k)', total: 890242200, active: 890242200, flops: 1.191451e9, total_training_flops: 2.321875e18, bpp: 0.822534, dt: 775.65, bf16_mfu: 40.72, color:'#1976D2' },
+
+  // ==========================================================================
+  // 3. ACTIVE: Monarch M1024 @ V=131,072 (c09 & c08_d12)
+  // ==========================================================================
+  { id:'mon_m1024_m1_128_v131k_d8_s1', label:'MON M1024 m1=128 V131k D8 s1', group:'Monarch (131k)', total: 378143248, active: 378143248, flops: 2.896722e8, total_training_flops: 2.806588e17, bpp: 0.939799, dt: 405.10, bf16_mfu: 18.95, color:'#C2185B' },
+  { id:'mon_m1024_m1_128_v131k_d12_s1', label:'MON M1024 m1=128 V131k D12 s1', group:'Monarch (131k)', total: 807273624, active: 807273624, flops: 6.931156e8, total_training_flops: 1.350729e18, bpp: 0.861588, dt: 679.80, bf16_mfu: 27.03, color:'#C2185B' },
+
+  // --- Commented out V=131k Monarch exploratory runs ---
+  // { id:'mon_m1024_v131k_d4_s1', label:'MON M1024 V131k D4 s1', group:'Monarch (131k)', total: 108396680, active: 108396680, flops: 5.452672e7, total_training_flops: 2.101196e16, bpp: 1.160772, dt: 302.89, bf16_mfu: 4.77, color:'#C2185B' },
+  // { id:'mon_m1024_m1_32_v131k_d8_s1', label:'MON M1024 m1=32 V131k D8 (ablation)', group:'Monarch (131k)', total: 365560336, active: 365560336, flops: 2.141747e8, total_training_flops: 2.075105e17, bpp: 1.013919, dt: 409.31, bf16_mfu: 13.87, color:'#E91E63' },
 
   // ==========================================================================
   // COMMENTED OUT VARIANTS
@@ -417,15 +437,15 @@ function fitPowerLaw(keyFn, data) {
 }
 
 // Dense baseline extrapolated power-law curve spanning all data
-function baseCurveDS(keyFn, variants, scale = 1e6) {
-  const allX = [...DENSE, ...(variants||[])].map(keyFn).filter(v => v > 0);
+function baseCurveDS(keyFn, scale = 1e6) {
+  const allX = [...DENSE, ...SCH_VARIANTS].map(keyFn).filter(v => v > 0);
   const xMin = Math.min(...allX);
   const xMax = Math.max(...allX);
   const logSpan = Math.log(xMax / xMin);
-  const pad = 0.35;
+  const pad = 0.25;
   const x0 = xMin * Math.exp(-pad * logSpan);
   const x1 = xMax * Math.exp( pad * logSpan);
-  const { a, b } = fitPowerLaw(keyFn);
+  const { a, b } = fitPowerLaw(keyFn, DENSE);
   const N = 120;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
@@ -433,7 +453,7 @@ function baseCurveDS(keyFn, variants, scale = 1e6) {
   });
   return {
     type: 'line',
-    label: 'Dense baseline (power fit)',
+    label: 'Dense 32k (extrapolated fit)',
     data: pts,
     tension: 0,
     borderColor: '#888780', backgroundColor: 'transparent',
@@ -443,19 +463,19 @@ function baseCurveDS(keyFn, variants, scale = 1e6) {
   };
 }
 
-// Power-law fit curve for Monarch M1024 depth ladder
-function variantCurveDS(keyFn, variantData, color, label, scale = 1e6) {
+// Power-law fit curve for any variant depth ladder
+function variantCurveDS(keyFn, variantData, color, label, scale = 1e6, borderDash = [4, 3], order = 6) {
   const valid = (variantData || []).filter(d => keyFn(d) > 0 && d.bpp > 0);
   if (valid.length < 2) return null;
   const { a, b, r2 } = fitPowerLaw(keyFn, valid);
-  const allXCombined = [...DENSE, ...valid].map(keyFn).filter(v => v > 0);
-  const xMin = Math.min(...allXCombined);
-  const xMax = Math.max(...allXCombined);
+  const allX = [...DENSE, ...SCH_VARIANTS].map(keyFn).filter(v => v > 0);
+  const xMin = Math.min(...allX);
+  const xMax = Math.max(...allX);
   const logSpan = Math.log(xMax / xMin);
-  const pad = 0.35;
+  const pad = 0.25;
   const x0 = xMin * Math.exp(-pad * logSpan);
   const x1 = xMax * Math.exp( pad * logSpan);
-  const N = 100;
+  const N = 120;
   const pts = Array.from({length: N}, (_, i) => {
     const x = x0 * Math.pow(x1/x0, i/(N-1));
     return { x: M(x, scale), y: a * Math.pow(x, b) };
@@ -466,18 +486,23 @@ function variantCurveDS(keyFn, variantData, color, label, scale = 1e6) {
     data: pts,
     tension: 0,
     borderColor: color, backgroundColor: 'transparent',
-    borderWidth: 2, borderDash: [4, 3],
+    borderWidth: 2, borderDash: borderDash,
     pointRadius: 0, pointHoverRadius: 0,
-    order: 6,
+    order: order,
     _fit: { a, b, r2 },
   };
 }
 
 // Measured DENSE points
 function baseDotDS(keyFn, scale = 1e6) {
-  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({ x: M(keyFn(d), scale), y: d.bpp, id: d.id }));
+  const pts = [...DENSE].sort((a,b) => keyFn(a)-keyFn(b)).map(d => ({
+    x: M(keyFn(d), scale),
+    y: d.bpp,
+    id: d.id,
+    raw: { ...d, label: `Dense (32k) ${d.id}`, group: 'Dense (32k)' }
+  }));
   return {
-    label: 'Dense (measured d12-d30)',
+    label: 'Dense 32k (measured d12-d30)',
     data: pts,
     showLine: false,
     backgroundColor: '#888780', borderColor: '#888780',
@@ -510,47 +535,114 @@ function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
   const validVariants = variants.filter(v => keyFn(v) != null && !isNaN(keyFn(v)) && v.bpp != null && !isNaN(v.bpp));
   const datasets = [];
 
-  let da = 0, db = 0, dr2 = 0;
-  let monarchFit = null;
+  const show32k = (currentGroupFilter === 'all' || currentGroupFilter === 'Monarch (32k)');
+  const show131k = (currentGroupFilter === 'all' || currentGroupFilter === '131k' || currentGroupFilter === 'Dense (131k)' || currentGroupFilter === 'Monarch (131k)');
+
+  let dense32kFit = null;
+  let mon32kFit = null;
+  let dense131kFit = null;
+  let mon131kFit = null;
 
   if (!isDt) {
-    datasets.push(baseCurveDS(keyFn, validVariants, scale));
-    datasets.push(baseDotDS(keyFn, scale));
-    const fit = fitPowerLaw(keyFn);
-    da = fit.a; db = fit.b; dr2 = fit.r2;
+    // 1. Dense (32k) baseline curve & dots
+    if (show32k) {
+      datasets.push(baseCurveDS(keyFn, scale));
+      datasets.push(baseDotDS(keyFn, scale));
+      dense32kFit = fitPowerLaw(keyFn, DENSE);
+    }
 
-    // Draw Monarch M1024 scaling curve
-    const monVariants = validVariants.filter(v => v.id.startsWith('mon_m1024') || v.group === 'Monarch M1024');
-    if (monVariants.length >= 2) {
-      const monCurve = variantCurveDS(keyFn, monVariants, '#2E7D32', 'Monarch M1024', scale);
-      if (monCurve) {
-        datasets.push(monCurve);
-        monarchFit = monCurve._fit;
+    // 2. Monarch (32k) power fit
+    const mon32kVariants = validVariants.filter(v => v.group === 'Monarch (32k)');
+    if (show32k && mon32kVariants.length >= 2) {
+      const mon32kCurve = variantCurveDS(keyFn, mon32kVariants, '#2E7D32', 'Monarch (32k)', scale, [4, 3], 7);
+      if (mon32kCurve) {
+        datasets.push(mon32kCurve);
+        mon32kFit = mon32kCurve._fit;
+      }
+    }
+
+    // 3. Dense (131k) power fit
+    const dense131kVariants = validVariants.filter(v => v.group === 'Dense (131k)');
+    if (show131k && dense131kVariants.length >= 2) {
+      const dense131kCurve = variantCurveDS(keyFn, dense131kVariants, '#1976D2', 'Dense (131k)', scale, [5, 3], 6);
+      if (dense131kCurve) {
+        datasets.push(dense131kCurve);
+        dense131kFit = dense131kCurve._fit;
+      }
+    }
+
+    // 4. Monarch (131k) power fit (D8 and D12 with m1=128)
+    const mon131kVariants = validVariants.filter(v => v.group === 'Monarch (131k)');
+    if (show131k && mon131kVariants.length >= 2) {
+      const mon131kCurve = variantCurveDS(keyFn, mon131kVariants, '#C2185B', 'Monarch (131k)', scale, [4, 3], 5);
+      if (mon131kCurve) {
+        datasets.push(mon131kCurve);
+        mon131kFit = mon131kCurve._fit;
       }
     }
   } else {
     // For dt vs bpp: connect points sorted by dt
-    const monVariants = validVariants.filter(v => (v.id.startsWith('mon_m1024') || v.group === 'Monarch M1024') && v.dt != null);
-    if (monVariants.length >= 2) {
-      const sorted = [...monVariants].sort((a,b) => keyFn(a) - keyFn(b));
-      datasets.push({
-        type: 'line',
-        label: 'Monarch M1024 (dt trend)',
-        data: sorted.map(d => ({ x: keyFn(d), y: d.bpp })),
-        borderColor: '#2E7D32', backgroundColor: 'transparent',
-        borderWidth: 2, borderDash: [4, 3],
-        tension: 0.1,
-        pointRadius: 0, pointHoverRadius: 0,
-        order: 6,
-      });
+    if (show32k) {
+      const mon32kVariants = validVariants.filter(v => v.group === 'Monarch (32k)' && v.dt != null);
+      if (mon32kVariants.length >= 2) {
+        const sorted = [...mon32kVariants].sort((a,b) => keyFn(a) - keyFn(b));
+        datasets.push({
+          type: 'line',
+          label: 'Monarch (32k) dt trend',
+          data: sorted.map(d => ({ x: keyFn(d), y: d.bpp })),
+          borderColor: '#2E7D32', backgroundColor: 'transparent',
+          borderWidth: 2, borderDash: [4, 3],
+          tension: 0.1,
+          pointRadius: 0, pointHoverRadius: 0,
+          order: 7,
+        });
+      }
+    }
+
+    if (show131k) {
+      const dense131kVariants = validVariants.filter(v => v.group === 'Dense (131k)' && v.dt != null);
+      if (dense131kVariants.length >= 2) {
+        const sorted = [...dense131kVariants].sort((a,b) => keyFn(a) - keyFn(b));
+        datasets.push({
+          type: 'line',
+          label: 'Dense (131k) dt trend',
+          data: sorted.map(d => ({ x: keyFn(d), y: d.bpp })),
+          borderColor: '#1976D2', backgroundColor: 'transparent',
+          borderWidth: 2, borderDash: [5, 3],
+          tension: 0.1,
+          pointRadius: 0, pointHoverRadius: 0,
+          order: 6,
+        });
+      }
+
+      const mon131kVariants = validVariants.filter(v => v.group === 'Monarch (131k)' && v.dt != null);
+      if (mon131kVariants.length >= 2) {
+        const sorted = [...mon131kVariants].sort((a,b) => keyFn(a) - keyFn(b));
+        datasets.push({
+          type: 'line',
+          label: 'Monarch (131k) dt trend',
+          data: sorted.map(d => ({ x: keyFn(d), y: d.bpp })),
+          borderColor: '#C2185B', backgroundColor: 'transparent',
+          borderWidth: 2, borderDash: [4, 3],
+          tension: 0.1,
+          pointRadius: 0, pointHoverRadius: 0,
+          order: 5,
+        });
+      }
     }
   }
 
+  // Add individual variant dots
   validVariants.forEach(v => {
     const ds = varDS(v, keyFn, scale);
     if (ds) datasets.push(ds);
   });
 
+  // Calculate pre-fit dense curves for tooltips if not calculated yet
+  const d32kRefFit = dense32kFit || fitPowerLaw(keyFn, DENSE);
+  const d131kRefFit = dense131kFit || fitPowerLaw(keyFn, SCH_VARIANTS.filter(v => v.group === 'Dense (131k)'));
+
+  // Fit info element text
   const infoEl = document.getElementById(`fit-info-${canvasId}`);
   if (infoEl) {
     if (!isDt) {
@@ -559,14 +651,23 @@ function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
       else if (xLabel.includes('active params')) varSymbol = 'N<sub>active</sub>';
       else if (xLabel.includes('active FLOPs')) varSymbol = 'FLOPs<sub>active</sub>';
       else if (xLabel.includes('training FLOPs')) varSymbol = 'FLOPs<sub>train</sub>';
-      
-      let html = `Dense baseline fit: <strong>bpp = ${da.toFixed(4)} × ${varSymbol}<sup>${db.toFixed(4)}</sup></strong> (R² = ${dr2.toFixed(4)})`;
-      if (monarchFit) {
-        html += ` &nbsp;|&nbsp; Monarch M1024 fit: <strong style="color:#2E7D32;">bpp = ${monarchFit.a.toFixed(4)} × ${varSymbol}<sup>${monarchFit.b.toFixed(4)}</sup></strong> (R² = ${monarchFit.r2.toFixed(4)})`;
+
+      const pills = [];
+      if (dense32kFit) {
+        pills.push(`<div><span style="color:#888780;font-weight:600;">Dense (32k) fit:</span> <strong>bpp = ${dense32kFit.a.toFixed(4)} × ${varSymbol}<sup>${dense32kFit.b.toFixed(4)}</sup></strong> <span style="opacity:0.8;">(R² = ${dense32kFit.r2.toFixed(4)})</span></div>`);
       }
-      infoEl.innerHTML = html;
+      if (mon32kFit) {
+        pills.push(`<div><span style="color:#2E7D32;font-weight:600;">Monarch (32k) fit:</span> <strong>bpp = ${mon32kFit.a.toFixed(4)} × ${varSymbol}<sup>${mon32kFit.b.toFixed(4)}</sup></strong> <span style="opacity:0.8;">(R² = ${mon32kFit.r2.toFixed(4)})</span></div>`);
+      }
+      if (dense131kFit) {
+        pills.push(`<div><span style="color:#1976D2;font-weight:600;">Dense (131k) fit:</span> <strong>bpp = ${dense131kFit.a.toFixed(4)} × ${varSymbol}<sup>${dense131kFit.b.toFixed(4)}</sup></strong> <span style="opacity:0.8;">(R² = ${dense131kFit.r2.toFixed(4)})</span></div>`);
+      }
+      if (mon131kFit) {
+        pills.push(`<div><span style="color:#C2185B;font-weight:600;">Monarch (131k) fit:</span> <strong>bpp = ${mon131kFit.a.toFixed(4)} × ${varSymbol}<sup>${mon131kFit.b.toFixed(4)}</sup></strong> <span style="opacity:0.8;">(R² = ${mon131kFit.r2.toFixed(4)})</span></div>`);
+      }
+      infoEl.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px 20px;padding-top:4px;">${pills.join('')}</div>`;
     } else {
-      infoEl.innerHTML = `Step Latency (steady-state median forward+backward+opt dt in ms). Points plotted: ${validVariants.length} Monarch points with measured dt.`;
+      infoEl.innerHTML = `Step Latency (steady-state median forward+backward+opt dt in ms). Active measured runs plotted: ${validVariants.length}.`;
     }
   }
 
@@ -624,10 +725,21 @@ function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
               const r = ctx.raw;
               const name = r.id ? `[${r.id}] ` : '';
               let xFormatted = isFlops ? `${r.x.toExponential(2)} FLOPs` : (isDt ? `${r.x.toFixed(1)} ms` : `${r.x.toFixed(1)}M`);
-              let denseFitAtX = (!isDt && da > 0) ? (da * Math.pow(r.x * scale, db)) : null;
-              let deltaStr = denseFitAtX ? ` | vs Dense Fit: ${r.y >= denseFitAtX ? '+' : ''}${(r.y - denseFitAtX).toFixed(4)}` : '';
+              
+              let deltaStr = '';
+              if (!isDt && r.raw) {
+                const is131k = r.raw.group === 'Dense (131k)' || r.raw.group === 'Monarch (131k)' || (r.raw.id && r.raw.id.includes('131k'));
+                const refFit = is131k ? d131kRefFit : d32kRefFit;
+                const refName = is131k ? 'Dense 131k Fit' : 'Dense 32k Fit';
+                if (refFit && refFit.a > 0) {
+                  const fitAtX = refFit.a * Math.pow(r.x * scale, refFit.b);
+                  const diff = r.y - fitAtX;
+                  deltaStr = ` | vs ${refName}: ${diff >= 0 ? '+' : ''}${diff.toFixed(4)}`;
+                }
+              }
               let dtStr = (r.raw && r.raw.dt != null) ? ` | dt: ${r.raw.dt.toFixed(1)}ms` : '';
-              return `${name}${ctx.dataset.label}: (${xFormatted}, ${r.y.toFixed(4)} bpp${deltaStr}${dtStr})`;
+              let mfuStr = (r.raw && r.raw.bf16_mfu != null) ? ` | MFU: ${r.raw.bf16_mfu.toFixed(1)}%` : '';
+              return `${name}${ctx.dataset.label}: (${xFormatted}, ${r.y.toFixed(4)} bpp${deltaStr}${dtStr}${mfuStr})`;
             }
           }
         }
@@ -636,16 +748,20 @@ function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
   });
 
   if (!isDt) {
-    const curves = [
-      { label: 'Dense baseline fit', color: '#888780', evalFn: v => da * Math.pow(v * scale, db) },
-    ];
-    if (monarchFit) {
-      curves.push({
-        label: 'Monarch M1024 fit',
-        color: '#2E7D32',
-        evalFn: v => monarchFit.a * Math.pow(v * scale, monarchFit.b)
-      });
+    const curves = [];
+    if (dense32kFit) {
+      curves.push({ label: 'Dense (32k) fit', color: '#888780', evalFn: v => dense32kFit.a * Math.pow(v * scale, dense32kFit.b) });
     }
+    if (mon32kFit) {
+      curves.push({ label: 'Monarch (32k) fit', color: '#2E7D32', evalFn: v => mon32kFit.a * Math.pow(v * scale, mon32kFit.b) });
+    }
+    if (dense131kFit) {
+      curves.push({ label: 'Dense (131k) fit', color: '#1976D2', evalFn: v => dense131kFit.a * Math.pow(v * scale, dense131kFit.b) });
+    }
+    if (mon131kFit) {
+      curves.push({ label: 'Monarch (131k) fit', color: '#C2185B', evalFn: v => mon131kFit.a * Math.pow(v * scale, mon131kFit.b) });
+    }
+
     const formatX = v => isFlops ? `${v.toExponential(2)} FLOPs` : (v >= 1000 ? `${(v / 1000).toFixed(2)}B` : `${v.toFixed(1)}M`);
     const formatY = v => `${v.toFixed(4)} bpp`;
     attachCrosshair(chart, curves, formatX, formatY, xLabel);
@@ -659,13 +775,19 @@ function makeChart(canvasId, variants, keyFn, xLabel, isDt = false) {
 // ============================================================================
 function buildLegend() {
   const el = document.getElementById('leg-sch');
-  const baseItem = `<span class="leg-item" style="cursor:default;"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#888780" stroke-width="2" stroke-dasharray="4,3"/></svg>Dense baseline (extrapolated power fit)</span>`;
-  const denseMeasItem = `<span class="leg-item" style="cursor:default;"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#888780"/></svg>Dense measured (d12-d30)</span>`;
-  const monCurveItem = `<span class="leg-item" style="cursor:default;"><svg width="22" height="8" viewBox="0 0 22 8"><line x1="0" y1="4" x2="22" y2="4" stroke="#2E7D32" stroke-width="2" stroke-dasharray="4,3"/></svg>Monarch M1024 (power fit)</span>`;
+  
+  const curveLegends = [
+    `<span class="leg-item" style="cursor:default;"><svg width="20" height="8" viewBox="0 0 20 8"><line x1="0" y1="4" x2="20" y2="4" stroke="#888780" stroke-width="2" stroke-dasharray="4,3"/></svg>Dense (32k) fit</span>`,
+    `<span class="leg-item" style="cursor:default;"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#888780"/></svg>Dense 32k measured (d12-d30)</span>`,
+    `<span class="leg-item" style="cursor:default;"><svg width="20" height="8" viewBox="0 0 20 8"><line x1="0" y1="4" x2="20" y2="4" stroke="#2E7D32" stroke-width="2" stroke-dasharray="4,3"/></svg>Monarch (32k) fit</span>`,
+    `<span class="leg-item" style="cursor:default;"><svg width="20" height="8" viewBox="0 0 20 8"><line x1="0" y1="4" x2="20" y2="4" stroke="#1976D2" stroke-width="2" stroke-dasharray="4,3"/></svg>Dense (131k) fit</span>`,
+    `<span class="leg-item" style="cursor:default;"><svg width="20" height="8" viewBox="0 0 20 8"><line x1="0" y1="4" x2="20" y2="4" stroke="#C2185B" stroke-width="2" stroke-dasharray="4,3"/></svg>Monarch (131k) fit</span>`,
+  ].join('');
   
   const items = SCH_VARIANTS.map(v => {
     const isHidden = hiddenVariantIds.has(v.id);
-    const isFilteredOut = (currentGroupFilter !== 'all' && v.group !== currentGroupFilter);
+    const isFilteredOut = (currentGroupFilter !== 'all' && currentGroupFilter !== '131k' && v.group !== currentGroupFilter) ||
+                          (currentGroupFilter === '131k' && v.group !== 'Dense (131k)' && v.group !== 'Monarch (131k)');
     const dimmedClass = (isHidden || isFilteredOut) ? 'dimmed' : '';
     return `<span class="leg-item ${dimmedClass}" data-id="${v.id}" title="Click to toggle ${v.label}">
       <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="${v.color}" stroke="rgba(255,255,255,0.7)" stroke-width="1"/></svg>
@@ -673,7 +795,7 @@ function buildLegend() {
     </span>`;
   }).join('');
   
-  el.innerHTML = baseItem + denseMeasItem + monCurveItem + items;
+  el.innerHTML = curveLegends + items;
 
   // Add click toggles
   el.querySelectorAll('.leg-item[data-id]').forEach(item => {
@@ -706,28 +828,48 @@ function setupFilters() {
 // ============================================================================
 function buildTable(activeVariants) {
   const tbody = document.getElementById('table-body');
-  const { a: da_flp, b: db_flp } = fitPowerLaw(d => d.flops);
+  const { a: da_flp_32k, b: db_flp_32k } = fitPowerLaw(d => d.flops, DENSE);
+  
+  const dense131kPoints = SCH_VARIANTS.filter(v => v.group === 'Dense (131k)');
+  const { a: da_flp_131k, b: db_flp_131k } = fitPowerLaw(d => d.flops, dense131kPoints);
   
   let html = '';
-  // Show Dense baseline reference row
+  // Show Dense baseline reference rows
   html += `<tr style="background: rgba(136,135,128,0.08); font-weight: 600;">
-    <td>dense_d4 (est)</td>
-    <td>DENSE Scaling Law @ Depth 4</td>
-    <td><span class="badge" style="background:#888780; color:#fff;">Dense Reference</span></td>
+    <td>dense_32k_ref</td>
+    <td>DENSE Scaling Law @ 32k (Depth 4 est)</td>
+    <td><span class="badge" style="background:#888780; color:#fff;">Dense (32k) Ref</span></td>
     <td>36,700,296</td>
     <td>36,700,296</td>
     <td>7.79e+07</td>
     <td>9.43e+15</td>
-    <td>${(da_flp * Math.pow(7.785754e7, db_flp)).toFixed(4)}</td>
+    <td>${(da_flp_32k * Math.pow(7.785754e7, db_flp_32k)).toFixed(4)}</td>
     <td>~178.6 ms</td>
+    <td>—</td>
+    <td>0.0000</td>
+  </tr>`;
+
+  html += `<tr style="background: rgba(25,118,210,0.08); font-weight: 600;">
+    <td>dense_131k_ref</td>
+    <td>DENSE Scaling Law @ 131k (Depth 4 est)</td>
+    <td><span class="badge" style="background:#1976D2; color:#fff;">Dense (131k) Ref</span></td>
+    <td>137,363,592</td>
+    <td>137,363,592</td>
+    <td>2.29e+08</td>
+    <td>8.82e+16</td>
+    <td>${(da_flp_131k * Math.pow(2.288525e8, db_flp_131k)).toFixed(4)}</td>
+    <td>245.76 ms</td>
+    <td>24.68%</td>
     <td>0.0000</td>
   </tr>`;
 
   activeVariants.forEach(v => {
-    const denseFitVal = (da_flp * Math.pow(v.flops, db_flp));
-    const delta = (v.bpp - denseFitVal);
-    const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(4);
-    const deltaColor = delta > 0.3 ? '#e11d48' : (delta > 0 ? '#ea580c' : '#16a34a');
+    const is131k = v.group === 'Dense (131k)' || v.group === 'Monarch (131k)' || v.id.includes('131k');
+    const baseFitVal = is131k ? (da_flp_131k * Math.pow(v.flops, db_flp_131k)) : (da_flp_32k * Math.pow(v.flops, db_flp_32k));
+    const delta = (v.bpp - baseFitVal);
+    const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(4) + (is131k ? ' (vs 131k)' : ' (vs 32k)');
+    const deltaColor = delta > 0.2 ? '#e11d48' : (delta > 0 ? '#ea580c' : '#16a34a');
+    const mfuDisplay = (v.bf16_mfu != null) ? `${v.bf16_mfu.toFixed(2)}%` : '<span style="color:#999;">—</span>';
     
     html += `<tr>
       <td>${v.id}</td>
@@ -739,6 +881,7 @@ function buildTable(activeVariants) {
       <td>${v.total_training_flops.toExponential(2)}</td>
       <td><strong>${v.bpp.toFixed(6)}</strong></td>
       <td>${v.dt != null ? v.dt.toFixed(2) + ' ms' : '<span style="color:#999;">—</span>'}</td>
+      <td>${mfuDisplay}</td>
       <td style="color:${deltaColor}; font-weight:600;">${deltaStr}</td>
     </tr>`;
   });
@@ -751,8 +894,9 @@ function buildTable(activeVariants) {
 function renderAll() {
   const filteredVariants = SCH_VARIANTS.filter(v => {
     if (hiddenVariantIds.has(v.id)) return false;
-    if (currentGroupFilter !== 'all' && v.group !== currentGroupFilter) return false;
-    return true;
+    if (currentGroupFilter === 'all') return true;
+    if (currentGroupFilter === '131k') return v.group === 'Dense (131k)' || v.group === 'Monarch (131k)';
+    return v.group === currentGroupFilter;
   });
 
   buildLegend();

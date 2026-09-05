@@ -398,7 +398,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --use-code-head|--sch-head-type|--sch-bits|--sch-order|--sch-max-m|--sch-phi-mode|--sch-code-mode|--sch-code-path|--sch-code-ecc-bits|--sch-code-seed|--sch-phi-density|--sch-phi-dtype|--sch-phi-normalize|--sch-phi-center|--sch-g-type|--sch-g-hidden|--sch-g-layers|--sch-g-out-std|--sch-mixture|--sch-residual-rank|--sch-logit-act|--sch-bias|--sch-input-mode|--sch-input-hidden|--sch-holdout-tokens|--sch-holdout-seed|--sch-holdout-min-id|--sch-holdout-mode|--sch-decile-metrics|--sch-rank-probe|--sch-eval-steps|--sch-product-groups|--sch-product-codebook|--sch-product-source|--sch-product-impl|--sch-phi-whiten|--sch-mixture-per-phi|--sch-mixture-topk|--sch-mixture-aux|--sch-monarch-m1)
+        --use-code-head|--sch-head-type|--sch-bits|--sch-order|--sch-max-m|--sch-phi-mode|--sch-code-mode|--sch-code-path|--sch-code-ecc-bits|--sch-code-seed|--sch-phi-density|--sch-phi-dtype|--sch-phi-normalize|--sch-phi-center|--sch-g-type|--sch-g-hidden|--sch-g-layers|--sch-g-out-std|--sch-mixture|--sch-residual-rank|--sch-logit-act|--sch-bias|--sch-input-mode|--sch-input-hidden|--sch-holdout-tokens|--sch-holdout-seed|--sch-holdout-min-id|--sch-holdout-mode|--sch-decile-metrics|--sch-rank-probe|--sch-eval-steps|--sch-product-groups|--sch-product-codebook|--sch-product-source|--sch-product-impl|--sch-phi-whiten|--sch-mixture-per-phi|--sch-mixture-topk|--sch-mixture-aux|--sch-monarch-m1|--sch-monarch-perm|--sch-monarch-perm-path)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

@@ -122,6 +122,7 @@ G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
 HEAD_TYPES = ("code", "hsoftmax", "monarch")
+MONARCH_PERMS = ("none", "random", "freq", "file")
 PHI_DTYPES = ("bf16", "fp32")
 HOLDOUT_MODES = ("target", "full")
 
@@ -285,6 +286,50 @@ def load_freq_table(vocab_size: int, tokenizer_dir: str | None) -> torch.Tensor 
     if ft.numel() < vocab_size:
         ft = torch.cat([ft, torch.zeros(vocab_size - ft.numel())])
     return ft
+
+
+def build_vocab_permutation(vocab_size: int, padded_vocab_size: int, mode: str,
+                            seed: int, path: str, tokenizer_dir: str | None):
+    """Return ``(perm, active)`` where ``perm[p] = t``: block position ``p`` carries token ``t``.
+
+    ``MonarchHead`` gives word ``w`` only the ``m1`` features of block ``w // block_out``,
+    so which words share a block decides how much each block's rank has to cover.
+    The default assignment is by token id, which BPE merge order makes roughly
+    frequency-stratified but never semantically coherent.  This is the knob that
+    changes it, and it costs nothing: no parameters, no FLOPs, one buffer.
+
+    The permutation is confined to ``[0, vocab_size)`` and is the identity on the
+    padding tail, because ``GPT.forward`` slices the padding off before the loss and
+    a permutation that moved a real token into the tail would silently drop it.
+    """
+    assert mode in MONARCH_PERMS, f"sch_monarch_perm={mode!r} not in {MONARCH_PERMS}"
+    perm = torch.arange(padded_vocab_size, dtype=torch.long)
+    if mode == "none":
+        return perm, False
+    if mode == "random":
+        # The control that decides what a win means. If a clustered permutation
+        # helps but a random one helps as much, the effect is not coherence.
+        gen = torch.Generator().manual_seed(seed)
+        perm[:vocab_size] = torch.randperm(vocab_size, generator=gen)
+    elif mode == "freq":
+        freqs = load_freq_table(vocab_size, tokenizer_dir)
+        assert freqs is not None, (
+            "sch_monarch_perm=freq needs a token frequency table; run "
+            "scripts/ensure_tokenizer.py to build <tokenizer_dir>/freq_table.pt")
+        # Descending frequency: block 0 owns the head of the distribution, the last
+        # block the tail. Stable, so ties keep token-id order and the arm is
+        # reproducible across frequency tables that differ only in zero counts.
+        perm[:vocab_size] = torch.argsort(freqs[:vocab_size], descending=True, stable=True)
+    else:
+        assert path, "sch_monarch_perm=file needs sch_monarch_perm_path"
+        loaded = torch.load(path, weights_only=True, map_location="cpu").long().flatten()
+        assert loaded.numel() == vocab_size, (
+            f"{path} holds {loaded.numel()} entries, expected vocab_size={vocab_size}")
+        assert torch.equal(torch.sort(loaded).values, torch.arange(vocab_size)), (
+            f"{path} is not a permutation of range({vocab_size}); "
+            "scripts/build_vocab_permutation.py writes one")
+        perm[:vocab_size] = loaded
+    return perm, True
 
 
 def build_codes(vocab_size: int, bits: int, mode: str = "binary", seed: int = 1234,
@@ -1422,12 +1467,51 @@ class MonarchHead(nn.Module):
         self.w2 = nn.Parameter(torch.empty(m2, self.block_out, m1))
         self.bias = nn.Parameter(torch.empty(V)) if int(getattr(config, "sch_bias", 0)) else None
 
+        # Shared low-rank residual. Block-diagonality gives each word m1 *private*
+        # directions and no shared ones, so a global unigram or syntactic-class
+        # direction has to be relearned in all m2 blocks. This buys r shared ones
+        # for r*(d + V) MACs. Same knob as the code head's, so the two are
+        # directly comparable. Rows live in block-position order like every other
+        # output-side parameter here, which is why the vocabulary permutation
+        # needs no special handling for them.
+        r = int(getattr(config, "sch_residual_rank", 0))
+        self.residual_rank = r
+        if r > 0:
+            self.res_down = nn.Linear(n_embd, r, bias=False)
+            self.res_emb = nn.Parameter(torch.empty(V, r))
+        else:
+            self.res_down, self.res_emb = None, None
+
+        self.perm_mode = str(getattr(config, "sch_monarch_perm", "none"))
+        # Kept so `init_weights` can rebuild: the model is constructed on the meta
+        # device and then `to_empty`d, which fills every buffer with garbage. A
+        # garbage permutation does not crash, it trains against the wrong words
+        # and returns a plausible bpb, so this is rebuilt exactly where the code
+        # head rebuilds `codes`.
+        self._perm_args = (int(getattr(config, "vocab_size", 0)) or V, V, self.perm_mode,
+                           int(getattr(config, "sch_code_seed", 1234)),
+                           str(getattr(config, "sch_monarch_perm_path", "")),
+                           getattr(config, "_tokenizer_dir", None))
+        perm, active = build_vocab_permutation(*self._perm_args)
+        self.permutes_vocab = active
+        # Both directions are persisted. inv_perm is what both hot paths actually
+        # read, and recomputing it on load is one more thing to get wrong for the
+        # sake of 1 MB.
+        self.register_buffer("vocab_perm", perm)
+        self.register_buffer("inv_perm", torch.argsort(perm))
+
     def init_weights(self):
+        perm, _ = build_vocab_permutation(*self._perm_args)
+        self.vocab_perm.copy_(perm.to(self.vocab_perm.device))
+        self.inv_perm.copy_(torch.argsort(perm).to(self.inv_perm.device))
         s = 3 ** 0.5 * self.n_embd ** -0.5
         torch.nn.init.uniform_(self.w1.weight, -s, s)
         torch.nn.init.normal_(self.w2, mean=0.0, std=0.001)
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
+        if self.res_emb is not None:
+            torch.nn.init.normal_(self.res_emb, mean=0.0, std=0.001)
+            torch.nn.init.uniform_(self.res_down.weight, -s, s)
 
     def forward(self, x):
         shape = x.shape[:-1]
@@ -1443,26 +1527,35 @@ class MonarchHead(nn.Module):
         # and it is why this head needs a smaller device batch than dense for the
         # same model. Removing it needs a fused grouped-GEMM kernel that writes
         # the output transposed; see OPEN_QUESTIONS Q11.
-        out = y.reshape(*shape, self.vocab_size)
+        #
+        # Everything after it is in place on that one copy. `flat` is the fresh
+        # tensor reshape just produced, nobody else holds it, and each additive
+        # term would otherwise cost another full-width buffer on the head that can
+        # least afford one.
+        flat = y.reshape(-1, self.vocab_size)
         if self.bias is not None:
-            # In place. `out` is the fresh tensor that reshape just copied into,
-            # so nobody else holds it, and the alternative allocates a THIRD
-            # full-width tensor for what is a per-token constant.
-            out += self.bias.to(dtype=out.dtype)
-        return out
+            flat += self.bias.to(dtype=flat.dtype)
+        if self.res_emb is not None:
+            h = F.linear(x, self.res_down.weight.to(dtype=x.dtype))
+            flat.addmm_(h.view(-1, self.residual_rank),
+                        self.res_emb.to(dtype=flat.dtype).t())
+        return flat.view(*shape, self.vocab_size)
 
     def rank_ceiling(self) -> int:
-        return min(self.width, self.n_embd) + 1
+        return min(self.width, self.n_embd) + 1 + self.residual_rank
 
     def flops_per_token(self) -> int:
         f = 6 * (self.w1.weight.numel() + self.w2.numel())
+        if self.res_emb is not None:
+            f += 6 * (self.res_down.weight.numel() + self.vocab_size * self.residual_rank)
         if self.bias is not None:
             f += 2 * self.vocab_size
         return int(f)
 
     def extra_repr(self):
         return (f"V={self.vocab_size}, M={self.width}, m1={self.m1}, m2={self.m2}, "
-                f"block_out={self.block_out}, rank_ceiling={self.rank_ceiling()}")
+                f"block_out={self.block_out}, residual_rank={self.residual_rank}, "
+                f"perm={self.perm_mode}, rank_ceiling={self.rank_ceiling()}")
 
 
 # ---------------------------------------------------------------------------

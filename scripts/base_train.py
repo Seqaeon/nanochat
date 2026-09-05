@@ -37,7 +37,8 @@ from nanochat.gpt import GPT, GPTConfig, Linear
 # Single source of truth for the --sch-* choice lists.  Restating them here by
 # hand is how --sch-phi-mode product reached a GPU and died in argparse.
 from nanochat.code_head import (CODE_MODES, G_TYPES, HEAD_TYPES, HOLDOUT_MODES,
-                                INPUT_MODES, LOGIT_ACTS, PHI_DTYPES, PHI_MODES,
+                                INPUT_MODES, LOGIT_ACTS, MONARCH_PERMS, PHI_DTYPES,
+                                PHI_MODES,
                                 PRODUCT_IMPLS, PRODUCT_SOURCES)
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, wrap_model
@@ -742,6 +743,8 @@ parser.add_argument("--sch-mixture-per-phi", type=int, default=0, help="SCH: giv
 parser.add_argument("--sch-mixture-topk", type=int, default=0, help="SCH: components evaluated per token (0 = all); cost tracks k not K")
 parser.add_argument("--sch-mixture-aux", type=float, default=0.01, help="SCH: load-balance weight for sparse mixture routing. 0 lets top-1 collapse onto a single component while paying for K")
 parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: Monarch inner factor m1 (0 = sqrt(M))")
+parser.add_argument("--sch-monarch-perm", type=str, default="none", choices=list(MONARCH_PERMS), help="SCH: which words share a Monarch block. Costs no FLOPs and no parameters; 'random' is the control that says whether coherence is what helps")
+parser.add_argument("--sch-monarch-perm-path", type=str, default="", help="SCH: .pt permutation of range(vocab_size) for --sch-monarch-perm=file (scripts/build_vocab_permutation.py)")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1293,6 +1296,8 @@ def build_model_meta(depth):
         sch_mixture_topk=int(getattr(args, 'sch_mixture_topk', 0)),
         sch_mixture_aux=float(getattr(args, 'sch_mixture_aux', 0.01)),
         sch_monarch_m1=int(getattr(args, 'sch_monarch_m1', 0)),
+        sch_monarch_perm=str(getattr(args, 'sch_monarch_perm', 'none')),
+        sch_monarch_perm_path=str(getattr(args, 'sch_monarch_perm_path', '')),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
