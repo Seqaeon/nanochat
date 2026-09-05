@@ -1,0 +1,2301 @@
+============================================================
+  C10: Monarch structure, V=32768, depth 4, d=256
+  M=256  m1=32  m2=8  block_out=4096
+  Q12 permutations: random
+  Q13 residual ranks: 16 32 64 128
+  target tokens 121110528   device-batch 128
+============================================================
+SKIP  MON_base_s1 (already completed)
+SKIP  MON_perm_random_s1 (already completed)
+
+--- MON_res_16_s1  (depth 4, V=32768, device-batch 128) ---
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sat Sep  5 08:57:53 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8F:00.0 Off |                    0 |
+| N/A   30C    P0             79W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/c10_monarch_structure/d4/MON_res_16_s1
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 506ms
+   Building nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+      Built nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+Prepared 1 package in 1.34s
+Uninstalled 1 package in 1ms
+Installed 1 package in 2ms
+ - nanochat==0.1.0 (from file:///root)
+ + nanochat==0.1.0 (from file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-09-05 08:58:06,087 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 08:58:06,220 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 08:58:06,366 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Target Tokens: 121,110,528
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens 121110528 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 0 --compile-regional 0 --timing-probe-steps 0 --compile-mode default --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites both --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 0 --cond-router-act none --cond-live-init 0.0 --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qkvo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed 1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mol 0 --mol-n-blocks 5 --mol-n-shared 1 --mol-topk 3 --mol-thin-dim 256 --mol-head-dim 64 --mol-ffn-mult 4.0 --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1 --mol-capacity-factor 1.0 --mol-block-lr-scale 1.0 --mol-per-block-ve 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --mst-sub-head-dim 0 --mst-final-norm 0 --mst-per-stream-ve 0 --mst-ve-map 0 --mst-ve-map-rank 0 --mst-lm-head-dim 0 --mst-compose-windows 0 --mst-channel-mix none --mst-channel-mix-site layer --mst-distribute-block-muon 0 --mst-trans-spectral-lr 0 --mst-talking-heads 0 --mst-wo-mode block --mst-stream-topk 0 --mst-stream-shared 0 --mst-stream-router-aux 0.01 --mst-stream-router-noise 0.0 --mst-stream-dispatch 0 --mst-stream-capacity-factor 1.0 --mst-stream-gate-attn 0 --mst-ffn-monarch none --mst-shampoo 0 --mst-precond-every 10 --mst-shampoo-beta 0.95 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --use-code-head 1 --sch-head-type monarch --sch-bits 0 --sch-order 2 --sch-max-m 256 --sch-phi-mode monomial --sch-code-mode binary --sch-code-path  --sch-code-ecc-bits 0 --sch-code-seed 1234 --sch-phi-density 0.0 --sch-phi-dtype fp32 --sch-phi-normalize 1 --sch-phi-center 0 --sch-g-type linear --sch-g-hidden 0 --sch-g-layers 2 --sch-g-out-std 0.001 --sch-mixture 1 --sch-residual-rank 16 --sch-logit-act none --sch-bias 1 --sch-input-mode table --sch-input-hidden 0 --sch-product-groups 8 --sch-product-codebook 256 --sch-product-source hash --sch-product-impl dense --sch-phi-whiten 0 --sch-mixture-per-phi 0 --sch-mixture-topk 0 --sch-mixture-aux 0.01 --sch-monarch-m1 32 --sch-monarch-perm none --sch-monarch-perm-path  --sch-holdout-tokens 0 --sch-holdout-seed 7 --sch-holdout-min-id 256 --sch-holdout-mode target --sch-decile-metrics 1 --sch-rank-probe 16384 --sch-eval-steps 100 --compile --tokenizer-dir tokenizer --data-dir data --max-shards 300 --checkpoints-dir /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base --model-tag base
+2026-09-05 08:58:14,069 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 08:58:14,214 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 08:58:14,384 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-09-05 08:58:15,627 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=16, perm=none, rank_ceiling=273 | head params 1,675,264 | head FLOPs/token 9,920,512 | dense equivalent 50,331,648
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "both",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 0,
+  "cond_live_init": 0.0,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mol": false,
+  "mol_n_blocks": 5,
+  "mol_n_shared": 1,
+  "mol_topk": 3,
+  "mol_thin_dim": 256,
+  "mol_head_dim": 64,
+  "mol_ffn_mult": 4.0,
+  "mol_router_aux": 0.05,
+  "mol_routed_attn": "softmax",
+  "mol_dispatch": 1,
+  "mol_capacity_factor": 1.0,
+  "mol_block_lr_scale": 1.0,
+  "mol_per_block_ve": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "mst_sub_head_dim": 0,
+  "mst_final_norm": 0,
+  "mst_per_stream_ve": 0,
+  "mst_ve_map": 0,
+  "mst_ve_map_rank": 0,
+  "mst_lm_head_dim": 0,
+  "mst_compose_windows": 0,
+  "mst_channel_mix": "none",
+  "mst_channel_mix_site": "layer",
+  "mst_distribute_block_muon": 0,
+  "mst_trans_spectral_lr": 0,
+  "mst_talking_heads": 0,
+  "mst_wo_mode": "block",
+  "mst_stream_topk": 0,
+  "mst_stream_shared": 0,
+  "mst_stream_router_aux": 0.01,
+  "mst_stream_router_noise": 0.0,
+  "mst_stream_dispatch": 0,
+  "mst_stream_capacity_factor": 1.0,
+  "mst_stream_gate_attn": 0,
+  "mst_ffn_monarch": "none",
+  "mst_shampoo": 0,
+  "mst_precond_every": 10,
+  "mst_shampoo_beta": 0.95,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false,
+  "use_code_head": true,
+  "sch_head_type": "monarch",
+  "sch_bits": 0,
+  "sch_order": 2,
+  "sch_max_m": 256,
+  "sch_phi_mode": "monomial",
+  "sch_code_mode": "binary",
+  "sch_code_path": "",
+  "sch_code_ecc_bits": 0,
+  "sch_code_seed": 1234,
+  "sch_phi_density": 0.0,
+  "sch_phi_dtype": "fp32",
+  "sch_phi_normalize": 1,
+  "sch_phi_center": 0,
+  "sch_g_type": "linear",
+  "sch_g_hidden": 0,
+  "sch_g_layers": 2,
+  "sch_g_out_std": 0.001,
+  "sch_mixture": 1,
+  "sch_residual_rank": 16,
+  "sch_logit_act": "none",
+  "sch_bias": 1,
+  "sch_input_mode": "table",
+  "sch_input_hidden": 0,
+  "sch_product_groups": 8,
+  "sch_product_codebook": 256,
+  "sch_product_source": "hash",
+  "sch_product_impl": "dense",
+  "sch_phi_whiten": 0,
+  "sch_mixture_per_phi": 0,
+  "sch_mixture_topk": 0,
+  "sch_mixture_aux": 0.01,
+  "sch_monarch_m1": 32,
+  "sch_monarch_perm": "none",
+  "sch_monarch_perm_path": ""
+}
+Seeded weight init with --seed 1
+Checkpoints directory: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=False, broadcast_buffers=False)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 1,675,264
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 29,986,952
+Estimated FLOPs per token (total):  3.744640e+07
+Estimated FLOPs per token (active): 3.744640e+07
+Estimated active params:            29,986,952
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=16, perm=none, rank_ceiling=273 | head params 1,675,264 | head FLOPs/token 9,920,512 | dense equivalent 50,331,648
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.136253 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 25.12
+Total training FLOPs estimate: 4.535153e+15
+Total training FLOPs (active):  4.535153e+15
+Total active training FLOPs estimate: 4.535153e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0905 08:58:16.451000 534 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+Warmup complete. Steady-state VRAM: 1.4 GB allocated
+step 00000/00462 (0.00%) | loss: 10.406701 | lrm: 0.50 | lr(adamw:2.755e-01, muon:7.071e-03) | dt: 249.22ms | tok/sec: 1,051,863 | bf16_mfu: 3.98 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-09-05 08:59:23,905 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/model_000200.pt
+2026-09-05 08:59:23,908 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/meta_000200.json
+2026-09-05 08:59:24,145 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/optim_000200_rank0.pt
+step 00200/00462 (43.29%) | loss: 4.529130 | lrm: 0.88 | lr(adamw:4.847e-01, muon:1.244e-02) | dt: 156.97ms | tok/sec: 1,669,980 | bf16_mfu: 6.32 | epoch: 1 pq: 1 rg: 17 | total time: 0.45m | eta: 0.6m
+2026-09-05 08:59:52,212 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/model_000400.pt
+2026-09-05 08:59:52,216 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/meta_000400.json
+2026-09-05 08:59:52,450 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/00462 (86.58%) | loss: 4.130860 | lrm: 0.25 | lr(adamw:1.357e-01, muon:3.484e-03) | dt: 147.04ms | tok/sec: 1,782,820 | bf16_mfu: 6.75 | epoch: 1 pq: 2 rg: 30 | total time: 0.92m | eta: 0.1m
+step 00461/00462 (99.78%) | loss: 4.078747 | lrm: 0.05 | lr(adamw:2.930e-02, muon:7.519e-04) | dt: 134.93ms | tok/sec: 1,942,836 | bf16_mfu: 7.36 | epoch: 1 pq: 2 rg: 59 | total time: 1.06m | eta: 0.0m
+Step 00462 | Validation bpb: 1.243147 | val_loss: 4.077745
+<|bos|>The capital of France is a country of the world's largest country in the world. The world's largest
+<|bos|>The chemical symbol of gold is the gold, the gold, and the gold. The gold is the gold,
+<|bos|>If yesterday was Friday, then tomorrow will be the first time. The first time I was in the 19th century,
+<|bos|>The opposite of hot is the same as the cold. The cold is the same as the cold. The
+<|bos|>The planets of the solar system are: the planets of the solar system are not visible. The solar system is not visible
+<|bos|>My favorite color is the color of the color of the color of the color of the color of the
+<|bos|>If 5*x + 3 = 13, then x is 1, then 1 is 1, then 1 is 1
+2026-09-05 09:00:40,706 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/model_000462.pt
+2026-09-05 09:00:40,710 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/meta_000462.json
+2026-09-05 09:00:40,940 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 4.078747 | early_stop: 0
+Peak memory usage: 44557.16MiB
+Total training time: 1.06m
+Minimum validation bpb: 1.243147
+Minimum validation loss (nats/byte): 4.077745
+[SCH] run_tag=base  phi_width_M=256  rank_ceiling=273  rank_effective_rank=268  val_bpb=1.2431  bpb_tail_minus_head=0.2899
+Final Validation BPB for base: 1.2431
+
+--- Generating Report ---
+Saved plot to out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/comparison_depth_4.png
+Saved TSV data to out/c10_monarch_structure/d4/MON_res_16_s1/depth_4/results_depth_4.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/c10_monarch_structure/d4/MON_res_16_s1
+================================================================
+OK    MON_res_16_s1
+SKIP  MON_res_32_s1 (already completed)
+
+--- MON_res_64_s1  (depth 4, V=32768, device-batch 128) ---
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sat Sep  5 09:01:24 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8F:00.0 Off |                    0 |
+| N/A   36C    P0             81W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/c10_monarch_structure/d4/MON_res_64_s1
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 190ms
+   Building nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+      Built nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+Prepared 1 package in 1.25s
+Uninstalled 1 package in 0.61ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-09-05 09:01:36,085 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:01:36,226 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:01:36,366 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Target Tokens: 121,110,528
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens 121110528 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 0 --compile-regional 0 --timing-probe-steps 0 --compile-mode default --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites both --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 0 --cond-router-act none --cond-live-init 0.0 --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qkvo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed 1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mol 0 --mol-n-blocks 5 --mol-n-shared 1 --mol-topk 3 --mol-thin-dim 256 --mol-head-dim 64 --mol-ffn-mult 4.0 --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1 --mol-capacity-factor 1.0 --mol-block-lr-scale 1.0 --mol-per-block-ve 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --mst-sub-head-dim 0 --mst-final-norm 0 --mst-per-stream-ve 0 --mst-ve-map 0 --mst-ve-map-rank 0 --mst-lm-head-dim 0 --mst-compose-windows 0 --mst-channel-mix none --mst-channel-mix-site layer --mst-distribute-block-muon 0 --mst-trans-spectral-lr 0 --mst-talking-heads 0 --mst-wo-mode block --mst-stream-topk 0 --mst-stream-shared 0 --mst-stream-router-aux 0.01 --mst-stream-router-noise 0.0 --mst-stream-dispatch 0 --mst-stream-capacity-factor 1.0 --mst-stream-gate-attn 0 --mst-ffn-monarch none --mst-shampoo 0 --mst-precond-every 10 --mst-shampoo-beta 0.95 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --use-code-head 1 --sch-head-type monarch --sch-bits 0 --sch-order 2 --sch-max-m 256 --sch-phi-mode monomial --sch-code-mode binary --sch-code-path  --sch-code-ecc-bits 0 --sch-code-seed 1234 --sch-phi-density 0.0 --sch-phi-dtype fp32 --sch-phi-normalize 1 --sch-phi-center 0 --sch-g-type linear --sch-g-hidden 0 --sch-g-layers 2 --sch-g-out-std 0.001 --sch-mixture 1 --sch-residual-rank 64 --sch-logit-act none --sch-bias 1 --sch-input-mode table --sch-input-hidden 0 --sch-product-groups 8 --sch-product-codebook 256 --sch-product-source hash --sch-product-impl dense --sch-phi-whiten 0 --sch-mixture-per-phi 0 --sch-mixture-topk 0 --sch-mixture-aux 0.01 --sch-monarch-m1 32 --sch-monarch-perm none --sch-monarch-perm-path  --sch-holdout-tokens 0 --sch-holdout-seed 7 --sch-holdout-min-id 256 --sch-holdout-mode target --sch-decile-metrics 1 --sch-rank-probe 16384 --sch-eval-steps 100 --compile --tokenizer-dir tokenizer --data-dir data --max-shards 300 --checkpoints-dir /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base --model-tag base
+2026-09-05 09:01:43,844 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:01:43,993 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:01:44,120 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-09-05 09:01:44,984 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=64, perm=none, rank_ceiling=321 | head params 3,260,416 | head FLOPs/token 19,431,424 | dense equivalent 50,331,648
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "both",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 0,
+  "cond_live_init": 0.0,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mol": false,
+  "mol_n_blocks": 5,
+  "mol_n_shared": 1,
+  "mol_topk": 3,
+  "mol_thin_dim": 256,
+  "mol_head_dim": 64,
+  "mol_ffn_mult": 4.0,
+  "mol_router_aux": 0.05,
+  "mol_routed_attn": "softmax",
+  "mol_dispatch": 1,
+  "mol_capacity_factor": 1.0,
+  "mol_block_lr_scale": 1.0,
+  "mol_per_block_ve": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "mst_sub_head_dim": 0,
+  "mst_final_norm": 0,
+  "mst_per_stream_ve": 0,
+  "mst_ve_map": 0,
+  "mst_ve_map_rank": 0,
+  "mst_lm_head_dim": 0,
+  "mst_compose_windows": 0,
+  "mst_channel_mix": "none",
+  "mst_channel_mix_site": "layer",
+  "mst_distribute_block_muon": 0,
+  "mst_trans_spectral_lr": 0,
+  "mst_talking_heads": 0,
+  "mst_wo_mode": "block",
+  "mst_stream_topk": 0,
+  "mst_stream_shared": 0,
+  "mst_stream_router_aux": 0.01,
+  "mst_stream_router_noise": 0.0,
+  "mst_stream_dispatch": 0,
+  "mst_stream_capacity_factor": 1.0,
+  "mst_stream_gate_attn": 0,
+  "mst_ffn_monarch": "none",
+  "mst_shampoo": 0,
+  "mst_precond_every": 10,
+  "mst_shampoo_beta": 0.95,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false,
+  "use_code_head": true,
+  "sch_head_type": "monarch",
+  "sch_bits": 0,
+  "sch_order": 2,
+  "sch_max_m": 256,
+  "sch_phi_mode": "monomial",
+  "sch_code_mode": "binary",
+  "sch_code_path": "",
+  "sch_code_ecc_bits": 0,
+  "sch_code_seed": 1234,
+  "sch_phi_density": 0.0,
+  "sch_phi_dtype": "fp32",
+  "sch_phi_normalize": 1,
+  "sch_phi_center": 0,
+  "sch_g_type": "linear",
+  "sch_g_hidden": 0,
+  "sch_g_layers": 2,
+  "sch_g_out_std": 0.001,
+  "sch_mixture": 1,
+  "sch_residual_rank": 64,
+  "sch_logit_act": "none",
+  "sch_bias": 1,
+  "sch_input_mode": "table",
+  "sch_input_hidden": 0,
+  "sch_product_groups": 8,
+  "sch_product_codebook": 256,
+  "sch_product_source": "hash",
+  "sch_product_impl": "dense",
+  "sch_phi_whiten": 0,
+  "sch_mixture_per_phi": 0,
+  "sch_mixture_topk": 0,
+  "sch_mixture_aux": 0.01,
+  "sch_monarch_m1": 32,
+  "sch_monarch_perm": "none",
+  "sch_monarch_perm_path": ""
+}
+Seeded weight init with --seed 1
+Checkpoints directory: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=False, broadcast_buffers=False)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 3,260,416
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 31,572,104
+Estimated FLOPs per token (total):  4.695731e+07
+Estimated FLOPs per token (active): 4.695731e+07
+Estimated active params:            31,572,104
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=64, perm=none, rank_ceiling=321 | head params 3,260,416 | head FLOPs/token 19,431,424 | dense equivalent 50,331,648
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.155689 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 18.90
+Total training FLOPs estimate: 5.687025e+15
+Total training FLOPs (active):  5.687025e+15
+Total active training FLOPs estimate: 5.687025e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0905 09:01:45.522000 13614 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+Warmup complete. Steady-state VRAM: 1.5 GB allocated
+step 00000/00462 (0.00%) | loss: 10.437235 | lrm: 0.50 | lr(adamw:2.755e-01, muon:7.071e-03) | dt: 235.29ms | tok/sec: 1,114,136 | bf16_mfu: 5.29 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-09-05 09:02:41,530 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/model_000200.pt
+2026-09-05 09:02:41,534 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/meta_000200.json
+2026-09-05 09:02:41,798 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/optim_000200_rank0.pt
+step 00200/00462 (43.29%) | loss: 4.453090 | lrm: 0.88 | lr(adamw:4.847e-01, muon:1.244e-02) | dt: 172.39ms | tok/sec: 1,520,628 | bf16_mfu: 7.22 | epoch: 1 pq: 1 rg: 17 | total time: 0.45m | eta: 0.6m
+2026-09-05 09:03:09,507 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/model_000400.pt
+2026-09-05 09:03:09,510 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/meta_000400.json
+2026-09-05 09:03:09,756 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/00462 (86.58%) | loss: 4.024671 | lrm: 0.25 | lr(adamw:1.357e-01, muon:3.484e-03) | dt: 141.86ms | tok/sec: 1,847,884 | bf16_mfu: 8.77 | epoch: 1 pq: 2 rg: 30 | total time: 0.91m | eta: 0.1m
+step 00461/00462 (99.78%) | loss: 3.968649 | lrm: 0.05 | lr(adamw:2.930e-02, muon:7.519e-04) | dt: 135.15ms | tok/sec: 1,939,721 | bf16_mfu: 9.21 | epoch: 1 pq: 2 rg: 59 | total time: 1.05m | eta: 0.0m
+Step 00462 | Validation bpb: 1.209690 | val_loss: 3.968001
+<|bos|>The capital of France is a country of the world's largest city in the world. The capital of France
+<|bos|>The chemical symbol of gold is a symbol of the purity of the gold. The gold is a symbol of purity
+<|bos|>If yesterday was Friday, then tomorrow will be the first time to get the first time to get the first time to get the
+<|bos|>The opposite of hot is the fact that the hot is the fact that the hot is the fact that the
+<|bos|>The planets of the solar system are: the solar system, the solar system, the solar system, the solar system,
+<|bos|>My favorite color is the color of the color of the color of the color of the color of the
+<|bos|>If 5*x + 3 = 13, then x is 3 = 13, then x is 3 = 13, then
+2026-09-05 09:03:54,321 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/model_000462.pt
+2026-09-05 09:03:54,324 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/meta_000462.json
+2026-09-05 09:03:54,571 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 3.968649 | early_stop: 0
+Peak memory usage: 44623.96MiB
+Total training time: 1.05m
+Minimum validation bpb: 1.209690
+Minimum validation loss (nats/byte): 3.968001
+[SCH] run_tag=base  phi_width_M=256  rank_ceiling=321  rank_effective_rank=257  val_bpb=1.2097  bpb_tail_minus_head=0.2369
+Final Validation BPB for base: 1.2097
+
+--- Generating Report ---
+Saved plot to out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/comparison_depth_4.png
+Saved TSV data to out/c10_monarch_structure/d4/MON_res_64_s1/depth_4/results_depth_4.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/c10_monarch_structure/d4/MON_res_64_s1
+================================================================
+OK    MON_res_64_s1
+
+--- MON_res_128_s1  (depth 4, V=32768, device-batch 128) ---
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sat Sep  5 09:04:37 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8F:00.0 Off |                    0 |
+| N/A   38C    P0             81W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/c10_monarch_structure/d4/MON_res_128_s1
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 112ms
+   Building nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+      Built nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+Prepared 1 package in 1.23s
+Uninstalled 1 package in 0.70ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-09-05 09:04:48,024 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:04:48,163 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:04:48,311 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Target Tokens: 121,110,528
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens 121110528 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 0 --compile-regional 0 --timing-probe-steps 0 --compile-mode default --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites both --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 0 --cond-router-act none --cond-live-init 0.0 --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qkvo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed 1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mol 0 --mol-n-blocks 5 --mol-n-shared 1 --mol-topk 3 --mol-thin-dim 256 --mol-head-dim 64 --mol-ffn-mult 4.0 --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1 --mol-capacity-factor 1.0 --mol-block-lr-scale 1.0 --mol-per-block-ve 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --mst-sub-head-dim 0 --mst-final-norm 0 --mst-per-stream-ve 0 --mst-ve-map 0 --mst-ve-map-rank 0 --mst-lm-head-dim 0 --mst-compose-windows 0 --mst-channel-mix none --mst-channel-mix-site layer --mst-distribute-block-muon 0 --mst-trans-spectral-lr 0 --mst-talking-heads 0 --mst-wo-mode block --mst-stream-topk 0 --mst-stream-shared 0 --mst-stream-router-aux 0.01 --mst-stream-router-noise 0.0 --mst-stream-dispatch 0 --mst-stream-capacity-factor 1.0 --mst-stream-gate-attn 0 --mst-ffn-monarch none --mst-shampoo 0 --mst-precond-every 10 --mst-shampoo-beta 0.95 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --use-code-head 1 --sch-head-type monarch --sch-bits 0 --sch-order 2 --sch-max-m 256 --sch-phi-mode monomial --sch-code-mode binary --sch-code-path  --sch-code-ecc-bits 0 --sch-code-seed 1234 --sch-phi-density 0.0 --sch-phi-dtype fp32 --sch-phi-normalize 1 --sch-phi-center 0 --sch-g-type linear --sch-g-hidden 0 --sch-g-layers 2 --sch-g-out-std 0.001 --sch-mixture 1 --sch-residual-rank 128 --sch-logit-act none --sch-bias 1 --sch-input-mode table --sch-input-hidden 0 --sch-product-groups 8 --sch-product-codebook 256 --sch-product-source hash --sch-product-impl dense --sch-phi-whiten 0 --sch-mixture-per-phi 0 --sch-mixture-topk 0 --sch-mixture-aux 0.01 --sch-monarch-m1 32 --sch-monarch-perm none --sch-monarch-perm-path  --sch-holdout-tokens 0 --sch-holdout-seed 7 --sch-holdout-min-id 256 --sch-holdout-mode target --sch-decile-metrics 1 --sch-rank-probe 16384 --sch-eval-steps 100 --compile --tokenizer-dir tokenizer --data-dir data --max-shards 300 --checkpoints-dir /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base --model-tag base
+2026-09-05 09:04:55,670 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:04:55,806 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:04:55,979 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-09-05 09:04:56,880 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=128, perm=none, rank_ceiling=385 | head params 5,373,952 | head FLOPs/token 32,112,640 | dense equivalent 50,331,648
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "both",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 0,
+  "cond_live_init": 0.0,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mol": false,
+  "mol_n_blocks": 5,
+  "mol_n_shared": 1,
+  "mol_topk": 3,
+  "mol_thin_dim": 256,
+  "mol_head_dim": 64,
+  "mol_ffn_mult": 4.0,
+  "mol_router_aux": 0.05,
+  "mol_routed_attn": "softmax",
+  "mol_dispatch": 1,
+  "mol_capacity_factor": 1.0,
+  "mol_block_lr_scale": 1.0,
+  "mol_per_block_ve": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "mst_sub_head_dim": 0,
+  "mst_final_norm": 0,
+  "mst_per_stream_ve": 0,
+  "mst_ve_map": 0,
+  "mst_ve_map_rank": 0,
+  "mst_lm_head_dim": 0,
+  "mst_compose_windows": 0,
+  "mst_channel_mix": "none",
+  "mst_channel_mix_site": "layer",
+  "mst_distribute_block_muon": 0,
+  "mst_trans_spectral_lr": 0,
+  "mst_talking_heads": 0,
+  "mst_wo_mode": "block",
+  "mst_stream_topk": 0,
+  "mst_stream_shared": 0,
+  "mst_stream_router_aux": 0.01,
+  "mst_stream_router_noise": 0.0,
+  "mst_stream_dispatch": 0,
+  "mst_stream_capacity_factor": 1.0,
+  "mst_stream_gate_attn": 0,
+  "mst_ffn_monarch": "none",
+  "mst_shampoo": 0,
+  "mst_precond_every": 10,
+  "mst_shampoo_beta": 0.95,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false,
+  "use_code_head": true,
+  "sch_head_type": "monarch",
+  "sch_bits": 0,
+  "sch_order": 2,
+  "sch_max_m": 256,
+  "sch_phi_mode": "monomial",
+  "sch_code_mode": "binary",
+  "sch_code_path": "",
+  "sch_code_ecc_bits": 0,
+  "sch_code_seed": 1234,
+  "sch_phi_density": 0.0,
+  "sch_phi_dtype": "fp32",
+  "sch_phi_normalize": 1,
+  "sch_phi_center": 0,
+  "sch_g_type": "linear",
+  "sch_g_hidden": 0,
+  "sch_g_layers": 2,
+  "sch_g_out_std": 0.001,
+  "sch_mixture": 1,
+  "sch_residual_rank": 128,
+  "sch_logit_act": "none",
+  "sch_bias": 1,
+  "sch_input_mode": "table",
+  "sch_input_hidden": 0,
+  "sch_product_groups": 8,
+  "sch_product_codebook": 256,
+  "sch_product_source": "hash",
+  "sch_product_impl": "dense",
+  "sch_phi_whiten": 0,
+  "sch_mixture_per_phi": 0,
+  "sch_mixture_topk": 0,
+  "sch_mixture_aux": 0.01,
+  "sch_monarch_m1": 32,
+  "sch_monarch_perm": "none",
+  "sch_monarch_perm_path": ""
+}
+Seeded weight init with --seed 1
+Checkpoints directory: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=False, broadcast_buffers=False)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 5,373,952
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 33,685,640
+Estimated FLOPs per token (total):  5.963853e+07
+Estimated FLOPs per token (active): 5.963853e+07
+Estimated active params:            33,685,640
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=128, perm=none, rank_ceiling=385 | head params 5,373,952 | head FLOPs/token 32,112,640 | dense equivalent 50,331,648
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.181603 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 14.22
+Total training FLOPs estimate: 7.222854e+15
+Total training FLOPs (active):  7.222854e+15
+Total active training FLOPs estimate: 7.222854e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0905 09:04:57.424000 25747 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+Warmup complete. Steady-state VRAM: 1.5 GB allocated
+step 00000/00462 (0.00%) | loss: 10.404250 | lrm: 0.50 | lr(adamw:2.755e-01, muon:7.071e-03) | dt: 175.10ms | tok/sec: 1,497,095 | bf16_mfu: 9.03 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-09-05 09:05:53,029 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/model_000200.pt
+2026-09-05 09:05:53,033 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/meta_000200.json
+2026-09-05 09:05:53,322 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/optim_000200_rank0.pt
+step 00200/00462 (43.29%) | loss: 4.283720 | lrm: 0.88 | lr(adamw:4.847e-01, muon:1.244e-02) | dt: 151.35ms | tok/sec: 1,732,032 | bf16_mfu: 10.44 | epoch: 1 pq: 1 rg: 17 | total time: 0.45m | eta: 0.6m
+2026-09-05 09:06:20,937 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/model_000400.pt
+2026-09-05 09:06:20,940 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/meta_000400.json
+2026-09-05 09:06:21,277 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/00462 (86.58%) | loss: 3.912671 | lrm: 0.25 | lr(adamw:1.357e-01, muon:3.484e-03) | dt: 152.75ms | tok/sec: 1,716,131 | bf16_mfu: 10.35 | epoch: 1 pq: 2 rg: 30 | total time: 0.90m | eta: 0.1m
+step 00461/00462 (99.78%) | loss: 3.858281 | lrm: 0.05 | lr(adamw:2.930e-02, muon:7.519e-04) | dt: 141.41ms | tok/sec: 1,853,835 | bf16_mfu: 11.18 | epoch: 1 pq: 2 rg: 59 | total time: 1.05m | eta: 0.0m
+Step 00462 | Validation bpb: 1.175721 | val_loss: 3.856576
+<|bos|>The capital of France is the capital of France, the capital of France, the capital of France, the
+<|bos|>The chemical symbol of gold is the symbol of gold, gold, and gold. The gold is the symbol of
+<|bos|>If yesterday was Friday, then tomorrow will be the first time you can see the first time you can see the first time you
+<|bos|>The opposite of hot is the same as the hot, cold, cold, cold, cold, cold,
+<|bos|>The planets of the solar system are: the solar system is the solar system. The solar system is the solar system.
+<|bos|>My favorite color is the color of the color of the color of the color of the color of the
+<|bos|>If 5*x + 3 = 13, then x is 1.5x + 3 = 13, then x is 
+2026-09-05 09:07:07,004 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/model_000462.pt
+2026-09-05 09:07:07,008 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/meta_000462.json
+2026-09-05 09:07:07,283 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 3.858281 | early_stop: 0
+Peak memory usage: 44707.37MiB
+Total training time: 1.05m
+Minimum validation bpb: 1.175721
+Minimum validation loss (nats/byte): 3.856576
+[SCH] run_tag=base  phi_width_M=256  rank_ceiling=385  rank_effective_rank=257  val_bpb=1.1757  bpb_tail_minus_head=0.2196
+Final Validation BPB for base: 1.1757
+
+--- Generating Report ---
+Saved plot to out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/comparison_depth_4.png
+Saved TSV data to out/c10_monarch_structure/d4/MON_res_128_s1/depth_4/results_depth_4.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/c10_monarch_structure/d4/MON_res_128_s1
+================================================================
+OK    MON_res_128_s1
+
+--- MON_perm_random_res_128_s1  (depth 4, V=32768, device-batch 128) ---
+Requested NPROC_PER_NODE=8, but only 1 GPU(s) visible. Capping.
+Using NPROC_PER_NODE=1
+NANOCHAT_SKIP_ENV_SETUP=0
+===== GPU Info =====
+Sat Sep  5 09:07:50 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:8F:00.0 Off |                    0 |
+| N/A   38C    P0             81W /  700W |       4MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Research Sweep. Output directory: out/c10_monarch_structure/d4/MON_perm_random_res_128_s1
+UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation.
+Validating system environment dependencies via uv...
+Using Python 3.12.10 environment at: /usr/local
+Resolved 159 packages in 160ms
+   Building nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+      Built nanochat @ file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID
+Prepared 1 package in 1.26s
+Uninstalled 1 package in 1ms
+Installed 1 package in 1ms
+ ~ nanochat==0.1.0 (from file:///__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID)
+Reset report and wrote header to out/report/header.md
+Dataset (up to 300 shards) already exists in data, skipping download.
+Tokenizer already exists in tokenizer, skipping training.
+================================================================
+Processing Depth: 4
+================================================================
+2026-09-05 09:08:01,079 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:08:01,223 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:08:01,460 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+[sweep] Requested 8 DDP workers but only 1 GPU(s) available — using 1.
+================================================================
+Starting Sweep for Depth 4
+Target Tokens: 121,110,528
+================================================================
+  Overriding default target_dim (128) with full model_dim 256
+
+--- Training base ---
+
+  ┌─────────────────────────────────────────────────────┐
+  │  🆕  STARTING FRESH: [base]
+  │     No checkpoints found — training from scratch.
+  └─────────────────────────────────────────────────────┘
+
+Running: /usr/local/bin/torchrun --standalone --nproc_per_node=1 -m scripts.base_train --depth 4 --aspect-ratio 64 --head-dim 128 --model-dim 256 --max-seq-len 2048 --device-batch-size 128 --total-batch-size 262144 --target-tokens 121110528 --eval-every -1 --log-every 200 --core-metric-every 0 --save-every 200 --warmup-ratio 0.005 --warmdown-ratio 0.65 --final-lr-frac 0.05 --adam-beta2 0.99 --research-warmup-ratio 0.05 --use-onecycle 0 --router-context-window -1 --remix-use-basis-gate 1 --remix-use-output-gate 1 --remix-use-context 1 --remix-basis-gate-mode mlp --remix-gate-lr-scale 0.3 --p22-n-templates 1 --p22-template-routing-learned 0 --p22-template-topk 0 --p22-attn-moe-route none --p26-output-gated-linear 0 --p28-shared-basis 0 --p28-chunk-routing-size 0 --p28-global-template-bank none --p28-attn-proj-templates 0 --p28-attn-qk-templates 0 --p31-chunk-route-impl compose --p31-top1-gate ones --p31-template-delta-rank 0 --p31-route-side output --p31-drop-basis-proj 0 --p31-basis-side-templates 0 --remix-template-block-diag 0 --remix-template-lr-scale 1.0 --p29-grad-equalize 0 --target-active-params 0 --compile-regional 0 --timing-probe-steps 0 --compile-mode default --remix-basis-gate-rank 8 --cclblock-modulation weight --cclblock-orth-lambda 0.0 --p35-template-diversity-lambda 0.0 --cclblock-context-stream local --cclblock-ema-factor 0.99 --cclblock-stale-ctx-lag 0 --cclblock-sparse-gate-k 0 --cclblock-gate-temperature 1.0 --cclblock-context-bank-size 0 --cclblock-per-head-ctx 0 --cclblock-context-source norm_x --cclblock-chunk-size 0 --cclblock-aux-objective none --cclblock-aux-lambda 0.1 --cclblock-boundary-token-id 198 --use-ral 0 --ral-rank 32 --p34-ffn-schedule  --p34-ffn-no-ffn-replacement none --p34-ffn-last-depth 1 --p36-swiglu-ffn 0 --p36-swiglu-mult 2.6666666666666665 --cond-sites both --p22-route-affine 0 --cond-rank 256 --cond-mult-steps 0 --cond-gate-source router --cond-coeff-act centered --cond-router-rank 0 --cond-router-act none --cond-live-init 0.0 --cond-chunk-size 0 --cond-mult-scale -1.0 --cond-mult-impl wy --cond-attn-projs qkvo --cond-layer-frac 1.0 --cclblock-film-gate 0 --cclblock-attn-shadow-dim 0 --cclblock-dynamic-ratio 0.25 --cclblock-gate-rank 8 --cclblock-num-regimes 8 --cclblock-regime-temperature 1.0 --cclblock-poly-order 2 --cclblock-lie-generators 4 --cclblock-grassmann-bank-size 4 --cclblock-tucker-rank 32 --cclblock-tucker-modes 8 --cclblock-svs-rank 64 --cclblock-svs-eps 0.1 --cclblock-vq-codes 8 --cclblock-vq-temperature 1.0 --cclblock-dcu-warmup-steps 0 --cclblock-fsi-rotations 8 --cclblock-fsi-selector-dim 64 --cclblock-aesp-strata 4 --cclblock-aesp-delta-rank 4 --cclblock-ckr-branches 4 --cclblock-ckr-kernel-size 64 --cclblock-ckr-pos-channels 1 --cclblock-ckr-dual-optim 0 --cclblock-ckr-content-bias 0.0 --cclblock-giad-rank 32 --cclblock-psg-kernel-size 64 --cclblock-ss-dynamic-ratio 0.25 --cclblock-ss-branches 2 --cclblock-ss-kernel-size 64 --cclblock-lokr-branches 8 --cclblock-lokr-rank 16 --cclblock-ckr-temp-start 2.0 --cclblock-ckr-temp-end 0.3 --cclblock-com-kernel-size 32 --cclblock-ckr-ortho-init 0 --cclblock-ckr-branch-dropout 0.0 --cclblock-ckr-diversity-lambda 0.0 --cclblock-pgr-kernel-size 64 --cclblock-cil-kernel-size 64 --cclblock-prb-kernel-size 64 --p18-layer-drop 0.0 --p18-dynamic-activation 0 --p18-mixture-norm 0 --p18-aux-sim-lambda 0.0 --p18-gradient-penalty 0.0 --p18-per-channel-scale 0 --p19-residual-gate 0 --p19-head-importance 0 --p19-residual-mix-groups 0 --p19-attn-logit-bias 0 --p19-residual-decay 0 --p19-grad-equilibrium 0.0 --p19-spectral-reparam 0 --p19-weight-anticollapse 0.0 --p19-ve-bias 0 --p19-weight-noise 0.0 --p20-hrcs-scale 0 --p20-lswr-scale 0 --p20-lswr-planes 8 --p20-lrcfb-branches 0 --p20-lrcfb-narrow 0 --p20-lrcfb-learned 0 --p20-lrcfb-topk 0 --p20-dgcr-branches 0 --p20-dgcr-aux-weight 0.01 --p20-mone-experts 0 --p20-mone-topk 0 --p20-mone-narrow 1 --p20-mone-frozen 0 --p20-ncea-branches 0 --p20-ncea-eps 0.1 --p20-adwi 0 --p20-pwu-branches 0 --p20-pwu-phase 1 --p20-fsvd-gate 0 --p20-wbfc-clusters 0 --p20-wbfc-active 0 --p21-per-experts 0 --p21-per-topk 0 --p21-per-learned 0 --p21-per-attn 0 --p23-tiny-expert 0 --p23-n-experts 64 --p23-topk 16 --p23-learned-route 0 --p23-std-moe-experts 0 --p23-std-moe-topk -1 --p23-std-moe-aux-weight 0.01 --p23-lokr 0 --p23-lokr-rank 4 --p23-use-shared-block-router 0 --p23-linear-moe-experts 0 --p23-linear-moe-topk 0 --p23-quantile-route 0 --seed 1 --p34-ffn-mult 4.0 --p34-ffn-single 0 --p34-dense-attn 0 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --p24-folded-mod-min-dim 128 --remix-shared-context-gates 0 --remix-use-dual-gate 0 --remix-basis-scale-factor 4 --remix-output-gate-rank 16 --p24-use-sliced-weight 0 --p24-sliced-weight-reduction-scale 8 --p24-sliced-weight-min-select 128 --p24-sliced-weight-scope per_token --p24-sliced-weight-balance-coeff 0.01 --p24-quantile-route 0 --p24-use-folded-mod 0 --p24-folded-mod-reduction-scale 8 --p24-folded-mod-scope per_layer --p24-folded-mod-gate-act tanh_centered --p24-use-sequence-gated-linear 0 --p24-sequence-gated-scope per_layer --p24-sequence-gated-act tanh_centered --remix-disable-ln-basis 0 --dense-intermediate-ln 0 --use-mol 0 --mol-n-blocks 5 --mol-n-shared 1 --mol-topk 3 --mol-thin-dim 256 --mol-head-dim 64 --mol-ffn-mult 4.0 --mol-router-aux 0.05 --mol-routed-attn softmax --mol-dispatch 1 --mol-capacity-factor 1.0 --mol-block-lr-scale 1.0 --mol-per-block-ve 0 --use-mst 0 --mst-n-subs 8 --mst-sub-dim 64 --mst-head-dim 0 --mst-input-mode fixed_slice --mst-rotated-slice-learned 0 --mst-routing-mode soft_weighted --mst-routing-topk 4 --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 --mst-ffn-mode standard --mst-transition-mode parallel --mst-final-mode aggregate_proj --mst-final-topk -1 --mst-ffn-shared-up 0 --mst-ffn-inner-dim 0 --mst-sub-dropout 0.0 --mst-transition-every 1 --mst-ffa-temperature 1.0 --mst-global-residual 0 --mst-hybrid-dense 0 --mst-cross-sub-kv 0 --mst-sub-aux-weight 0.0 --mst-progressive-merge 0 --mst-multi-scale-windows 0 --mst-delta-residual 0 --mst-sub-layers 1 --mst-grad-equalize 0 --mst-block-diagonal-muon 0 --mst-transition-width-mult 1.0 --mst-sub-lr-scale 1.0 --mst-shared-expert 0 --mst-router-entropy-weight 0.0 --mst-shared-kv-attn 0 --mst-contrastive-diversity-weight 0.0 --mst-transition-nonlinear 0 --mst-transition-gated 0 --mst-transition-mlp 0 --mst-cross-sub-gate 0 --mst-hyper-connect 0 --mst-cross-kv-inject 0 --mst-slice-transition 0 --mst-lookback-layers 0 --mst-bilinear-transition 0 --mst-cross-sub-qmod 0 --mst-feature-cycle 0 --mst-mean-transition 0 --mst-sub-head-dim 0 --mst-final-norm 0 --mst-per-stream-ve 0 --mst-ve-map 0 --mst-ve-map-rank 0 --mst-lm-head-dim 0 --mst-compose-windows 0 --mst-channel-mix none --mst-channel-mix-site layer --mst-distribute-block-muon 0 --mst-trans-spectral-lr 0 --mst-talking-heads 0 --mst-wo-mode block --mst-stream-topk 0 --mst-stream-shared 0 --mst-stream-router-aux 0.01 --mst-stream-router-noise 0.0 --mst-stream-dispatch 0 --mst-stream-capacity-factor 1.0 --mst-stream-gate-attn 0 --mst-ffn-monarch none --mst-shampoo 0 --mst-precond-every 10 --mst-shampoo-beta 0.95 --use-eet 0 --eet-frozen-kv 1 --eet-reenter-final 0 --eet-compute-skip 0 --eet-target-active-frac 0.125 --eet-capacity-schedule bell --eet-exit-fracs  --eet-router-type mlp2 --eet-router-hidden 0 --eet-freq-prior-alpha 0.0 --eet-pos-prior-beta 0.0 --eet-domain-prior 0 --eet-warmup-frac 0.02 --eet-explore-frac 0.15 --eet-reconstruct-lambda 1.0 --eet-efficiency-lambda-start 0.01 --eet-efficiency-lambda-end 0.1 --eet-translator-rank 0 --eet-max-frozen-kv-frac 0.75 --eet-exit-threshold 0.5 --eet-min-exit-layer 1 --eet-loss-variant reconstruct --eet-topk-vocab 512 --eet-entropy-lambda 0.3 --eet-surprise-lambda 0.1 --eet-adv-lambda 1.0 --eet-adv-entropy-lambda 0.2 --eet-quality-lambda 1.0 --eet-quality-entropy-bonus 0.1 --eet-gumbel-temp-start 0.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 --eet-commitment-beta 0.1 --eet-global-router 0 --eet-freq-efficiency-alpha 0.0 --eet-diversity-lambda 0.0 --eet-ce-guided-lambda 1.0 --eet-router-lr-mult 5.0 --eet-model-lr-mult 1.0 --eet-depth-weight-type none --eet-depth-weight-max 2.5 --eet-use-override 0 --eet-override-prob-start 0.5 --eet-override-prob-end 0.1 --eet-capacity-alignment-lambda 0.0 --eet-router-task-grad 1 --eet-reinforce-interval 0 --eet-reinforce-lambda 0.1 --eet-exit-adapter-rank 0 --eet-router-after-block 0 --eet-ffn-skip 0 --eet-ffn-target-frac 0.5 --eet-ffn-full-attn 1 --eet-depth-affine 0 --eet-capacity-anneal-frac 0.0 --eet-learned-schedule 0 --eet-departure-summary 0 --eet-route-consistency-lambda 0.0 --eet-dense-distill-interval 0 --eet-dense-distill-lambda 0.5 --eet-depth-lr-scale 0 --eet-depth-grad-scale 0 --eet-detach-aux-from-backbone 0 --eet-detach-exit-from-backbone 0 --use-code-head 1 --sch-head-type monarch --sch-bits 0 --sch-order 2 --sch-max-m 256 --sch-phi-mode monomial --sch-code-mode binary --sch-code-path  --sch-code-ecc-bits 0 --sch-code-seed 1234 --sch-phi-density 0.0 --sch-phi-dtype fp32 --sch-phi-normalize 1 --sch-phi-center 0 --sch-g-type linear --sch-g-hidden 0 --sch-g-layers 2 --sch-g-out-std 0.001 --sch-mixture 1 --sch-residual-rank 128 --sch-logit-act none --sch-bias 1 --sch-input-mode table --sch-input-hidden 0 --sch-product-groups 8 --sch-product-codebook 256 --sch-product-source hash --sch-product-impl dense --sch-phi-whiten 0 --sch-mixture-per-phi 0 --sch-mixture-topk 0 --sch-mixture-aux 0.01 --sch-monarch-m1 32 --sch-monarch-perm random --sch-monarch-perm-path  --sch-holdout-tokens 0 --sch-holdout-seed 7 --sch-holdout-min-id 256 --sch-holdout-mode target --sch-decile-metrics 1 --sch-rank-probe 16384 --sch-eval-steps 100 --compile --tokenizer-dir tokenizer --data-dir data --max-shards 300 --checkpoints-dir /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base --model-tag base
+2026-09-05 09:08:08,915 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+2026-09-05 09:08:09,060 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-09-05 09:08:09,202 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-09-05 09:08:10,269 - nanochat.common - INFO - Distributed world size: 1
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=128, perm=random, rank_ceiling=385 | head params 5,373,952 | head FLOPs/token 32,112,640 | dense equivalent 50,331,648
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 4,
+  "n_head": 2,
+  "n_kv_head": 2,
+  "n_embd": 256,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "both",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 0,
+  "cond_live_init": 0.0,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "SSSL",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mol": false,
+  "mol_n_blocks": 5,
+  "mol_n_shared": 1,
+  "mol_topk": 3,
+  "mol_thin_dim": 256,
+  "mol_head_dim": 64,
+  "mol_ffn_mult": 4.0,
+  "mol_router_aux": 0.05,
+  "mol_routed_attn": "softmax",
+  "mol_dispatch": 1,
+  "mol_capacity_factor": 1.0,
+  "mol_block_lr_scale": 1.0,
+  "mol_per_block_ve": 0,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "mst_sub_head_dim": 0,
+  "mst_final_norm": 0,
+  "mst_per_stream_ve": 0,
+  "mst_ve_map": 0,
+  "mst_ve_map_rank": 0,
+  "mst_lm_head_dim": 0,
+  "mst_compose_windows": 0,
+  "mst_channel_mix": "none",
+  "mst_channel_mix_site": "layer",
+  "mst_distribute_block_muon": 0,
+  "mst_trans_spectral_lr": 0,
+  "mst_talking_heads": 0,
+  "mst_wo_mode": "block",
+  "mst_stream_topk": 0,
+  "mst_stream_shared": 0,
+  "mst_stream_router_aux": 0.01,
+  "mst_stream_router_noise": 0.0,
+  "mst_stream_dispatch": 0,
+  "mst_stream_capacity_factor": 1.0,
+  "mst_stream_gate_attn": 0,
+  "mst_ffn_monarch": "none",
+  "mst_shampoo": 0,
+  "mst_precond_every": 10,
+  "mst_shampoo_beta": 0.95,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false,
+  "use_code_head": true,
+  "sch_head_type": "monarch",
+  "sch_bits": 0,
+  "sch_order": 2,
+  "sch_max_m": 256,
+  "sch_phi_mode": "monomial",
+  "sch_code_mode": "binary",
+  "sch_code_path": "",
+  "sch_code_ecc_bits": 0,
+  "sch_code_seed": 1234,
+  "sch_phi_density": 0.0,
+  "sch_phi_dtype": "fp32",
+  "sch_phi_normalize": 1,
+  "sch_phi_center": 0,
+  "sch_g_type": "linear",
+  "sch_g_hidden": 0,
+  "sch_g_layers": 2,
+  "sch_g_out_std": 0.001,
+  "sch_mixture": 1,
+  "sch_residual_rank": 128,
+  "sch_logit_act": "none",
+  "sch_bias": 1,
+  "sch_input_mode": "table",
+  "sch_input_hidden": 0,
+  "sch_product_groups": 8,
+  "sch_product_codebook": 256,
+  "sch_product_source": "hash",
+  "sch_product_impl": "dense",
+  "sch_phi_whiten": 0,
+  "sch_mixture_per_phi": 0,
+  "sch_mixture_topk": 0,
+  "sch_mixture_aux": 0.01,
+  "sch_monarch_m1": 32,
+  "sch_monarch_perm": "random",
+  "sch_monarch_perm_path": ""
+}
+Seeded weight init with --seed 1
+Checkpoints directory: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base
+✓ Wrapping model with DistributedDataParallel (rank 0, find_unused_parameters=False, broadcast_buffers=False)
+Parameter counts:
+wte                     : 8,388,608
+wpe                     : 0
+value_embeds            : 16,777,216
+lm_head                 : 5,373,952
+transformer_matrices    : 3,145,856
+research                : 0
+scalars                 : 8
+total                   : 33,685,640
+Estimated FLOPs per token (total):  5.963853e+07
+Estimated FLOPs per token (active): 5.963853e+07
+Estimated active params:            33,685,640
+[SCH] head=monarch V=32768, M=256, m1=32, m2=8, block_out=4096, residual_rank=128, perm=random, rank_ceiling=385 | head params 5,373,952 | head FLOPs/token 32,112,640 | dense equivalent 50,331,648
+Scaling LRs by 0.7071 for batch size 262,144 (reference: 524,288)
+Scaling weight decay from 0.200000 to 0.181603 for depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+Calculated number of iterations from target data:param ratio: 462
+Total number of training tokens: 121,110,528
+Tokens : Scaling params ratio: 14.22
+Total training FLOPs estimate: 7.222854e+15
+Total training FLOPs (active):  7.222854e+15
+Total active training FLOPs estimate: 7.222854e+15
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 128 x 2048 = 262,144
+Tokens / micro-batch: 262,144
+Total batch size 262,144 => gradient accumulation steps: 1
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+[rank0]:W0905 09:08:10.857000 37875 site-packages/torch/_logging/_internal.py:1199] [0/0] Profiler function <class 'torch.autograd.profiler.record_function'> will be ignored
+Warmup complete. Steady-state VRAM: 1.5 GB allocated
+step 00000/00462 (0.00%) | loss: 10.398149 | lrm: 0.50 | lr(adamw:2.755e-01, muon:7.071e-03) | dt: 180.44ms | tok/sec: 1,452,800 | bf16_mfu: 8.76 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+2026-09-05 09:08:58,565 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/model_000200.pt
+2026-09-05 09:08:58,568 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/meta_000200.json
+2026-09-05 09:08:58,848 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/optim_000200_rank0.pt
+step 00200/00462 (43.29%) | loss: 4.312370 | lrm: 0.88 | lr(adamw:4.847e-01, muon:1.244e-02) | dt: 147.40ms | tok/sec: 1,778,477 | bf16_mfu: 10.72 | epoch: 1 pq: 1 rg: 17 | total time: 0.43m | eta: 0.6m
+2026-09-05 09:09:25,667 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/model_000400.pt
+2026-09-05 09:09:25,671 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/meta_000400.json
+2026-09-05 09:09:25,988 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/optim_000400_rank0.pt
+Removed previous periodic checkpoint at step 000200
+step 00400/00462 (86.58%) | loss: 3.913926 | lrm: 0.25 | lr(adamw:1.357e-01, muon:3.484e-03) | dt: 146.59ms | tok/sec: 1,788,321 | bf16_mfu: 10.78 | epoch: 1 pq: 2 rg: 30 | total time: 0.88m | eta: 0.1m
+step 00461/00462 (99.78%) | loss: 3.859690 | lrm: 0.05 | lr(adamw:2.930e-02, muon:7.519e-04) | dt: 136.30ms | tok/sec: 1,923,292 | bf16_mfu: 11.60 | epoch: 1 pq: 2 rg: 59 | total time: 1.02m | eta: 0.0m
+Step 00462 | Validation bpb: 1.175977 | val_loss: 3.857415
+<|bos|>The capital of France is a capital of the world's largest capital of the world. The capital of the
+<|bos|>The chemical symbol of gold is the most common element of the earth's crust. The most common element of the
+<|bos|>If yesterday was Friday, then tomorrow will be a good time to get a good idea of what you're doing. The first
+<|bos|>The opposite of hot is the opposite of hot, hot, and cold. The hot is the opposite of
+<|bos|>The planets of the solar system are: the planets of the planet, and the planets of the planet are the planets of
+<|bos|>My favorite color is the red, blue, and blue. I have a blue, blue, and
+<|bos|>If 5*x + 3 = 13, then x is the number of 5*x + 3 = 13, then x
+2026-09-05 09:10:14,478 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/model_000462.pt
+2026-09-05 09:10:14,481 - nanochat.checkpoint_manager - INFO - Saved metadata to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/meta_000462.json
+2026-09-05 09:10:14,762 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /__modal/volumes/vo-13RUizLCQ1jl7rp7QY0sID/out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/ckpt_base/base/optim_000462_rank0.pt
+step 00462/00462 (final) | loss: 3.859690 | early_stop: 0
+Peak memory usage: 44711.62MiB
+Total training time: 1.02m
+Minimum validation bpb: 1.175977
+Minimum validation loss (nats/byte): 3.857415
+[SCH] run_tag=base  phi_width_M=256  rank_ceiling=385  rank_effective_rank=257  val_bpb=1.1760  bpb_tail_minus_head=0.2177
+Final Validation BPB for base: 1.1760
+
+--- Generating Report ---
+Saved plot to out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/comparison_depth_4.png
+Saved TSV data to out/c10_monarch_structure/d4/MON_perm_random_res_128_s1/depth_4/results_depth_4.tsv
+Generating report to out/report/report.md
+Copying report.md to current directory for convenience
+================================================================
+Sweep Complete! Results saved to out/c10_monarch_structure/d4/MON_perm_random_res_128_s1
+================================================================
+OK    MON_perm_random_res_128_s1
+
+============================================================
+  C10 complete.
+
+    python -m scripts.sweep_report out/c10_monarch_structure/d<DEPTH>
+
+  READ IT AGAINST MON_base, NOT AGAINST DENSE. Both moves are about
+  per-block capacity, and MON_base is the arm that has neither.
+
+  Q12 arms cost exactly the same FLOPs as MON_base, so any bpb they buy is
+  free Pareto movement. Check MON_perm_random FIRST: if it moves as much as
+  freq or file, coherence is not the mechanism and the result is about
+  something else.
+
+  Q13 arms cost more, so compare against the break-even in the header:
+    r=16  +0.0299    r=32  +0.0289    r=64  +0.0270
+  and against the equal-cost m1 (144 / 160 / 192), whose projected gain is
+  0.0032 / 0.0063 / 0.0108 bpb. A residual that buys less than the m1 it
+  displaces means shared directions are worth less than private ones, and
+  the answer to depth 12 is simply a bigger m1.
+============================================================
+
