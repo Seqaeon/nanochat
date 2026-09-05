@@ -69,6 +69,7 @@ RUN_DENSE=0
 RUN_Q12=1
 RUN_Q13=1
 RUN_LOWRANK=0
+RUN_BASE=1
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -78,9 +79,15 @@ while [[ $# -gt 0 ]]; do
         --q12-only)   RUN_Q12=1; RUN_Q13=0; shift ;;
         --q13-only)   RUN_Q12=0; RUN_Q13=1; shift ;;
         --with-lowrank) RUN_LOWRANK=1; shift ;;
+        # Resume paths. The in-sweep reference is worth re-running when device batch
+        # or tokenizer may have moved, and worth skipping when it demonstrably has
+        # not, so it is a flag rather than a line to comment out.
+        --no-base)      RUN_BASE=0; shift ;;
+        --lowrank-only) RUN_BASE=0; RUN_Q12=0; RUN_Q13=0; RUN_LOWRANK=1; shift ;;
         [0-9]*)       DEPTHS+=("$1"); shift ;;
         *) echo "unknown arg: $1"
-           echo "usage: $0 [--force] [--seeds N] [--with-dense] [--with-lowrank] [--q12-only|--q13-only] [DEPTH ...]"
+           echo "usage: $0 [--force] [--seeds N] [--with-dense] [--with-lowrank]"
+           echo "       [--q12-only|--q13-only|--lowrank-only] [--no-base] [DEPTH ...]"
            exit 1 ;;
     esac
 done
@@ -211,11 +218,22 @@ echo "  Q12 permutations: ${PERMS}"
 echo "  Q13 residual ranks: ${RANKS}"
 [ -n "$PERM_FILE" ] && echo "  clustered permutation: ${PERM_FILE}"
 echo "  target tokens ${TARGET_TOKENS}   device-batch ${DEVICE_BATCH_SIZE}"
+PLAN=""
+[ "$RUN_BASE" -eq 1 ]    && PLAN="$PLAN MON_base"
+[ "$RUN_DENSE" -eq 1 ]   && PLAN="$PLAN BASE_dense"
+[ "$RUN_Q12" -eq 1 ]     && for p in $PERMS; do PLAN="$PLAN MON_perm_${p}"; done
+[ "$RUN_Q13" -eq 1 ]     && for r in $RANKS; do PLAN="$PLAN MON_res_${r}"; done
+[ "$RUN_LOWRANK" -eq 1 ] && for r in $RANKS; do
+    PLAN="$PLAN LOWRANK_M$(python3 -c "print(int(($MODEL_DIM*$M + $VOCAB*$M1) / ($MODEL_DIM + $VOCAB)) + $r)")_vs_r${r}"
+done
+[ "$RUN_Q12" -eq 1 ] && [ "$RUN_Q13" -eq 1 ] && \
+    PLAN="$PLAN MON_perm_${BEST_PERM:-freq}_res_${BEST_RANK:-$(echo $RANKS | awk '{print $NF}')}"
+echo "  arms:${PLAN}"
 echo "============================================================"
 
 # The in-sweep reference. Every other arm is read against this one and not
 # against c09's number, because device batch and tokenizer must match.
-run "MON_base" $MON
+[ "$RUN_BASE" -eq 1 ] && run "MON_base" $MON
 [ "$RUN_DENSE" -eq 1 ] && run BASE_dense --models base --sch-rank-probe $RANK_CONTEXTS
 
 if [ "$RUN_Q12" -eq 1 ]; then
