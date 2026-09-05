@@ -68,6 +68,7 @@ SEEDS=1
 RUN_DENSE=0
 RUN_Q12=1
 RUN_Q13=1
+RUN_LOWRANK=0
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -76,9 +77,10 @@ while [[ $# -gt 0 ]]; do
         --with-dense) RUN_DENSE=1; shift ;;
         --q12-only)   RUN_Q12=1; RUN_Q13=0; shift ;;
         --q13-only)   RUN_Q12=0; RUN_Q13=1; shift ;;
+        --with-lowrank) RUN_LOWRANK=1; shift ;;
         [0-9]*)       DEPTHS+=("$1"); shift ;;
         *) echo "unknown arg: $1"
-           echo "usage: $0 [--force] [--seeds N] [--with-dense] [--q12-only|--q13-only] [DEPTH ...]"
+           echo "usage: $0 [--force] [--seeds N] [--with-dense] [--with-lowrank] [--q12-only|--q13-only] [DEPTH ...]"
            exit 1 ;;
     esac
 done
@@ -227,6 +229,26 @@ fi
 if [ "$RUN_Q13" -eq 1 ]; then
     for r in $RANKS; do
         run "MON_res_${r}" $MON --sch-residual-rank "$r"
+    done
+fi
+
+# The control that decides whether the Monarch factorisation is still earning its
+# keep. Once the residual is most of the head's cost (79% at r=128), this stops
+# being a Monarch head with a residual and becomes a low-rank head with a Monarch
+# term, and c06's answer to "is this just low-rank" was established at r=0.
+#
+# A pure low-rank head of rank R costs R(d + V), so the rank that spends exactly
+# what MonarchHead+residual spends is
+#
+#     R = (d*M + V*m1) / (d + V) + r
+#
+# computed, never typed, because a hand-matched control drifts the moment M, m1 or
+# r changes and then compares two different budgets while looking correct.
+if [ "$RUN_LOWRANK" -eq 1 ]; then
+    for r in $RANKS; do
+        R=$(python3 -c "print(int(($MODEL_DIM*$M + $VOCAB*$M1) / ($MODEL_DIM + $VOCAB)) + $r)")
+        run "LOWRANK_M${R}_vs_r${r}" --models base --use-code-head 1 \
+            --sch-phi-mode learned --sch-max-m "$R" $PROBE
     done
 fi
 
