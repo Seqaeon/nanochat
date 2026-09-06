@@ -39,9 +39,14 @@ from nanochat.code_head import load_freq_table
 def vocab_rows(checkpoint: str, source: str, vocab_size: int) -> torch.Tensor:
     """Pull the (V, d) matrix whose row geometry we are clustering.
 
-    ``lm_head`` is the honest choice: it is the matrix Monarch replaces, so its row
-    similarity is exactly the structure a block has to reproduce. ``wte`` is the
-    fallback for a tied or non-dense checkpoint.
+    ``lm_head`` is the honest choice: it is the matrix a structured head replaces, so
+    its row similarity is exactly the structure that head has to reproduce. ``wte`` is
+    the fallback for a tied or non-dense checkpoint.
+
+    Three shapes are accepted: a bare ``(V, d)`` tensor, a state dict, and the
+    ``{"acts", "lm_head"}`` payload that ``scripts/dump_head_acts.py --also-head``
+    writes. The last one is now the usual source, because the same file supplies both
+    the rows to cluster and the activations that order the leaf axis.
     """
     obj = torch.load(checkpoint, weights_only=True, map_location="cpu")
     if isinstance(obj, torch.Tensor):
@@ -50,8 +55,8 @@ def vocab_rows(checkpoint: str, source: str, vocab_size: int) -> torch.Tensor:
         assert obj.shape[0] >= vocab_size, (
             f"{checkpoint} has {obj.shape[0]} rows, fewer than vocab_size={vocab_size}")
         return obj[:vocab_size].float()
-    sd = obj.get("model", sd) if False else obj.get("model", obj)
-    keys = {"lm_head": ("lm_head.weight", "_orig_mod.lm_head.weight"),
+    sd = obj.get("model", obj)
+    keys = {"lm_head": ("lm_head.weight", "_orig_mod.lm_head.weight", "lm_head"),
             "wte": ("transformer.wte.weight", "_orig_mod.transformer.wte.weight")}[source]
     for k in keys:
         if k in sd:
@@ -65,7 +70,8 @@ def vocab_rows(checkpoint: str, source: str, vocab_size: int) -> torch.Tensor:
         "cluster from a dense run.")
 
 
-def balanced_assign(rows: torch.Tensor, blocks: int, iters: int, seed: int) -> torch.Tensor:
+def balanced_assign(rows: torch.Tensor, blocks: int, iters: int, seed: int,
+                    verbose: bool = True) -> torch.Tensor:
     """k-means, then a capacitated assignment that forces exactly V/blocks per block.
 
     Plain k-means gives clusters of wildly different sizes and the head needs equal
@@ -88,8 +94,9 @@ def balanced_assign(rows: torch.Tensor, blocks: int, iters: int, seed: int) -> t
             sel = x[assign == j]
             if sel.numel():
                 centroids[j] = torch.nn.functional.normalize(sel.mean(0), dim=0)
-        print(f"  k-means iter {it + 1}/{iters}  sizes "
-              f"{torch.bincount(assign, minlength=blocks).tolist()}")
+        if verbose:
+            print(f"  k-means iter {it + 1}/{iters}  sizes "
+                  f"{torch.bincount(assign, minlength=blocks).tolist()}")
 
     sim = x @ centroids.t()                             # (V, blocks)
     order_pref = sim.argsort(dim=1, descending=True)
@@ -106,10 +113,55 @@ def balanced_assign(rows: torch.Tensor, blocks: int, iters: int, seed: int) -> t
     return final
 
 
+def leaf_scores(rows: torch.Tensor, acts: str, tokenizer_dir, vocab_size: int) -> torch.Tensor:
+    """Per-token predictability proxy used to order the LAST code axis.
+
+    In a factorised head the last axis' factor ``alpha^G_r`` is shared across every
+    cell of the axes above it, so index ``j`` only means something if it means the
+    same thing everywhere. Ordering each leaf group by how likely its members are
+    makes ``j`` read as "the j-th likeliest word in my cell". Measured worth 10 to
+    20% of the offline reconstruction error at every rank and factorisation depth,
+    for zero run-time cost.
+    """
+    if acts:
+        blob = torch.load(acts, weights_only=False, map_location="cpu")
+        h = blob["acts"] if isinstance(blob, dict) else blob
+        return (h.float() @ rows.float().t()).mean(0)
+    freqs = load_freq_table(vocab_size, tokenizer_dir)
+    if freqs is not None:
+        return freqs[:vocab_size].float()
+    # Last resort. Row norm correlates with frequency but only loosely, so say so
+    # rather than letting a silent fallback masquerade as the fitted ordering.
+    print("  [leaf] no --acts and no frequency table: falling back to row norm")
+    return rows.float().norm(dim=1)
+
+
+def nested_assign(rows, dims, score, iters, seed, ids=None, depth=0):
+    """Recursive balanced clustering, one level per code axis.
+
+    ``NonnegFactorHead`` in ``cp`` mode maps a word to ``(a_1, .., a_G)``, so the
+    assignment is a nested partition rather than a flat one: ``a_1`` picks a coarse
+    group, ``a_2`` a group inside it, and so on. Each level is the same capacitated
+    k-means the flat mode uses, and the leaf is ordered by ``score``.
+
+    Returns ``perm`` with ``perm[p] = t``: slot ``p`` carries token ``t``.
+    """
+    if ids is None:
+        ids = torch.arange(rows.shape[0])
+    if len(dims) == 1:
+        # Leaf: order by the predictability proxy, descending.
+        return ids[torch.argsort(score[ids], descending=True, stable=True)]
+    k = dims[0]
+    sub = balanced_assign(rows[ids], k, iters, seed + depth, verbose=(depth == 0))
+    print(f"  [nest] depth {depth}: {ids.numel()} tokens -> {k} groups of {ids.numel() // k}")
+    return torch.cat([nested_assign(rows, dims[1:], score, iters, seed,
+                                    ids[sub == j], depth + 1) for j in range(k)])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=("freq", "cluster", "random"), required=True)
+    ap.add_argument("--mode", choices=("freq", "cluster", "random", "nested"), required=True)
     ap.add_argument("--out", required=True, help="destination .pt")
     ap.add_argument("--vocab-size", type=int, default=0,
                     help="0 = infer from the frequency table or checkpoint")
@@ -119,9 +171,23 @@ def main():
     ap.add_argument("--tokenizer-dir", default=None)
     ap.add_argument("--iters", type=int, default=25)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--dims", default="", help="code axis sizes for --mode=nested, e.g. 64,64,32")
+    ap.add_argument("--acts", default="", help="a .pt of hidden activations; orders the leaf axis by mean logit")
     args = ap.parse_args()
 
-    if args.mode == "cluster":
+    if args.mode == "nested":
+        assert args.checkpoint, "--mode=nested needs --checkpoint"
+        assert args.vocab_size, "--mode=nested needs an explicit --vocab-size"
+        dims = [int(x) for x in args.dims.replace(" ", ",").split(",") if x]
+        assert dims, "--mode=nested needs --dims, e.g. --dims 64,64,32"
+        import math as _math
+        assert _math.prod(dims) == args.vocab_size, (
+            f"--dims multiplies to {_math.prod(dims)}, not --vocab-size {args.vocab_size}. "
+            "The code is a bijection; anything else drops or duplicates words.")
+        rows = vocab_rows(args.checkpoint, args.source, args.vocab_size)
+        score = leaf_scores(rows, args.acts, args.tokenizer_dir, args.vocab_size)
+        perm = nested_assign(rows, dims, score, args.iters, args.seed)
+    elif args.mode == "cluster":
         assert args.blocks > 1, "--mode=cluster needs --blocks (the head's m2)"
         assert args.checkpoint, "--mode=cluster needs --checkpoint"
         assert args.vocab_size, "--mode=cluster needs an explicit --vocab-size"

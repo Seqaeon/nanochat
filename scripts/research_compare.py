@@ -553,6 +553,16 @@ def run_training_sweep(args):
         "--sch-proposal-warmup", str(getattr(args, 'sch_proposal_warmup', 0)),
         "--sch-proposal-chunk", str(getattr(args, 'sch_proposal_chunk', 2048)),
         "--sch-proposal-aux", str(getattr(args, 'sch_proposal_aux', 1.0)),
+        "--sch-nfh-mode", str(getattr(args, 'sch_nfh_mode', 'cp')),
+        "--sch-nfh-rank", str(getattr(args, 'sch_nfh_rank', 32)),
+        "--sch-nfh-dims", str(getattr(args, 'sch_nfh_dims', '')),
+        "--sch-nfh-groups", str(getattr(args, 'sch_nfh_groups', 3)),
+        "--sch-nfh-views", str(getattr(args, 'sch_nfh_views', 1)),
+        "--sch-nfh-perm", str(getattr(args, 'sch_nfh_perm', 'none')),
+        "--sch-nfh-perm-path", str(getattr(args, 'sch_nfh_perm_path', '')),
+        "--sch-nfh-g-type", str(getattr(args, 'sch_nfh_g_type', 'linear')),
+        "--sch-nfh-g-hidden", str(getattr(args, 'sch_nfh_g_hidden', 0)),
+        "--sch-nfh-chunk", str(getattr(args, 'sch_nfh_chunk', 256)),
         "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
         "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
         "--sch-holdout-min-id", str(getattr(args, 'sch_holdout_min_id', 256)),
@@ -1329,6 +1339,16 @@ if __name__ == "__main__":
     parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-proposal-chunk", type=int, default=2048, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-mode", type=str, default='cp', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-rank", type=int, default=32, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-dims", type=str, default='', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-groups", type=int, default=3, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-views", type=int, default=1, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-perm", type=str, default='none', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-perm-path", type=str, default='', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-g-type", type=str, default='linear', help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-g-hidden", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-nfh-chunk", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

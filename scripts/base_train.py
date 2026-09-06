@@ -756,6 +756,16 @@ parser.add_argument("--sch-proposal-samples", type=int, default=4096, help="SCH:
 parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: steps of exact softmax before switching. The proposal selects nothing useful at initialisation")
 parser.add_argument("--sch-proposal-chunk", type=int, default=2048, help="SCH: tokens sharing one candidate set. Per-token sets read the weight 10,240x more than a dense matmul and measured 18.7 s/step")
 parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: weight on the ranking loss that trains the proposal against the exact logits. 0 leaves it with no gradient at all when --sch-proposal-samples=0")
+parser.add_argument("--sch-nfh-mode", type=str, default='cp', help="SCH: cp = mixture of product codes; global = a V x m log-table whose per-token cost is independent of V")
+parser.add_argument("--sch-nfh-rank", type=int, default=32, help="SCH: R mixture components (cp) or m table columns (global). R=1 is exactly LightRNN and is the decisive ablation")
+parser.add_argument("--sch-nfh-dims", type=str, default='', help="SCH: code axis sizes, e.g. 64,64,32. Must multiply to the PADDED vocabulary; empty derives them")
+parser.add_argument("--sch-nfh-groups", type=int, default=3, help="SCH: G, used only when --sch-nfh-dims is empty")
+parser.add_argument("--sch-nfh-views", type=int, default=1, help="SCH: independent bijections mixed uniformly; view 0 uses --sch-nfh-perm and the rest are random")
+parser.add_argument("--sch-nfh-perm", type=str, default='none', help="SCH: none | random (control) | freq | file. Which words share a code cell; costs nothing")
+parser.add_argument("--sch-nfh-perm-path", type=str, default='', help="SCH: .pt permutation of range(vocab_size) from scripts/build_vocab_permutation.py")
+parser.add_argument("--sch-nfh-g-type", type=str, default='linear', help="SCH: linear | mlp. The map into the factors. mlp is nearly free once the head is 0.04x of dense")
+parser.add_argument("--sch-nfh-g-hidden", type=int, default=0, help="SCH: hidden width for --sch-nfh-g-type mlp (0 = n_embd)")
+parser.add_argument("--sch-nfh-chunk", type=int, default=256, help="SCH: tokens per chunk on the EVAL path only; the training path builds no V-wide tensor")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1319,6 +1329,16 @@ def build_model_meta(depth):
         sch_proposal_warmup=int(getattr(args, 'sch_proposal_warmup', 0)),
         sch_proposal_chunk=int(getattr(args, 'sch_proposal_chunk', 128)),
         sch_proposal_aux=float(getattr(args, 'sch_proposal_aux', 1.0)),
+        sch_nfh_mode=str(getattr(args, 'sch_nfh_mode', 'cp')),
+        sch_nfh_rank=int(getattr(args, 'sch_nfh_rank', 32)),
+        sch_nfh_dims=str(getattr(args, 'sch_nfh_dims', '')),
+        sch_nfh_groups=int(getattr(args, 'sch_nfh_groups', 3)),
+        sch_nfh_views=int(getattr(args, 'sch_nfh_views', 1)),
+        sch_nfh_perm=str(getattr(args, 'sch_nfh_perm', 'none')),
+        sch_nfh_perm_path=str(getattr(args, 'sch_nfh_perm_path', '')),
+        sch_nfh_g_type=str(getattr(args, 'sch_nfh_g_type', 'linear')),
+        sch_nfh_g_hidden=int(getattr(args, 'sch_nfh_g_hidden', 0)),
+        sch_nfh_chunk=int(getattr(args, 'sch_nfh_chunk', 256)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

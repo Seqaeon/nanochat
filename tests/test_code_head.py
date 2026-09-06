@@ -1088,6 +1088,112 @@ import subprocess
 import sys as _sys
 
 
+def _nfh(**kw):
+    kw.setdefault("sch_nfh_dims", "8,8,8")
+    kw.setdefault("sch_nfh_rank", 5)
+    return _phase5(use_code_head=1, sch_head_type='nfh', **kw)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(),
+    dict(sch_nfh_rank=1),                                  # the LightRNN corner
+    dict(sch_nfh_dims="32,16"),
+    dict(sch_nfh_dims=""),                                 # auto-derived axes
+    dict(sch_nfh_views=3, sch_nfh_perm='random'),
+    dict(sch_nfh_g_type='mlp'),
+    dict(sch_nfh_mode='global', sch_nfh_rank=16),
+])
+def test_nfh_is_exactly_normalised_and_the_two_paths_agree(kw):
+    """Two claims in one, and both are load-bearing.
+
+    Exact normalisation is the whole reason this head has no partition function to
+    compute; if ``logsumexp`` over the vocabulary is not 0 the FLOP saving is not
+    real, it is just a missing normaliser.
+
+    And the training path must equal the evaluation path. ``loss()`` never builds a
+    V-wide tensor -- that is the memory claim -- while ``forward()`` does, so they
+    are two separate pieces of arithmetic that have to produce the same number. A
+    mismatch here means training optimises something other than what bpb reports.
+    """
+    m = _nfh(**kw)
+    head = m.lm_head
+    x = torch.randn(3, 7, head.n_embd)
+    lp = head(x).float()
+    assert lp.shape == (3, 7, head.vocab_size)
+    assert torch.logsumexp(lp, -1).abs().max() < 1e-4, "not a normalised distribution"
+
+    tgt = torch.randint(0, head.vocab_size, (3, 7))
+    tgt[0, 0] = -1                                          # the ignore index
+    got = head.loss(x, tgt, reduction="mean")
+    ref = F.nll_loss(lp.reshape(-1, head.vocab_size), tgt.reshape(-1), ignore_index=-1)
+    assert torch.allclose(got, ref, atol=2e-5), f"{got.item()} vs {ref.item()}"
+    per = head.loss(x, tgt, reduction="none")
+    assert per.shape == tgt.shape
+    assert torch.allclose(per[tgt >= 0].mean(), got, atol=2e-5)
+    assert torch.allclose(head.loss(x, tgt, reduction="sum"), per[tgt >= 0].sum(), atol=1e-4)
+
+
+def test_nfh_rank_one_is_exactly_a_product_of_independent_categoricals():
+    """R=1 is LightRNN, and the paper's central claim is the gap between R=1 and
+    R>1. Pinning the corner exactly is what makes that comparison mean something:
+    if R=1 quietly did more than a product of independent digit distributions, the
+    ablation would understate the mixture."""
+    m = _nfh(sch_nfh_rank=1, sch_nfh_dims="8,8,8")
+    head = m.lm_head
+    x = torch.randn(4, head.n_embd)
+    _lpi, las = head._factors(x)
+    slot = torch.arange(head.vocab_size)
+    idx = [slot // 64, (slot // 8) % 8, slot % 8]
+    manual = sum(la[:, 0, 0, :][:, i] for la, i in zip(las, idx))
+    manual = manual.index_select(-1, head.inv_perms[0])
+    assert torch.allclose(manual, head(x).float(), atol=1e-5)
+
+
+def test_nfh_survives_the_meta_device_round_trip():
+    """``build_model_meta`` constructs under ``torch.device("meta")`` and then
+    ``to_empty()``s, which fills every buffer with garbage. A garbage permutation
+    does not crash: it trains against the wrong words and returns a plausible bpb,
+    which is why MonarchHead rebuilds in ``init_weights`` and why this head has to
+    be held to the same standard."""
+    cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=D, sequence_len=32,
+                    vocab_size=V, use_code_head=1, sch_head_type='nfh',
+                    sch_nfh_dims="8,8,8", sch_nfh_rank=4, sch_nfh_perm='random')
+    with torch.device("meta"):
+        m = GPT(cfg)
+    m.to_empty(device="cpu")
+    m.init_weights()
+    perm = m.lm_head.inv_perms[0]
+    assert torch.equal(torch.sort(perm).values, torch.arange(perm.numel())), \
+        "to_empty left a garbage permutation behind"
+
+
+def test_nfh_is_cheaper_than_dense_and_every_parameter_trains():
+    """The FLOP claim and the DDP claim. An unused parameter is not a slow path,
+    it is a crash: the routed-mixture head died on 'Expected to have finished
+    reduction in the prior iteration' for exactly this reason."""
+    m = _nfh(sch_nfh_dims="8,8,8", sch_nfh_rank=5)
+    head = m.lm_head
+    assert head.flops_per_token() == 6 * head.proj.weight.numel()
+    assert head.flops_per_token() < 6 * head.vocab_size * head.n_embd, \
+        "a factorised head that is not cheaper is pointless"
+    assert head.rank_ceiling() > head.n_embd + 1, \
+        "the log-sum-exp lifts the log-prob matrix off the d+1 bound; saying otherwise " \
+        "gives away the expressivity half of the claim"
+    x = torch.randint(0, m.config.vocab_size, (2, 8))
+    loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    for name, p in head.named_parameters():
+        assert p.grad is not None and p.grad.abs().sum() > 0, f"{name} received no gradient"
+
+
+def test_nfh_axes_must_tile_the_padded_vocabulary():
+    """The code is a bijection. Axes that multiply to anything else silently drop
+    or duplicate words, and the head would still return a normalised vector."""
+    with pytest.raises(AssertionError, match="multiplies to"):
+        _nfh(sch_nfh_dims="8,8,7")
+
+
 def _base_train_parser():
     """Build base_train's parser without running base_train.
 
@@ -1230,8 +1336,14 @@ def _sweep_arms(path):
                 one = expand(one, (loop_vals[0], val) if val is not None else None)
                 one = one.replace('"$DEPTH"', "8").replace("$DEPTH", "8").replace('"', "")
                 toks = one.split()
-                assert toks[0] == "run" and toks[2] == "8", f"unexpected run line: {one[:90]}"
-                flags = [x for x in toks[3:] if x not in ("--models", "base")]
+                assert toks[0] == "run", f"unexpected run line: {one[:90]}"
+                # Two conventions live in this repo. c05-c09 pass the depth on the
+                # run line (`run TAG "$DEPTH" --flags`); c13 onwards let the run
+                # function append it. Accepting only the first silently extracted
+                # zero arms from the newer scripts, which is a test that passes by
+                # finding nothing.
+                start = 3 if len(toks) > 2 and toks[2] == "8" else 2
+                flags = [x for x in toks[start:] if x not in ("--models", "base")]
                 assert not any(x.startswith("$") for x in flags), \
                     f"unexpanded shell variable in {toks[1]}: {flags}"
                 arms.append((toks[1], flags))
@@ -1335,6 +1447,61 @@ def test_every_sweep_arm_builds_at_the_real_vocabulary_size(vocab, depth, script
         except Exception as exc:
             pytest.fail(f"{script} arm {tag} does not build at V={vocab} depth={depth}: "
                         f"{type(exc).__name__}: {exc}")
+
+
+def test_every_c14_arm_builds_at_v131k():
+    """c14 cannot join the parametrised sweep test above, which also builds at
+    V=32,768: the code axes have to TILE the vocabulary, so ``64,64,32`` is legal
+    at 131,072 and an outright error at 32,768. That assertion is the point of the
+    head rather than an inconvenience, so the arm check gets its own case at the
+    vocabulary the script actually runs.
+
+    (c13 is still not covered by either. Its arms are built from a multi-line
+    ``PROP="..."`` assignment that ``_sweep_arms`` cannot read, and fixing that
+    belongs with c13, not here.)"""
+    import contextlib
+    import io as _io
+    from nanochat.gpt import GPT, GPTConfig
+
+    parser = _base_train_parser()
+    depth, vocab = 8, 131072
+    d = ((depth * 64 + 127) // 128) * 128
+    runtime_only = ("sch_rank_probe", "sch_decile_metrics", "sch_eval_steps",
+                    "sch_holdout_tokens", "sch_holdout_seed", "sch_holdout_min_id",
+                    "sch_holdout_mode")
+    arms = _sweep_arms("scripts/c14_nfh.sh")
+    assert arms, "no arms extracted from c14; the extractor and the script disagree"
+    seen, asked_for_fitted = set(), False
+    for tag, flags in arms:
+        ns, _ = parser.parse_known_args(flags)
+        # The fitted permutation is a build artefact, not something a unit test
+        # should require on disk; check that an arm ASKS for it, then build with
+        # the identity so the rest of the shape checking still runs.
+        if ns.sch_nfh_perm == "file":
+            asked_for_fitted = True
+            if not os.path.exists(ns.sch_nfh_perm_path):
+                ns.sch_nfh_perm, ns.sch_nfh_perm_path = "none", ""
+        kw = {k: v for k, v in vars(ns).items()
+              if (k.startswith("sch_") or k == "use_code_head") and k not in runtime_only}
+        seen.add((kw.get("sch_head_type"), kw.get("sch_nfh_mode"), kw.get("sch_nfh_rank")))
+        cfg = GPTConfig(sequence_len=2048, vocab_size=vocab, n_layer=depth,
+                        n_head=max(1, d // 128), n_kv_head=max(1, d // 128),
+                        n_embd=d, **kw)
+        cfg._tokenizer_dir = None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                with torch.device("meta"):
+                    GPT(cfg)
+        except Exception as exc:
+            pytest.fail(f"c14 arm {tag} does not build at V={vocab} depth={depth}: "
+                        f"{type(exc).__name__}: {exc}")
+    # R=1 is LightRNN and the whole claim is the gap to R>1, so losing that arm to a
+    # refactor would quietly remove the paper's control rather than break a test.
+    # R=1 is LightRNN and the whole claim is the gap to R>1, so losing that arm to a
+    # refactor would quietly remove the paper's control rather than break a test.
+    assert ("nfh", "cp", 1) in seen, "the R=1 (LightRNN) arm is gone from c14"
+    assert ("nfh", "global", 256) in seen, "the global-mode hedge is gone from c14"
+    assert asked_for_fitted, "no c14 arm requests the fitted assignment any more"
 
 
 def test_an_illegal_product_code_says_what_to_change_it_to():

@@ -622,7 +622,7 @@ class GPTConfig:
     # version is that order 1 is Oda et al. 2017 (logit rank <= B), order B is the
     # exact softmax, and everything between is unexplored.
     use_code_head: bool = False                     # master switch for the code output head
-    sch_head_type: str = 'code'                     # code | hsoftmax (Huffman tree) | monarch (block-diagonal, fully learned)
+    sch_head_type: str = 'code'                     # code | hsoftmax | monarch | tiered | proposal | nfh (nonnegative factorized)
     sch_bits: int = 0                               # B, code length (0 = ceil(log2 V), the minimal/degenerate code)
     sch_order: int = 2                              # k, highest monomial interaction order kept
     sch_max_m: int = 0                              # cap on M (0 = uncapped); also sets M directly for non-monomial phi modes
@@ -667,6 +667,19 @@ class GPTConfig:
     sch_proposal_warmup: int = 0                    # steps of exact softmax before switching; the proposal is noise at init
     sch_proposal_chunk: int = 2048                  # tokens sharing one candidate set; also sets how many dense (V,d) grad buffers per step
     sch_proposal_aux: float = 1.0                   # weight on the ranking loss that trains the proposal from the exact logits
+    # --- Nonnegative factorized heads (sch_head_type=nfh) -------------------
+    # Reparameterises the DISTRIBUTION so the partition function factorises, rather
+    # than approximating the V x d matrix. See nanochat/code_head.py.
+    sch_nfh_mode: str = 'cp'                        # cp (mixture of product codes) | global (V x m log-table, cost independent of V)
+    sch_nfh_rank: int = 32                          # R components for cp; m table columns for global. R=1 is exactly LightRNN
+    sch_nfh_dims: str = ''                          # code axis sizes, e.g. '64,64,32'; must multiply to the PADDED vocab. Empty = auto
+    sch_nfh_groups: int = 3                         # G used only when sch_nfh_dims is empty
+    sch_nfh_views: int = 1                          # independent bijections mixed uniformly; view 0 uses sch_nfh_perm, the rest are random
+    sch_nfh_perm: str = 'none'                      # none | random (control) | freq | file. Which words share a code cell
+    sch_nfh_perm_path: str = ''                     # .pt permutation of range(vocab_size) (scripts/build_vocab_permutation.py)
+    sch_nfh_g_type: str = 'linear'                  # linear | mlp. The map into the factors; mlp is nearly free once the head is 0.04x
+    sch_nfh_g_hidden: int = 0                       # hidden width for sch_nfh_g_type=mlp (0 = n_embd)
+    sch_nfh_chunk: int = 256                        # tokens per chunk on the EVAL path only; the training path builds no V-wide tensor
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -769,6 +782,9 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_tier_bounds", "sch_tier_caps", "sch_tier_order", "sch_tier_perm_path",
     "sch_proposal_rank", "sch_proposal_topk", "sch_proposal_samples",
     "sch_proposal_warmup", "sch_proposal_chunk", "sch_proposal_aux",
+    "sch_nfh_mode", "sch_nfh_rank", "sch_nfh_dims", "sch_nfh_groups",
+    "sch_nfh_views", "sch_nfh_perm", "sch_nfh_perm_path", "sch_nfh_g_type",
+    "sch_nfh_g_hidden", "sch_nfh_chunk",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",

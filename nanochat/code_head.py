@@ -121,7 +121,8 @@ PRODUCT_IMPLS = ("dense", "gather")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
-HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered", "proposal")
+HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered", "proposal", "nfh")
+NFH_MODES = ("cp", "global")
 MONARCH_PERMS = ("none", "random", "freq", "file")
 PHI_DTYPES = ("bf16", "fp32")
 HOLDOUT_MODES = ("target", "full")
@@ -1948,6 +1949,346 @@ class MonarchHead(nn.Module):
                 f"perm={self.perm_mode}, rank_ceiling={self.rank_ceiling()}")
 
 
+def _nfh_dims(spec, padded_vocab_size: int, groups: int) -> list[int]:
+    """Code axis sizes: parsed if given, else prod-matched to the vocabulary.
+
+    The axes must multiply to the PADDED vocabulary exactly, because the code is a
+    bijection and anything else silently drops or duplicates words.  Auto-derivation
+    handles powers of two only, which is what every vocabulary in this repo is; a
+    non-power-of-two vocabulary has to state its factorisation.
+    """
+    dims = _parse_int_list(spec)
+    if dims:
+        return dims
+    rest, e = padded_vocab_size, 0
+    while rest % 2 == 0:
+        rest //= 2
+        e += 1
+    assert rest == 1, (f"padded vocabulary {padded_vocab_size} is not a power of two, "
+                       f"so sch_nfh_dims must be given explicitly")
+    g = max(1, min(groups, e))
+    # Largest axis first, smallest last: the leaf axis is the one the assignment
+    # orders by predictability, and it is also the bmm's inner dimension on the eval
+    # path. 64x64x32 at V=131072 is what the offline screen measured.
+    out = sorted((e // g + (1 if i < e % g else 0) for i in range(g)), reverse=True)
+    return [2 ** k for k in out]
+
+
+class NonnegFactorHead(nn.Module):
+    """Nonnegative factorisation of the DISTRIBUTION, not of the head matrix.
+
+    Every other head in this file approximates the ``V x d`` matrix and normalises
+    exactly.  Three measured walls close that route at V=131,072:
+
+      * a head linear in ``h`` has logit rank <= d, which dense already attains;
+      * the head's rows do not cluster.  In the whitened metric, where Euclidean
+        distance IS RMS logit error over the real activation distribution, k-means
+        radius falls only 2.455 -> 1.983 from k=16 to k=4096 and tracks a Gaussian
+        control of identical second moment at a flat 0.89 ratio.  Six levels of
+        RESIDUAL quantisation (256^6 cells against V=131k) take it from 3.73 only
+        to 1.74, also tracking the control.  Quantising the vocabulary is hopeless
+        at every depth, which is what sank product codes, VQ-Logits and would sink
+        an RQ-VAE semantic-ID head;
+      * materialising V logits is a bandwidth floor.  Dense and a perfectly fused
+        cheap head write the same ``N x V`` tensor, so the ceiling is about 2.6x
+        however much arithmetic is removed (OPEN_QUESTIONS Q8).
+
+    So reparameterise the distribution instead::
+
+        p(w | h) = sum_r psi_r(h) phi_r(w) / Z(h),     Z = psi(h) . [sum_w phi(w)]
+
+    with everything nonnegative.  ``Z`` costs R operations rather than V, no
+    ``(N, V)`` tensor exists on the training path at all, and because ``log p`` is a
+    log of a sum of products of softmaxes of linear forms the log-prob matrix is NOT
+    confined to rank d+1.  That is what Mixture of Softmaxes buys at R x dense cost
+    and this buys at a fraction of dense cost.
+
+    ``cp`` (the headline).  Fix a bijection ``w -> (a_1(w), .., a_G(w))`` into
+    ``[K_1] x .. x [K_G]`` with ``prod K_g = V``, and let::
+
+        p(w|h) = sum_r pi_r(h) prod_g alpha^g_{r, a_g(w)}(h)
+
+    every factor a normalised categorical, so ``sum_w p = 1`` by construction, with
+    no partition function to compute, no sampling and no bias.  Cost is
+    ``d R (1 + sum_g K_g)``: at V=131072, d=512, 64x64x32, R=32 that is 2.64M MACs
+    against the dense head's 67.1M, **0.039x**, and the widest activation is
+    ``N x 5120`` against ``N x 131072``.  Two or three dense GEMMs, no gather, no
+    data-dependent shape, which is what every previous head here failed on.
+
+    THIS IS THE CODE HEAD, FIXED.  ``a_g`` is a K-ary digit and ``alpha^g`` its
+    score, so R=1 is exactly the independent-digit head: LightRNN at G=2, Oda et al.
+    (2017) at K=2.  That is a rank-1 nonnegative tensor and it cannot represent a
+    peaked multi-modal distribution.  Phase 0 answered that by raising the
+    *interaction order* of the code, which costs ``sum_{j<=k} C(G,j)(K-1)^j``
+    columns; an R-component mixture reaches exactly the distributions of nonnegative
+    tensor rank <= R at ``R sum_g K_g`` columns.  Coupling is exponentially cheaper
+    in probability space than in logit space, which is why the order-3 to order-4
+    rung cost 2.7x the FLOPs and bought nothing.
+
+    ``global`` (the hedge).  A learned ``V x m`` log-table with no product
+    structure::
+
+        log p(w|h) = lse_j(u_j(h) + v_{w,j}) - lse_j(u_j(h) + s_j),  s_j = lse_w v_{w,j}
+
+    Per-token cost ``d m``, **independent of V**, and the column sums ``s`` are one
+    reduction per forward rather than per token.  It matters because its
+    per-context degrees of freedom (m=256) sit BELOW d=512, so unlike ``cp`` its
+    offline oracle is close to a realisability guarantee rather than an upper bound.
+
+    Measured oracles against the trained d8 V=131k head (free fit, so an upper bound
+    on quality for ``cp``), in bpb, against the +0.0931 bpb a head costing nothing
+    at all would be worth at depth 8:
+
+        cp 512x256   R=1  (LightRNN)   0.166     at 0.0059x the dense head
+        cp 512x256   R=32              0.0033    at 0.188x
+        cp 64x64x32  R=32              0.0091    at 0.039x
+        cp 64x64x32  R=64              0.0050    at 0.079x
+        global       m=128             0.155     at 0.00098x
+        global       m=256             0.0573    at 0.00196x
+
+    Two implementation notes.  ``forward`` returns log-probabilities in TOKEN order,
+    so ``permutes_vocab`` stays False and generation needs no special handling; the
+    extra gather is on the eval path only, and the training path never builds a
+    V-wide tensor to gather from in the first place.  And the loss is a
+    ``logsumexp`` over R in log space rather than a sum of probabilities, because a
+    product of G softmaxes underflows fp32 well inside the range these factors
+    actually take.
+    """
+
+    custom_loss = True        # the training path never materialises V logits
+    emits_logits = True       # ...but it can produce log-probs for eval and decode
+    self_normalized = True    # what it produces are log-probabilities, not logits
+    permutes_vocab = False    # forward() un-permutes internally; see the docstring
+
+    def __init__(self, config, padded_vocab_size: int, n_embd: int):
+        super().__init__()
+        V = self.vocab_size = padded_vocab_size
+        self.n_embd = n_embd
+        self.mode = str(getattr(config, "sch_nfh_mode", "cp"))
+        assert self.mode in NFH_MODES, f"sch_nfh_mode={self.mode!r} not in {NFH_MODES}"
+        self.rank = R = int(getattr(config, "sch_nfh_rank", 32))
+        assert R > 0, f"sch_nfh_rank must be positive, got {R}"
+        self.eval_chunk = int(getattr(config, "sch_nfh_chunk", 256))
+        self.views = 1
+        self.dims: list[int] = []
+        self.stem = None
+        self.g_type = "linear"
+        self.perm_mode = "none"
+
+        if self.mode == "global":
+            # No factorisation and no permutation: the table is indexed by token id.
+            self.table = nn.Parameter(torch.empty(V, R))
+            self.up = nn.Linear(n_embd, R, bias=True)
+            self._perm_args = []
+            self.register_buffer("inv_perms", torch.arange(V).view(1, V))
+            return
+
+        self.views = L = max(1, int(getattr(config, "sch_nfh_views", 1)))
+        self.dims = _nfh_dims(getattr(config, "sch_nfh_dims", ""), V,
+                              int(getattr(config, "sch_nfh_groups", 3)))
+        assert math.prod(self.dims) == V, (
+            f"sch_nfh_dims={self.dims} multiplies to {math.prod(self.dims)}, not the "
+            f"padded vocabulary {V}. The code has to be a bijection or the head is "
+            f"not a distribution over the vocabulary.")
+        assert all(k > 1 for k in self.dims), f"every code axis must be >1: {self.dims}"
+
+        # One projection covering the gate and every code axis. The total output
+        # width is R*(1 + sum_g K_g): 5,120 at R=32 on 64x64x32 against the dense
+        # head's 131,072, and that ratio IS the method.
+        self.width = R * (1 + sum(self.dims))
+        g_type = str(getattr(config, "sch_nfh_g_type", "linear"))
+        assert g_type in ("linear", "mlp"), f"sch_nfh_g_type={g_type!r} not linear|mlp"
+        self.g_type = g_type
+        if g_type == "mlp":
+            # Once the head is 0.039x of dense, widening the map INTO the factors is
+            # nearly free, and it is the only knob here that lifts the Jacobian rank
+            # arXiv 2603.10145 measures as 95-99% suppressed by a dense head.
+            hid = int(getattr(config, "sch_nfh_g_hidden", 0)) or n_embd
+            self.stem = nn.Sequential(nn.Linear(n_embd, hid, bias=False), nn.GELU())
+            self.proj_in = hid
+        else:
+            self.proj_in = n_embd
+        self.proj = nn.Linear(self.proj_in, L * self.width, bias=True)
+
+        # View 0 takes the configured assignment, views 1.. take random ones. That
+        # is the sketching argument: several independent hashes beat one perfect
+        # one, and it removes the single-assignment fragility without needing L
+        # separately fitted permutations.
+        self.perm_mode = str(getattr(config, "sch_nfh_perm", "none"))
+        seed = int(getattr(config, "sch_code_seed", 1234))
+        self._perm_args = [(int(getattr(config, "vocab_size", 0)) or V, V,
+                            self.perm_mode if l == 0 else "random", seed + l,
+                            str(getattr(config, "sch_nfh_perm_path", "")),
+                            getattr(config, "_tokenizer_dir", None)) for l in range(L)]
+        # Only the inverse is ever read: loss() maps a target id to its slot and
+        # forward() gathers the grid back into token order. Rebuilt in init_weights
+        # because to_empty() fills every buffer with garbage, and a garbage
+        # permutation does not crash, it trains against the wrong words and returns
+        # a plausible bpb.
+        self.register_buffer("inv_perms", self._build_inv_perms())
+
+    def _build_inv_perms(self):
+        return torch.stack([torch.argsort(build_vocab_permutation(*a)[0])
+                            for a in self._perm_args])
+
+    # -- setup ------------------------------------------------------------
+    def init_weights(self):
+        if self.mode == "global":
+            # exp(v) is the nonnegative table; v near -log V starts it uniform.
+            torch.nn.init.normal_(self.table, mean=-math.log(self.vocab_size), std=0.02)
+            torch.nn.init.zeros_(self.up.weight)
+            torch.nn.init.zeros_(self.up.bias)
+            return
+        self.inv_perms.copy_(self._build_inv_perms().to(self.inv_perms.device))
+        if self.stem is not None:
+            s = 3 ** 0.5 * self.n_embd ** -0.5
+            torch.nn.init.uniform_(self.stem[0].weight, -s, s)
+        # Small but NOT zero. Zero weights make every mixture component identical,
+        # which makes the gate's gradient exactly symmetric and collapses the
+        # mixture to one component permanently: the same failure that had to be
+        # guarded in the routed-mixture head (OPEN_QUESTIONS Q9).
+        torch.nn.init.normal_(self.proj.weight, mean=0.0, std=0.02 * self.proj_in ** -0.5)
+        torch.nn.init.normal_(self.proj.bias, mean=0.0, std=0.02)
+
+    # -- shared machinery -------------------------------------------------
+    def _factors(self, flat):
+        """(N, d) -> log pi (N, L, R) and one log alpha^g (N, L, R, K_g) per axis."""
+        h = self.stem(flat) if self.stem is not None else flat
+        z = F.linear(h, self.proj.weight.to(dtype=h.dtype),
+                     self.proj.bias.to(dtype=h.dtype))
+        z = z.view(-1, self.views, self.width).float()
+        lpi = z[..., :self.rank].log_softmax(-1)
+        las, off = [], self.rank
+        for K in self.dims:
+            las.append(z[..., off:off + self.rank * K]
+                       .view(-1, self.views, self.rank, K).log_softmax(-1))
+            off += self.rank * K
+        return lpi, las
+
+    def _target_parts(self, las, tgt):
+        """log alpha^g at each view's slot for the target: G tensors of (N, L, R)."""
+        slots = self.inv_perms.index_select(1, tgt).t()          # (N, L)
+        parts, rest = [], slots
+        for K in reversed(self.dims):
+            parts.append((rest % K, K))
+            rest = rest // K
+        out = []
+        for la, (idx, _) in zip(las, reversed(parts)):
+            out.append(torch.gather(
+                la, 3, idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, self.rank, 1)
+            ).squeeze(-1))
+        return out
+
+    # -- training path: no V-wide tensor ever exists ----------------------
+    def loss(self, x, targets, reduction: str = "mean"):
+        flat = x.reshape(-1, x.shape[-1])
+        tgt = targets.reshape(-1)
+        keep = tgt >= 0
+        safe = tgt.clamp_min(0)
+        if self.mode == "global":
+            lp = self._global_logp_at(flat, safe)
+        else:
+            lpi, las = self._factors(flat)
+            acc = lpi
+            for part in self._target_parts(las, safe):
+                acc = acc + part
+            lp = torch.logsumexp(acc.reshape(acc.shape[0], -1), dim=-1)
+            if self.views > 1:
+                lp = lp - math.log(self.views)
+        nll = torch.where(keep, -lp, torch.zeros_like(lp))
+        if reduction == "mean":
+            return nll.sum() / keep.sum().clamp_min(1)
+        if reduction == "sum":
+            return nll.sum()
+        return nll.view(targets.shape)
+
+    def _global_logp_at(self, flat, tgt):
+        u = F.linear(flat, self.up.weight.to(dtype=flat.dtype),
+                     self.up.bias.to(dtype=flat.dtype)).float()          # (N, m)
+        v = self.table.float()
+        # One reduction over the (V, m) table per FORWARD, not per token, so it is
+        # amortised over the whole micro-batch. flops_per_token quotes it as such.
+        s = torch.logsumexp(v, dim=0)
+        num = torch.logsumexp(u + v.index_select(0, tgt), dim=-1)
+        return num - torch.logsumexp(u + s, dim=-1)
+
+    # -- eval and generation: full log-probs, token order -----------------
+    # Dynamo would unroll the chunk loop into one graph, which is how the proposal
+    # head hit a 30-minute compile. This is never the hot path: bpb evaluation goes
+    # through loss(), and generation calls it one token at a time.
+    @torch._dynamo.disable
+    def forward(self, x):
+        shape = x.shape[:-1]
+        flat = x.reshape(-1, x.shape[-1])
+        out = [self._logp_all(flat[a:a + self.eval_chunk])
+               for a in range(0, flat.shape[0], self.eval_chunk)]
+        return torch.cat(out, 0).view(*shape, self.vocab_size)
+
+    def _logp_all(self, flat):
+        if self.mode == "global":
+            u = F.linear(flat, self.up.weight.to(dtype=flat.dtype),
+                         self.up.bias.to(dtype=flat.dtype)).float()
+            v = self.table.float()
+            s = torch.logsumexp(v, dim=0)
+            num = torch.logsumexp(u.unsqueeze(1) + v.unsqueeze(0), dim=-1)   # (n, V)
+            return num - torch.logsumexp(u + s, dim=-1, keepdim=True)
+        n, R = flat.shape[0], self.rank
+        lpi, las = self._factors(flat)
+        total = None
+        for l in range(self.views):
+            # Probability space with a per-token shift, because the grid cannot be
+            # built by logsumexp without an (n, R, V) intermediate.
+            w = lpi[:, l]                                                # (n, R)
+            es = []
+            for la in las:
+                f = la[:, l]
+                mx = f.max(-1, keepdim=True).values
+                w = w + mx.squeeze(-1)
+                es.append((f - mx).exp())                                # <= 1
+            m = w.max(-1, keepdim=True).values                           # (n, 1)
+            acc = (w - m).exp().unsqueeze(-1)                            # (n, R, 1)
+            # Contract every axis but the last while keeping r, then one bmm that
+            # sums r. Peak buffer is (n, R, V/K_last), which is why the auto-derived
+            # axes put the largest one last.
+            for e in es[:-1]:
+                acc = (acc.unsqueeze(-1) * e.unsqueeze(2)).reshape(n, R, -1)
+            p = torch.bmm(acc.transpose(1, 2), es[-1]).reshape(n, -1)    # (n, V)
+            lg = p.clamp_min(1e-38).log() + m
+            lg = lg.index_select(-1, self.inv_perms[l])
+            total = lg if total is None else torch.logaddexp(total, lg)
+        if self.views > 1:
+            total = total - math.log(self.views)
+        return total
+
+    # -- accounting -------------------------------------------------------
+    def rank_ceiling(self) -> int:
+        # Not d+1. log p is a log-sum-exp over R of sums of log-softmaxes of linear
+        # forms, so the log-prob matrix is lifted off the d-dimensional bound that
+        # every linear head in this file is clamped to. The only bound left is V.
+        return self.vocab_size
+
+    def flops_per_token(self) -> int:
+        if self.mode == "global":
+            # The (V, m) column-sum reduction is once per forward, not per token.
+            # Quoted amortised over a nominal 32,768-token micro-batch so the number
+            # is not silently optimistic; it is under 1% of the projection either way.
+            return int(6 * self.n_embd * self.rank
+                       + 6 * self.vocab_size * self.rank // 32768)
+        f = 6 * self.proj.weight.numel()
+        if self.stem is not None:
+            f += 6 * self.stem[0].weight.numel()
+        return int(f)
+
+    def extra_repr(self):
+        if self.mode == "global":
+            return (f"V={self.vocab_size}, mode=global, m={self.rank}, "
+                    f"rank_ceiling={self.rank_ceiling()}")
+        return (f"V={self.vocab_size}, mode={self.mode}, dims={self.dims}, "
+                f"R={self.rank}, views={self.views}, width={self.width}, "
+                f"g={self.g_type}, perm={self.perm_mode}, "
+                f"rank_ceiling={self.rank_ceiling()}")
+
+
 # ---------------------------------------------------------------------------
 # Input side (Phase 3)
 # ---------------------------------------------------------------------------
@@ -2180,6 +2521,8 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
         return TieredHead(config, padded_vocab_size, n_embd)
     if head_type == "proposal":
         return ProposalHead(config, padded_vocab_size, n_embd)
+    if head_type == "nfh":
+        return NonnegFactorHead(config, padded_vocab_size, n_embd)
     assert head_type == "code", f"unknown sch_head_type={head_type!r}"
     return StructuredCodeHead(config, padded_vocab_size, n_embd)
 
@@ -2195,7 +2538,8 @@ def describe_head(head: nn.Module) -> str:
     params = sum(p.numel() for p in head.parameters())
     kind = ("monarch" if isinstance(head, MonarchHead) else
             "tiered" if isinstance(head, TieredHead) else
-            "proposal" if isinstance(head, ProposalHead) else "code")
+            "proposal" if isinstance(head, ProposalHead) else
+            "nfh" if isinstance(head, NonnegFactorHead) else "code")
     return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "
             f"| head FLOPs/token {head.flops_per_token():,} "
             f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
