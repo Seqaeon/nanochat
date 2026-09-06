@@ -121,7 +121,7 @@ PRODUCT_IMPLS = ("dense", "gather")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
-HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered")
+HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered", "proposal")
 MONARCH_PERMS = ("none", "random", "freq", "file")
 PHI_DTYPES = ("bf16", "fp32")
 HOLDOUT_MODES = ("target", "full")
@@ -1454,6 +1454,198 @@ def _parse_int_list(spec: str) -> list[int]:
     return [int(tok) for tok in spec.replace(" ", ",").split(",") if tok]
 
 
+class ProposalHead(nn.Module):
+    """Exact dense head, approximate normalisation.
+
+    Every other head here approximates the head MATRIX and normalises exactly: they
+    trade capacity for FLOPs. This does the reverse. ``weight`` is the full V x d
+    matrix, unchanged and unfactorised; what changes is that only a few thousand of
+    its rows are evaluated per token.
+
+        z_prop = B (A h)          rank-c proposal over all V             V*c MACs
+        K      = topK(z_prop) U {target}
+        z_K    = weight[K] . h    EXACT logits, full-rank head           K*d MACs
+        tail   = importance sample S from q ∝ exp(z_prop) off K          S*d MACs
+        log Z  = logaddexp(lse(z_K), tail)
+        loss   = log Z - z_target
+
+    The only approximation is log Z, and because the loss is ``z_target - log Z`` an
+    error of e nats per token is exactly e/(ln2 * bytes_per_token) bits per byte,
+    which is measurable rather than inferred. On the trained V=131,072 heads
+    (scripts/proposal_probe.py) that error is 0.006 to 0.035 nats at 9x fewer head
+    FLOPs, worth +0.113 / +0.067 / +0.024 bpb over the dense curve at depth 4 / 8 / 12.
+
+    THE TAIL MUST BE SAMPLED, NOT SUBSTITUTED. Using the cheap logits for the
+    non-selected words is the obvious thing and it is biased: measured at -0.027 nats
+    at depth 4 and -1.6 nats at depth 12, enough to lose everything the FLOPs bought.
+    Sampling the tail from the proposal is unbiased and its variance is small exactly
+    where the proposal is good, which the top-K step has already arranged.
+
+    THE PROPOSAL MUST BE TRAINED TO RANK, NOT TO RECONSTRUCT. A truncated SVD of the
+    head is the optimal rank-c APPROXIMATION and a poor RANKER: at depth 12, rank 32
+    by SVD keeps the true top-1 inside K only 76.1% of the time against 98.6% for the
+    same rank trained by distillation, a 14x difference in the resulting log-Z error.
+    That is why the rank needed appeared to grow with d (0.06d, 0.13d, 0.33d) and why
+    it does not once the proposal is trained (16 to 32 at every depth). It is also, we
+    think, why SVD-Softmax (Shim et al., 2017) underdelivered.
+
+    Costs: the head reports the TRAINING path, ``V*c + c*d + (K+S)*d``, not ``V*d``.
+    The dense weight is still V*d PARAMETERS; it is simply not all read per token.
+    Evaluation and generation use the exact dense head, so reported bpb measures the
+    model rather than the approximation.
+    """
+
+    custom_loss = True        # which logits are exact depends on the targets
+    emits_logits = True       # ...but it can still produce a full vector on request
+    self_normalized = False
+    # GPT.forward squashes logits with this before the dense loss. The approximate
+    # path has to squash identically or training and evaluation optimise different
+    # objectives, which would show up as a quality gap that has nothing to do with
+    # the approximation being measured.
+    SOFTCAP = 20.0
+
+    def __init__(self, config, padded_vocab_size: int, n_embd: int):
+        super().__init__()
+        V = self.vocab_size = padded_vocab_size
+        # The dense path slices padding off before the loss, so padded rows must be
+        # unreachable here too: selecting one would add spurious mass to the
+        # partition sum for a token that can never be a target.
+        self.real_vocab = min(int(getattr(config, "vocab_size", 0)) or V, V)
+        self.n_embd = n_embd
+        c = int(getattr(config, "sch_proposal_rank", 32))
+        assert 0 < c <= n_embd, f"proposal rank must lie in (0, d={n_embd}], got {c}"
+        self.rank = c
+        self.topk = int(getattr(config, "sch_proposal_topk", 4096))
+        self.samples = int(getattr(config, "sch_proposal_samples", 1024))
+        self.warmup = int(getattr(config, "sch_proposal_warmup", 0))
+        # Token chunk for the gather. weight[idx] is (chunk, K, d): at K=4096, d=512
+        # that is 537 MB in bf16 per 128 tokens, so this is the memory knob, and the
+        # thing a fused gather-matmul kernel would remove entirely.
+        self.chunk = int(getattr(config, "sch_proposal_chunk", 128))
+        self.vocab_chunk = int(getattr(config, "sch_proposal_vocab_chunk", 16384))
+
+        self.weight = nn.Parameter(torch.empty(V, n_embd))
+        self.prop_down = nn.Linear(n_embd, c, bias=False)
+        self.prop_up = nn.Parameter(torch.empty(V, c))
+        self.bias = nn.Parameter(torch.empty(V)) if int(getattr(config, "sch_bias", 0)) else None
+        self.register_buffer("_step", torch.zeros((), dtype=torch.long), persistent=True)
+
+    def init_weights(self):
+        s = 3 ** 0.5 * self.n_embd ** -0.5
+        torch.nn.init.uniform_(self.weight, -s, s)
+        torch.nn.init.uniform_(self.prop_down.weight, -s, s)
+        torch.nn.init.normal_(self.prop_up, mean=0.0, std=0.001)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
+
+    # -- exact path, used for evaluation and generation ----------------------
+    def forward(self, x):
+        out = F.linear(x, self.weight.to(dtype=x.dtype))
+        if self.bias is not None:
+            out += self.bias.to(dtype=out.dtype)
+        return out
+
+    def _proposal_topk(self, z, K):
+        """Streaming top-K over the vocabulary, so no (N, V) tensor is ever built.
+
+        This is the memory win as much as the FLOP one: at 65,536 tokens and
+        V=131,072 a bf16 logit tensor is 17 GB, which is why every dense arm in this
+        project needed a small device batch.
+        """
+        best_v = best_i = None
+        for s in range(0, self.real_vocab, self.vocab_chunk):
+            up = self.prop_up[s:min(s + self.vocab_chunk, self.real_vocab)].to(dtype=z.dtype)
+            v, i = (z @ up.T).topk(min(K, up.shape[0]), dim=-1)
+            i = i + s
+            if best_v is None:
+                best_v, best_i = v, i
+            else:
+                v = torch.cat([best_v, v], -1)
+                i = torch.cat([best_i, i], -1)
+                # Early merges hold fewer than K candidates, and asking topk for more
+                # than exist is a hard error rather than a short result.
+                best_v, sel = v.topk(min(K, v.shape[-1]), dim=-1)
+                best_i = i.gather(-1, sel)
+        return best_i
+
+    def loss(self, x, targets, reduction="mean"):
+        flat = x.reshape(-1, self.n_embd)
+        tgt = targets.reshape(-1)
+        valid = tgt >= 0
+        cap = self.SOFTCAP
+        if self.training:
+            self._step += 1
+        # The proposal is noise at initialisation and would select nothing useful, so
+        # the first steps pay full price and give it something to learn from.
+        if self.training and int(self._step) <= self.warmup:
+            logits = self.forward(flat)[:, :self.real_vocab].float()
+            logits = cap * torch.tanh(logits / cap)
+            return F.cross_entropy(logits, tgt, ignore_index=-1, reduction=reduction)
+
+        K, S = min(self.topk, self.real_vocab), self.samples
+        losses = flat.new_zeros(flat.shape[0], dtype=torch.float32)
+        for a in range(0, flat.shape[0], self.chunk):
+            h = flat[a:a + self.chunk]
+            t = tgt[a:a + self.chunk]
+            # cast the weight, as nanochat's Linear does: activations are bf16
+            z = F.linear(h, self.prop_down.weight.to(dtype=h.dtype))
+            with torch.no_grad():
+                idx = self._proposal_topk(z, K)
+                # The target must be scored exactly, and must appear once: a duplicate
+                # would be counted twice in the partition sum.
+                miss = ~(idx == t.clamp_min(0).unsqueeze(-1)).any(-1)
+                idx[miss, -1] = t.clamp_min(0)[miss]
+            W = self.weight[idx].to(dtype=h.dtype)               # (n, K, d)
+            zk = torch.einsum("nd,nkd->nk", h, W).float()
+            if self.bias is not None:
+                zk = zk + self.bias[idx].float()
+            zk = cap * torch.tanh(zk / cap)
+            hi = torch.logsumexp(zk, dim=-1)
+            if S > 0:
+                zp = (z @ self.prop_up[:self.real_vocab].to(dtype=z.dtype).T).float()
+                zp = cap * torch.tanh(zp / cap)
+                zp = zp.scatter(-1, idx, -1e30)                  # q lives off K
+                logC = torch.logsumexp(zp, dim=-1)
+                with torch.no_grad():
+                    sidx = torch.multinomial((zp - logC.unsqueeze(-1)).exp(), S,
+                                             replacement=True)
+                Ws = self.weight[sidx].to(dtype=h.dtype)
+                zs = torch.einsum("nd,nkd->nk", h, Ws).float()
+                if self.bias is not None:
+                    zs = zs + self.bias[sidx].float()
+                zs = cap * torch.tanh(zs / cap)
+                # unbiased: E_q[exp(z_true - z_prop)] * C = sum over the complement
+                ratio = (zs - zp.gather(-1, sidx)).exp().mean(-1).clamp_min(1e-30)
+                logZ = torch.logaddexp(hi, logC + ratio.log())
+            else:
+                logZ = hi
+            pos = (idx == t.clamp_min(0).unsqueeze(-1)).float().argmax(-1, keepdim=True)
+            losses[a:a + self.chunk] = logZ - zk.gather(-1, pos).squeeze(-1)
+        losses = losses.masked_fill(~valid, 0.0)
+        if reduction == "none":
+            return losses.view_as(targets)
+        return losses.sum() / valid.sum().clamp_min(1)
+
+    def rank_ceiling(self) -> int:
+        return min(self.vocab_size, self.n_embd) + 1     # the head is exactly dense
+
+    def flops_per_token(self) -> int:
+        # The TRAINING path. The dense weight is V*d parameters but only K+S of its
+        # rows are read per token, which is the entire point.
+        K, S = min(self.topk, self.real_vocab), self.samples
+        f = 6 * (self.vocab_size * self.rank + self.rank * self.n_embd
+                 + (K + S) * self.n_embd)
+        if self.bias is not None:
+            f += 2 * (K + S)
+        return int(f)
+
+    def extra_repr(self):
+        return (f"V={self.vocab_size}, exact head {self.vocab_size}x{self.n_embd}, "
+                f"proposal rank={self.rank}, K={self.topk}, S={self.samples}, "
+                f"warmup={self.warmup}, dense-head FLOPs saved "
+                f"{6 * self.vocab_size * self.n_embd / max(self.flops_per_token(), 1):.1f}x")
+
+
 class TieredHead(nn.Module):
     """Frequency tiers of unequal size, each with its own low-rank head.
 
@@ -1937,6 +2129,8 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
         return MonarchHead(config, padded_vocab_size, n_embd)
     if head_type == "tiered":
         return TieredHead(config, padded_vocab_size, n_embd)
+    if head_type == "proposal":
+        return ProposalHead(config, padded_vocab_size, n_embd)
     assert head_type == "code", f"unknown sch_head_type={head_type!r}"
     return StructuredCodeHead(config, padded_vocab_size, n_embd)
 
@@ -1951,7 +2145,8 @@ def describe_head(head: nn.Module) -> str:
                 f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
     params = sum(p.numel() for p in head.parameters())
     kind = ("monarch" if isinstance(head, MonarchHead) else
-            "tiered" if isinstance(head, TieredHead) else "code")
+            "tiered" if isinstance(head, TieredHead) else
+            "proposal" if isinstance(head, ProposalHead) else "code")
     return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "
             f"| head FLOPs/token {head.flops_per_token():,} "
             f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")

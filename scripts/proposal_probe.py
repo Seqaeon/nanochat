@@ -50,6 +50,9 @@ def main():
                     help="dense bpb/decade at this vocabulary; enables the margin column")
     ap.add_argument("--dense-model-macs", type=float, default=0.0,
                     help="whole-model MACs/token of the dense arm; enables the margin")
+    ap.add_argument("--chunk", type=int, default=512,
+                    help="activations per pass; a full (N, V) logit tensor is 2.1 GB "
+                         "at N=4096, V=131,072")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -73,9 +76,34 @@ def main():
     margin_ok = bool(bpb and args.slope and args.dense_model_macs)
     body = args.dense_model_macs - V * d if margin_ok else 0.0
 
+    # Chunked over activations: a full (N, V) logit tensor is 2.1 GB at N=4096 and
+    # V=131,072, which is the same wall the training runs keep hitting.
+    CH = max(1, args.chunk)
+
+    def stats(c, K, S, Uc):
+        kept = mass = plug = samp = 0.0
+        for i in range(0, N, CH):
+            Hc = H[i:i + CH]
+            Z = SOFTCAP * torch.tanh((Hc @ U.T) / SOFTCAP)
+            Zp = SOFTCAP * torch.tanh((Hc @ Uc.T) / SOFTCAP)
+            logZ = torch.logsumexp(Z, dim=-1)
+            idx = Zp.topk(K, dim=-1).indices
+            hi = torch.logsumexp(Z.gather(-1, idx), dim=-1)
+            kept += float((idx == Z.argmax(-1, keepdim=True)).any(-1).float().sum())
+            mass += float(Z.softmax(-1).gather(-1, idx).sum(-1).sum())
+            off = Zp.masked_fill(
+                torch.zeros_like(Zp, dtype=torch.bool).scatter_(-1, idx, True), -1e30)
+            logC = torch.logsumexp(off, dim=-1)
+            plug += float((torch.logaddexp(hi, logC) - logZ).abs().sum())
+            q = (off - logC.unsqueeze(-1)).exp()
+            s_idx = torch.multinomial(q, S, replacement=True)
+            ratio = (Z.gather(-1, s_idx) - Zp.gather(-1, s_idx)).exp()
+            tail = logC + ratio.mean(-1).clamp_min(1e-30).log()
+            samp += float((torch.logaddexp(hi, tail) - logZ).abs().sum())
+            del Z, Zp, off, q
+        return kept / N, mass / N, plug / N, samp / N
+
     with torch.no_grad():
-        Z = SOFTCAP * torch.tanh((H @ U.T) / SOFTCAP)
-        logZ = torch.logsumexp(Z, dim=-1)
         Vh = torch.linalg.svd(U, full_matrices=False).Vh
         hdr = f"  {'rank':>5} {'K':>6} {'S':>5} {'top-1':>7} {'massK':>7} " \
               f"{'plug-in':>9} {'sampled':>9}"
@@ -86,22 +114,9 @@ def main():
         print(hdr)
         for c in ranks:
             Uc = (U @ Vh[:c].T) @ Vh[:c]
-            Zp = SOFTCAP * torch.tanh((H @ Uc.T) / SOFTCAP)
             for K in Ks:
-                idx = Zp.topk(K, dim=-1).indices
-                hi = torch.logsumexp(Z.gather(-1, idx), dim=-1)
-                kept = (idx == Z.argmax(-1, keepdim=True)).any(-1).float().mean()
-                mass = Z.softmax(-1).gather(-1, idx).sum(-1).mean()
-                off = Zp.masked_fill(
-                    torch.zeros_like(Zp, dtype=torch.bool).scatter_(-1, idx, True), -1e30)
-                logC = torch.logsumexp(off, dim=-1)
-                plug = (torch.logaddexp(hi, logC) - logZ).abs().mean()
                 for S in Ss:
-                    q = (off - logC.unsqueeze(-1)).exp()
-                    s_idx = torch.multinomial(q, S, replacement=True)
-                    ratio = (Z.gather(-1, s_idx) - Zp.gather(-1, s_idx)).exp()
-                    tail = logC + ratio.mean(-1).clamp_min(1e-30).log()
-                    err = float((torch.logaddexp(hi, tail) - logZ).abs().mean())
+                    kept, mass, plug, err = stats(c, K, S, Uc)
                     row = (f"  {c:>5} {K:>6} {S:>5} {kept:>6.1%} {mass:>7.4f} "
                            f"{plug:>9.5f} {err:>9.5f}")
                     if bpb:

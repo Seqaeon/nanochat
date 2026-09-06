@@ -421,7 +421,10 @@ def run_all_diagnostics(model, build_val_loader, token_bytes, vocab_size, steps=
     # last step over it. The per-token loss path still works, so the decile
     # metrics do run.
     head = getattr(model, "lm_head", None)
-    emits_logits = not getattr(head, "custom_loss", False)
+    # A head that owns its loss may still be able to produce logits on demand;
+    # the proposal head does, from its exact dense weight.
+    emits_logits = (not getattr(head, "custom_loss", False)
+                    or getattr(head, "emits_logits", False))
     if not emits_logits and rank_contexts:
         print0("[SCH] this head computes its loss without a logit vector; "
                "skipping the rank, anisotropy and held-out-rank probes")

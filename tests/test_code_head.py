@@ -731,6 +731,107 @@ def test_monarch_head_trains():
 
 
 # ---------------------------------------------------------------------------
+# Proposal head: exact dense head, approximate normalisation.
+# ---------------------------------------------------------------------------
+
+
+def _proposal(**kw):
+    kw.setdefault("sch_proposal_rank", 8)
+    kw.setdefault("sch_proposal_topk", 64)
+    kw.setdefault("sch_proposal_samples", 32)
+    kw.setdefault("sch_proposal_chunk", 7)          # deliberately not a divisor
+    kw.setdefault("sch_proposal_vocab_chunk", 100)  # deliberately not a divisor
+    return _phase5(use_code_head=1, sch_head_type='proposal', **kw)
+
+
+def test_proposal_head_is_exact_when_it_selects_everything():
+    """K = V and S = 0 removes every approximation, so the loss must be the
+    ordinary cross-entropy of the exact dense head. Nothing else pins the
+    bookkeeping -- the target's position inside K, the partition sum, the chunking
+    over both tokens and vocabulary -- all at once."""
+    m = _proposal(sch_proposal_topk=V, sch_proposal_samples=0, sch_bias=1)
+    x = torch.randint(0, V, (2, 8))
+    m.train()
+    got = m(x, x)
+    # reference: the exact dense head, squashed exactly as GPT.forward squashes it
+    m.eval()
+    logits = m(x)[..., :V].float()
+    sc = m.lm_head.SOFTCAP
+    ref = torch.nn.functional.cross_entropy(
+        (sc * torch.tanh(logits / sc)).reshape(-1, V), x.reshape(-1))
+    # bf16 tolerance: the two paths accumulate in different orders (a gathered
+    # einsum against one dense matmul), so the residual is precision, not
+    # bookkeeping. An index error here moves the loss by whole nats, not 1e-3.
+    torch.testing.assert_close(got.float(), ref, rtol=2e-3, atol=2e-3)
+
+
+def test_proposal_head_trains_the_exact_weight_and_the_proposal():
+    m = _proposal()
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    loss = m(x, x)
+    loss.backward()
+    head = m.lm_head
+    assert torch.isfinite(loss)
+    # the exact head must receive gradient on the rows it selected...
+    assert head.weight.grad is not None and head.weight.grad.abs().sum() > 0
+    touched = (head.weight.grad.abs().sum(-1) > 0).sum()
+    assert 0 < touched < V, f"expected a sparse row update, touched {touched} of {V}"
+    # ...and the proposal must train too, or it never learns to rank
+    assert head.prop_up.grad.abs().sum() > 0
+    assert head.prop_down.weight.grad.abs().sum() > 0
+
+
+def test_proposal_head_warmup_runs_the_exact_softmax():
+    m = _proposal(sch_proposal_warmup=3, sch_proposal_topk=4, sch_proposal_samples=0)
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    warm = m(x, x)                       # step 1: exact, every row gets gradient
+    warm.backward()
+    assert (m.lm_head.weight.grad.abs().sum(-1) > 0).sum() == V
+    for _ in range(3):                   # step past the warmup
+        m(x, x)
+    m.zero_grad(set_to_none=True)
+    m(x, x).backward()
+    assert (m.lm_head.weight.grad.abs().sum(-1) > 0).sum() < V, \
+        "after warmup the head must be evaluated sparsely"
+
+
+def test_proposal_streaming_topk_matches_a_direct_topk():
+    """The streaming selection exists so no (N, V) logit tensor is built. It walks
+    the vocabulary in slices and merges, which is where an off-by-one would hide."""
+    head = _proposal().lm_head
+    z = torch.randn(5, head.rank)
+    got = head._proposal_topk(z, 17)
+    ref = (z @ head.prop_up.T).topk(17, dim=-1).indices
+    assert set(map(int, got[0])) == set(map(int, ref[0]))
+    assert got.shape == ref.shape
+
+
+def test_proposal_head_prices_the_training_path_not_the_dense_one():
+    head = _proposal(sch_proposal_rank=8, sch_proposal_topk=64,
+                     sch_proposal_samples=32).lm_head
+    d, K, S = head.n_embd, 64, 32
+    assert head.flops_per_token() == 6 * (V * 8 + 8 * d + (K + S) * d)
+    assert head.flops_per_token() < 6 * V * d
+    # the dense weight is still there in full: no capacity is traded away
+    assert head.weight.shape == (V, d)
+    assert head.rank_ceiling() == min(V, d) + 1
+
+
+def test_proposal_head_still_emits_exact_logits_for_evaluation():
+    """It owns its loss, but unlike the tree head it can produce a logit vector, and
+    evaluation uses the exact dense path so reported bpb measures the model rather
+    than the approximation."""
+    m = _proposal()
+    m.eval()
+    x = torch.randint(0, V, (2, 8))
+    logits = m(x)
+    assert logits.shape == (2, 8, m.config.vocab_size)
+    assert torch.isfinite(logits).all()
+
+
+# ---------------------------------------------------------------------------
 # Tiered head: unequal frequency tiers, capacity solved per tier.
 # ---------------------------------------------------------------------------
 

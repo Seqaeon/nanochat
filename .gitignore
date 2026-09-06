@@ -21,6 +21,9 @@ tokenizer_131k/
 head_d4_v131k.pt
 head_d8_v131k.pt
 head_d12_v131k.pt
+acts_d4_v131k.pt
+acts_d8_v131k.pt
+acts_d12_v131k.pt
 *.pt
 *.pth
 *.ckpt

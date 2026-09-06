@@ -661,6 +661,12 @@ class GPTConfig:
     sch_tier_caps: str = ''                         # dims per tier, e.g. '512,512,511,480,18' (scripts/solve_tiers.py solves these)
     sch_tier_order: str = 'freq'                    # none | random | freq | file. Which words land in which tier; freq is the point
     sch_tier_perm_path: str = ''                    # .pt permutation of range(vocab_size) for sch_tier_order=file
+    sch_proposal_rank: int = 32                     # c for sch_head_type=proposal. Trained to RANK, so it stays 16-32 at any d
+    sch_proposal_topk: int = 4096                   # K words scored exactly per token, plus the target
+    sch_proposal_samples: int = 1024                # S importance samples for the tail; 0 makes the estimator biased
+    sch_proposal_warmup: int = 0                    # steps of exact softmax before switching; the proposal is noise at init
+    sch_proposal_chunk: int = 128                   # tokens per gather; weight[idx] is (chunk, K, d), the memory knob
+    sch_proposal_vocab_chunk: int = 16384           # vocabulary slice for the streaming top-K, so no (N, V) tensor is built
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -761,6 +767,8 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_mixture_aux",
     "sch_monarch_m1", "sch_monarch_perm", "sch_monarch_perm_path",
     "sch_tier_bounds", "sch_tier_caps", "sch_tier_order", "sch_tier_perm_path",
+    "sch_proposal_rank", "sch_proposal_topk", "sch_proposal_samples",
+    "sch_proposal_warmup", "sch_proposal_chunk", "sch_proposal_vocab_chunk",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
@@ -11340,13 +11348,16 @@ class GPT(nn.Module):
         # Forward the lm_head (compute logits)
         softcap = 20 # smoothly cap the logits to the range [-softcap, softcap]
         if self.use_code_head and getattr(self.lm_head, 'custom_loss', False):
-            # Hierarchical softmax owns its own loss: the whole point of a tree
-            # head is that the full V-wide logit vector is never materialised.
-            # Incompatible with the auxiliary objectives below, asserted in __init__.
-            assert targets is not None, (
+            # Some heads own their loss. Hierarchical softmax does so because the full
+            # V-wide logit vector is never materialised at all. The proposal head does
+            # so because WHICH logits it computes exactly depends on the targets, but
+            # it can still produce a logit vector when asked (evaluation and generation
+            # run its exact dense head), so it is not held to the tree head's rule.
+            if targets is not None:
+                return self.lm_head.loss(x, targets, reduction=loss_reduction)
+            assert getattr(self.lm_head, 'emits_logits', False), (
                 "hierarchical softmax cannot produce a logit vector; it supports the "
                 "loss path only (use a code or dense head for generation / rank probes)")
-            return self.lm_head.loss(x, targets, reduction=loss_reduction)
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation

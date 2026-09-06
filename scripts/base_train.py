@@ -750,6 +750,12 @@ parser.add_argument("--sch-tier-bounds", type=str, default="", help="SCH: cumula
 parser.add_argument("--sch-tier-caps", type=str, default="", help="SCH: dimensions per tier, e.g. '512,512,511,480,18'. Solved by scripts/solve_tiers.py against a trained dense head; not a value to guess")
 parser.add_argument("--sch-tier-order", type=str, default="freq", choices=list(MONARCH_PERMS), help="SCH: which words land in which tier. 'freq' is the whole point; 'none' (token id) is the control that shows the ordering is what pays")
 parser.add_argument("--sch-tier-perm-path", type=str, default="", help="SCH: .pt permutation for --sch-tier-order=file")
+parser.add_argument("--sch-proposal-rank", type=int, default=32, help="SCH: c, the proposal rank. Trained to rank rather than reconstruct, so it stays 16-32 at any depth; a truncated SVD would need 0.33d")
+parser.add_argument("--sch-proposal-topk", type=int, default=4096, help="SCH: K words scored EXACTLY per token from the full dense head, plus the target")
+parser.add_argument("--sch-proposal-samples", type=int, default=1024, help="SCH: S importance samples for the partition tail. 0 substitutes the cheap logits instead, which is biased by -0.03 to -1.6 nats")
+parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: steps of exact softmax before switching. The proposal selects nothing useful at initialisation")
+parser.add_argument("--sch-proposal-chunk", type=int, default=128, help="SCH: tokens per gather; weight[idx] is (chunk, K, d) and this is the memory knob")
+parser.add_argument("--sch-proposal-vocab-chunk", type=int, default=16384, help="SCH: vocabulary slice for the streaming top-K, so the (N, V) logit tensor is never built")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1307,6 +1313,12 @@ def build_model_meta(depth):
         sch_tier_caps=str(getattr(args, 'sch_tier_caps', '')),
         sch_tier_order=str(getattr(args, 'sch_tier_order', 'freq')),
         sch_tier_perm_path=str(getattr(args, 'sch_tier_perm_path', '')),
+        sch_proposal_rank=int(getattr(args, 'sch_proposal_rank', 32)),
+        sch_proposal_topk=int(getattr(args, 'sch_proposal_topk', 4096)),
+        sch_proposal_samples=int(getattr(args, 'sch_proposal_samples', 1024)),
+        sch_proposal_warmup=int(getattr(args, 'sch_proposal_warmup', 0)),
+        sch_proposal_chunk=int(getattr(args, 'sch_proposal_chunk', 128)),
+        sch_proposal_vocab_chunk=int(getattr(args, 'sch_proposal_vocab_chunk', 16384)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)
