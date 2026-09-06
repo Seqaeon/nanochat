@@ -1454,6 +1454,36 @@ def _parse_int_list(spec: str) -> list[int]:
     return [int(tok) for tok in spec.replace(" ", ",").split(",") if tok]
 
 
+class _GatheredLinear(torch.autograd.Function):
+    """``out[n, k] = <h[n], weight[idx[n, k]]>`` without retaining the gather.
+
+    The obvious spelling, ``einsum("nd,nkd->nk", h, weight[idx])``, saves the gathered
+    (n, K, d) tensor for backward. At K=4096, d=512 that is 537 MB per 128 tokens, and
+    a 65,536-token micro-batch retains every chunk's copy: 275 GB. Chunking the loop
+    bounds compute but not memory, because autograd keeps the whole graph.
+
+    Recomputing ``weight[idx]`` in backward costs one more gather -- memory traffic, no
+    extra arithmetic, since the einsums for grad_h and grad_weight have to touch it
+    anyway -- and drops what is retained from (n, K, d) to (n, K).
+    """
+
+    @staticmethod
+    def forward(ctx, h, weight, idx):
+        ctx.save_for_backward(h, weight, idx)
+        return torch.einsum("nd,nkd->nk", h, weight[idx].to(dtype=h.dtype))
+
+    @staticmethod
+    def backward(ctx, g):
+        h, weight, idx = ctx.saved_tensors
+        g = g.to(dtype=h.dtype)
+        W = weight[idx].to(dtype=h.dtype)                    # recomputed, not stored
+        grad_h = torch.einsum("nk,nkd->nd", g, W)
+        gw = torch.zeros_like(weight)
+        gw.index_add_(0, idx.reshape(-1),
+                      torch.einsum("nk,nd->nkd", g, h).reshape(-1, h.shape[-1]).to(gw.dtype))
+        return grad_h, gw, None
+
+
 class ProposalHead(nn.Module):
     """Exact dense head, approximate normalisation.
 
@@ -1553,11 +1583,19 @@ class ProposalHead(nn.Module):
             out += self.bias.to(dtype=out.dtype)
         return out
 
+    @torch._dynamo.disable
     def loss(self, x, targets, reduction="mean"):
-        """Chunked over tokens, which is what bounds memory: the peak full-width
-        tensor is (chunk, V) rather than (N, V) -- 67 MB against 17 GB at N=65,536
-        and V=131,072, which is why the dense arms in this project needed a small
-        device batch and this does not."""
+        """Chunked over tokens, and deliberately not compiled.
+
+        Dynamo unrolls a Python loop into one graph, so a 65,536-token micro-batch at
+        chunk=128 becomes 512 copies of a topk over 131,072 plus two gathers: the
+        compile never finishes. The body of the model stays compiled; only this
+        method opts out, and it is memory-bound rather than fusion-bound anyway.
+
+        What chunking buys is peak memory: the full-width proposal is (chunk, V),
+        67 MB rather than 17 GB, and it is built under no_grad so no chunk's copy
+        survives into backward. Everything retained is (chunk, K+S).
+        """
         flat = x.reshape(-1, self.n_embd)
         tgt = targets.reshape(-1)
         valid = tgt >= 0
@@ -1573,68 +1611,70 @@ class ProposalHead(nn.Module):
             t = tgt[a:a + self.chunk]
             tc = t.clamp_min(0)
             z = F.linear(h, self.prop_down.weight.to(dtype=h.dtype))
-            zp = (z @ self.prop_up[:Vr].to(dtype=z.dtype).T).float()
-            zp = cap * torch.tanh(zp / cap)
             nchunk += 1
 
             if warm:
-                # The exact path, and the proposal learns from it. Without this term
-                # the proposal receives no gradient during warmup at all: it would
-                # still be its random initialisation the moment the exact path
-                # switches off, which is the opposite of what a warmup is for. (It
-                # also leaves prop_down and prop_up unused, which DDP rejects.)
+                # The exact path. Its memory profile is the dense head's, which is
+                # what it is replacing, so nothing is worse here than the baseline.
                 full = self.forward(h)[:, :Vr].float()
                 full = cap * torch.tanh(full / cap)
                 losses[a:a + self.chunk] = F.cross_entropy(
                     full, t, ignore_index=-1, reduction="none")
-                aux = aux + F.kl_div(zp.log_softmax(-1), full.detach().log_softmax(-1),
-                                     log_target=True, reduction="batchmean")
+                with torch.no_grad():
+                    sel = full.topk(K, dim=-1).indices     # the exact top-K teaches
+                    teacher = full.gather(-1, sel).log_softmax(-1)
+                student = _GatheredLinear.apply(z, self.prop_up, sel).float()
+                aux = aux + F.kl_div((cap * torch.tanh(student / cap)).log_softmax(-1),
+                                     teacher, log_target=True, reduction="batchmean")
                 continue
 
+            # Selection and the sampler are inference: no gradient reaches the
+            # proposal through them, which is what lets the (chunk, V) tensor be
+            # freed immediately. The proposal learns from the ranking term below.
             with torch.no_grad():
+                zp = (z @ self.prop_up[:Vr].to(dtype=z.dtype).T).float()
+                zp = cap * torch.tanh(zp / cap)
                 idx = zp.topk(K, dim=-1).indices
                 # The target must be scored exactly, and exactly once: a duplicate
                 # would be counted twice in the partition sum. Written with `where`
-                # rather than a boolean mask assignment, because masked assignment
-                # lowers to `nonzero`, whose output shape depends on the data, and
-                # that breaks the graph on every step.
+                # rather than a masked assignment, which lowers to `nonzero`.
                 has = (idx == tc.unsqueeze(-1)).any(-1)
                 idx[:, -1] = torch.where(has, idx[:, -1], tc)
-            W = self.weight[idx].to(dtype=h.dtype)               # (n, K, d)
-            zk = torch.einsum("nd,nkd->nk", h, W).float()
+                if S > 0:
+                    off = zp.scatter(-1, idx, -1e30)        # q lives off K
+                    logC = torch.logsumexp(off, dim=-1)
+                    sidx = torch.multinomial((off - logC.unsqueeze(-1)).exp(), S,
+                                             replacement=True)
+                    zp_sample = zp.gather(-1, sidx)
+                del zp
+
+            zk = _GatheredLinear.apply(h, self.weight, idx).float()
             if self.bias is not None:
                 zk = zk + self.bias[idx].float()
             zk = cap * torch.tanh(zk / cap)
             hi = torch.logsumexp(zk, dim=-1)
 
-            teach, stud = [zk], [zp.gather(-1, idx)]
             if S > 0:
-                off = zp.scatter(-1, idx, -1e30)                 # q lives off K
-                logC = torch.logsumexp(off, dim=-1)
-                with torch.no_grad():
-                    sidx = torch.multinomial((off - logC.unsqueeze(-1)).exp(), S,
-                                             replacement=True)
-                Ws = self.weight[sidx].to(dtype=h.dtype)
-                zs = torch.einsum("nd,nkd->nk", h, Ws).float()
+                zs = _GatheredLinear.apply(h, self.weight, sidx).float()
                 if self.bias is not None:
                     zs = zs + self.bias[sidx].float()
                 zs = cap * torch.tanh(zs / cap)
                 # unbiased: E_q[exp(z_true - z_prop)] * C is the sum over the complement
-                ratio = (zs - zp.gather(-1, sidx)).exp().mean(-1).clamp_min(1e-30)
+                ratio = (zs - zp_sample).exp().mean(-1).clamp_min(1e-30)
                 logZ = torch.logaddexp(hi, logC + ratio.log())
-                teach.append(zs)
-                stud.append(zp.gather(-1, sidx))
+                sel, teach = torch.cat([idx, sidx], -1), torch.cat([zk, zs], -1)
             else:
                 logZ = hi
+                sel, teach = idx, zk
 
             pos = (idx == tc.unsqueeze(-1)).float().argmax(-1, keepdim=True)
             losses[a:a + self.chunk] = logZ - zk.gather(-1, pos).squeeze(-1)
             # Train the proposal to RANK, against the exact logits it just caused to
-            # be computed. Free: those logits already exist. This is the term that
-            # made a rank-32 proposal beat a rank-128 truncated SVD offline, and the
-            # only gradient the proposal gets when S=0.
-            aux = aux + F.kl_div(torch.cat(stud, -1).log_softmax(-1),
-                                 torch.cat(teach, -1).detach().log_softmax(-1),
+            # be computed. This is the only gradient it receives, and the term that
+            # made a rank-32 proposal beat a rank-128 truncated SVD offline.
+            student = _GatheredLinear.apply(z, self.prop_up, sel).float()
+            aux = aux + F.kl_div((cap * torch.tanh(student / cap)).log_softmax(-1),
+                                 teach.detach().log_softmax(-1),
                                  log_target=True, reduction="batchmean")
 
         losses = losses.masked_fill(~valid, 0.0)

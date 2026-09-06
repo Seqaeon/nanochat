@@ -80,7 +80,11 @@ RANKS="${RANKS:-32}"
 TOPKS="${TOPKS:-4096}"
 SAMPLES="${SAMPLES:-1024}"
 WARMUP="${WARMUP:-200}"          # steps of exact softmax; the proposal is noise at init
-PCHUNK="${PCHUNK:-128}"          # tokens per gather: weight[idx] is (chunk, K, d)
+# Tokens per chunk. This is now a SPEED knob, not a memory-safety one: what backward
+# retains is (chunk, K+S) after the custom gathered-linear, and the (chunk, V) proposal
+# is built under no_grad and freed. Bigger chunks mean fewer kernel launches and a
+# larger transient gather; 512 gives 128 iterations per 65,536-token micro-batch.
+PCHUNK="${PCHUNK:-512}"
 
 # Budget reference, the Monarch arm already trained: d*M + V*m1 + r*(d+V).
 REF_M="${REF_M:-1024}"; REF_M1="${REF_M1:-32}"; REF_RANK="${REF_RANK:-224}"
@@ -215,4 +219,10 @@ echo "    2. PROP against PROP_plugin. The gap IS the tail estimator, and offlin
 echo "       was the difference between working and not."
 echo "    3. rank 16 against rank 32. If 16 holds, the proposal really is constant"
 echo "       cost in d and the saving does not decay with model size."
+echo ""
+echo "  And watch dt, sceptically. The FLOPs claim is what this project measures, but"
+echo "  the exact logits come from a per-token gather, which is memory-bound where a"
+echo "  dense matmul is not: a smoke run at V=131,072 had the approximate path SLOWER"
+echo "  in wall clock than the exact one on a small model. If bpb holds and dt does"
+echo "  not, the missing piece is a fused gather-matmul kernel, not the architecture."
 echo "============================================================"
