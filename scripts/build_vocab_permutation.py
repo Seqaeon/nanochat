@@ -139,7 +139,19 @@ def leaf_scores(rows: torch.Tensor, acts: str, tokenizer_dir, vocab_size: int,
     plausible file full of noise, which is how a corrupted permutation reached a
     training run once already.
     """
-    assert mode in ("auto", "acts", "freq", "rownorm"), mode
+    assert mode in ("auto", "acts", "freq", "rownorm", "random"), mode
+    if mode == "random":
+        # Deliberate, not a fallback. Ordering the leaf by frequency CONCENTRATES
+        # unigram mass on the low indices of that axis, and the axis is one 32-way
+        # softmax shared across every cell above it, so it then has to carry a
+        # distribution its dimensions cannot represent. Measured at depth 8,
+        # V=32,768: a frequency-ordered leaf cost +0.099 bpb at R=32 and +0.134 at
+        # R=1 against a random one. The offline oracle ranked it the other way,
+        # because a FREE per-context fit refits every context and never feels mass
+        # imbalance. LEARNINGS records the identical finding for Monarch blocks.
+        print("  [leaf] source: random order (deliberate: balances mass across the axis)")
+        g = torch.Generator().manual_seed(1234)
+        return torch.randperm(rows.shape[0], generator=g).float()
     if mode in ("auto", "acts") and acts:
         blob = torch.load(acts, weights_only=False, map_location="cpu")
         h = blob["acts"] if isinstance(blob, dict) else blob
@@ -221,9 +233,11 @@ def main():
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--dims", default="", help="code axis sizes for --mode=nested, e.g. 64,64,32")
     ap.add_argument("--acts", default="", help="a .pt of hidden activations; orders the leaf axis by mean logit")
-    ap.add_argument("--leaf", choices=("auto", "acts", "freq", "rownorm"), default="auto",
+    ap.add_argument("--leaf", choices=("auto", "acts", "freq", "rownorm", "random"),
+                    default="auto",
                     help="how to order the leaf axis. auto prefers acts, then the "
-                         "frequency table, then row norms, validating each")
+                         "frequency table, then row norms, validating each. random is "
+                         "a deliberate choice and measured the best of them at d8")
     args = ap.parse_args()
 
     if args.mode == "nested":

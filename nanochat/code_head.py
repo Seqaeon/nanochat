@@ -2127,7 +2127,12 @@ class NonnegFactorHead(nn.Module):
             # nearly free, and it is the only knob here that lifts the Jacobian rank
             # arXiv 2603.10145 measures as 95-99% suppressed by a dense head.
             hid = int(getattr(config, "sch_nfh_g_hidden", 0)) or n_embd
-            self.stem = nn.Sequential(nn.Linear(n_embd, hid, bias=False), nn.GELU())
+            # A bare Linear, applied by hand in _factors rather than called as a
+            # module, because every weight in this file has to be cast to the
+            # ACTIVATION dtype at use. base_train's pre-compilation warmup runs the
+            # model outside autocast, so an nn.Module called directly meets bf16
+            # activations with an fp32 weight and dies in the extern mm.
+            self.stem = nn.Linear(n_embd, hid, bias=False)
             self.proj_in = hid
         else:
             self.proj_in = n_embd
@@ -2178,7 +2183,7 @@ class NonnegFactorHead(nn.Module):
         self.inv_perms.copy_(self._build_inv_perms().to(self.inv_perms.device))
         if self.stem is not None:
             s = 3 ** 0.5 * self.n_embd ** -0.5
-            torch.nn.init.uniform_(self.stem[0].weight, -s, s)
+            torch.nn.init.uniform_(self.stem.weight, -s, s)
         # Small but NOT zero. Zero weights make every mixture component identical,
         # which makes the gate's gradient exactly symmetric and collapses the
         # mixture to one component permanently: the same failure that had to be
@@ -2189,7 +2194,9 @@ class NonnegFactorHead(nn.Module):
     # -- shared machinery -------------------------------------------------
     def _factors(self, flat):
         """(N, d) -> log pi (N, L, R) and one log alpha^g (N, L, R, K_g) per axis."""
-        h = self.stem(flat) if self.stem is not None else flat
+        h = flat
+        if self.stem is not None:
+            h = F.gelu(F.linear(flat, self.stem.weight.to(dtype=flat.dtype)))
         z = F.linear(h, self.proj.weight.to(dtype=h.dtype),
                      self.proj.bias.to(dtype=h.dtype))
         z = z.view(-1, self.views, self.width).float()
@@ -2331,7 +2338,7 @@ class NonnegFactorHead(nn.Module):
                        + 6 * self.vocab_size * self.rank // 32768)
         f = 6 * self.proj.weight.numel()
         if self.stem is not None:
-            f += 6 * self.stem[0].weight.numel()
+            f += 6 * self.stem.weight.numel()
         if self.prior is not None:
             # lam is d MACs; the prior is ONE gather on the training path. The
             # log_softmax over V is a per-forward reduction, quoted amortised over a

@@ -1136,6 +1136,32 @@ def test_nfh_is_exactly_normalised_and_the_two_paths_agree(kw):
     assert torch.allclose(head.loss(x, tgt, reduction="sum"), per[tgt >= 0].sum(), atol=1e-4)
 
 
+@pytest.mark.parametrize("kw", [
+    dict(),
+    dict(sch_nfh_g_type='mlp'),
+    dict(sch_nfh_smooth=1),
+    dict(sch_nfh_mode='global', sch_nfh_rank=16),
+])
+def test_nfh_runs_on_bf16_activations_outside_autocast(kw):
+    """base_train's pre-compilation warmup (`_wloss = model(_wx, _wy)`) is
+    deliberately NOT wrapped in autocast, so the head receives the body's bf16
+    activations while its own parameters are fp32. Every weight in this file is
+    therefore cast to the ACTIVATION dtype at the point of use.
+
+    Calling an nn.Module directly skips that cast. Doing it for the MLP stem killed
+    three arms of a sweep at the warmup step with `expected mat1 and mat2 to have the
+    same dtype`, and no test caught it because they all fed fp32.
+    """
+    head = _nfh(**kw).lm_head
+    x = torch.randn(3, 7, head.n_embd, dtype=torch.bfloat16)
+    tgt = torch.randint(0, head.vocab_size, (3, 7))
+    loss = head.loss(x, tgt)
+    assert torch.isfinite(loss), loss
+    loss.backward()
+    lp = head(x)
+    assert torch.isfinite(lp).all()
+
+
 def test_nfh_rank_one_is_exactly_a_product_of_independent_categoricals():
     """R=1 is LightRNN, and the paper's central claim is the gap between R=1 and
     R>1. Pinning the corner exactly is what makes that comparison mean something:
