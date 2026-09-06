@@ -1522,7 +1522,9 @@ class ProposalHead(nn.Module):
         # that is 537 MB in bf16 per 128 tokens, so this is the memory knob, and the
         # thing a fused gather-matmul kernel would remove entirely.
         self.chunk = int(getattr(config, "sch_proposal_chunk", 128))
-        self.vocab_chunk = int(getattr(config, "sch_proposal_vocab_chunk", 16384))
+        # Weight on the ranking loss that teaches the proposal. Zero leaves it with
+        # gradient only through the sampler, and none at all when S=0.
+        self.aux_weight = float(getattr(config, "sch_proposal_aux", 1.0))
 
         self.weight = nn.Parameter(torch.empty(V, n_embd))
         self.prop_down = nn.Linear(n_embd, c, bias=False)
@@ -1545,86 +1547,96 @@ class ProposalHead(nn.Module):
             out += self.bias.to(dtype=out.dtype)
         return out
 
-    def _proposal_topk(self, z, K):
-        """Streaming top-K over the vocabulary, so no (N, V) tensor is ever built.
-
-        This is the memory win as much as the FLOP one: at 65,536 tokens and
-        V=131,072 a bf16 logit tensor is 17 GB, which is why every dense arm in this
-        project needed a small device batch.
-        """
-        best_v = best_i = None
-        for s in range(0, self.real_vocab, self.vocab_chunk):
-            up = self.prop_up[s:min(s + self.vocab_chunk, self.real_vocab)].to(dtype=z.dtype)
-            v, i = (z @ up.T).topk(min(K, up.shape[0]), dim=-1)
-            i = i + s
-            if best_v is None:
-                best_v, best_i = v, i
-            else:
-                v = torch.cat([best_v, v], -1)
-                i = torch.cat([best_i, i], -1)
-                # Early merges hold fewer than K candidates, and asking topk for more
-                # than exist is a hard error rather than a short result.
-                best_v, sel = v.topk(min(K, v.shape[-1]), dim=-1)
-                best_i = i.gather(-1, sel)
-        return best_i
-
     def loss(self, x, targets, reduction="mean"):
+        """Chunked over tokens, which is what bounds memory: the peak full-width
+        tensor is (chunk, V) rather than (N, V) -- 67 MB against 17 GB at N=65,536
+        and V=131,072, which is why the dense arms in this project needed a small
+        device batch and this does not."""
         flat = x.reshape(-1, self.n_embd)
         tgt = targets.reshape(-1)
         valid = tgt >= 0
-        cap = self.SOFTCAP
+        cap, Vr = self.SOFTCAP, self.real_vocab
         if self.training:
             self._step += 1
-        # The proposal is noise at initialisation and would select nothing useful, so
-        # the first steps pay full price and give it something to learn from.
-        if self.training and int(self._step) <= self.warmup:
-            logits = self.forward(flat)[:, :self.real_vocab].float()
-            logits = cap * torch.tanh(logits / cap)
-            return F.cross_entropy(logits, tgt, ignore_index=-1, reduction=reduction)
-
-        K, S = min(self.topk, self.real_vocab), self.samples
+        warm = bool(self.training and int(self._step) <= self.warmup)
+        K, S = min(self.topk, Vr), self.samples
         losses = flat.new_zeros(flat.shape[0], dtype=torch.float32)
+        aux = flat.new_zeros((), dtype=torch.float32)
+        nchunk = 0
+
         for a in range(0, flat.shape[0], self.chunk):
             h = flat[a:a + self.chunk]
             t = tgt[a:a + self.chunk]
-            # cast the weight, as nanochat's Linear does: activations are bf16
+            tc = t.clamp_min(0)
             z = F.linear(h, self.prop_down.weight.to(dtype=h.dtype))
+            zp = (z @ self.prop_up[:Vr].to(dtype=z.dtype).T).float()
+            zp = cap * torch.tanh(zp / cap)
+            nchunk += 1
+
+            if warm:
+                # The exact path, and the proposal learns from it. Without this term
+                # the proposal receives no gradient during warmup at all: it would
+                # still be its random initialisation the moment the exact path
+                # switches off, which is the opposite of what a warmup is for. (It
+                # also leaves prop_down and prop_up unused, which DDP rejects.)
+                full = self.forward(h)[:, :Vr].float()
+                full = cap * torch.tanh(full / cap)
+                losses[a:a + self.chunk] = F.cross_entropy(
+                    full, t, ignore_index=-1, reduction="none")
+                aux = aux + F.kl_div(zp.log_softmax(-1), full.detach().log_softmax(-1),
+                                     log_target=True, reduction="batchmean")
+                continue
+
             with torch.no_grad():
-                idx = self._proposal_topk(z, K)
-                # The target must be scored exactly, and must appear once: a duplicate
+                idx = zp.topk(K, dim=-1).indices
+                # The target must be scored exactly, and exactly once: a duplicate
                 # would be counted twice in the partition sum.
-                miss = ~(idx == t.clamp_min(0).unsqueeze(-1)).any(-1)
-                idx[miss, -1] = t.clamp_min(0)[miss]
+                miss = ~(idx == tc.unsqueeze(-1)).any(-1)
+                idx[miss, -1] = tc[miss]
             W = self.weight[idx].to(dtype=h.dtype)               # (n, K, d)
             zk = torch.einsum("nd,nkd->nk", h, W).float()
             if self.bias is not None:
                 zk = zk + self.bias[idx].float()
             zk = cap * torch.tanh(zk / cap)
             hi = torch.logsumexp(zk, dim=-1)
+
+            teach, stud = [zk], [zp.gather(-1, idx)]
             if S > 0:
-                zp = (z @ self.prop_up[:self.real_vocab].to(dtype=z.dtype).T).float()
-                zp = cap * torch.tanh(zp / cap)
-                zp = zp.scatter(-1, idx, -1e30)                  # q lives off K
-                logC = torch.logsumexp(zp, dim=-1)
+                off = zp.scatter(-1, idx, -1e30)                 # q lives off K
+                logC = torch.logsumexp(off, dim=-1)
                 with torch.no_grad():
-                    sidx = torch.multinomial((zp - logC.unsqueeze(-1)).exp(), S,
+                    sidx = torch.multinomial((off - logC.unsqueeze(-1)).exp(), S,
                                              replacement=True)
                 Ws = self.weight[sidx].to(dtype=h.dtype)
                 zs = torch.einsum("nd,nkd->nk", h, Ws).float()
                 if self.bias is not None:
                     zs = zs + self.bias[sidx].float()
                 zs = cap * torch.tanh(zs / cap)
-                # unbiased: E_q[exp(z_true - z_prop)] * C = sum over the complement
+                # unbiased: E_q[exp(z_true - z_prop)] * C is the sum over the complement
                 ratio = (zs - zp.gather(-1, sidx)).exp().mean(-1).clamp_min(1e-30)
                 logZ = torch.logaddexp(hi, logC + ratio.log())
+                teach.append(zs)
+                stud.append(zp.gather(-1, sidx))
             else:
                 logZ = hi
-            pos = (idx == t.clamp_min(0).unsqueeze(-1)).float().argmax(-1, keepdim=True)
+
+            pos = (idx == tc.unsqueeze(-1)).float().argmax(-1, keepdim=True)
             losses[a:a + self.chunk] = logZ - zk.gather(-1, pos).squeeze(-1)
+            # Train the proposal to RANK, against the exact logits it just caused to
+            # be computed. Free: those logits already exist. This is the term that
+            # made a rank-32 proposal beat a rank-128 truncated SVD offline, and the
+            # only gradient the proposal gets when S=0.
+            aux = aux + F.kl_div(torch.cat(stud, -1).log_softmax(-1),
+                                 torch.cat(teach, -1).detach().log_softmax(-1),
+                                 log_target=True, reduction="batchmean")
+
         losses = losses.masked_fill(~valid, 0.0)
         if reduction == "none":
             return losses.view_as(targets)
-        return losses.sum() / valid.sum().clamp_min(1)
+        out = losses.sum() / valid.sum().clamp_min(1)
+        if self.aux_weight > 0 and nchunk:
+            out = out + self.aux_weight * aux / nchunk
+        return out
 
     def rank_ceiling(self) -> int:
         return min(self.vocab_size, self.n_embd) + 1     # the head is exactly dense

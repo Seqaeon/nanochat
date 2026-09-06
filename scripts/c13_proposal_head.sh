@@ -81,7 +81,7 @@ TOPKS="${TOPKS:-4096}"
 SAMPLES="${SAMPLES:-1024}"
 WARMUP="${WARMUP:-200}"          # steps of exact softmax; the proposal is noise at init
 PCHUNK="${PCHUNK:-128}"          # tokens per gather: weight[idx] is (chunk, K, d)
-VCHUNK="${VCHUNK:-16384}"
+
 # Budget reference, the Monarch arm already trained: d*M + V*m1 + r*(d+V).
 REF_M="${REF_M:-1024}"; REF_M1="${REF_M1:-32}"; REF_RANK="${REF_RANK:-224}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
@@ -138,7 +138,7 @@ COMMON="--device-batch-size $DEVICE_BATCH_SIZE --total-batch-size -1 \
 PROBE="--sch-phi-dtype fp32 --sch-rank-probe $RANK_CONTEXTS --sch-bias 1"
 PROP="--models base --use-code-head 1 --sch-head-type proposal \
   --sch-proposal-warmup $WARMUP --sch-proposal-chunk $PCHUNK \
-  --sch-proposal-vocab-chunk $VCHUNK $PROBE"
+  $PROBE"
 
 run() {
     local tag="$1"; shift

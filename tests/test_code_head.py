@@ -740,7 +740,6 @@ def _proposal(**kw):
     kw.setdefault("sch_proposal_topk", 64)
     kw.setdefault("sch_proposal_samples", 32)
     kw.setdefault("sch_proposal_chunk", 7)          # deliberately not a divisor
-    kw.setdefault("sch_proposal_vocab_chunk", 100)  # deliberately not a divisor
     return _phase5(use_code_head=1, sch_head_type='proposal', **kw)
 
 
@@ -749,7 +748,8 @@ def test_proposal_head_is_exact_when_it_selects_everything():
     ordinary cross-entropy of the exact dense head. Nothing else pins the
     bookkeeping -- the target's position inside K, the partition sum, the chunking
     over both tokens and vocabulary -- all at once."""
-    m = _proposal(sch_proposal_topk=V, sch_proposal_samples=0, sch_bias=1)
+    m = _proposal(sch_proposal_topk=V, sch_proposal_samples=0, sch_bias=1,
+                  sch_proposal_aux=0.0)   # isolate the cross-entropy
     x = torch.randint(0, V, (2, 8))
     m.train()
     got = m(x, x)
@@ -797,15 +797,29 @@ def test_proposal_head_warmup_runs_the_exact_softmax():
         "after warmup the head must be evaluated sparsely"
 
 
-def test_proposal_streaming_topk_matches_a_direct_topk():
-    """The streaming selection exists so no (N, V) logit tensor is built. It walks
-    the vocabulary in slices and merges, which is where an off-by-one would hide."""
-    head = _proposal().lm_head
-    z = torch.randn(5, head.rank)
-    got = head._proposal_topk(z, 17)
-    ref = (z @ head.prop_up.T).topk(17, dim=-1).indices
-    assert set(map(int, got[0])) == set(map(int, ref[0]))
-    assert got.shape == ref.shape
+def test_proposal_head_trains_its_proposal_during_warmup():
+    """The warmup exists so the proposal is useful when the exact path switches off.
+    Without a ranking term it receives NO gradient while the exact path runs, so it
+    would still be its random initialisation at the switch -- and DDP rejects the
+    unused parameters, which is how this was found."""
+    m = _proposal(sch_proposal_warmup=5)
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    m(x, x).backward()
+    head = m.lm_head
+    assert head.prop_up.grad is not None and head.prop_up.grad.abs().sum() > 0
+    assert head.prop_down.weight.grad.abs().sum() > 0
+
+
+def test_proposal_head_trains_its_proposal_with_no_sampling():
+    """S=0 is the plug-in ablation. The sampler is then the proposal's only other
+    gradient path, so without the ranking term it goes unused there too."""
+    m = _proposal(sch_proposal_samples=0)
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    m(x, x).backward()
+    assert m.lm_head.prop_up.grad.abs().sum() > 0
+    assert m.lm_head.prop_down.weight.grad.abs().sum() > 0
 
 
 def test_proposal_head_prices_the_training_path_not_the_dense_one():

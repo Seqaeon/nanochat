@@ -755,7 +755,7 @@ parser.add_argument("--sch-proposal-topk", type=int, default=4096, help="SCH: K 
 parser.add_argument("--sch-proposal-samples", type=int, default=1024, help="SCH: S importance samples for the partition tail. 0 substitutes the cheap logits instead, which is biased by -0.03 to -1.6 nats")
 parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: steps of exact softmax before switching. The proposal selects nothing useful at initialisation")
 parser.add_argument("--sch-proposal-chunk", type=int, default=128, help="SCH: tokens per gather; weight[idx] is (chunk, K, d) and this is the memory knob")
-parser.add_argument("--sch-proposal-vocab-chunk", type=int, default=16384, help="SCH: vocabulary slice for the streaming top-K, so the (N, V) logit tensor is never built")
+parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: weight on the ranking loss that trains the proposal against the exact logits. 0 leaves it with no gradient at all when --sch-proposal-samples=0")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1318,7 +1318,7 @@ def build_model_meta(depth):
         sch_proposal_samples=int(getattr(args, 'sch_proposal_samples', 1024)),
         sch_proposal_warmup=int(getattr(args, 'sch_proposal_warmup', 0)),
         sch_proposal_chunk=int(getattr(args, 'sch_proposal_chunk', 128)),
-        sch_proposal_vocab_chunk=int(getattr(args, 'sch_proposal_vocab_chunk', 16384)),
+        sch_proposal_aux=float(getattr(args, 'sch_proposal_aux', 1.0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

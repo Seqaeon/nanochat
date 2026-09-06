@@ -666,7 +666,7 @@ class GPTConfig:
     sch_proposal_samples: int = 1024                # S importance samples for the tail; 0 makes the estimator biased
     sch_proposal_warmup: int = 0                    # steps of exact softmax before switching; the proposal is noise at init
     sch_proposal_chunk: int = 128                   # tokens per gather; weight[idx] is (chunk, K, d), the memory knob
-    sch_proposal_vocab_chunk: int = 16384           # vocabulary slice for the streaming top-K, so no (N, V) tensor is built
+    sch_proposal_aux: float = 1.0                   # weight on the ranking loss that trains the proposal from the exact logits
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -768,7 +768,7 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_monarch_m1", "sch_monarch_perm", "sch_monarch_perm_path",
     "sch_tier_bounds", "sch_tier_caps", "sch_tier_order", "sch_tier_perm_path",
     "sch_proposal_rank", "sch_proposal_topk", "sch_proposal_samples",
-    "sch_proposal_warmup", "sch_proposal_chunk", "sch_proposal_vocab_chunk",
+    "sch_proposal_warmup", "sch_proposal_chunk", "sch_proposal_aux",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",
