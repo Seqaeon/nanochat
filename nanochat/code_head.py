@@ -121,7 +121,7 @@ PRODUCT_IMPLS = ("dense", "gather")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
-HEAD_TYPES = ("code", "hsoftmax", "monarch")
+HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered")
 MONARCH_PERMS = ("none", "random", "freq", "file")
 PHI_DTYPES = ("bf16", "fp32")
 HOLDOUT_MODES = ("target", "full")
@@ -1446,6 +1446,129 @@ class HierarchicalSoftmaxHead(nn.Module):
         return int(6 * max(self.avg_depth, 1.0) * self.n_embd)
 
 
+def _parse_int_list(spec: str) -> list[int]:
+    """Parse "1024,4096,16384" into a list. Empty string gives an empty list."""
+    spec = str(spec).strip()
+    if not spec:
+        return []
+    return [int(tok) for tok in spec.replace(" ", ",").split(",") if tok]
+
+
+class TieredHead(nn.Module):
+    """Frequency tiers of unequal size, each with its own low-rank head.
+
+        logits[tier t] = B_t (A_t h)      A_t: (c_t, d)    B_t: (V_t, c_t)
+        cost           = sum_t c_t (d + V_t)
+
+    Every other head in this file gives all V words the same per-word capacity. That
+    is the wrong shape for a Zipf distribution: at V=131,072 the top 1,024 tokens
+    carry 80% of the probability mass and the bottom 65,536 carry 1.7%, yet a Monarch
+    block spends the same m1 dimensions on each.
+
+    Scored offline against a trained dense head (scripts/head_oracle.py), at the exact
+    cost of the arms already trained, in frequency-weighted captured energy over a
+    cost-matched pure low-rank head:
+
+        32 equal blocks, uniform capacity (Monarch, as trained)   +0.0055
+        32 equal blocks, uniform capacity, clustered              +0.0364
+        5 tiers, capacity solved                                  +0.1323
+
+    Two structural notes. There is no shared residual: a shared rank-r term costs
+    r*(d + V) because it is charged against every word, and dropping it in favour of
+    tier capacity was worth both +0.0202 capture AND a third of the budget. And there
+    is no block-diagonal factor, no permutation of features, no clustering: the tiers
+    are T ordinary dense GEMMs, which is also why none of Monarch's kernel problems
+    appear here.
+
+    Capacity is solved, not swept. Captured energy is additive across disjoint tiers
+    and concave in each tier's capacity, so the optimum is a greedy over marginal
+    eigenvalue per MAC; ``scripts/solve_tiers.py`` computes it in seconds. Read
+    ``sch_tier_caps`` as the output of that solver, never as a guess.
+
+    The word-to-tier map reuses the Monarch permutation machinery, so the head returns
+    logits in tier-position order and ``GPT.forward`` permutes the targets rather than
+    the logits, which is a gather of N integers instead of a second (N, V) tensor.
+    """
+
+    custom_loss = False
+    self_normalized = False
+
+    def __init__(self, config, padded_vocab_size: int, n_embd: int):
+        super().__init__()
+        V = self.vocab_size = padded_vocab_size
+        self.n_embd = n_embd
+        bounds = _parse_int_list(getattr(config, "sch_tier_bounds", ""))
+        caps = _parse_int_list(getattr(config, "sch_tier_caps", ""))
+        assert caps, ("sch_head_type=tiered needs --sch-tier-caps; "
+                      "scripts/solve_tiers.py computes the optimal ones")
+        assert len(caps) == len(bounds) + 1, (
+            f"{len(bounds)} tier boundaries define {len(bounds) + 1} tiers but "
+            f"{len(caps)} capacities were given")
+        edges = [0] + bounds + [V]
+        assert all(edges[i] < edges[i + 1] for i in range(len(edges) - 1)), (
+            f"tier boundaries must be strictly increasing and below the padded "
+            f"vocabulary {V}: got {edges}")
+        assert all(0 < c <= n_embd for c in caps), (
+            f"tier capacities must lie in (0, d={n_embd}]: a capacity above d costs "
+            f"FLOPs for rank the logit matrix cannot carry. Got {caps}")
+        self.sizes = [edges[i + 1] - edges[i] for i in range(len(caps))]
+        self.caps = caps
+        # Padding lands in the last tier, which has the least capacity. Padding rows
+        # are never targets, so that is where the waste should go.
+        self.down = nn.ModuleList([nn.Linear(n_embd, c, bias=False) for c in caps])
+        self.up = nn.ParameterList(
+            [nn.Parameter(torch.empty(n, c)) for n, c in zip(self.sizes, caps)])
+        self.bias = nn.Parameter(torch.empty(V)) if int(getattr(config, "sch_bias", 0)) else None
+
+        self.order_mode = str(getattr(config, "sch_tier_order", "freq"))
+        self._perm_args = (int(getattr(config, "vocab_size", 0)) or V, V, self.order_mode,
+                           int(getattr(config, "sch_code_seed", 1234)),
+                           str(getattr(config, "sch_tier_perm_path", "")),
+                           getattr(config, "_tokenizer_dir", None))
+        perm, active = build_vocab_permutation(*self._perm_args)
+        self.permutes_vocab = active
+        self.register_buffer("vocab_perm", perm)
+        self.register_buffer("inv_perm", torch.argsort(perm))
+
+    def init_weights(self):
+        perm, _ = build_vocab_permutation(*self._perm_args)
+        self.vocab_perm.copy_(perm.to(self.vocab_perm.device))
+        self.inv_perm.copy_(torch.argsort(perm).to(self.inv_perm.device))
+        s = 3 ** 0.5 * self.n_embd ** -0.5
+        for dn in self.down:
+            torch.nn.init.uniform_(dn.weight, -s, s)
+        for up in self.up:
+            torch.nn.init.normal_(up, mean=0.0, std=0.001)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
+
+    def forward(self, x):
+        # `cat` holds the parts and the result at once, the same two full-width
+        # tensors Monarch needs for its clone, so device batch transfers across.
+        parts = [F.linear(F.linear(x, dn.weight.to(dtype=x.dtype)), up.to(dtype=x.dtype))
+                 for dn, up in zip(self.down, self.up)]
+        out = torch.cat(parts, dim=-1)
+        if self.bias is not None:
+            out += self.bias.to(dtype=out.dtype)   # in place: nobody else holds `out`
+        return out
+
+    def rank_ceiling(self) -> int:
+        # Per word it is that word's own tier capacity; the logit matrix as a whole is
+        # bounded by the widest tier, and by d, plus one for the bias.
+        return min(self.n_embd, max(self.caps)) + 1
+
+    def flops_per_token(self) -> int:
+        f = 6 * sum(c * (self.n_embd + n) for c, n in zip(self.caps, self.sizes))
+        if self.bias is not None:
+            f += 2 * self.vocab_size
+        return int(f)
+
+    def extra_repr(self):
+        tiers = " ".join(f"{n}w:{c}d" for n, c in zip(self.sizes, self.caps))
+        return (f"V={self.vocab_size}, tiers=[{tiers}], order={self.order_mode}, "
+                f"rank_ceiling={self.rank_ceiling()}")
+
+
 class MonarchHead(nn.Module):
     """Monarch-factorised output head: two block-diagonal factors with a
     transpose between them.
@@ -1812,6 +1935,8 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
         return HierarchicalSoftmaxHead(config, padded_vocab_size, n_embd)
     if head_type == "monarch":
         return MonarchHead(config, padded_vocab_size, n_embd)
+    if head_type == "tiered":
+        return TieredHead(config, padded_vocab_size, n_embd)
     assert head_type == "code", f"unknown sch_head_type={head_type!r}"
     return StructuredCodeHead(config, padded_vocab_size, n_embd)
 
@@ -1825,7 +1950,8 @@ def describe_head(head: nn.Module) -> str:
                 f"| head FLOPs/token {head.flops_per_token():,} "
                 f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
     params = sum(p.numel() for p in head.parameters())
-    kind = "monarch" if isinstance(head, MonarchHead) else "code"
+    kind = ("monarch" if isinstance(head, MonarchHead) else
+            "tiered" if isinstance(head, TieredHead) else "code")
     return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "
             f"| head FLOPs/token {head.flops_per_token():,} "
             f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")

@@ -657,6 +657,10 @@ class GPTConfig:
     sch_monarch_m1: int = 0                         # Monarch inner factor (0 = sqrt(M)); cost is d*M + V*m1
     sch_monarch_perm: str = 'none'                  # none | random (control) | freq | file. Which words share a Monarch block; costs nothing
     sch_monarch_perm_path: str = ''                 # .pt holding a permutation of range(vocab_size) (scripts/build_vocab_permutation.py)
+    sch_tier_bounds: str = ''                       # cumulative vocab edges for sch_head_type=tiered, e.g. '1024,4096,16384,65536'
+    sch_tier_caps: str = ''                         # dims per tier, e.g. '512,512,511,480,18' (scripts/solve_tiers.py solves these)
+    sch_tier_order: str = 'freq'                    # none | random | freq | file. Which words land in which tier; freq is the point
+    sch_tier_perm_path: str = ''                    # .pt permutation of range(vocab_size) for sch_tier_order=file
 
 
 # Used by notebooks to validate kwargs passed to GPTConfig.
@@ -756,6 +760,7 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_product_groups", "sch_product_codebook", "sch_product_source", "sch_product_impl",
     "sch_phi_whiten", "sch_mixture_per_phi", "sch_mixture_topk", "sch_mixture_aux",
     "sch_monarch_m1", "sch_monarch_perm", "sch_monarch_perm_path",
+    "sch_tier_bounds", "sch_tier_caps", "sch_tier_order", "sch_tier_perm_path",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",

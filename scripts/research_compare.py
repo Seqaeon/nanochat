@@ -543,6 +543,10 @@ def run_training_sweep(args):
         "--sch-monarch-m1", str(getattr(args, 'sch_monarch_m1', 0)),
         "--sch-monarch-perm", str(getattr(args, 'sch_monarch_perm', 'none')),
         "--sch-monarch-perm-path", str(getattr(args, 'sch_monarch_perm_path', '')),
+        "--sch-tier-bounds", str(getattr(args, 'sch_tier_bounds', '')),
+        "--sch-tier-caps", str(getattr(args, 'sch_tier_caps', '')),
+        "--sch-tier-order", str(getattr(args, 'sch_tier_order', 'freq')),
+        "--sch-tier-perm-path", str(getattr(args, 'sch_tier_perm_path', '')),
         "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
         "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
         "--sch-holdout-min-id", str(getattr(args, 'sch_holdout_min_id', 256)),
@@ -1309,6 +1313,10 @@ if __name__ == "__main__":
     parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-monarch-perm", type=str, default="none", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-monarch-perm-path", type=str, default="", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-tier-bounds", type=str, default="", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-tier-caps", type=str, default="", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-tier-order", type=str, default="freq", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-tier-perm-path", type=str, default="", help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

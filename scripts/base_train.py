@@ -746,6 +746,10 @@ parser.add_argument("--sch-mixture-aux", type=float, default=0.01, help="SCH: lo
 parser.add_argument("--sch-monarch-m1", type=int, default=0, help="SCH: Monarch inner factor m1 (0 = sqrt(M))")
 parser.add_argument("--sch-monarch-perm", type=str, default="none", choices=list(MONARCH_PERMS), help="SCH: which words share a Monarch block. Costs no FLOPs and no parameters; 'random' is the control that says whether coherence is what helps")
 parser.add_argument("--sch-monarch-perm-path", type=str, default="", help="SCH: .pt permutation of range(vocab_size) for --sch-monarch-perm=file (scripts/build_vocab_permutation.py)")
+parser.add_argument("--sch-tier-bounds", type=str, default="", help="SCH: cumulative vocabulary edges for --sch-head-type=tiered, e.g. '1024,4096,16384,65536'. N edges define N+1 tiers")
+parser.add_argument("--sch-tier-caps", type=str, default="", help="SCH: dimensions per tier, e.g. '512,512,511,480,18'. Solved by scripts/solve_tiers.py against a trained dense head; not a value to guess")
+parser.add_argument("--sch-tier-order", type=str, default="freq", choices=list(MONARCH_PERMS), help="SCH: which words land in which tier. 'freq' is the whole point; 'none' (token id) is the control that shows the ordering is what pays")
+parser.add_argument("--sch-tier-perm-path", type=str, default="", help="SCH: .pt permutation for --sch-tier-order=file")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
@@ -1299,6 +1303,10 @@ def build_model_meta(depth):
         sch_monarch_m1=int(getattr(args, 'sch_monarch_m1', 0)),
         sch_monarch_perm=str(getattr(args, 'sch_monarch_perm', 'none')),
         sch_monarch_perm_path=str(getattr(args, 'sch_monarch_perm_path', '')),
+        sch_tier_bounds=str(getattr(args, 'sch_tier_bounds', '')),
+        sch_tier_caps=str(getattr(args, 'sch_tier_caps', '')),
+        sch_tier_order=str(getattr(args, 'sch_tier_order', 'freq')),
+        sch_tier_perm_path=str(getattr(args, 'sch_tier_perm_path', '')),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

@@ -731,6 +731,77 @@ def test_monarch_head_trains():
 
 
 # ---------------------------------------------------------------------------
+# Tiered head: unequal frequency tiers, capacity solved per tier.
+# ---------------------------------------------------------------------------
+
+
+def _tiered(**kw):
+    kw.setdefault("sch_tier_bounds", "32,128")
+    kw.setdefault("sch_tier_caps", "48,24,8")
+    kw.setdefault("sch_tier_order", "none")
+    return _phase5(use_code_head=1, sch_head_type='tiered', **kw)
+
+
+def test_tiered_head_prices_every_tier_and_trains():
+    m = _tiered(sch_bias=1)
+    head = m.lm_head
+    V, d = head.vocab_size, head.n_embd
+    assert head.sizes == [32, 96, V - 128]
+    assert head.flops_per_token() == 6 * sum(
+        c * (d + n) for c, n in zip(head.caps, head.sizes)) + 2 * V
+    assert head.flops_per_token() < 6 * V * d, "a tiered head that is not cheaper is pointless"
+    x = torch.randint(0, m.config.vocab_size, (2, 8))
+    loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    # every tier must receive gradient: a tier that never trains is a silent bug,
+    # and the tail tier is exactly the one a shape error would strand.
+    for i, (dn, up) in enumerate(zip(head.down, head.up)):
+        assert up.grad is not None and up.grad.abs().sum() > 0, f"tier {i} up"
+        assert dn.weight.grad.abs().sum() > 0, f"tier {i} down"
+
+
+def test_tiered_head_refuses_a_capacity_above_d():
+    """A tier wider than d costs FLOPs for rank the logit matrix cannot carry."""
+    with pytest.raises(AssertionError, match="capacities must lie"):
+        _tiered(sch_tier_caps=f"{D + 1},24,8")
+
+
+def test_tiered_head_refuses_mismatched_bounds_and_caps():
+    with pytest.raises(AssertionError, match="tier boundaries define"):
+        _tiered(sch_tier_caps="48,24")
+
+
+def test_tiered_head_frequency_order_matches_the_loss_it_reports():
+    """The head returns logits in tier-position order and GPT.forward permutes the
+    targets. Those are two pieces of code; pin them against each other."""
+    m = _tiered(sch_tier_order='random', sch_bias=1)
+    assert m.lm_head.permutes_vocab
+    x = torch.randint(0, m.config.vocab_size, (2, 8))
+    loss = m(x, x)
+    logits = m(x)                                   # no targets: vocabulary order
+    manual = torch.nn.functional.cross_entropy(
+        logits.view(-1, logits.size(-1)).float(), x.view(-1))
+    torch.testing.assert_close(loss.float(), manual, rtol=1e-5, atol=1e-5)
+
+
+def test_tiered_head_survives_to_empty_and_a_round_trip():
+    m = _tiered(sch_tier_order='random')
+    cfg = m.config
+    with torch.device("meta"):
+        meta = GPT(cfg)
+    meta.to_empty(device="cpu")
+    meta.init_weights(verify=False)
+    padded = meta.lm_head.vocab_size
+    torch.testing.assert_close(torch.sort(meta.lm_head.vocab_perm).values,
+                               torch.arange(padded))
+    dst = _tiered(sch_tier_order='random', sch_code_seed=999)
+    assert not torch.equal(dst.lm_head.vocab_perm, m.lm_head.vocab_perm)
+    dst.load_state_dict(m.state_dict())
+    assert torch.equal(dst.lm_head.vocab_perm, m.lm_head.vocab_perm)
+
+
+# ---------------------------------------------------------------------------
 # Q12 / Q13: the two structural moves on the Monarch head.
 # ---------------------------------------------------------------------------
 
