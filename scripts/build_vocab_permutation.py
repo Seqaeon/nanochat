@@ -113,26 +113,74 @@ def balanced_assign(rows: torch.Tensor, blocks: int, iters: int, seed: int,
     return final
 
 
-def leaf_scores(rows: torch.Tensor, acts: str, tokenizer_dir, vocab_size: int) -> torch.Tensor:
+def leaf_scores(rows: torch.Tensor, acts: str, tokenizer_dir, vocab_size: int,
+                mode: str = "auto") -> torch.Tensor:
     """Per-token predictability proxy used to order the LAST code axis.
 
     In a factorised head the last axis' factor ``alpha^G_r`` is shared across every
     cell of the axes above it, so index ``j`` only means something if it means the
     same thing everywhere. Ordering each leaf group by how likely its members are
-    makes ``j`` read as "the j-th likeliest word in my cell". Measured worth 10 to
-    20% of the offline reconstruction error at every rank and factorisation depth,
-    for zero run-time cost.
+    makes ``j`` read as "the j-th likeliest word in my cell". Measured worth about
+    0.001 bpb of the offline reconstruction error, for zero run-time cost.
+
+    Three sources, and which one was used is PRINTED rather than inferred, because a
+    silently-degraded ordering is indistinguishable from a good one in the output file:
+
+      acts     mean logit over a real activation dump. The best available, Spearman
+               +0.513 against the true unigram at V=131,072.
+      freq     the tokenizer's unigram table.
+      rownorm  the head's row norms. Needs nothing but the checkpoint, and measured
+               Spearman +0.412 against the same ground truth, so about 80% of the
+               ideal for free.
+
+    Both external sources are VALIDATED before use. An activation dump whose targets
+    do not span the vocabulary came from the wrong tokenizer, and a frequency table
+    that is mostly zeros was zero-padded from a shorter one; either produces a
+    plausible file full of noise, which is how a corrupted permutation reached a
+    training run once already.
     """
-    if acts:
+    assert mode in ("auto", "acts", "freq", "rownorm"), mode
+    if mode in ("auto", "acts") and acts:
         blob = torch.load(acts, weights_only=False, map_location="cpu")
         h = blob["acts"] if isinstance(blob, dict) else blob
+        tgt = blob.get("targets") if isinstance(blob, dict) else None
+        if tgt is not None:
+            t = tgt[tgt >= 0]
+            seen, n, hi = t.unique().numel(), t.numel(), int(t.max()) if t.numel() else 0
+            # Two independent tells, because either alone has a blind spot. A stub
+            # tokenizer of size K can never emit an id at or above K, so its targets
+            # cover a tiny prefix of the vocabulary; and natural text through a stub
+            # repeats a handful of byte tokens, so its diversity collapses. Measured
+            # on the dump that actually caused this: 74 distinct across 4,094 targets,
+            # max id 226 against a vocabulary of 32,768.
+            why = None
+            if n >= 512 and hi < vocab_size // 8:
+                why = (f"the highest target id is {hi}, under an eighth of the "
+                       f"vocabulary, so the tokenizer is smaller than {vocab_size}")
+            elif seen < max(2, int(0.1 * min(n, vocab_size))):
+                why = (f"only {seen} distinct ids across {n} targets, under the "
+                       f"{max(2, int(0.1 * min(n, vocab_size)))} a real dump shows")
+            assert why is None, (
+                f"{acts} was dumped with the wrong tokenizer: {why}. Every score from "
+                f"it would be noise, and the permutation it produced would still be a "
+                f"valid permutation. Re-dump, or pass --leaf rownorm.")
+        elif mode == "auto":
+            print(f"  [leaf] {acts} has no targets to validate against; trusting it")
+        print("  [leaf] source: mean logit over the activation dump")
         return (h.float() @ rows.float().t()).mean(0)
-    freqs = load_freq_table(vocab_size, tokenizer_dir)
-    if freqs is not None:
-        return freqs[:vocab_size].float()
-    # Last resort. Row norm correlates with frequency but only loosely, so say so
-    # rather than letting a silent fallback masquerade as the fitted ordering.
-    print("  [leaf] no --acts and no frequency table: falling back to row norm")
+    if mode in ("auto", "freq"):
+        freqs = load_freq_table(vocab_size, tokenizer_dir)
+        if freqs is not None:
+            nz = int((freqs[:vocab_size] > 0).sum())
+            if nz > vocab_size // 2:
+                print(f"  [leaf] source: unigram frequency table ({nz:,} non-zero)")
+                return freqs[:vocab_size].float()
+            msg = (f"the frequency table has only {nz:,} non-zero entries of "
+                   f"{vocab_size:,}; it was padded from a shorter one")
+            assert mode == "auto", f"--leaf freq refused: {msg}"
+            print(f"  [leaf] skipping the frequency table: {msg}")
+    print("  [leaf] source: head row norms (Spearman +0.41 against the true unigram "
+          "at V=131,072, against +0.51 for a real activation dump)")
     return rows.float().norm(dim=1)
 
 
@@ -173,6 +221,9 @@ def main():
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--dims", default="", help="code axis sizes for --mode=nested, e.g. 64,64,32")
     ap.add_argument("--acts", default="", help="a .pt of hidden activations; orders the leaf axis by mean logit")
+    ap.add_argument("--leaf", choices=("auto", "acts", "freq", "rownorm"), default="auto",
+                    help="how to order the leaf axis. auto prefers acts, then the "
+                         "frequency table, then row norms, validating each")
     args = ap.parse_args()
 
     if args.mode == "nested":
@@ -185,7 +236,8 @@ def main():
             f"--dims multiplies to {_math.prod(dims)}, not --vocab-size {args.vocab_size}. "
             "The code is a bijection; anything else drops or duplicates words.")
         rows = vocab_rows(args.checkpoint, args.source, args.vocab_size)
-        score = leaf_scores(rows, args.acts, args.tokenizer_dir, args.vocab_size)
+        score = leaf_scores(rows, args.acts, args.tokenizer_dir, args.vocab_size,
+                            args.leaf)
         perm = nested_assign(rows, dims, score, args.iters, args.seed)
     elif args.mode == "cluster":
         assert args.blocks > 1, "--mode=cluster needs --blocks (the head's m2)"

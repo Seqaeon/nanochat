@@ -1493,6 +1493,49 @@ def test_every_sweep_arm_builds_at_the_real_vocabulary_size(vocab, depth, script
                         f"{type(exc).__name__}: {exc}")
 
 
+def test_leaf_scores_refuses_a_dump_from_the_wrong_tokenizer(tmp_path):
+    """This exact failure put a corrupted permutation into a training run.
+
+    `dump_head_acts` inherits whatever tokenizer it is pointed at. A stub tokenizer
+    produces activations from a byte-level stream, the mean logit computed from them
+    is noise, and the resulting permutation is a valid permutation of the right
+    length that orders the leaf axis at random. Nothing downstream can tell. The
+    targets are the tell, and they are cheap: real ones span the vocabulary.
+    """
+    from scripts.build_vocab_permutation import leaf_scores
+    V, d = 4096, 16
+    rows = torch.randn(V, d)
+    good = tmp_path / "good.pt"
+    bad = tmp_path / "bad.pt"
+    # Shaped like the dump that actually caused this: many targets, few distinct,
+    # all of them in a tiny prefix of the vocabulary.
+    torch.save({"acts": torch.randn(2048, d),
+                "targets": torch.randint(0, V, (2048,))}, good)
+    torch.save({"acts": torch.randn(2048, d),
+                "targets": torch.randint(0, 200, (2048,))}, bad)   # a stub tokenizer
+
+    leaf_scores(rows, str(good), None, V)                          # accepted
+    with pytest.raises(AssertionError, match="wrong tokenizer"):
+        leaf_scores(rows, str(bad), None, V)
+    # A small but honest dump must NOT be refused: 256 targets cannot span 4,096 ids
+    # however good the tokenizer is, and a guard that punishes that is a guard people
+    # route around.
+    small = tmp_path / "small.pt"
+    torch.save({"acts": torch.randn(256, d),
+                "targets": torch.randint(0, V, (256,))}, small)
+    leaf_scores(rows, str(small), None, V)
+
+    # And the same for a frequency table zero-padded up from a shorter one, which is
+    # what load_freq_table does and which is equally undetectable downstream.
+    tok = tmp_path / "tok"
+    tok.mkdir()
+    torch.save(torch.cat([torch.rand(200), torch.zeros(V - 200)]), tok / "freq_table.pt")
+    with pytest.raises(AssertionError, match="padded from a shorter one"):
+        leaf_scores(rows, "", str(tok), V, mode="freq")
+    # auto must fall through to row norms rather than use it
+    assert torch.allclose(leaf_scores(rows, "", str(tok), V), rows.norm(dim=1))
+
+
 def test_every_c14_arm_builds_at_v131k():
     """c14 cannot join the parametrised sweep test above, which also builds at
     V=32,768: the code axes have to TILE the vocabulary, so ``64,64,32`` is legal
