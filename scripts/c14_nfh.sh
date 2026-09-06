@@ -150,10 +150,19 @@ for _v in DIMS:3 DIMS2:2; do
 done
 GLOBAL_M="${GLOBAL_M:-256}"
 SMOOTH="${SMOOTH:-0}"
-PERM_PATH="${PERM_PATH:-perms/nfh_g3_v${VOCAB}.pt}"
-# A plain string, not an array: scripts/../tests extract arms by reading these
+# Two fitted assignments, differing ONLY in how the leaf axis is ordered, kept as
+# separate files so neither overwrites the other. Measured at depth 8, V=32,768:
+# ordering the leaf by descending unigram frequency cost +0.099 bpb at R=32 and
+# +0.134 at R=1 against a random order, because frequency ordering concentrates mass
+# on the low indices of an axis whose 32-way softmax is shared across all 1,024 cells
+# above it. So random is the DEFAULT and frequency is the control, not the reverse.
+PERM_PATH="${PERM_PATH:-perms/nfh_g3_v${VOCAB}_randleaf.pt}"
+PERM_PATH_FREQ="${PERM_PATH_FREQ:-perms/nfh_g3_v${VOCAB}.pt}"
+PERM_LEAF="${PERM_LEAF:-random}"
+# Plain strings, not arrays: tests/test_code_head.py extracts arms by reading these
 # assignments, and "${ARR[@]}" is not something that extractor can expand.
 PERM_FLAGS="--sch-nfh-perm file --sch-nfh-perm-path $PERM_PATH"
+PERM_FLAGS_FREQ="--sch-nfh-perm file --sch-nfh-perm-path $PERM_PATH_FREQ"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 OUT_BASE="${OUT_BASE:-out/c14_nfh}"
 RANK_CONTEXTS="${RANK_CONTEXTS:-16384}"
@@ -206,8 +215,8 @@ if [ ! -f "$PERM_PATH" ]; then
         mkdir -p "$(dirname "$PERM_PATH")"
         if ! python3 -m scripts.build_vocab_permutation --mode nested \
                 --dims "$DIMS" --vocab-size "$VOCAB" --checkpoint "$PERM_CKPT" \
-                --acts "${PERM_ACTS:-$PERM_CKPT}" --iters "${PERM_ITERS:-12}" \
-                --out "$PERM_PATH"; then
+                --leaf "$PERM_LEAF" --acts "${PERM_ACTS:-}" \
+                --iters "${PERM_ITERS:-12}" --out "$PERM_PATH"; then
             echo "  [perm] could not build ${PERM_PATH}; nothing was run."
             exit 1
         fi
@@ -356,12 +365,29 @@ if [ "$RUN_GLOBAL" -eq 1 ]; then
 fi
 
 if [ "$RUN_CONTROLS" -eq 1 ]; then
-    # Is the assignment load-bearing, or would any bijection do? Offline the fitted
-    # one is worth 3.3x over token-id order and 7x over random.
+    # The assignment is the LARGEST lever measured on this head: 0.099 bpb between two
+    # arbitrary choices, against a remaining gap to dense of 0.125. These four points
+    # separate the two things that could explain it, semantic coherence and probability
+    # mass balance, which the Monarch work already found pull in opposite directions.
     for R in $RANKS; do
         [ "$R" = "1" ] && continue
+        # same clustering, leaf ordered by frequency instead of at random. This is the
+        # arm that isolates the mass-balance effect, because nothing else differs, so
+        # skip it loudly rather than letting it die inside the model constructor.
+        if [ -f "$PERM_PATH_FREQ" ]; then
+            run "NFH_cp_R${R}_freqleaf" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
+                --sch-nfh-rank "$R" $PERM_FLAGS_FREQ
+        else
+            echo "SKIP  NFH_cp_R${R}_freqleaf: ${PERM_PATH_FREQ} does not exist."
+            echo "      Build it with --leaf freq (needs the unigram table) to isolate"
+            echo "      the leaf ordering from everything else."
+        fi
+        # no clustering at all. BPE ids are merge order, so this is frequency
+        # stratified: coherence low, mass badly imbalanced.
         run "NFH_cp_R${R}_permnone"   $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
             --sch-nfh-rank "$R" --sch-nfh-perm none
+        # mass balanced by construction and coherence destroyed. If this matches or
+        # beats the fitted assignment, mass is what matters and clustering is not.
         run "NFH_cp_R${R}_permrandom" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
             --sch-nfh-rank "$R" --sch-nfh-perm random
         # Factorisation depth: 2 axes cost 4.8x more and the oracle says they buy 3x
