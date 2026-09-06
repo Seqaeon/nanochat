@@ -1454,36 +1454,6 @@ def _parse_int_list(spec: str) -> list[int]:
     return [int(tok) for tok in spec.replace(" ", ",").split(",") if tok]
 
 
-class _GatheredLinear(torch.autograd.Function):
-    """``out[n, k] = <h[n], weight[idx[n, k]]>`` without retaining the gather.
-
-    The obvious spelling, ``einsum("nd,nkd->nk", h, weight[idx])``, saves the gathered
-    (n, K, d) tensor for backward. At K=4096, d=512 that is 537 MB per 128 tokens, and
-    a 65,536-token micro-batch retains every chunk's copy: 275 GB. Chunking the loop
-    bounds compute but not memory, because autograd keeps the whole graph.
-
-    Recomputing ``weight[idx]`` in backward costs one more gather -- memory traffic, no
-    extra arithmetic, since the einsums for grad_h and grad_weight have to touch it
-    anyway -- and drops what is retained from (n, K, d) to (n, K).
-    """
-
-    @staticmethod
-    def forward(ctx, h, weight, idx):
-        ctx.save_for_backward(h, weight, idx)
-        return torch.einsum("nd,nkd->nk", h, weight[idx].to(dtype=h.dtype))
-
-    @staticmethod
-    def backward(ctx, g):
-        h, weight, idx = ctx.saved_tensors
-        g = g.to(dtype=h.dtype)
-        W = weight[idx].to(dtype=h.dtype)                    # recomputed, not stored
-        grad_h = torch.einsum("nk,nkd->nd", g, W)
-        gw = torch.zeros_like(weight)
-        gw.index_add_(0, idx.reshape(-1),
-                      torch.einsum("nk,nd->nkd", g, h).reshape(-1, h.shape[-1]).to(gw.dtype))
-        return grad_h, gw, None
-
-
 class ProposalHead(nn.Module):
     """Exact dense head, approximate normalisation.
 
@@ -1545,13 +1515,15 @@ class ProposalHead(nn.Module):
         c = int(getattr(config, "sch_proposal_rank", 32))
         assert 0 < c <= n_embd, f"proposal rank must lie in (0, d={n_embd}], got {c}"
         self.rank = c
-        self.topk = int(getattr(config, "sch_proposal_topk", 4096))
-        self.samples = int(getattr(config, "sch_proposal_samples", 1024))
+        self.topk = int(getattr(config, "sch_proposal_topk", 16384))
+        self.samples = int(getattr(config, "sch_proposal_samples", 4096))
         self.warmup = int(getattr(config, "sch_proposal_warmup", 0))
         # Token chunk for the gather. weight[idx] is (chunk, K, d): at K=4096, d=512
         # that is 537 MB in bf16 per 128 tokens, so this is the memory knob, and the
         # thing a fused gather-matmul kernel would remove entirely.
-        self.chunk = int(getattr(config, "sch_proposal_chunk", 128))
+        # Tokens sharing one candidate set. Bigger means better weight reuse and a
+        # set that must serve more tokens; 512 measured within 0.008 nats of 128.
+        self.chunk = int(getattr(config, "sch_proposal_chunk", 512))
         # Weight on the ranking loss that teaches the proposal. Zero leaves it with
         # gradient only through the sampler, and none at all when S=0.
         self.aux_weight = float(getattr(config, "sch_proposal_aux", 1.0))
@@ -1585,23 +1557,34 @@ class ProposalHead(nn.Module):
 
     @torch._dynamo.disable
     def loss(self, x, targets, reduction="mean"):
-        """Chunked over tokens, and deliberately not compiled.
+        """One candidate set per chunk of tokens, not one per token.
 
-        Dynamo unrolls a Python loop into one graph, so a 65,536-token micro-batch at
-        chunk=128 becomes 512 copies of a topk over 131,072 plus two gathers: the
-        compile never finishes. The body of the model stays compiled; only this
-        method opts out, and it is memory-bound rather than fusion-bound anyway.
+        Per-token top-K is the better selection and an unusable kernel. A GEMM is fast
+        because the weight is read once and reused across every token; gathering K rows
+        per token destroys exactly that reuse, and at V=131,072 with K=4096 it reads
+        10,240x more weight than the dense matmul it replaces. Measured: 18.7 s/step
+        against dense's 0.4.
 
-        What chunking buys is peak memory: the full-width proposal is (chunk, V),
-        67 MB rather than 17 GB, and it is built under no_grad so no chunk's copy
-        survives into backward. Everything retained is (chunk, K+S).
+        Sharing the set across a chunk restores the GEMM. It costs recall, because one
+        set must serve every token in the chunk, but tokens in a batch share most of
+        their plausible vocabulary, so the exchange rate is mild: measured on trained
+        depth-8 activations, a shared K=16,384 matches a per-token K=8,192 (94.8%
+        against 93.9% top-1, 0.119 against 0.111 nats) while reading the weight 512x
+        less. It is also cheaper than dense on BOTH counts, since the retained logit
+        tensor is (N, K+S) rather than (N, V).
+
+        The target's own logit is computed exactly and separately, for the numerator
+        only. It is deliberately NOT added to the exact set: the tail estimator already
+        covers everything outside the candidates, so adding it would count it twice.
+
+        Not compiled: Dynamo unrolls the chunk loop into one graph and never finishes.
         """
         flat = x.reshape(-1, self.n_embd)
         tgt = targets.reshape(-1)
         valid = tgt >= 0
         cap, Vr = self.SOFTCAP, self.real_vocab
         warm = bool(self.training and self.exact_mode)
-        K, S = min(self.topk, Vr), self.samples
+        K, S = min(self.topk, Vr), min(self.samples, Vr - 1)
         losses = flat.new_zeros(flat.shape[0], dtype=torch.float32)
         aux = flat.new_zeros((), dtype=torch.float32)
         nchunk = 0
@@ -1614,66 +1597,63 @@ class ProposalHead(nn.Module):
             nchunk += 1
 
             if warm:
-                # The exact path. Its memory profile is the dense head's, which is
-                # what it is replacing, so nothing is worse here than the baseline.
                 full = self.forward(h)[:, :Vr].float()
                 full = cap * torch.tanh(full / cap)
                 losses[a:a + self.chunk] = F.cross_entropy(
                     full, t, ignore_index=-1, reduction="none")
                 with torch.no_grad():
-                    sel = full.topk(K, dim=-1).indices     # the exact top-K teaches
-                    teacher = full.gather(-1, sel).log_softmax(-1)
-                student = _GatheredLinear.apply(z, self.prop_up, sel).float()
-                aux = aux + F.kl_div((cap * torch.tanh(student / cap)).log_softmax(-1),
+                    C = full.softmax(-1).sum(0).topk(K).indices     # the exact teacher
+                    teacher = full[:, C].log_softmax(-1)
+                stud = F.linear(z, self.prop_up[C].to(dtype=z.dtype)).float()
+                aux = aux + F.kl_div((cap * torch.tanh(stud / cap)).log_softmax(-1),
                                      teacher, log_target=True, reduction="batchmean")
                 continue
 
-            # Selection and the sampler are inference: no gradient reaches the
-            # proposal through them, which is what lets the (chunk, V) tensor be
-            # freed immediately. The proposal learns from the ranking term below.
+            # Selection and sampling are inference. Keeping them under no_grad is what
+            # lets the (chunk, V) proposal be freed instead of retained for backward.
             with torch.no_grad():
                 zp = (z @ self.prop_up[:Vr].to(dtype=z.dtype).T).float()
                 zp = cap * torch.tanh(zp / cap)
-                idx = zp.topk(K, dim=-1).indices
-                # The target must be scored exactly, and exactly once: a duplicate
-                # would be counted twice in the partition sum. Written with `where`
-                # rather than a masked assignment, which lowers to `nonzero`.
-                has = (idx == tc.unsqueeze(-1)).any(-1)
-                idx[:, -1] = torch.where(has, idx[:, -1], tc)
-                if S > 0:
-                    off = zp.scatter(-1, idx, -1e30)        # q lives off K
-                    logC = torch.logsumexp(off, dim=-1)
-                    sidx = torch.multinomial((off - logC.unsqueeze(-1)).exp(), S,
-                                             replacement=True)
-                    zp_sample = zp.gather(-1, sidx)
+                # Rank by total probability mass across the chunk: the words worth
+                # scoring exactly are the ones some token in the chunk actually wants.
+                agg = zp.softmax(-1).sum(0)
+                C = agg.topk(K).indices
+                q = agg.clone().index_fill_(0, C, 0.0)
+                q = q / q.sum().clamp_min(1e-30)                    # sampler off C
+                sidx = torch.multinomial(q, S, replacement=True) if S > 0 else None
                 del zp
 
-            zk = _GatheredLinear.apply(h, self.weight, idx).float()
+            W = self.weight.index_select(0, C).to(dtype=h.dtype)    # (K, d), reused
+            zk = F.linear(h, W).float()
             if self.bias is not None:
-                zk = zk + self.bias[idx].float()
+                zk = zk + self.bias[C].float()
             zk = cap * torch.tanh(zk / cap)
             hi = torch.logsumexp(zk, dim=-1)
 
             if S > 0:
-                zs = _GatheredLinear.apply(h, self.weight, sidx).float()
+                Ws = self.weight.index_select(0, sidx).to(dtype=h.dtype)
+                zs = F.linear(h, Ws).float()
                 if self.bias is not None:
                     zs = zs + self.bias[sidx].float()
                 zs = cap * torch.tanh(zs / cap)
-                # unbiased: E_q[exp(z_true - z_prop)] * C is the sum over the complement
-                ratio = (zs - zp_sample).exp().mean(-1).clamp_min(1e-30)
-                logZ = torch.logaddexp(hi, logC + ratio.log())
-                sel, teach = torch.cat([idx, sidx], -1), torch.cat([zk, zs], -1)
+                # unbiased under the shared sampler: mean_s exp(z_true) / q(s)
+                w = (zs - q[sidx].log().unsqueeze(0)).logsumexp(-1) - math.log(S)
+                logZ = torch.logaddexp(hi, w)
             else:
                 logZ = hi
-                sel, teach = idx, zk
 
-            pos = (idx == tc.unsqueeze(-1)).float().argmax(-1, keepdim=True)
-            losses[a:a + self.chunk] = logZ - zk.gather(-1, pos).squeeze(-1)
-            # Train the proposal to RANK, against the exact logits it just caused to
-            # be computed. This is the only gradient it receives, and the term that
-            # made a rank-32 proposal beat a rank-128 truncated SVD offline.
-            student = _GatheredLinear.apply(z, self.prop_up, sel).float()
-            aux = aux + F.kl_div((cap * torch.tanh(student / cap)).log_softmax(-1),
+            # The target's exact logit, for the numerator. One row per token.
+            z_tgt = (h * self.weight.index_select(0, tc).to(dtype=h.dtype)).sum(-1).float()
+            if self.bias is not None:
+                z_tgt = z_tgt + self.bias[tc].float()
+            z_tgt = cap * torch.tanh(z_tgt / cap)
+            losses[a:a + self.chunk] = logZ - z_tgt
+
+            # Train the proposal to RANK, against the exact logits already computed.
+            sel = C if S == 0 else torch.cat([C, sidx])
+            teach = zk if S == 0 else torch.cat([zk, zs], -1)
+            stud = F.linear(z, self.prop_up[sel].to(dtype=z.dtype)).float()
+            aux = aux + F.kl_div((cap * torch.tanh(stud / cap)).log_softmax(-1),
                                  teach.detach().log_softmax(-1),
                                  log_target=True, reduction="batchmean")
 

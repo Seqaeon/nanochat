@@ -662,10 +662,10 @@ class GPTConfig:
     sch_tier_order: str = 'freq'                    # none | random | freq | file. Which words land in which tier; freq is the point
     sch_tier_perm_path: str = ''                    # .pt permutation of range(vocab_size) for sch_tier_order=file
     sch_proposal_rank: int = 32                     # c for sch_head_type=proposal. Trained to RANK, so it stays 16-32 at any d
-    sch_proposal_topk: int = 4096                   # K words scored exactly per token, plus the target
-    sch_proposal_samples: int = 1024                # S importance samples for the tail; 0 makes the estimator biased
+    sch_proposal_topk: int = 16384                   # K words scored exactly per token, plus the target
+    sch_proposal_samples: int = 4096                # S importance samples for the tail; 0 makes the estimator biased
     sch_proposal_warmup: int = 0                    # steps of exact softmax before switching; the proposal is noise at init
-    sch_proposal_chunk: int = 128                   # tokens per gather; weight[idx] is (chunk, K, d), the memory knob
+    sch_proposal_chunk: int = 512                   # tokens sharing one candidate set; bigger reuses the weight more
     sch_proposal_aux: float = 1.0                   # weight on the ranking loss that trains the proposal from the exact logits
 
 

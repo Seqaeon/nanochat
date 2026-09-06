@@ -751,10 +751,10 @@ parser.add_argument("--sch-tier-caps", type=str, default="", help="SCH: dimensio
 parser.add_argument("--sch-tier-order", type=str, default="freq", choices=list(MONARCH_PERMS), help="SCH: which words land in which tier. 'freq' is the whole point; 'none' (token id) is the control that shows the ordering is what pays")
 parser.add_argument("--sch-tier-perm-path", type=str, default="", help="SCH: .pt permutation for --sch-tier-order=file")
 parser.add_argument("--sch-proposal-rank", type=int, default=32, help="SCH: c, the proposal rank. Trained to rank rather than reconstruct, so it stays 16-32 at any depth; a truncated SVD would need 0.33d")
-parser.add_argument("--sch-proposal-topk", type=int, default=4096, help="SCH: K words scored EXACTLY per token from the full dense head, plus the target")
-parser.add_argument("--sch-proposal-samples", type=int, default=1024, help="SCH: S importance samples for the partition tail. 0 substitutes the cheap logits instead, which is biased by -0.03 to -1.6 nats")
+parser.add_argument("--sch-proposal-topk", type=int, default=16384, help="SCH: candidates scored EXACTLY, shared across a chunk of tokens so the gather stays a GEMM")
+parser.add_argument("--sch-proposal-samples", type=int, default=4096, help="SCH: S importance samples for the partition tail. 0 substitutes the cheap logits instead, which is biased by -0.03 to -1.6 nats")
 parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: steps of exact softmax before switching. The proposal selects nothing useful at initialisation")
-parser.add_argument("--sch-proposal-chunk", type=int, default=128, help="SCH: tokens per gather; weight[idx] is (chunk, K, d) and this is the memory knob")
+parser.add_argument("--sch-proposal-chunk", type=int, default=512, help="SCH: tokens sharing one candidate set. Per-token sets read the weight 10,240x more than a dense matmul and measured 18.7 s/step")
 parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: weight on the ranking loss that trains the proposal against the exact logits. 0 leaves it with no gradient at all when --sch-proposal-samples=0")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")

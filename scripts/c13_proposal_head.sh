@@ -25,6 +25,22 @@
 #        8    rank 32    4096    0.036 nats      9.8x        +0.0666
 #       12    rank 32    8192    0.035 nats      8.9x        +0.0243
 #
+#   Those used a PER-TOKEN candidate set, which is the better selection and an
+#   unusable kernel: each token reads its own K rows, so the weight is never reused
+#   and traffic is 10,240x a dense matmul's. Measured 18.7 s/step against dense's
+#   0.4. The candidates are therefore shared across a chunk of tokens, which turns
+#   the gather back into a GEMM. Re-measured on the same depth-8 activations:
+#
+#     scheme                 chunk      K       S    top-1     nats
+#     per-token               --     8192    1024    93.9%   0.1106
+#     shared                  512   16384    4096    94.8%   0.1190
+#     shared                 1024   16384    4096    94.1%   0.1327
+#
+#   A shared K=16,384 buys what a per-token K=8,192 does, at 512x less weight
+#   traffic, because tokens in a batch share most of their plausible vocabulary.
+#   It is also cheaper than dense on both counts: the retained logit tensor is
+#   (N, K+S) rather than (N, V).
+#
 #   For scale: at depth 12 the best Monarch arm was +0.0016 and a completely FREE
 #   head would be +0.0405. This captures 60-72% of that ceiling at every depth.
 #
@@ -77,8 +93,8 @@ done
 
 VOCAB="${VOCAB:-131072}"
 RANKS="${RANKS:-32}"
-TOPKS="${TOPKS:-4096}"
-SAMPLES="${SAMPLES:-1024}"
+TOPKS="${TOPKS:-16384}"
+SAMPLES="${SAMPLES:-4096}"
 WARMUP="${WARMUP:-200}"          # steps of exact softmax; the proposal is noise at init
 # Tokens per chunk. This is now a SPEED knob, not a memory-safety one: what backward
 # retains is (chunk, K+S) after the custom gathered-linear, and the (chunk, V) proposal
@@ -220,9 +236,9 @@ echo "       was the difference between working and not."
 echo "    3. rank 16 against rank 32. If 16 holds, the proposal really is constant"
 echo "       cost in d and the saving does not decay with model size."
 echo ""
-echo "  And watch dt, sceptically. The FLOPs claim is what this project measures, but"
-echo "  the exact logits come from a per-token gather, which is memory-bound where a"
-echo "  dense matmul is not: a smoke run at V=131,072 had the approximate path SLOWER"
-echo "  in wall clock than the exact one on a small model. If bpb holds and dt does"
-echo "  not, the missing piece is a fused gather-matmul kernel, not the architecture."
+echo "  And watch dt. The first build used per-token candidates and ran at 18.7 s/step"
+echo "  against dense's 0.4, because a per-token gather reads the weight 10,240x more"
+echo "  than the matmul it replaces. Shared candidates restore the GEMM and a smoke run"
+echo "  now has the approximate path FASTER than the exact one. If dt is still poor,"
+echo "  raise --sch-proposal-chunk: it trades candidate-set quality for weight reuse."
 echo "============================================================"
