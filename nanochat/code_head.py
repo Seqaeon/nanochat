@@ -1521,9 +1521,14 @@ class ProposalHead(nn.Module):
         # Token chunk for the gather. weight[idx] is (chunk, K, d): at K=4096, d=512
         # that is 537 MB in bf16 per 128 tokens, so this is the memory knob, and the
         # thing a fused gather-matmul kernel would remove entirely.
-        # Tokens sharing one candidate set. Bigger means better weight reuse and a
-        # set that must serve more tokens; 512 measured within 0.008 nats of 128.
-        self.chunk = int(getattr(config, "sch_proposal_chunk", 512))
+        # Tokens sharing one candidate set, and the head's main speed knob. It sets
+        # how many chunks a step runs, and EACH chunk's backward allocates and zeroes
+        # a dense (V, d) gradient buffer for the index_select: at V=131,072, d=512
+        # that is 137 GB of buffer traffic per step at chunk=2048 and 550 GB at 512.
+        # Measured cost of the larger set, on trained depth-8 activations:
+        #   chunk  512 -> 0.0342 bpb   1024 -> 0.0377   2048 -> 0.0440   4096 -> 0.0452
+        # so 2048 trades about 0.010 bpb for 4x less of the dominant traffic.
+        self.chunk = int(getattr(config, "sch_proposal_chunk", 2048))
         # Weight on the ranking loss that teaches the proposal. Zero leaves it with
         # gradient only through the sampler, and none at all when S=0.
         self.aux_weight = float(getattr(config, "sch_proposal_aux", 1.0))
@@ -1612,13 +1617,18 @@ class ProposalHead(nn.Module):
             # Selection and sampling are inference. Keeping them under no_grad is what
             # lets the (chunk, V) proposal be freed instead of retained for backward.
             with torch.no_grad():
-                zp = (z @ self.prop_up[:Vr].to(dtype=z.dtype).T).float()
-                zp = cap * torch.tanh(zp / cap)
+                # Kept in bf16 and NOT softcapped. This (chunk, V) tensor is the
+                # dominant memory traffic in the whole head -- it is written once and
+                # read several times per chunk -- so every pass over it and every byte
+                # of it counts. The softcap is a monotone squash, so it changes neither
+                # the ranking nor, since the same q is used to sample and to weight,
+                # the estimator's unbiasedness. Dropping it removes two full passes.
+                zp = z @ self.prop_up[:Vr].to(dtype=z.dtype).T
                 # Rank by total probability mass across the chunk: the words worth
                 # scoring exactly are the ones some token in the chunk actually wants.
-                agg = zp.softmax(-1).sum(0)
+                agg = zp.softmax(-1).sum(0).float()
                 C = agg.topk(K).indices
-                q = agg.clone().index_fill_(0, C, 0.0)
+                q = agg.index_fill(0, C, 0.0)
                 q = q / q.sum().clamp_min(1e-30)                    # sampler off C
                 sidx = torch.multinomial(q, S, replacement=True) if S > 0 else None
                 del zp

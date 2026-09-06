@@ -551,7 +551,7 @@ def run_training_sweep(args):
         "--sch-proposal-topk", str(getattr(args, 'sch_proposal_topk', 16384)),
         "--sch-proposal-samples", str(getattr(args, 'sch_proposal_samples', 4096)),
         "--sch-proposal-warmup", str(getattr(args, 'sch_proposal_warmup', 0)),
-        "--sch-proposal-chunk", str(getattr(args, 'sch_proposal_chunk', 512)),
+        "--sch-proposal-chunk", str(getattr(args, 'sch_proposal_chunk', 2048)),
         "--sch-proposal-aux", str(getattr(args, 'sch_proposal_aux', 1.0)),
         "--sch-holdout-tokens", str(getattr(args, 'sch_holdout_tokens', 0)),
         "--sch-holdout-seed", str(getattr(args, 'sch_holdout_seed', 7)),
@@ -1327,7 +1327,7 @@ if __name__ == "__main__":
     parser.add_argument("--sch-proposal-topk", type=int, default=16384, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-proposal-samples", type=int, default=4096, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
-    parser.add_argument("--sch-proposal-chunk", type=int, default=512, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
+    parser.add_argument("--sch-proposal-chunk", type=int, default=2048, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: passthrough to base_train (see nanochat/code_head.py)")

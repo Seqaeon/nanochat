@@ -665,7 +665,7 @@ class GPTConfig:
     sch_proposal_topk: int = 16384                   # K words scored exactly per token, plus the target
     sch_proposal_samples: int = 4096                # S importance samples for the tail; 0 makes the estimator biased
     sch_proposal_warmup: int = 0                    # steps of exact softmax before switching; the proposal is noise at init
-    sch_proposal_chunk: int = 512                   # tokens sharing one candidate set; bigger reuses the weight more
+    sch_proposal_chunk: int = 2048                  # tokens sharing one candidate set; also sets how many dense (V,d) grad buffers per step
     sch_proposal_aux: float = 1.0                   # weight on the ranking loss that trains the proposal from the exact logits
 
 

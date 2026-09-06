@@ -100,7 +100,7 @@ WARMUP="${WARMUP:-200}"          # steps of exact softmax; the proposal is noise
 # retains is (chunk, K+S) after the custom gathered-linear, and the (chunk, V) proposal
 # is built under no_grad and freed. Bigger chunks mean fewer kernel launches and a
 # larger transient gather; 512 gives 128 iterations per 65,536-token micro-batch.
-PCHUNK="${PCHUNK:-512}"
+PCHUNK="${PCHUNK:-2048}"
 
 # Budget reference, the Monarch arm already trained: d*M + V*m1 + r*(d+V).
 REF_M="${REF_M:-1024}"; REF_M1="${REF_M1:-32}"; REF_RANK="${REF_RANK:-224}"

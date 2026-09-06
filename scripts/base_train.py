@@ -754,7 +754,7 @@ parser.add_argument("--sch-proposal-rank", type=int, default=32, help="SCH: c, t
 parser.add_argument("--sch-proposal-topk", type=int, default=16384, help="SCH: candidates scored EXACTLY, shared across a chunk of tokens so the gather stays a GEMM")
 parser.add_argument("--sch-proposal-samples", type=int, default=4096, help="SCH: S importance samples for the partition tail. 0 substitutes the cheap logits instead, which is biased by -0.03 to -1.6 nats")
 parser.add_argument("--sch-proposal-warmup", type=int, default=0, help="SCH: steps of exact softmax before switching. The proposal selects nothing useful at initialisation")
-parser.add_argument("--sch-proposal-chunk", type=int, default=512, help="SCH: tokens sharing one candidate set. Per-token sets read the weight 10,240x more than a dense matmul and measured 18.7 s/step")
+parser.add_argument("--sch-proposal-chunk", type=int, default=2048, help="SCH: tokens sharing one candidate set. Per-token sets read the weight 10,240x more than a dense matmul and measured 18.7 s/step")
 parser.add_argument("--sch-proposal-aux", type=float, default=1.0, help="SCH: weight on the ranking loss that trains the proposal against the exact logits. 0 leaves it with no gradient at all when --sch-proposal-samples=0")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
