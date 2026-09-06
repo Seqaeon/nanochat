@@ -2075,6 +2075,29 @@ class NonnegFactorHead(nn.Module):
         self.g_type = "linear"
         self.perm_mode = "none"
 
+        # Interpolated background prior (Jelinek-Mercer smoothing), off by default.
+        #
+        #     p(w|h) = (1 - lam(h)) p_mix(w|h) + lam(h) p_prior(w)
+        #
+        # A product mixture can only give a word mass by pointing a component at its
+        # cell. A word no component points at gets the background product, which at
+        # 32x32x32 is about (1/32)^3 = 3e-5 against a true unigram of 1e-4 to 1e-3, so
+        # the head is 1 to 3.5 nats wrong on exactly the words cross-entropy is
+        # dominated by. A dense softmax gets that right for free from one parameter
+        # per row. This buys it back for V parameters, ONE GATHER per token on the
+        # training path, and no change to exactness: both terms are normalised, so
+        # the interpolation is. The same argument as the per-token bias in
+        # output-head-efficiency-directions.md s4.4, which was worth more there than
+        # any of the architecture.
+        self.smooth = int(getattr(config, "sch_nfh_smooth", 0))
+        if self.smooth:
+            self.prior = nn.Parameter(torch.empty(V))
+            self.lam = nn.Linear(n_embd, 1, bias=True)
+            self._freq_args = (int(getattr(config, "vocab_size", 0)) or V,
+                               getattr(config, "_tokenizer_dir", None))
+        else:
+            self.prior, self.lam = None, None
+
         if self.mode == "global":
             # No factorisation and no permutation: the table is indexed by token id.
             self.table = nn.Parameter(torch.empty(V, R))
@@ -2133,6 +2156,19 @@ class NonnegFactorHead(nn.Module):
 
     # -- setup ------------------------------------------------------------
     def init_weights(self):
+        if self.prior is not None:
+            # Start at the unigram, which is what the prior is for. Falling back to
+            # uniform is correct but throws away the one thing that is free.
+            with torch.device("cpu"):
+                f = load_freq_table(*self._freq_args)
+            if f is not None and f.numel() >= self.vocab_size:
+                lp = f[:self.vocab_size].clamp_min(1e-9).log()
+            else:
+                lp = torch.zeros(self.vocab_size)
+            self.prior.data.copy_(lp.to(self.prior.device))
+            torch.nn.init.zeros_(self.lam.weight)
+            # sigmoid(-2.2) = 0.1: present from step 0, not dominant.
+            torch.nn.init.constant_(self.lam.bias, -2.2)
         if self.mode == "global":
             # exp(v) is the nonnegative table; v near -log V starts it uniform.
             torch.nn.init.normal_(self.table, mean=-math.log(self.vocab_size), std=0.02)
@@ -2195,6 +2231,8 @@ class NonnegFactorHead(nn.Module):
             lp = torch.logsumexp(acc.reshape(acc.shape[0], -1), dim=-1)
             if self.views > 1:
                 lp = lp - math.log(self.views)
+        if self.prior is not None:
+            lp = self._interpolate(flat, lp, self.prior.float().log_softmax(0)[safe])
         nll = torch.where(keep, -lp, torch.zeros_like(lp))
         if reduction == "mean":
             return nll.sum() / keep.sum().clamp_min(1)
@@ -2211,6 +2249,16 @@ class NonnegFactorHead(nn.Module):
         s = torch.logsumexp(v, dim=0)
         num = torch.logsumexp(u + v.index_select(0, tgt), dim=-1)
         return num - torch.logsumexp(u + s, dim=-1)
+
+    def _interpolate(self, flat, lp_mix, lp_prior):
+        """log[(1-lam) exp(lp_mix) + lam exp(lp_prior)], in log space throughout."""
+        l = F.linear(flat, self.lam.weight.to(dtype=flat.dtype),
+                     self.lam.bias.to(dtype=flat.dtype)).float()          # (N, 1)
+        # The loss path carries one log-prob per token, the eval path a whole row, so
+        # lam has to keep or drop its trailing axis to broadcast against either.
+        if lp_mix.dim() == 1:
+            l = l.squeeze(-1)
+        return torch.logaddexp(F.logsigmoid(-l) + lp_mix, F.logsigmoid(l) + lp_prior)
 
     # -- eval and generation: full log-probs, token order -----------------
     # Dynamo would unroll the chunk loop into one graph, which is how the proposal
@@ -2231,7 +2279,11 @@ class NonnegFactorHead(nn.Module):
             v = self.table.float()
             s = torch.logsumexp(v, dim=0)
             num = torch.logsumexp(u.unsqueeze(1) + v.unsqueeze(0), dim=-1)   # (n, V)
-            return num - torch.logsumexp(u + s, dim=-1, keepdim=True)
+            out = num - torch.logsumexp(u + s, dim=-1, keepdim=True)
+            if self.prior is not None:
+                out = self._interpolate(flat, out,
+                                        self.prior.float().log_softmax(0).unsqueeze(0))
+            return out
         n, R = flat.shape[0], self.rank
         lpi, las = self._factors(flat)
         total = None
@@ -2258,6 +2310,9 @@ class NonnegFactorHead(nn.Module):
             total = lg if total is None else torch.logaddexp(total, lg)
         if self.views > 1:
             total = total - math.log(self.views)
+        if self.prior is not None:
+            total = self._interpolate(flat, total,
+                                      self.prior.float().log_softmax(0).unsqueeze(0))
         return total
 
     # -- accounting -------------------------------------------------------
@@ -2277,6 +2332,11 @@ class NonnegFactorHead(nn.Module):
         f = 6 * self.proj.weight.numel()
         if self.stem is not None:
             f += 6 * self.stem[0].weight.numel()
+        if self.prior is not None:
+            # lam is d MACs; the prior is ONE gather on the training path. The
+            # log_softmax over V is a per-forward reduction, quoted amortised over a
+            # nominal 32,768-token micro-batch like the global table's.
+            f += 6 * self.n_embd + 2 * self.vocab_size // 32768
         return int(f)
 
     def extra_repr(self):
@@ -2286,7 +2346,7 @@ class NonnegFactorHead(nn.Module):
         return (f"V={self.vocab_size}, mode={self.mode}, dims={self.dims}, "
                 f"R={self.rank}, views={self.views}, width={self.width}, "
                 f"g={self.g_type}, perm={self.perm_mode}, "
-                f"rank_ceiling={self.rank_ceiling()}")
+                f"smooth={self.smooth}, rank_ceiling={self.rank_ceiling()}")
 
 
 # ---------------------------------------------------------------------------

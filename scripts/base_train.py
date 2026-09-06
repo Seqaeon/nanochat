@@ -765,6 +765,7 @@ parser.add_argument("--sch-nfh-perm", type=str, default='none', help="SCH: none 
 parser.add_argument("--sch-nfh-perm-path", type=str, default='', help="SCH: .pt permutation of range(vocab_size) from scripts/build_vocab_permutation.py")
 parser.add_argument("--sch-nfh-g-type", type=str, default='linear', help="SCH: linear | mlp. The map into the factors. mlp is nearly free once the head is 0.04x of dense")
 parser.add_argument("--sch-nfh-g-hidden", type=int, default=0, help="SCH: hidden width for --sch-nfh-g-type mlp (0 = n_embd)")
+parser.add_argument("--sch-nfh-smooth", type=int, default=0, help="SCH: interpolate a static per-token prior into the mixture. A product mixture cannot give a word mass without pointing a component at it; this buys the unigram back for V params and one gather per token")
 parser.add_argument("--sch-nfh-chunk", type=int, default=256, help="SCH: tokens per chunk on the EVAL path only; the training path builds no V-wide tensor")
 # Held-out vocabulary: the headline capability experiment. Instrument from day one.
 parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold N token ids out of TRAINING so their zero-shot perplexity can be measured against an untrained softmax row")
@@ -1339,6 +1340,7 @@ def build_model_meta(depth):
         sch_nfh_g_type=str(getattr(args, 'sch_nfh_g_type', 'linear')),
         sch_nfh_g_hidden=int(getattr(args, 'sch_nfh_g_hidden', 0)),
         sch_nfh_chunk=int(getattr(args, 'sch_nfh_chunk', 256)),
+        sch_nfh_smooth=int(getattr(args, 'sch_nfh_smooth', 0)),
     )
     # Stash tokenizer_dir on config for lazy prior loading in EET
     config._tokenizer_dir = getattr(args, 'tokenizer_dir', None)

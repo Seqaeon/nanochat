@@ -679,6 +679,7 @@ class GPTConfig:
     sch_nfh_perm_path: str = ''                     # .pt permutation of range(vocab_size) (scripts/build_vocab_permutation.py)
     sch_nfh_g_type: str = 'linear'                  # linear | mlp. The map into the factors; mlp is nearly free once the head is 0.04x
     sch_nfh_g_hidden: int = 0                       # hidden width for sch_nfh_g_type=mlp (0 = n_embd)
+    sch_nfh_smooth: int = 0                         # interpolate a static per-token prior into the mixture (Jelinek-Mercer). V params, one gather/token
     sch_nfh_chunk: int = 256                        # tokens per chunk on the EVAL path only; the training path builds no V-wide tensor
 
 
@@ -784,7 +785,7 @@ RESEARCH_ALLOWED_KEYS = {
     "sch_proposal_warmup", "sch_proposal_chunk", "sch_proposal_aux",
     "sch_nfh_mode", "sch_nfh_rank", "sch_nfh_dims", "sch_nfh_groups",
     "sch_nfh_views", "sch_nfh_perm", "sch_nfh_perm_path", "sch_nfh_g_type",
-    "sch_nfh_g_hidden", "sch_nfh_chunk",
+    "sch_nfh_g_hidden", "sch_nfh_chunk", "sch_nfh_smooth",
     "use_mol", "mol_n_blocks", "mol_n_shared", "mol_topk", "mol_thin_dim",
     "mol_head_dim", "mol_ffn_mult", "mol_router_aux", "mol_routed_attn",
     "mol_dispatch", "mol_capacity_factor", "mol_block_lr_scale", "mol_per_block_ve",

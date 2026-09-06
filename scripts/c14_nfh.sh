@@ -39,9 +39,9 @@
 #   exponentially cheaper in probability space than in logit space, and that is why
 #   the order-3 to order-4 rung cost 2.7x the FLOPs and bought nothing.
 #
-# OFFLINE ORACLE, measured on the d8 V=131,072 head with the permutation this sweep
-# actually uses (perms/nfh_g3_d8_131k.pt), against the +0.0931 bpb that a head
-# costing NOTHING AT ALL would be worth at depth 8:
+# OFFLINE ORACLE, measured on the d8 V=131,072 head (acts_d8_v131k.pt) with a nested
+# assignment, against the +0.0931 bpb that a head costing NOTHING AT ALL is worth at
+# depth 8. These are FREE fits, so for cp they are a lower bound on the excess:
 #
 #     mode            R        excess bpb    head MACs vs dense
 #     cp 64x64x32     1          0.2829         0.0012x     <- LightRNN
@@ -57,9 +57,18 @@
 #   That gap is the one thing this run exists to measure. NFH_global is the hedge
 #   precisely because its per-context degrees of freedom (256) sit BELOW d.
 #
-# WHAT WOULD KILL IT
-#   R=32 landing within noise of R=1. That would say the mixture is not the
-#   mechanism and the whole framing is wrong, and it is the first thing to read.
+# WHAT THE FIRST d8 SWEEP SAID, and what it changed
+#   R=1 1.5101, R=32 1.1220, dense 0.9691. The 0.388 bpb between R=1 and R=32 is the
+#   claim and it survived: the mixture IS the mechanism. But R=32 came in +0.1529 bpb
+#   above dense against a +0.0281 budget, so it loses by 0.125, and the free-fit oracle
+#   said 0.0051. Thirty times the oracle is realisability, not capacity.
+#
+#   The checkpoint says which kind. The trained head's static background is UNIFORM to
+#   four decimal places (entropy 10.395 of 10.397), so it holds no unigram prior and
+#   pays to re-derive one from h at every position; and its components are NOT collapsed
+#   (mean |cos| 0.037 to 0.171 across the three axes). So --sch-nfh-smooth attacks the
+#   measured failure and anything aimed at collapse is already ruled out. --with-fixes
+#   runs that pair.
 #
 #   VOCAB=32768 bash scripts/c14_nfh.sh 8                # the cheap screen, ~5x less
 #   bash scripts/c14_nfh.sh 8                            # the headline, V=131,072
@@ -71,8 +80,9 @@ set -o pipefail
 FORCE=0
 SEEDS=1
 RUN_MAIN=1
-RUN_GLOBAL=1
+RUN_GLOBAL=0
 RUN_CONTROLS=0
+RUN_FIXES=0
 RUN_BASELINES=0
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
@@ -80,37 +90,30 @@ while [[ $# -gt 0 ]]; do
         --force)          FORCE=1; shift ;;
         --seeds)          SEEDS="$2"; shift 2 ;;
         --with-controls)  RUN_CONTROLS=1; shift ;;
+        --with-fixes)     RUN_FIXES=1; shift ;;
+        --fixes-only)     RUN_MAIN=0; RUN_GLOBAL=0; RUN_FIXES=1; shift ;;
         --with-baselines) RUN_BASELINES=1; shift ;;
-        --no-global)      RUN_GLOBAL=0; shift ;;
+        --with-global)    RUN_GLOBAL=1; shift ;;
         --global-only)    RUN_MAIN=0; RUN_GLOBAL=1; shift ;;
         --controls-only)  RUN_MAIN=0; RUN_GLOBAL=0; RUN_CONTROLS=1; shift ;;
         [0-9]*)           DEPTHS+=("$1"); shift ;;
         *) echo "unknown arg: $1"
            echo "usage: $0 [--force] [--seeds N] [--with-controls] [--with-baselines]"
+           echo "       [--with-fixes] [--fixes-only]"
            echo "       [--no-global] [--global-only] [--controls-only] [DEPTH ...]"
            exit 1 ;;
     esac
 done
 [ ${#DEPTHS[@]} -eq 0 ] && DEPTHS=(8)
 
-# V=32,768 is a VALID screen for this head and was not for any previous one, because
-# what is being approximated changed. Measured free-fit oracle at R=32, cp with three
-# axes: 0.00509 bpb at V=32,768 against 0.00970 at V=131,072, i.e. the family fits
-# BETTER at the small vocabulary. What gets worse is the cost ratio, head/dense =
-# R(1 + sum_g K_g)/V, because sum_g K_g = G V^(1/G) shrinks far more slowly than V:
-# 0.0947x at 32,768 against 0.0393x at 131,072. Net, as a fraction of the break-even
-# budget the head has to stay inside:
-#
-#   V=32,768  d4    budget +0.0645 bpb   oracle spends  8%
-#   V=32,768  d8    budget +0.0282       oracle spends 18%
-#   V=131,072 d8    budget +0.0865       oracle spends 11%
-#   V=131,072 d12   budget +0.0383       oracle spends 25%
-#
-# So V=32,768 d8 is a conservative screen: a win there implies a win at 131,072, it
-# costs roughly 5x less to run, and the dense legs at that budget already exist
-# (440.4M tokens, LEARNINGS "The V=32,768 depth-8 arc"). Screen there, then confirm
-# the headline at 131,072, which is where the regime claim lives and where modern
-# tokenizers actually sit.
+# CHOOSING THE VOCABULARY. head/dense = R(1 + sum_g K_g)/V with sum_g K_g = G V^(1/G),
+# so 0.0947x at V=32,768 against 0.0393x at V=131,072: independent of d, and the method
+# gets relatively cheaper as V grows. Head share moves the same way, 35.2% against 68.4%
+# at depth 8. Both make V=32,768 the HARSHER setting on cost, budget +0.0282 bpb against
+# +0.0865. Whether it is harsher or kinder on quality is unmeasured: the offline numbers
+# that once claimed otherwise were taken on a byte-level token stream and are retracted
+# (LEARNINGS, "RETRACTED: the V=32,768 offline numbers"). Runs there are about 5x cheaper
+# and the dense legs exist, so it stays the screen; the headline belongs at 131,072.
 VOCAB="${VOCAB:-131072}"
 # R=1 is not an optional extra: it is the LightRNN corner and the ablation the whole
 # claim rests on, so it runs by default alongside the headline rank.
@@ -146,6 +149,7 @@ for _v in DIMS:3 DIMS2:2; do
     fi
 done
 GLOBAL_M="${GLOBAL_M:-256}"
+SMOOTH="${SMOOTH:-0}"
 PERM_PATH="${PERM_PATH:-perms/nfh_g3_v${VOCAB}.pt}"
 # A plain string, not an array: scripts/../tests extract arms by reading these
 # assignments, and "${ARR[@]}" is not something that extractor can expand.
@@ -318,7 +322,29 @@ echo "============================================================"
 if [ "$RUN_MAIN" -eq 1 ]; then
     for R in $RANKS; do
         run "NFH_cp_R${R}" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
-            --sch-nfh-rank "$R" $PERM_FLAGS
+            --sch-nfh-rank "$R" $PERM_FLAGS --sch-nfh-smooth "$SMOOTH"
+    done
+fi
+# The two arms that attack the MEASURED failure of the first d8 sweep, where R=32 came
+# in 0.1529 bpb above dense against a +0.0281 budget while its free-fit oracle said
+# 0.0051. Thirty times the oracle is realisability, not capacity, so both of these
+# widen the path from h to the factors rather than adding components.
+#   smooth  a word no component points at falls to the background product, about
+#           (1/32)^3 at these axes against a true unigram of 1e-4 to 1e-3. One gather
+#           per token buys the unigram back, and 0.1529 bpb is 0.501 nats, which is
+#           the right size for that gap.
+#   mlp     the map itself: 3,104 factor parameters out of a 512-dimensional h is a
+#           6x compression, and this is the only knob that relieves it. Costs 16% more
+#           head FLOPs, moving the budget +0.0281 -> +0.0271.
+if [ "$RUN_FIXES" -eq 1 ]; then
+    for R in $RANKS; do
+        [ "$R" = "1" ] && continue
+        run "NFH_cp_R${R}_smooth" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
+            --sch-nfh-rank "$R" $PERM_FLAGS --sch-nfh-smooth 1
+        run "NFH_cp_R${R}_mlp" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
+            --sch-nfh-rank "$R" $PERM_FLAGS --sch-nfh-g-type mlp
+        run "NFH_cp_R${R}_smooth_mlp" $NFH --sch-nfh-mode cp --sch-nfh-dims "$DIMS" \
+            --sch-nfh-rank "$R" $PERM_FLAGS --sch-nfh-smooth 1 --sch-nfh-g-type mlp
     done
 fi
 

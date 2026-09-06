@@ -1102,6 +1102,9 @@ def _nfh(**kw):
     dict(sch_nfh_views=3, sch_nfh_perm='random'),
     dict(sch_nfh_g_type='mlp'),
     dict(sch_nfh_mode='global', sch_nfh_rank=16),
+    dict(sch_nfh_smooth=1),                                # interpolated prior
+    dict(sch_nfh_smooth=1, sch_nfh_rank=1),
+    dict(sch_nfh_mode='global', sch_nfh_rank=16, sch_nfh_smooth=1),
 ])
 def test_nfh_is_exactly_normalised_and_the_two_paths_agree(kw):
     """Two claims in one, and both are load-bearing.
@@ -1185,6 +1188,47 @@ def test_nfh_is_cheaper_than_dense_and_every_parameter_trains():
     assert torch.isfinite(loss)
     for name, p in head.named_parameters():
         assert p.grad is not None and p.grad.abs().sum() > 0, f"{name} received no gradient"
+
+
+def test_nfh_smoothing_raises_the_tail_and_stays_exact():
+    """The interpolated prior exists for one measured reason: a word no component
+    points at falls to the background product, which at 32x32x32 is about (1/32)^3
+    = 3e-5 against a true unigram of 1e-4 to 1e-3, so the head is 1 to 3.5 nats wrong
+    on exactly the words cross-entropy is dominated by. Measured excess on the first
+    d8 sweep was 0.501 nats/token, the right size for that.
+
+    So the claim is not "there is a prior term", it is "the tail comes up". Compare
+    the SAME mixture with and without it, and require both that the worst-case
+    log-probability rises and that the result is still a distribution.
+    """
+    plain = _nfh(sch_nfh_rank=2, sch_nfh_smooth=0).lm_head
+    smooth = _nfh(sch_nfh_rank=2, sch_nfh_smooth=1).lm_head
+    missing, _ = smooth.load_state_dict(plain.state_dict(), strict=False)
+    assert set(missing) == {"prior", "lam.weight", "lam.bias"}, missing
+    with torch.no_grad():                       # a strongly non-uniform prior
+        smooth.prior.copy_(torch.randn(smooth.vocab_size))
+        smooth.lam.bias.fill_(-1.0)
+
+    x = torch.randn(4, plain.n_embd)
+    lp0, lp1 = plain(x).float(), smooth(x).float()
+    assert torch.logsumexp(lp1, -1).abs().max() < 1e-4, "smoothing broke exactness"
+
+    # The claim is directional, not global: interpolation scales the mixture by
+    # (1 - lam), so a word the prior ALSO thinks is unlikely correctly goes down.
+    # What must come up is a word the mixture starves and the prior does not, which
+    # is the whole tail case. Build exactly that.
+    t = 7
+    with torch.no_grad():
+        smooth.prior.fill_(-20.0)
+        smooth.prior[t] = 20.0                  # prior is essentially certain of t
+    lp1 = smooth(x).float()
+    assert lp1[:, t].min() > lp0[:, t].max() + 1.0, \
+        "a word the mixture starves and the prior favours did not come up"
+
+    # And it is a floor, exactly: every word is at least lam * p_prior(w).
+    lam = torch.sigmoid(smooth.lam(x).float())
+    floor = lam.log() + smooth.prior.float().log_softmax(0).unsqueeze(0)
+    assert (lp1 >= floor - 1e-5).all(), "the interpolated prior is not a floor"
 
 
 def test_nfh_axes_must_tile_the_padded_vocabulary():

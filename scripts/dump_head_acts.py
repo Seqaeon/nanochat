@@ -66,7 +66,10 @@ def main():
     ap.add_argument("--out", default="acts.pt")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--also-head", action="store_true",
-                    help="save lm_head.weight alongside, so one file carries both")
+                    help="save the head alongside, so one file carries both. For a dense "
+                         "head that is lm_head.weight; for any other it is the whole "
+                         "lm_head state dict, which is the only way to probe a "
+                         "structured head offline")
     args = ap.parse_args()
 
     model, cfg, meta, path = build(args.checkpoint_dir, args.step)
@@ -100,13 +103,31 @@ def main():
             pass
     handle.remove()
     H = grabbed["x"].reshape(-1, cfg.n_embd).half().cpu()
+    # The NEXT token for each position, which is what the head is scoring. The last
+    # position of each row has no successor in this batch and is marked -1, the same
+    # ignore index the loss uses, so an offline probe can drop it without guessing.
+    tgt = torch.full_like(x, -1)
+    tgt[:, :-1] = x[:, 1:]
+    tgt = tgt.reshape(-1).cpu()
 
-    payload = H if not args.also_head else {
-        "acts": H, "lm_head": model.lm_head.weight.detach().half().cpu()}
+    payload = H if not args.also_head else {"acts": H, "targets": tgt}
+    if args.also_head:
+        w = getattr(model.lm_head, "weight", None)
+        if isinstance(w, torch.Tensor) and w.dim() == 2:
+            payload["lm_head"] = w.detach().half().cpu()      # dense, as before
+        # Always the full state dict too: a structured head has no single matrix, and
+        # without its parameters an activation dump cannot say anything about it.
+        # Floats to half, integer buffers left alone: a permutation cast to half is
+        # silently wrong above 2048 and this file exists to be trusted.
+        payload["head_state"] = {
+            k: (v.detach().half() if v.is_floating_point() else v.detach()).cpu()
+            for k, v in model.lm_head.state_dict().items()}
+        payload["head_repr"] = repr(model.lm_head)
+        payload["model_config"] = meta["model_config"]
     torch.save(payload, args.out)
     mb = os.path.getsize(args.out) / 1e6
     print(f"[dump] wrote {args.out}: {tuple(H.shape)} activations, {mb:.1f} MB"
-          + ("  (+ lm_head)" if args.also_head else ""))
+          + ("  (+ targets, head state dict)" if args.also_head else ""))
 
 
 if __name__ == "__main__":
