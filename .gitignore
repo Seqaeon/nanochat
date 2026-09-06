@@ -16,8 +16,6 @@ wandb/
 # Training artifacts and large outputs
 out/
 data/
-tokenizer/
-tokenizer_131k/
 head_d4_v131k.pt
 head_d8_v131k.pt
 head_d12_v131k.pt
@@ -43,3 +41,19 @@ acts_d12_v131k.pt
 .triton_cache/
 **/.inductor_cache/
 **/.triton_cache/
+
+# Small build artefacts that every box has to hold an IDENTICAL copy of, and that
+# `*.pt` above would otherwise swallow. About 4.4 MB in total.
+#   perms/           vocabulary permutations. A factorised head is fitted to one
+#                    specific assignment, so a box without it silently trains the
+#                    token-id control instead of the arm you asked for.
+#   tokenizer*/      the tokenizers themselves. Rebuilding one is a BPE training run,
+#                    and two boxes that rebuilt separately are not the same tokenizer.
+# Directory negations come first: git cannot re-include a file whose parent
+# directory is excluded, and tokenizer_131k/ is excluded by name above.
+!perms/
+!perms/**
+!tokenizer/
+!tokenizer/**
+!tokenizer_131k/
+!tokenizer_131k/**

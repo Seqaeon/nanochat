@@ -174,19 +174,48 @@ if ! python3 -m scripts.ensure_tokenizer --vocab-size "$VOCAB" --tokenizer-dir "
 fi
 mkdir -p "$OUT_BASE"
 
-# The assignment decides which words share a code cell, and it is the difference
-# between 0.0097 and 0.0483 bpb offline. Falling back silently would turn the
-# headline arm into its own control, so say so loudly.
+# The assignment decides which words share a code cell and is worth 3.3x the
+# structural error offline, so a silent fallback to token-id order would turn the
+# headline arm into its own control and the sweep would look like it ran. Build it if
+# we are told where from, and otherwise stop.
+#
+#   PERM_CKPT   a dense .pt to fit the assignment from. A full checkpoint, a bare
+#               (V, d) head, or the {"acts","lm_head"} payload dump_head_acts writes.
+#   PERM_ACTS   optional activations that order the leaf axis by predictability;
+#               worth 10-20% of the reconstruction error, free at run time. Defaults
+#               to PERM_CKPT, which already carries them if it is an acts payload.
+#   ALLOW_NO_PERM=1  run on token-id order on purpose. It is a control, not a default.
 if [ ! -f "$PERM_PATH" ]; then
-    echo ""
-    echo "  !! ${PERM_PATH} does not exist. The fitted assignment is worth 3.3x the"
-    echo "  !! structural error offline; without it this sweep measures token-id order."
-    echo "  !! Build it first:"
-    echo "  !!   python -m scripts.build_vocab_permutation --mode nested \\"
-    echo "  !!       --dims ${DIMS} --vocab-size ${VOCAB} --checkpoint <dense head .pt> \\"
-    echo "  !!       --acts <acts .pt> --out ${PERM_PATH}"
-    echo ""
-    PERM_FLAGS="--sch-nfh-perm none"
+    if [ -n "${PERM_CKPT:-}" ]; then
+        echo "  [perm] ${PERM_PATH} missing; fitting it from ${PERM_CKPT}"
+        mkdir -p "$(dirname "$PERM_PATH")"
+        if ! python3 -m scripts.build_vocab_permutation --mode nested \
+                --dims "$DIMS" --vocab-size "$VOCAB" --checkpoint "$PERM_CKPT" \
+                --acts "${PERM_ACTS:-$PERM_CKPT}" --iters "${PERM_ITERS:-12}" \
+                --out "$PERM_PATH"; then
+            echo "  [perm] could not build ${PERM_PATH}; nothing was run."
+            exit 1
+        fi
+    elif [ "${ALLOW_NO_PERM:-0}" = "1" ]; then
+        echo "  [perm] ALLOW_NO_PERM=1: running on token-id order. This is the control arm."
+        PERM_FLAGS="--sch-nfh-perm none"
+    else
+        echo ""
+        echo "  ${PERM_PATH} does not exist, and without it every arm would silently"
+        echo "  measure token-id order instead of the fitted assignment. Nothing was run."
+        echo ""
+        echo "  Point the sweep at any V=${VOCAB} DENSE checkpoint and it will fit one:"
+        echo "    PERM_CKPT=<dense model_*.pt | head .pt | acts .pt> \\"
+        echo "        VOCAB=${VOCAB} bash $0 ${DEPTHS[*]}"
+        echo ""
+        echo "  Or build it yourself:"
+        echo "    python -m scripts.build_vocab_permutation --mode nested \\"
+        echo "        --dims ${DIMS} --vocab-size ${VOCAB} --checkpoint <dense .pt> \\"
+        echo "        --acts <acts .pt> --out ${PERM_PATH}"
+        echo ""
+        echo "  Or ALLOW_NO_PERM=1 to run the token-id control on purpose."
+        exit 1
+    fi
 fi
 
 done_already() {
