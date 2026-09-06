@@ -15,7 +15,7 @@ wandb/
 
 # Training artifacts and large outputs
 out/
-data/
+data
 head_d4_v131k.pt
 head_d8_v131k.pt
 head_d12_v131k.pt

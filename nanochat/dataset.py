@@ -35,8 +35,15 @@ DATA_DIR = default_data_dir()
 def resolve_data_dir(data_dir=None):
     """Resolve dataset path from explicit arg, env override, or default."""
     if data_dir is not None:
-        return data_dir
-    return os.environ.get("NANOCHAT_DATA_DIR", DATA_DIR)
+        target = data_dir
+    else:
+        target = os.environ.get("NANOCHAT_DATA_DIR", DATA_DIR)
+    if os.path.islink(target) and not os.path.exists(target):
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+    return target
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
@@ -47,6 +54,11 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False, max_shards=None):
 
     # If the directory doesn't exist, create it in the current working directory
     if not os.path.exists(data_dir):
+        if os.path.islink(data_dir):
+            try:
+                os.unlink(data_dir)
+            except OSError:
+                pass
         # Local fallback: create directory in the current working directory
         folder_name = os.path.basename(data_dir)
         new_data_dir = os.path.join(os.getcwd(), folder_name)

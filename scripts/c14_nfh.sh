@@ -167,8 +167,19 @@ if [ "$VOCAB" -eq 131072 ]; then
 else
     TOK="${TOKENIZER_DIR:-tokenizer}"
 fi
+CHECK_DATA_DIR="${DATA_DIR:-data}"
+if [ -L "$CHECK_DATA_DIR" ] && [ ! -e "$CHECK_DATA_DIR" ]; then
+    echo "  [data] removing dangling symlink at $CHECK_DATA_DIR"
+    rm "$CHECK_DATA_DIR"
+fi
+mkdir -p "$CHECK_DATA_DIR"
+if [ ! -f "$CHECK_DATA_DIR/shard_06542.parquet" ] || [ ! -f "$CHECK_DATA_DIR/shard_00000.parquet" ]; then
+    echo "  [data] initial data shards missing in $CHECK_DATA_DIR; downloading..."
+    python3 -m nanochat.dataset -n "${MAX_SHARDS:-8}" --data-dir "$CHECK_DATA_DIR"
+fi
+
 if ! python3 -m scripts.ensure_tokenizer --vocab-size "$VOCAB" --tokenizer-dir "$TOK" \
-        --data-dir "${DATA_DIR:-data}" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+        --data-dir "$CHECK_DATA_DIR" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
     echo "could not prepare the tokenizer at '${TOK}'; nothing was run."
     exit 1
 fi
