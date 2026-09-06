@@ -303,6 +303,19 @@ def build_vocab_permutation(vocab_size: int, padded_vocab_size: int, mode: str,
     a permutation that moved a real token into the tail would silently drop it.
     """
     assert mode in MONARCH_PERMS, f"sch_monarch_perm={mode!r} not in {MONARCH_PERMS}"
+    # Pinned to CPU, not to the ambient device. This runs inside MonarchHead.__init__,
+    # which build_model_meta executes under `with torch.device("meta")`, where every
+    # factory call below would produce meta tensors: `torch.equal` then has no kernel
+    # and the validation dies, and a `freq` table shorter than the vocabulary hits the
+    # same wall in `torch.cat`. The result is index bookkeeping that belongs on the
+    # host regardless, and `init_weights` copies it to the real device afterwards.
+    with torch.device("cpu"):
+        return _build_vocab_permutation(vocab_size, padded_vocab_size, mode, seed,
+                                        path, tokenizer_dir)
+
+
+def _build_vocab_permutation(vocab_size: int, padded_vocab_size: int, mode: str,
+                             seed: int, path: str, tokenizer_dir: str | None):
     perm = torch.arange(padded_vocab_size, dtype=torch.long)
     if mode == "none":
         return perm, False
@@ -322,7 +335,8 @@ def build_vocab_permutation(vocab_size: int, padded_vocab_size: int, mode: str,
         perm[:vocab_size] = torch.argsort(freqs[:vocab_size], descending=True, stable=True)
     else:
         assert path, "sch_monarch_perm=file needs sch_monarch_perm_path"
-        loaded = torch.load(path, weights_only=True, map_location="cpu").long().flatten()
+        loaded = torch.load(path, weights_only=True,
+                            map_location="cpu").cpu().long().flatten()
         assert loaded.numel() == vocab_size, (
             f"{path} holds {loaded.numel()} entries, expected vocab_size={vocab_size}")
         assert torch.equal(torch.sort(loaded).values, torch.arange(vocab_size)), (

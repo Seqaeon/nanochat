@@ -1,0 +1,150 @@
+FOR D12:
+head 131,072 x 768   per-word capacity 160   blocks 8   block_out 16,384
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.3769   (pure low-rank ceiling)
+  token-id        8  152    0.3790   +0.0022
+  token-id       16  144    0.3807   +0.0039
+  token-id       32  128    0.3836   +0.0067
+  token-id       64   96    0.3882   +0.0113
+  token-id      128   32    0.3950   +0.0181
+  random          8  152    0.3782   +0.0014
+  random         16  144    0.3794   +0.0025
+  random         32  128    0.3813   +0.0044
+  random         64   96    0.3844   +0.0076
+  random        128   32    0.3890   +0.0121
+  clustered       8  152    0.3854   +0.0085
+  clustered      16  144    0.3905   +0.0136
+  clustered      32  128    0.3981   +0.0212
+  clustered      64   96    0.4091   +0.0322
+  clustered     128   32    0.4251   +0.0483
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.
+
+head 131,072 x 768   per-word capacity 160   blocks 256   block_out 512
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.3769   (pure low-rank ceiling)
+  token-id        8  152    0.4021   +0.0252
+  token-id       16  144    0.4243   +0.0475
+  token-id       32  128    0.4641   +0.0872
+  token-id       64   96    0.5321   +0.1553
+  token-id      128   32    0.6399   +0.2630
+  random          8  152    0.4020   +0.0252
+  random         16  144    0.4242   +0.0473
+  random         32  128    0.4638   +0.0869
+  random         64   96    0.5313   +0.1544
+  random        128   32    0.6382   +0.2613
+  clustered       8  152    0.4370   +0.0601
+  clustered      16  144    0.4682   +0.0914
+  clustered      32  128    0.5171   +0.1403
+  clustered      64   96    0.5928   +0.2159
+  clustered     128   32    0.7052   +0.3283
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.
+
+
+
+
+
+FOR D4:
+head 131,072 x 256   per-word capacity 160   blocks 8   block_out 16,384
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.7993   (pure low-rank ceiling)
+  token-id        8  152    0.8006   +0.0013
+  token-id       16  144    0.8015   +0.0023
+  token-id       32  128    0.8029   +0.0037
+  token-id       64   96    0.8049   +0.0056
+  token-id      128   32    0.8076   +0.0083
+  random          8  152    0.8000   +0.0008
+  random         16  144    0.8005   +0.0013
+  random         32  128    0.8013   +0.0020
+  random         64   96    0.8024   +0.0031
+  random        128   32    0.8038   +0.0046
+  clustered       8  152    0.8027   +0.0035
+  clustered      16  144    0.8049   +0.0056
+  clustered      32  128    0.8082   +0.0089
+  clustered      64   96    0.8128   +0.0135
+  clustered     128   32    0.8196   +0.0204
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.
+head 131,072 x 256   per-word capacity 160   blocks 256   block_out 512
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.7993   (pure low-rank ceiling)
+  token-id        8  152    0.8130   +0.0137
+  token-id       16  144    0.8235   +0.0242
+  token-id       32  128    0.8403   +0.0410
+  token-id       64   96    0.8656   +0.0664
+  token-id      128   32    0.9007   +0.1015
+  random          8  152    0.8127   +0.0134
+  random         16  144    0.8230   +0.0238
+  random         32  128    0.8396   +0.0404
+  random         64   96    0.8647   +0.0654
+  random        128   32    0.8993   +0.1000
+  clustered       8  152    0.8239   +0.0247
+  clustered      16  144    0.8369   +0.0376
+  clustered      32  128    0.8562   +0.0569
+  clustered      64   96    0.8835   +0.0842
+  clustered     128   32    0.9203   +0.1210
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.
+
+
+
+FOR D8:
+head 131,072 x 512   per-word capacity 160   blocks 8   block_out 16,384
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.5120   (pure low-rank ceiling)
+  token-id        8  152    0.5141   +0.0020
+  token-id       16  144    0.5156   +0.0035
+  token-id       32  128    0.5181   +0.0061
+  token-id       64   96    0.5220   +0.0100
+  token-id      128   32    0.5276   +0.0155
+  random          8  152    0.5133   +0.0013
+  random         16  144    0.5143   +0.0022
+  random         32  128    0.5159   +0.0039
+  random         64   96    0.5185   +0.0064
+  random        128   32    0.5219   +0.0099
+  clustered       8  152    0.5192   +0.0072
+  clustered      16  144    0.5236   +0.0116
+  clustered      32  128    0.5304   +0.0184
+  clustered      64   96    0.5404   +0.0284
+  clustered     128   32    0.5550   +0.0430
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.
+head 131,072 x 512   per-word capacity 160   blocks 256   block_out 512
+
+  assignment     m1    r  captured   vs global rank-160
+  global          -  160    0.5120   (pure low-rank ceiling)
+  token-id        8  152    0.5349   +0.0228
+  token-id       16  144    0.5543   +0.0423
+  token-id       32  128    0.5884   +0.0763
+  token-id       64   96    0.6445   +0.1324
+  token-id      128   32    0.7294   +0.2173
+  random          8  152    0.5347   +0.0227
+  random         16  144    0.5542   +0.0421
+  random         32  128    0.5880   +0.0760
+  random         64   96    0.6436   +0.1316
+  random        128   32    0.7273   +0.2153
+  clustered       8  152    0.5617   +0.0497
+  clustered      16  144    0.5878   +0.0757
+  clustered      32  128    0.6285   +0.1164
+  clustered      64   96    0.6904   +0.1783
+  clustered     128   32    0.7794   +0.2674
+
+  the last column is what the block structure buys over pure low-rank at
+  the same per-word cost. If it is near zero, blocks of that assignment
+  share the global subspace and their private capacity is wasted.

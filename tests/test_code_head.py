@@ -829,6 +829,36 @@ def test_monarch_permutation_and_residual_compose():
     torch.testing.assert_close(loss.float(), manual, rtol=1e-5, atol=1e-5)
 
 
+def test_monarch_permutation_builds_under_the_meta_device(tmp_path):
+    """build_model_meta constructs the model under `with torch.device("meta")`.
+
+    Every tensor factory inside MonarchHead.__init__ therefore lands on meta unless
+    it says otherwise, and the file-mode validation compares against torch.arange:
+    `aten::equal` has no meta kernel, so the run died after torchrun had already
+    started. `random` mode hid this because it never calls equal.
+    """
+    perm = torch.randperm(V, generator=torch.Generator().manual_seed(3))
+    path = tmp_path / "perm.pt"
+    torch.save(perm, path)
+
+    def config(mode, **extra):
+        cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=D, vocab_size=V,
+                        sequence_len=64, use_code_head=True, sch_head_type='monarch',
+                        sch_max_m=128, sch_monarch_perm=mode, **extra)
+        cfg._tokenizer_dir = None
+        return cfg
+
+    for mode, extra in (("file", {"sch_monarch_perm_path": str(path)}), ("random", {})):
+        with torch.device("meta"):
+            m = GPT(config(mode, **extra))
+        assert m.lm_head.permutes_vocab, mode
+
+    # and the file's contents reach the head once it is on a real device
+    real = GPT(config("file", sch_monarch_perm_path=str(path)))
+    real.init_weights(verify=False)
+    torch.testing.assert_close(real.lm_head.vocab_perm[:V], perm)
+
+
 def test_monarch_permutation_survives_to_empty():
     """base_train builds on meta and then to_empty()s, which fills every buffer
     with garbage. A garbage permutation does not crash: it trains against the
