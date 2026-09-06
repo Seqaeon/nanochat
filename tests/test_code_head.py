@@ -1088,6 +1088,90 @@ import subprocess
 import sys as _sys
 
 
+def _rerank(**kw):
+    kw.setdefault("sch_rerank_rank", 8)
+    kw.setdefault("sch_rerank_k", 5)
+    return _phase5(use_code_head=1, sch_head_type='rerank', **kw)
+
+
+def test_rerank_rank_zero_is_exactly_the_dense_head():
+    """The r=0 arm is the control the whole comparison rests on. If it is not bit
+    identical to a dense head, any measured gain could be an initialisation or an
+    optimiser-grouping difference rather than the correction."""
+    head = _rerank(sch_rerank_rank=0).lm_head
+    x = torch.randn(3, 7, head.n_embd)
+    assert torch.equal(head(x), F.linear(x, head.weight))
+    assert head.rank_ceiling() == head.n_embd + 1
+    assert head.flops_per_token() == 6 * head.vocab_size * head.n_embd
+
+
+def test_rerank_correction_is_exactly_zero_outside_the_top_k():
+    """The cost claim is `k*r` rather than `V*r`, and it is only true if the
+    correction really is confined to the selected words. A leak would also make the
+    ablation against mode=full meaningless, since that arm exists precisely to price
+    what the restriction buys."""
+    head = _rerank(sch_rerank_rank=8, sch_rerank_k=5).lm_head
+    with torch.no_grad():
+        head.weight.normal_(0, 0.5)
+        head.up.normal_(0, 0.5)
+        head.down.weight.normal_(0, 0.3)
+    x = torch.randn(6, head.n_embd)
+    z = F.linear(x, head.weight)
+    diff = head(x) - z
+    idx = z.topk(head.k, dim=-1).indices
+    on_k = torch.zeros_like(diff, dtype=torch.bool).scatter_(1, idx, True)
+    assert diff[~on_k].abs().max() == 0, "the correction leaked outside the top-k"
+    assert diff[on_k].abs().mean() > 0, "the correction is inert on the top-k"
+
+
+@pytest.mark.parametrize("mode", ["topk", "full", "mos2", "temp"])
+def test_rerank_every_mode_trains_on_bf16_activations_outside_autocast(mode):
+    """Two failures in one test, both of which have already cost this project arms.
+
+    base_train's pre-compilation warmup runs the model OUTSIDE autocast, so the head
+    sees bf16 activations against fp32 parameters; calling an nn.Module directly
+    there is what killed the previous head's MLP arms.
+
+    And every parameter must receive gradient. The correction is a PRODUCT, so
+    initialising `up` to zero -- which is tempting, because the head would then start
+    exactly dense -- leaves `down` with identically zero gradient on step 0 and DDP
+    reports parameters that received none. That is the routed-mixture failure again.
+    """
+    head = _rerank(sch_rerank_mode=mode).lm_head
+    x = torch.randn(3, 7, head.n_embd, dtype=torch.bfloat16)
+    tgt = torch.randint(0, head.vocab_size, (3, 7))
+    out = head(x).float().reshape(-1, head.vocab_size)
+    loss = (F.nll_loss(out, tgt.reshape(-1)) if head.self_normalized
+            else F.cross_entropy(out, tgt.reshape(-1)))
+    assert torch.isfinite(loss)
+    loss.backward()
+    for name, p in head.named_parameters():
+        assert p.grad is not None and p.grad.abs().sum() > 0, f"{name} got no gradient"
+
+
+def test_rerank_lifts_the_rank_ceiling_and_costs_almost_nothing():
+    """Both halves of the claim. The correction has to escape the d+1 bound that caps
+    every linear head here, and it has to do so for a cost that rounds to nothing:
+    at V=32,768, k=64, r=32 the head is 1.0011x dense, which is +2.1% of total FLOPs
+    at depth 8 and needs only 0.0015 bpb of gain to be Pareto-positive."""
+    from nanochat.gpt import GPT, GPTConfig
+    cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=512, sequence_len=32,
+                    vocab_size=32768, use_code_head=1, sch_head_type='rerank',
+                    sch_rerank_mode='topk', sch_rerank_k=64, sch_rerank_rank=32)
+    cfg._tokenizer_dir = None
+    with torch.device("meta"):
+        head = GPT(cfg).lm_head
+    dense = 6 * 32768 * 512
+    assert head.rank_ceiling() > 512 + 1, "the correction did not lift the rank ceiling"
+    assert head.flops_per_token() / dense < 1.005, \
+        f"the correction is not cheap enough: {head.flops_per_token() / dense:.4f}x"
+    # and mode=full is the comparator, which must be visibly more expensive
+    cfg.sch_rerank_mode = 'full'
+    with torch.device("meta"):
+        full = GPT(cfg).lm_head
+    assert full.flops_per_token() > head.flops_per_token() * 1.02
+
+
 def _nfh(**kw):
     kw.setdefault("sch_nfh_dims", "8,8,8")
     kw.setdefault("sch_nfh_rank", 5)
@@ -1560,6 +1644,45 @@ def test_leaf_scores_refuses_a_dump_from_the_wrong_tokenizer(tmp_path):
         leaf_scores(rows, "", str(tok), V, mode="freq")
     # auto must fall through to row norms rather than use it
     assert torch.allclose(leaf_scores(rows, "", str(tok), V), rows.norm(dim=1))
+
+
+def test_every_c15_arm_builds_at_v32k():
+    """c15 runs at V=32,768 and depth 8, where the whole point is the arithmetic: a
+    head costing nothing is worth +0.0318 bpb, so the headline arm has to be within a
+    rounding error of dense in cost. Build every arm and check that."""
+    import contextlib
+    import io as _io
+    from nanochat.gpt import GPT, GPTConfig
+
+    parser = _base_train_parser()
+    depth, vocab = 8, 32768
+    d = ((depth * 64 + 127) // 128) * 128
+    runtime_only = ("sch_rank_probe", "sch_decile_metrics", "sch_eval_steps",
+                    "sch_holdout_tokens", "sch_holdout_seed", "sch_holdout_min_id",
+                    "sch_holdout_mode")
+    arms = _sweep_arms("scripts/c15_rerank.sh")
+    assert arms, "no arms extracted from c15"
+    seen, dense_flops = {}, 6 * vocab * d
+    for tag, flags in arms:
+        ns, _ = parser.parse_known_args(flags)
+        kw = {k: v for k, v in vars(ns).items()
+              if (k.startswith("sch_") or k == "use_code_head") and k not in runtime_only}
+        cfg = GPTConfig(sequence_len=2048, vocab_size=vocab, n_layer=depth,
+                        n_head=max(1, d // 128), n_kv_head=max(1, d // 128),
+                        n_embd=d, **kw)
+        cfg._tokenizer_dir = None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                with torch.device("meta"):
+                    seen[tag] = GPT(cfg).lm_head
+        except Exception as exc:
+            pytest.fail(f"c15 arm {tag} does not build at V={vocab} depth={depth}: "
+                        f"{type(exc).__name__}: {exc}")
+    assert "RERANK_k64_r32" in seen and "DENSE" in seen and "TEMP" in seen, sorted(seen)
+    # The headline arm's entire case is that it is free. If a refactor makes it cost
+    # real FLOPs the Pareto argument silently dies, so pin it here.
+    assert seen["RERANK_k64_r32"].flops_per_token() / dense_flops < 1.005
+    assert seen["RERANK_full_r32"].flops_per_token() / dense_flops > 1.02
 
 
 def test_every_c14_arm_builds_at_v131k():

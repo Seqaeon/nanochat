@@ -139,7 +139,21 @@ def leaf_scores(rows: torch.Tensor, acts: str, tokenizer_dir, vocab_size: int,
     plausible file full of noise, which is how a corrupted permutation reached a
     training run once already.
     """
-    assert mode in ("auto", "acts", "freq", "rownorm", "random"), mode
+    assert mode in ("auto", "acts", "freq", "rownorm", "random", "proj"), mode
+    if mode == "proj":
+        # Order the leaf by each row's coordinate along the head's leading principal
+        # direction, so adjacent leaf indices are geometrically adjacent tokens. The
+        # accidental permutation that still holds the best result at depth 8 ordered
+        # its leaf by W h_bar, a projection onto a fixed direction, and beat both
+        # frequency (+0.032) and random (+0.064) orderings built from the same
+        # clustering. This is that ordering with the direction taken from the head
+        # itself, so it needs no activations. The hypothesis it tests is that the
+        # shared 32-way softmax on that axis can express a SMOOTH preference over a
+        # coordinate but not an arbitrary lookup over an unordered set.
+        X = rows.float() - rows.float().mean(0)
+        v = torch.linalg.svd(X, full_matrices=False)[2][0]
+        print("  [leaf] source: projection on the head's leading principal direction")
+        return X @ v
     if mode == "random":
         # Deliberate, not a fallback. Ordering the leaf by frequency CONCENTRATES
         # unigram mass on the low indices of that axis, and the axis is one 32-way
@@ -233,7 +247,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--dims", default="", help="code axis sizes for --mode=nested, e.g. 64,64,32")
     ap.add_argument("--acts", default="", help="a .pt of hidden activations; orders the leaf axis by mean logit")
-    ap.add_argument("--leaf", choices=("auto", "acts", "freq", "rownorm", "random"),
+    ap.add_argument("--leaf", choices=("auto", "acts", "freq", "rownorm", "random", "proj"),
                     default="auto",
                     help="how to order the leaf axis. auto prefers acts, then the "
                          "frequency table, then row norms, validating each. random is "

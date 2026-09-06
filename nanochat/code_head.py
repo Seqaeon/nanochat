@@ -121,7 +121,7 @@ PRODUCT_IMPLS = ("dense", "gather")
 G_TYPES = ("linear", "mlp")
 LOGIT_ACTS = ("none", "sigsoftmax", "monotonic")
 INPUT_MODES = ("table", "linear", "expanded", "nonlinear", "tied")
-HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered", "proposal", "nfh")
+HEAD_TYPES = ("code", "hsoftmax", "monarch", "tiered", "proposal", "nfh", "rerank")
 NFH_MODES = ("cp", "global")
 MONARCH_PERMS = ("none", "random", "freq", "file")
 PHI_DTYPES = ("bf16", "fp32")
@@ -1349,6 +1349,13 @@ class HierarchicalSoftmaxHead(nn.Module):
         # Until the Huffman tree is built the balanced-tree depth is the right
         # estimate, and it is a plain float so it survives the meta device.
         self.avg_depth = float(minimal_bits(padded_vocab_size))
+        # describe_head runs from GPT.__init__, BEFORE init_weights builds the tree,
+        # so anything it prints about depth is the balanced-tree bound and not the
+        # Huffman depth, which on a Zipf is the unigram entropy in bits (about 11 at
+        # either vocabulary here, against 15 or 17 balanced). Reporting the bound as
+        # if it were the cost overstates this head's FLOPs by ~1.4x, which is the
+        # same class of error as OPEN_QUESTIONS Q8. Say which one it is.
+        self.tree_built = False
         depth_bound = max(2 * minimal_bits(padded_vocab_size), 8)
         self.register_buffer("nodes", torch.empty(padded_vocab_size, depth_bound, dtype=torch.int64))
         self.register_buffer("dirs", torch.empty(padded_vocab_size, depth_bound, dtype=torch.float32))
@@ -1380,6 +1387,7 @@ class HierarchicalSoftmaxHead(nn.Module):
         # Huffman is shorter than a balanced tree on a Zipf distribution, so this
         # is the number the FLOP column should carry, not ceil(log2 V).
         self.avg_depth = float(self.mask.sum(dim=1).float().mean().item())
+        self.tree_built = True
         torch.nn.init.normal_(self.node_emb, mean=0.0, std=0.001)
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
@@ -1409,6 +1417,7 @@ class HierarchicalSoftmaxHead(nn.Module):
         try:
             if self.mask.numel() and not self.mask.is_meta:
                 self.avg_depth = float(self.mask.sum(dim=1).float().mean().item())
+                self.tree_built = True
         except (NotImplementedError, RuntimeError):   # pragma: no cover - meta device
             pass
 
@@ -2356,6 +2365,190 @@ class NonnegFactorHead(nn.Module):
                 f"smooth={self.smooth}, rank_ceiling={self.rank_ceiling()}")
 
 
+RERANK_MODES = ("topk", "full", "mos2", "temp")
+
+
+class RerankHead(nn.Module):
+    """Dense head plus a cheap learned correction, applied ONLY where the mass is.
+
+    Every other head in this file is cost-side: spend fewer FLOPs producing the same
+    distribution. At V=32,768 that is capped by arithmetic. A head costing NOTHING AT
+    ALL is worth +0.0762 bpb at depth 4, +0.0318 at depth 8 and +0.0168 at depth 12,
+    and every approximation measured in this project costs more than that. So the
+    cost side cannot produce a result here, and this attacks the other side.
+
+    The asymmetry is the point. A correction costing 6% of the head is +2.1% of total
+    FLOPs at depth 8, so it has to GAIN only 0.0015 bpb to be Pareto-positive. That is
+    a thousand times easier than the cost side offers on the same hardware.
+
+    Two measurements say the gain is there. The dense head is rank-saturated: the c05
+    depth-4 runs report ``rank_ceiling=257`` against ``rank_effective_rank=256``, so
+    the logit matrix uses every direction it is allowed, and Godey et al. (2024) tie
+    exactly that mismatch to small-model saturation. And the mass is concentrated:
+    top-1 0.677, top-64 0.9805, effective support 9.3 tokens.
+
+        z     = W h                       dense, exact, unchanged
+        K     = topk(z)                   the model's OWN top-k, no corpus statistics
+        z[K] += U[K] . f(h)               rank-r nonlinear correction, on K only
+        p     = softmax(z)                over all V, exact
+
+    Cost is ``k*r`` rather than ``V*r``: 2,048 MACs per token at k=64, r=32, against
+    the head's 16.8M. Restricting to the top-k is what makes a rank lift affordable.
+    The correction is nonlinear in ``h`` and ``K`` is data-dependent, so the log-prob
+    matrix is not confined to rank ``d+1``; that is what Mixture of Softmaxes buys at
+    R times dense cost.
+
+    Nearest prior work, and the difference in one line each. MoS (Yang et al., 2018)
+    lifts rank with R full-vocabulary softmaxes at R x cost. Sigsoftmax (Kanai et al.,
+    2018) and Ganea et al. (2019) apply a monotone POINTWISE function of ``z_w``
+    alone, so they cannot move two words with the same logit relative to each other;
+    this correction is a function of ``(h, w)`` and can. AS-Softmax (2508.03175)
+    DISCARDS low-scoring classes from the normaliser, which makes the loss
+    approximate; this keeps the normaliser exact over all V and only adds capacity.
+
+    Four modes, so the ablations are the evidence rather than an afterthought:
+    ``topk`` is the mechanism, ``full`` applies the same correction to all V and
+    prices what the restriction buys, ``mos2`` is the published comparator, and
+    ``temp`` is a per-token logit scale, the cheapest possible rank lift and the floor
+    the mechanism has to clear.
+    """
+
+    custom_loss = False       # the forward is dense, so the ordinary CE path applies
+    emits_logits = True
+    permutes_vocab = False
+
+    def __init__(self, config, padded_vocab_size: int, n_embd: int):
+        super().__init__()
+        V = self.vocab_size = padded_vocab_size
+        self.n_embd = n_embd
+        self.mode = str(getattr(config, "sch_rerank_mode", "topk"))
+        assert self.mode in RERANK_MODES, \
+            f"sch_rerank_mode={self.mode!r} not in {RERANK_MODES}"
+        self.k = int(getattr(config, "sch_rerank_k", 64))
+        self.rank = r = int(getattr(config, "sch_rerank_rank", 32))
+        assert r >= 0, f"sch_rerank_rank must be >= 0, got {r}"
+        assert 0 < self.k <= V, f"sch_rerank_k must lie in (0, {V}], got {self.k}"
+        # mos2 mixes two normalised distributions, so it returns log-probabilities and
+        # GPT.forward must take the nll_loss path instead of cross_entropy. An INSTANCE
+        # attribute, because the class serves four protocols.
+        self.self_normalized = (self.mode == "mos2")
+
+        self.weight = nn.Parameter(torch.empty(V, n_embd))
+        if self.mode == "temp":
+            # One scalar per token position: z * (1 + tanh(s.h)). Rank +1, d MACs.
+            self.scale = nn.Linear(n_embd, 1, bias=True)
+            self.down, self.up, self.gate = None, None, None
+        elif r > 0:
+            self.down = nn.Linear(n_embd, r, bias=True)
+            self.up = nn.Parameter(torch.empty(V, r))
+            self.scale = None
+            # mos2 needs a mixing weight over the two components
+            self.gate = nn.Linear(n_embd, 2, bias=True) if self.mode == "mos2" else None
+        else:
+            # r=0 must reduce to the dense head EXACTLY. That is the control that says
+            # any measured gain came from the correction and not from a different
+            # initialisation or optimiser grouping.
+            self.down, self.up, self.scale, self.gate = None, None, None, None
+
+    def init_weights(self):
+        # Match nanochat's dense lm_head so the baseline comparison is not confounded
+        # by initialisation.
+        torch.nn.init.normal_(self.weight, mean=0.0, std=0.001)
+        if self.up is not None:
+            s = 3 ** 0.5 * self.n_embd ** -0.5
+            torch.nn.init.uniform_(self.down.weight, -s, s)
+            torch.nn.init.zeros_(self.down.bias)
+            # Small but NOT zero. Zero looks attractive (the head would start exactly
+            # dense) and it is a DDP crash: the correction is a product, so with
+            # ``up = 0`` the gradient reaching ``down`` is identically zero on step 0
+            # and the reducer reports parameters that received no gradient. Same
+            # failure mode as the routed-mixture head. 0.001 matches the convention
+            # every other output-side parameter here uses, and leaves the head within
+            # 1e-3 of dense at initialisation; ``sch_rerank_rank=0`` is the arm that
+            # gives exactly dense.
+            torch.nn.init.normal_(self.up, mean=0.0, std=0.001)
+        if self.gate is not None:
+            torch.nn.init.zeros_(self.gate.weight)
+            torch.nn.init.constant_(self.gate.bias, 0.0)
+        if self.scale is not None:
+            torch.nn.init.zeros_(self.scale.weight)
+            torch.nn.init.zeros_(self.scale.bias)
+
+    def forward(self, x):
+        shape = x.shape[:-1]
+        flat = x.reshape(-1, x.shape[-1])
+        # Every weight is cast to the ACTIVATION dtype at use: base_train's
+        # pre-compilation warmup runs outside autocast, and calling an nn.Module
+        # directly there is what killed the MLP arms of the previous head.
+        z = F.linear(flat, self.weight.to(dtype=flat.dtype))          # (N, V) exact
+
+        if self.mode == "temp":
+            s = F.linear(flat, self.scale.weight.to(dtype=flat.dtype),
+                         self.scale.bias.to(dtype=flat.dtype))
+            return (z * (1.0 + torch.tanh(s))).view(*shape, self.vocab_size)
+        if self.up is None:
+            return z.view(*shape, self.vocab_size)                    # r=0: dense
+
+        c = F.gelu(F.linear(flat, self.down.weight.to(dtype=flat.dtype),
+                            self.down.bias.to(dtype=flat.dtype)))     # (N, r)
+
+        if self.mode == "full":
+            z = z + F.linear(c, self.up.to(dtype=c.dtype))            # V*r MACs
+        elif self.mode == "mos2":
+            z2 = F.linear(c, self.up.to(dtype=c.dtype))
+            g = F.linear(flat, self.gate.weight.to(dtype=flat.dtype),
+                         self.gate.bias.to(dtype=flat.dtype)).float().log_softmax(-1)
+            z = torch.logaddexp(g[:, :1] + z.float().log_softmax(-1),
+                                g[:, 1:] + z2.float().log_softmax(-1))
+        else:   # topk: the mechanism
+            # Selection uses the UNCORRECTED logits, which is deliberate: topk has no
+            # useful gradient anyway, and selecting on z keeps the choice independent
+            # of the thing being learned.
+            idx = z.topk(self.k, dim=-1).indices                      # (N, k)
+            # Gather k rows of a (V, r) table. This is a per-token gather, which is
+            # what killed three earlier heads, but the table is r-wide rather than
+            # d-wide (1M entries at V=32,768, r=32) so it sits in cache and the traffic
+            # is 0.01% of the dense matmul rather than 10,240x it.
+            corr = (self.up.to(dtype=c.dtype)[idx] * c.unsqueeze(1)).sum(-1)
+            # scatter_add_ requires self.dtype == src.dtype exactly, and under
+            # autocast the reduction above does not always land on z's dtype. Being
+            # explicit is the house idiom here anyway.
+            corr = corr.to(dtype=z.dtype)
+            # In place: F.linear's backward needs its INPUTS, not its output, and
+            # nothing else holds z, so mutating it saves a second (N, V) tensor.
+            z = z.scatter_add_(-1, idx, corr)
+        return z.view(*shape, self.vocab_size)
+
+    def rank_ceiling(self) -> int:
+        if self.up is None and self.scale is None:
+            return self.n_embd + 1                                    # exactly dense
+        if self.mode == "temp":
+            return self.n_embd + 2        # a per-token scale buys one direction
+        # The correction is nonlinear in h, and for `topk` its support is
+        # data-dependent, so the log-prob matrix is not confined to d+1.
+        return self.vocab_size
+
+    def flops_per_token(self) -> int:
+        f = 6 * self.vocab_size * self.n_embd                         # the dense head
+        if self.mode == "temp":
+            return int(f + 6 * self.n_embd)
+        if self.up is None:
+            return int(f)
+        f += 6 * self.down.weight.numel()                             # h -> r
+        if self.mode == "topk":
+            f += 6 * self.k * self.rank                               # k*r, not V*r
+        else:
+            f += 6 * self.vocab_size * self.rank
+            if self.gate is not None:
+                f += 6 * 2 * self.n_embd
+        return int(f)
+
+    def extra_repr(self):
+        return (f"V={self.vocab_size}, mode={self.mode}, k={self.k}, r={self.rank}, "
+                f"rank_ceiling={self.rank_ceiling()}, "
+                f"vs_dense={self.flops_per_token() / (6 * self.vocab_size * self.n_embd):.4f}x")
+
+
 # ---------------------------------------------------------------------------
 # Input side (Phase 3)
 # ---------------------------------------------------------------------------
@@ -2590,6 +2783,8 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
         return ProposalHead(config, padded_vocab_size, n_embd)
     if head_type == "nfh":
         return NonnegFactorHead(config, padded_vocab_size, n_embd)
+    if head_type == "rerank":
+        return RerankHead(config, padded_vocab_size, n_embd)
     assert head_type == "code", f"unknown sch_head_type={head_type!r}"
     return StructuredCodeHead(config, padded_vocab_size, n_embd)
 
@@ -2597,8 +2792,9 @@ def build_code_head(config, padded_vocab_size: int, n_embd: int) -> nn.Module:
 def describe_head(head: nn.Module) -> str:
     """One-line startup summary, printed by GPT.__init__."""
     if isinstance(head, HierarchicalSoftmaxHead):
+        note = "" if getattr(head, "tree_built", False) else " (balanced bound; Huffman is shorter)"
         return (f"[SCH] head=hsoftmax V={head.vocab_size} d={head.n_embd}, "
-                f"avg_depth={head.avg_depth:.2f} | head params "
+                f"avg_depth={head.avg_depth:.2f}{note} | head params "
                 f"{sum(p.numel() for p in head.parameters()):,} "
                 f"| head FLOPs/token {head.flops_per_token():,} "
                 f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
@@ -2606,7 +2802,8 @@ def describe_head(head: nn.Module) -> str:
     kind = ("monarch" if isinstance(head, MonarchHead) else
             "tiered" if isinstance(head, TieredHead) else
             "proposal" if isinstance(head, ProposalHead) else
-            "nfh" if isinstance(head, NonnegFactorHead) else "code")
+            "nfh" if isinstance(head, NonnegFactorHead) else
+            "rerank" if isinstance(head, RerankHead) else "code")
     return (f"[SCH] head={kind} {head.extra_repr()} | head params {params:,} "
             f"| head FLOPs/token {head.flops_per_token():,} "
             f"| dense equivalent {6 * head.vocab_size * head.n_embd:,}")
