@@ -1530,7 +1530,13 @@ class ProposalHead(nn.Module):
         self.prop_down = nn.Linear(n_embd, c, bias=False)
         self.prop_up = nn.Parameter(torch.empty(V, c))
         self.bias = nn.Parameter(torch.empty(V)) if int(getattr(config, "sch_bias", 0)) else None
-        self.register_buffer("_step", torch.zeros((), dtype=torch.long), persistent=True)
+        # A PLAIN PYTHON BOOL, and deliberately not a step counter in a buffer.
+        # Reading a tensor counter inside the loss means int(...) inside the compiled
+        # forward, which is a `.item()` sync Dynamo cannot trace and breaks the graph
+        # every step. The training loop sets this from outside the compiled region,
+        # the same way EET schedules its phases; Dynamo then guards on the bool and
+        # pays one recompile at the boundary instead of a break on every step.
+        self.exact_mode = self.warmup > 0
 
     def init_weights(self):
         s = 3 ** 0.5 * self.n_embd ** -0.5
@@ -1556,9 +1562,7 @@ class ProposalHead(nn.Module):
         tgt = targets.reshape(-1)
         valid = tgt >= 0
         cap, Vr = self.SOFTCAP, self.real_vocab
-        if self.training:
-            self._step += 1
-        warm = bool(self.training and int(self._step) <= self.warmup)
+        warm = bool(self.training and self.exact_mode)
         K, S = min(self.topk, Vr), self.samples
         losses = flat.new_zeros(flat.shape[0], dtype=torch.float32)
         aux = flat.new_zeros((), dtype=torch.float32)
@@ -1590,9 +1594,12 @@ class ProposalHead(nn.Module):
             with torch.no_grad():
                 idx = zp.topk(K, dim=-1).indices
                 # The target must be scored exactly, and exactly once: a duplicate
-                # would be counted twice in the partition sum.
-                miss = ~(idx == tc.unsqueeze(-1)).any(-1)
-                idx[miss, -1] = tc[miss]
+                # would be counted twice in the partition sum. Written with `where`
+                # rather than a boolean mask assignment, because masked assignment
+                # lowers to `nonzero`, whose output shape depends on the data, and
+                # that breaks the graph on every step.
+                has = (idx == tc.unsqueeze(-1)).any(-1)
+                idx[:, -1] = torch.where(has, idx[:, -1], tc)
             W = self.weight[idx].to(dtype=h.dtype)               # (n, K, d)
             zk = torch.einsum("nd,nkd->nk", h, W).float()
             if self.bias is not None:

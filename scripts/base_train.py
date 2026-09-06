@@ -2338,6 +2338,14 @@ while True:
             
             orig_model.train()
 
+    # Proposal head: the exact/approximate switch is read inside the compiled
+    # forward, so it is decided OUT here. A step counter in the head would mean a
+    # tensor .item() inside the graph, which breaks it every step; a Python bool set
+    # from outside costs one recompile at the boundary and nothing after.
+    _ph = getattr(orig_model, 'lm_head', None)
+    if hasattr(_ph, 'exact_mode'):
+        _ph.exact_mode = step < getattr(_ph, 'warmup', 0)
+
     # Enable MST diagnostic capture on log steps (last micro-step only)
     _mst_diag_this_step = (_mst_tracker is not None and _mst_diag_every > 0 and
                            (step % _mst_diag_every == 0 or step == num_iterations - 1))

@@ -786,11 +786,10 @@ def test_proposal_head_warmup_runs_the_exact_softmax():
     m = _proposal(sch_proposal_warmup=3, sch_proposal_topk=4, sch_proposal_samples=0)
     m.train()
     x = torch.randint(0, V, (2, 8))
-    warm = m(x, x)                       # step 1: exact, every row gets gradient
-    warm.backward()
+    assert m.lm_head.exact_mode, "a head with a warmup must start in exact mode"
+    m(x, x).backward()                   # exact: every row gets gradient
     assert (m.lm_head.weight.grad.abs().sum(-1) > 0).sum() == V
-    for _ in range(3):                   # step past the warmup
-        m(x, x)
+    m.lm_head.exact_mode = False         # the training loop flips this from outside
     m.zero_grad(set_to_none=True)
     m(x, x).backward()
     assert (m.lm_head.weight.grad.abs().sum(-1) > 0).sum() < V, \
