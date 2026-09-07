@@ -148,6 +148,12 @@ if [ -n "$_stored" ] && [ "$(get_var tokens_vocab_d${DEPTH})" = "$TOK_VOCAB" ]; 
 fi
 #run_experiment "DENSE_D${DEPTH}" "Dense control" --use-eet 0 $DENSE_PIN
 
+# An explicit TOKENS= always wins, which is how you pin the sweep when the DENSE arm is
+# commented out because you already have that control from a previous sweep.
+if [ -n "${TOKENS:-}" ]; then
+    _stored="$TOKENS"
+    set_var "tokens_d${DEPTH}" "$_stored"; set_var "tokens_vocab_d${DEPTH}" "$TOK_VOCAB"
+fi
 if [ -z "$_stored" ] && [ -f "$LOGFILE" ]; then
     TOK_N=$(grep -h "Total number of training tokens:" "$LOGFILE" 2>/dev/null | head -1 \
             | sed 's/.*: *//' | tr -d ', ' || true)
@@ -156,8 +162,23 @@ if [ -z "$_stored" ] && [ -f "$LOGFILE" ]; then
         _stored="$TOK_N"
     fi
 fi
-ISO=""; [ -n "$_stored" ] && ISO="--target-tokens $_stored"
-echo "[iso-data] all arms pinned to ${_stored:-<unpinned>} tokens"
+
+# Refuse to run unpinned. Every arm here is compared against a dense control at a fixed
+# token budget, so an arm on its own Chinchilla horizon is not measuring what the criteria
+# at the top of this file describe. Silently running unpinned is how DENSE_D8 ended up on
+# 440,401,920 tokens while every arm it was the control for had 265,814,016.
+if [ -z "$_stored" ]; then
+    echo ""
+    echo "[ABORT] no iso-data token budget available, so the arms would each run on their"
+    echo "        own Chinchilla horizon and would not be comparable with each other or"
+    echo "        with your dense control."
+    echo "        Pass it explicitly (the P02 sweep used 265814016):"
+    echo "          TOKENS=265814016 TOKENIZER_DIR=\$TOK bash \$0 ${DEPTH}"
+    echo "        Or uncomment the DENSE_D${DEPTH} arm so this sweep measures its own."
+    exit 1
+fi
+ISO="--target-tokens $_stored"
+echo "[iso-data] all arms pinned to ${_stored} tokens"
 
 # ---- T0A: no exits before layer 4 -----------------------------------------
 run_experiment "T0A_LATEEXIT_D${DEPTH}" \

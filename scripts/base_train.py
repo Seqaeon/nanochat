@@ -2987,9 +2987,14 @@ if model_config.use_eet:
         # Compute per-slot exit counts from active_counts
         # active_counts[i] = K_cur at block i (before block runs)
         # Exit at slot k = active_counts[routing_block_k] - active_counts[routing_block_k+1]
+        # Routing slots live at blocks [min_exit_layer .. n_layer-2], NOT at 1..n_rl.
+        # Hardcoding `slot + 1` is only correct when min_exit_layer == 1; with
+        # --eet-min-exit-layer 4 it read blocks 1-3, where nothing has exited yet, and
+        # reported "0 tokens" at every slot while the final layer showed 9.96% active --
+        # a contradiction, since the other 90% had to have exited somewhere.
+        _min_exit = int(getattr(args, 'eet_min_exit_layer', 1))
         for slot in range(n_rl):
-            # Block index for this routing slot: warmup block is 0, routing slots are 1..n_rl
-            block_idx = slot + 1  # after warmup
+            block_idx = _min_exit + slot
             k_before = active_counts[block_idx]
             if block_idx + 1 < n_blocks:
                 k_after = active_counts[block_idx + 1]
