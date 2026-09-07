@@ -615,6 +615,21 @@ class GPTConfig:
     # pass rather than n_layer of them.
     deep_supervision_lambda: float = 0.0
     deep_supervision_frac: float = 0.125
+    # --- Tier 2 idea 5: the inverse-width stack ------------------------------
+    # Depth collapse is not the deep layers being starved; it is the model refusing to
+    # build hierarchy past the first exit (measured: moving min_exit_layer 1 -> 4 moves
+    # the flat region from L3 to L5 and takes bpb 1.0622 -> 1.0194). Rather than fight
+    # the readability pressure, accept it and give the deep layers something the shallow
+    # ones cannot have: width. A layer running 10% of the tokens can be many times wider
+    # at the same FLOPs, because block cost scales with (tokens x width^2).
+    #
+    #   ffn_mult[i] = base * (1 / active_frac[i]) ** eet_width_power
+    #
+    # power 0 is the current uniform stack; power 1 makes every layer's FFN cost the same
+    # in FLOPs regardless of how few tokens reach it. This is the opposite of every
+    # pyramid/funnel transformer, which tapers width DOWN with depth.
+    eet_width_power: float = 0.0
+    eet_width_cap: float = 16.0    # ceiling on the multiplier; 1/a hits 10x at a=0.10
     # Escape hatch: run the split-KV attention outside the compiled graph. Costs speed but
     # sidesteps any inductor stride-guard failure on the mask, so the T1 quality gate can
     # still produce a bpb number. Never use it for a wallclock claim.
@@ -884,6 +899,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_capacity_alignment_lambda", "eet_router_task_grad",
     "eet_kv_mode", "eet_route_noise", "eet_route_noise_end", "eet_coverage_diag",
     "deep_supervision_lambda", "deep_supervision_frac",
+    "eet_width_power", "eet_width_cap",
     "eet_kv_eager",
     "eet_depth_affine", "eet_capacity_anneal_frac", "eet_learned_schedule",
     "eet_departure_summary", "eet_route_consistency_lambda",
@@ -9602,6 +9618,43 @@ def _interp_profile(profile, n_layer):
     return out
 
 
+def eet_active_fractions(n_layer, min_exit_layer, target_frac, schedule='bell'):
+    """Fraction of tokens still active when each block runs, under EET's capacity schedule.
+
+    Mirrors the computation inside EarlyExitGPT.forward's compute-skip path. It lives here
+    because the FFN widths have to be chosen at construction time, before any forward has
+    run. tests/test_eet_width.py asserts the two stay in agreement.
+    """
+    routing_layers = list(range(min_exit_layer, n_layer - 1))
+    n_rl = len(routing_layers)
+    if n_rl <= 0:
+        return [1.0] * n_layer
+    if schedule == 'uniform':
+        fracs = [(1.0 - target_frac) / n_rl] * n_rl
+    elif schedule == 'linear':
+        w = [k + 1 for k in range(n_rl)]
+        fracs = [x / sum(w) * (1.0 - target_frac) for x in w]
+    elif schedule == 'geometric':
+        per = 1.0 - target_frac ** (1.0 / n_rl)
+        fracs = [per] * n_rl
+    else:  # bell
+        mid = (n_rl - 1) / 2.0
+        sigma = max(1.0, n_rl / 4.0)
+        w = [math.exp(-((k - mid) / sigma) ** 2) for k in range(n_rl)]
+        fracs = [x / sum(w) * (1.0 - target_frac) for x in w]
+    survivor, caps = 1.0, []
+    for f in fracs:
+        survivor -= f
+        caps.append(max(1e-6, survivor))
+    per_block, rl, cur = [], 0, 1.0
+    for i in range(n_layer):
+        per_block.append(cur)
+        if i in routing_layers and rl < n_rl:
+            cur = caps[rl]
+            rl += 1
+    return per_block
+
+
 def resolve_ffn_schedule(config, n_layer):
     """Per-layer FFN width multiplier. 0 at a layer means NO FFN in that block.
 
@@ -9619,6 +9672,18 @@ def resolve_ffn_schedule(config, n_layer):
     """
     base = float(getattr(config, 'p34_ffn_mult', 4.0))
     spec = str(getattr(config, 'p34_ffn_schedule', '') or '').strip()
+
+    # Tier 2 idea 5: widen the FFN where tokens are scarce. Takes precedence over the
+    # p34 presets, which were fitted on a dense stack where every layer sees every token.
+    _wp = float(getattr(config, 'eet_width_power', 0.0))
+    if _wp > 0.0 and getattr(config, 'use_eet', False):
+        a = eet_active_fractions(n_layer,
+                                 int(getattr(config, 'eet_min_exit_layer', 1)),
+                                 float(getattr(config, 'eet_target_active_frac', 0.125)),
+                                 str(getattr(config, 'eet_capacity_schedule', 'bell')))
+        cap = float(getattr(config, 'eet_width_cap', 16.0))
+        return [base * min(cap, (1.0 / max(ai, 1e-6)) ** _wp) for ai in a]
+
     if not spec:
         return [base] * n_layer
     if ',' in spec:

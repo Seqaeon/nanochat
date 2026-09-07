@@ -87,6 +87,14 @@ import json; s=json.load(open('$STATE_FILE'))
 g=s.get('completed',{}).pop('$t',None) is not None
 json.dump(s,open('$STATE_FILE','w'),indent=2)
 print('[redo] cleared $t' if g else '[redo] $t was not completed')"
+    # Clearing the state is not enough: base_train RESUMES from any checkpoint left in
+    # the run directory, so the arm reloads its old weights, re-evaluates and reports the
+    # identical bpb. That is what made a --redo of T0B at a new lambda return 1.022844
+    # again. Remove the directory so the arm actually retrains.
+    if [ -d "${OUT_BASE}/${t}" ]; then
+        echo "[redo] removing ${OUT_BASE}/${t} so the arm retrains rather than resumes"
+        rm -rf "${OUT_BASE}/${t}"
+    fi
 done
 
 # --- tokenizer preflight: the repo has shipped a 265-token stub before ------
@@ -196,12 +204,57 @@ run_experiment "T0B_DEEPSUP_D${DEPTH}" \
     --use-eet 0 $ISO \
     --deep-supervision-lambda "${DS_LAMBDA}" --deep-supervision-frac 0.125 || true
 
+# ---- T0B at a lower lambda: is the tension a cliff or a dial? --------------
+# lambda 1.0 cost dense +0.0330 bpb (threshold was 0.030) and flattened its depth gain
+# from +0.8008 to +0.0497. If a quarter of the pressure costs much less than a quarter of
+# the bpb, readability is a dial and a partial version is affordable; if it costs nearly
+# the same, the tension is a cliff and no weighting escapes it.
+run_experiment "T0B_DEEPSUP_L025_D${DEPTH}" \
+    "T0B at lambda 0.25: is the readability/hierarchy tension a cliff or a dial?" \
+    --use-eet 0 $ISO \
+    --deep-supervision-lambda 0.25 --deep-supervision-frac 0.125 || true
+
+# ---- Tier 2 idea 5: the inverse-width stack --------------------------------
+# Tier 0 says the model stops building hierarchy past the first exit, and that the
+# readability pressure causing it cannot be routed around. So stop fighting it: give the
+# deep layers the one thing the shallow ones cannot have at equal cost, which is width.
+# A block running 10% of the tokens can be ~10x wider for the same FLOPs.
+#   power 0.5  FFN FLOPs 0.727x dense, FFN params 1.69x   (banks half the saving)
+#   power 1.0  FFN FLOPs 1.000x dense, FFN params 3.54x   (spends all of it)
+# Both are run because they bracket the trade: 0.5 stays inside the current FLOP budget,
+# 1.0 spends the whole routing saving on capacity and is only worth it if it beats dense.
+# PASS for either: bpb below the min_exit=1 control's 1.0622 by more than 0.02 AND the
+# last-4-layer profile gain above 0.05. Width without hierarchy is not the claim.
+# Run as a 2x2 over (first exit layer, width power), because the two are not independent.
+# At min_exit=1 the representation is already flat by layer 3, so widening layers 4-7 hands
+# capacity to layers with nothing left to refine and width may do nothing. At min_exit=4
+# the deep layers still receive a developing representation. Both controls already exist:
+#   min_exit=1 power=0 -> T0A_CTRL_EARLYEXIT  1.0622   (flop_r 0.722, allowed +0.0241)
+#   min_exit=4 power=0 -> T0A_LATEEXIT        1.0194   (flop_r 0.831, allowed +0.0136)
+# so each width arm is read against the control sharing its exit depth.
+#   me=1 p=0.5 flop_r 0.765 allowed +0.0198 | me=1 p=1.0 flop_r 0.861 allowed +0.0110
+#   me=4 p=0.5 flop_r 0.855 allowed +0.0115 | me=4 p=1.0 flop_r 0.910 allowed +0.0069
+# Width is not free: every arm below has a TIGHTER budget than its control, so a bpb win
+# that is smaller than the FLOPs it cost is still a loss.
+for _ME in 1 4; do
+  for _WP in 0.5 1.0; do
+    _TAG=$(printf "T2_WIDTH_ME%s_P%s_D%s" "$_ME" "$(echo $_WP | tr -d .)" "$DEPTH")
+    run_experiment "$_TAG" \
+        "Tier 2 idea 5: inverse-width stack, min_exit=${_ME}, width-power ${_WP}" \
+        $EET_FLAGS $ISO --eet-min-exit-layer "${_ME}" \
+        --eet-width-power "${_WP}" --eet-width-cap 16.0 || true
+  done
+done
+
 # ---- per-layer profile on every checkpoint: THE Tier 0 measurement ---------
 echo ""
 echo "==============================================================="
 echo "  PER-LAYER PROFILES"
 echo "==============================================================="
-for tag in "DENSE_D${DEPTH}" "T0A_CTRL_EARLYEXIT_D${DEPTH}" "T0A_LATEEXIT_D${DEPTH}" "T0B_DEEPSUP_D${DEPTH}"; do
+for tag in "DENSE_D${DEPTH}" "T0A_CTRL_EARLYEXIT_D${DEPTH}" "T0A_LATEEXIT_D${DEPTH}" \
+           "T0B_DEEPSUP_D${DEPTH}" "T0B_DEEPSUP_L025_D${DEPTH}" \
+           "T2_WIDTH_ME1_P05_D${DEPTH}" "T2_WIDTH_ME1_P10_D${DEPTH}" \
+           "T2_WIDTH_ME4_P05_D${DEPTH}" "T2_WIDTH_ME4_P10_D${DEPTH}"; do
     CK="${OUT_BASE}/${tag}/depth_${DEPTH}/ckpt_base/base"
     LAST=$(ls "$CK"/model_*.pt 2>/dev/null | sort | tail -1 || true)
     if [ -z "$LAST" ]; then echo "[profile] $tag: no checkpoint, skipped"; continue; fi

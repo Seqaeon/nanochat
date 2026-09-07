@@ -518,6 +518,8 @@ def run_training_sweep(args):
         "--eet-kv-eager", str(getattr(args, 'eet_kv_eager', 0)),
         "--deep-supervision-lambda", str(getattr(args, 'deep_supervision_lambda', 0.0)),
         "--deep-supervision-frac", str(getattr(args, 'deep_supervision_frac', 0.125)),
+        "--eet-width-power", str(getattr(args, 'eet_width_power', 0.0)),
+        "--eet-width-cap", str(getattr(args, 'eet_width_cap', 16.0)),
         # SCH: Structured Code Output Heads
         "--use-code-head", str(getattr(args, 'use_code_head', 0)),
         "--sch-head-type", str(getattr(args, 'sch_head_type', 'code')),
@@ -1387,6 +1389,8 @@ if __name__ == "__main__":
     parser.add_argument("--eet-kv-eager", type=int, default=0, choices=[0, 1])
     parser.add_argument("--deep-supervision-lambda", type=float, default=0.0)
     parser.add_argument("--deep-supervision-frac", type=float, default=0.125)
+    parser.add_argument("--eet-width-power", type=float, default=0.0)
+    parser.add_argument("--eet-width-cap", type=float, default=16.0)
 
     args = parser.parse_args()
     
