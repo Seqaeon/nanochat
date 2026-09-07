@@ -318,3 +318,110 @@ def test_oracle_dense_row_matches_the_models_own_forward():
                                   torch.rand(x.shape), 'dense', token_bytes)
     orc_bpb = float(nats) / int(nbytes) / math.log(2.0)
     assert abs(orc_bpb - ref_bpb) < 2e-3, (orc_bpb, ref_bpb)
+
+
+# ---------------------------------------------------------------------------
+# Meta-device construction: the path base_train actually uses
+# ---------------------------------------------------------------------------
+def _build_on_meta(cfg, poison=True, verify=True):
+    """Reproduce base_train's construction: build on meta, to_empty, init_weights.
+
+    to_empty() replaces the storage of every parameter AND buffer with whatever the
+    allocator hands back, so any value assigned in __init__ is gone by the time training
+    starts. Constructing the model directly (as the other tests do) hides this entirely.
+
+    ``poison`` fills that storage with NaN first. Without it these tests are a coin flip:
+    a fresh process usually gets zeros, which is silently wrong but not NaN, so nothing
+    reports and the test passes for the wrong reason. That nondeterminism is the bug
+    itself, so the tests pin the worst case rather than sampling the allocator.
+
+    ``verify=False`` skips init_weights's generic NaN repair, so an assertion measures
+    what EET's own initialization writes rather than what the fallback papered over.
+    """
+    import torch as _t
+    with _t.device("meta"):
+        m = EarlyExitGPT(cfg)
+    m.to_empty(device="cpu")
+    if poison:
+        with _t.no_grad():
+            for t in list(m.parameters()) + list(m.buffers()):
+                if t.is_floating_point():
+                    t.fill_(float("nan"))
+    m.init_weights(verify=verify)
+    return m
+
+
+def test_eet_buffers_survive_the_meta_to_empty_path():
+    """Every buffer EarlyExitGPT registers must be re-initialized after to_empty.
+
+    exit_freq_ema divides into the per-exit loss weight (1/ema.clamp(0.05)); garbage there
+    silently reweights the objective. It crashed only when the allocator happened to hand
+    back NaN, so it was an intermittent failure masking a permanent correctness problem.
+    """
+    cfg = _config(eet_depth_weight_type='ema', eet_route_consistency_lambda=1.0)
+    m = _build_on_meta(cfg, verify=False)
+
+    assert torch.isfinite(m.exit_freq_ema).all()
+    assert torch.allclose(m.exit_freq_ema, torch.full_like(m.exit_freq_ema, 1.0 / m.n_exits))
+    assert torch.isfinite(m.vocab_route_ema).all()
+    assert torch.allclose(m.vocab_route_ema, torch.full_like(m.vocab_route_ema, 1.0 / m.n_exits))
+    for name in ('token_ce_sum', 'token_ce_count', 'token_difficulty'):
+        b = getattr(m, name)
+        assert torch.isfinite(b).all() and float(b.abs().sum()) == 0.0, name
+    assert int(m.eet_phase_tracker[0]) == 1
+
+    # Nothing anywhere in the model may still be NaN.
+    bad = [n for n, b in m.named_buffers() if b.is_floating_point() and torch.isnan(b).any()]
+    bad += [n for n, p in m.named_parameters() if p.is_floating_point() and torch.isnan(p).any()]
+    assert not bad, bad
+
+
+def test_uninitialized_report_survives_a_top_level_tensor():
+    """The tripwire must name a root-level tensor, not raise on it.
+
+    get_submodule('exit_freq_ema') raises "is not an nn.Module"; the owner of a dot-less
+    name is the root module, ''. This killed a training run at init_weights.
+    """
+    cfg = _config(eet_depth_weight_type='ema')
+    m = _build_on_meta(cfg)
+    m.exit_freq_ema.fill_(float('nan'))
+    missed = m._report_uninitialized()
+    assert ('exit_freq_ema', 'buffer') in missed, missed
+    for name, _kind in missed:
+        owner_path = name.rsplit('.', 1)[0] if '.' in name else ''
+        m.get_submodule(owner_path)   # must not raise
+
+
+def test_p02_modes_run_after_the_meta_path():
+    """The kv-mode and route-noise arms must survive real construction, not just __init__."""
+    for mode, noise in (('fresh', 0.0), ('stale', 1.0)):
+        cfg = _config(eet_kv_mode=mode, eet_route_noise=noise, eet_depth_weight_type='ema')
+        m = _build_on_meta(cfg)
+        m.train()
+        x, y = _batch(cfg)
+        loss = m(x, y, eet_do_route=True, eet_phase=3, eet_total_steps=100)
+        assert torch.isfinite(loss), (mode, noise, float(loss))
+
+
+def test_every_router_parameter_is_initialized_after_the_meta_path():
+    """A router whose hidden layer is all zeros emits the same score for every token.
+
+    GPT.init_weights does not reach eet_routers, and only the output layer was set here,
+    so mlp1/mlp2 routers ran with an uninitialized first layer. The routing decision was
+    then constant across tokens at init: the flag was on, but there was no router.
+    """
+    for rtype in ('linear', 'mlp1', 'mlp2'):
+        cfg = _config(eet_router_type=rtype)
+        m = _build_on_meta(cfg, verify=False)
+        params = [(n, p) for n, p in m.named_parameters() if n.startswith('eet_routers.')]
+        assert params, rtype
+        for n, p in params:
+            assert torch.isfinite(p).all(), (rtype, n)
+            if n.endswith('weight'):
+                assert float(p.std()) > 1e-4, f"{rtype} {n} has no variance: router is constant"
+
+        # The router must actually separate tokens, not just hold nonzero numbers.
+        x, _ = _batch(cfg, B=2, T=32)
+        with torch.no_grad():
+            logits = m.eet_routers[0](m.transformer.wte(x).float())
+        assert float(logits.std(dim=1).mean()) > 1e-6, f"{rtype}: router output constant across tokens"

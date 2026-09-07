@@ -10629,28 +10629,47 @@ class GPT(nn.Module):
                 ve.to(dtype=COMPUTE_DTYPE)
 
         if verify:
-            missed = self._report_uninitialized()
-            if missed:
-                # Repair conservatively so the run does not produce NaN, but say
-                # so loudly: a generic init is a guess, and the module that owns
-                # these tensors is the only thing that knows what they should be.
-                by_class = {}
-                for name, kind in missed:
-                    owner = self.get_submodule(name.rsplit('.', 1)[0])
-                    by_class.setdefault(type(owner).__name__, []).append(f"{name} ({kind})")
-                print0("=" * 72)
-                print0("init_weights: UNINITIALIZED TENSORS, results from this run are suspect")
-                for cls_name, names in sorted(by_class.items()):
-                    print0(f"  {cls_name}: {len(names)} tensors, e.g. {', '.join(names[:3])}")
-                print0("  Give the owning class a reset_parameters(bound) and add it to")
-                print0("  _SELF_INIT_MODULES. Falling back to a generic init for now.")
-                print0("=" * 72)
-                for name, _kind in missed:
-                    t = self.get_parameter(name) if _kind == 'param' else self.get_buffer(name)
-                    if t.ndim >= 2:
-                        torch.nn.init.normal_(t, std=t.shape[-1] ** -0.5)
-                    else:
-                        torch.nn.init.zeros_(t)
+            self._verify_initialized()
+
+    @torch.no_grad()
+    def _verify_initialized(self):
+        """Name and repair anything init_weights left as uninitialized memory.
+
+        Separate from init_weights so a subclass can run its own initialization first and
+        then check the FINAL state. EarlyExitGPT initializes its routers and buffers after
+        super().init_weights() returns, so verifying inside the base call reported eight
+        tensors that were about to be set correctly, printed "results from this run are
+        suspect" on every EET run, and overwrote the routers with a generic init that the
+        subclass then replaced anyway.
+        """
+        missed = self._report_uninitialized()
+        if not missed:
+            return
+        # Repair conservatively so the run does not produce NaN, but say
+        # so loudly: a generic init is a guess, and the module that owns
+        # these tensors is the only thing that knows what they should be.
+        by_class = {}
+        for name, kind in missed:
+            # A tensor registered directly on GPT has no dot in its name, and rsplit
+            # would then hand get_submodule the tensor's own name and raise. '' is the
+            # root module, which is the correct owner. Before this, the tripwire crashed
+            # on exactly the case it exists to catch.
+            owner_path = name.rsplit('.', 1)[0] if '.' in name else ''
+            owner = self.get_submodule(owner_path)
+            by_class.setdefault(type(owner).__name__, []).append(f"{name} ({kind})")
+        print0("=" * 72)
+        print0("init_weights: UNINITIALIZED TENSORS, results from this run are suspect")
+        for cls_name, names in sorted(by_class.items()):
+            print0(f"  {cls_name}: {len(names)} tensors, e.g. {', '.join(names[:3])}")
+        print0("  Give the owning class a reset_parameters(bound) and add it to")
+        print0("  _SELF_INIT_MODULES. Falling back to a generic init for now.")
+        print0("=" * 72)
+        for name, _kind in missed:
+            t = self.get_parameter(name) if _kind == 'param' else self.get_buffer(name)
+            if t.ndim >= 2:
+                torch.nn.init.normal_(t, std=t.shape[-1] ** -0.5)
+            else:
+                torch.nn.init.zeros_(t)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
         # TODO: bump base theta more? e.g. 100K is more common more recently

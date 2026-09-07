@@ -197,3 +197,55 @@ cost. If P02 succeeds, the paper framing has to change with it: the defensible p
 stays readable by others), which no published work routes as two separate budgets.
 MoD is symmetric skip, MoR is symmetric recursion, and CALM/SkipDecode patch the KV as an
 implementation detail rather than as a routed resource.
+
+### P02 run gotchas (cost real GPU time, both now guarded)
+
+**The repo's `./tokenizer` is a 265-token stub.** `tokenizer.pkl` is 1.9 KB and
+`get_tokenizer('tokenizer')` returns `vocab_size=265`. base_train prints
+`Vocab size: 265`, pads it to 320, and trains to completion without complaint. The first
+P02 attempt trained `DENSE_D8` and both iso-FLOP dense controls that way; their bpb
+numbers are not comparable with anything trained at V=32768 and had to be discarded. The
+real tokenizer is at `~/.cache/nanochat/tokenizer` (411 KB, V=32768); `tokenizer_131k/` is
+the V=131072 one. `scripts/eet_p02_tests.sh` now aborts before the first run if the
+resolved vocabulary is under 1000, and `scripts/eet_p02_report.py` refuses to print a
+table if any arm trained at a stub vocabulary or if arms disagree.
+
+**`GPT.estimate_flops` does not count a tied LM head.** It subtracts `wte` from the
+parameter count, so when `wte` and `lm_head` share a tensor the head's `6*d*V` disappears
+from the printed active-FLOPs figure entirely. At d8/512/V=32768 that is 1.007e8 per
+token, **32% of the honest total**, and routing never reduces it because every token is
+still predicted. A Pareto claim computed on the printed axis therefore overstates the
+saving of any token-routing method. The P02 report prices the head back in and prints
+both axes; the same correction applies to any MST or Remix curve plotted against active
+FLOPs per token.
+
+### Initialization bugs found and fixed during P02 (all pre-existing)
+
+All three were latent in the `meta` -> `to_empty()` -> `init_weights()` path base_train
+uses, and all three were allocator-dependent: NaN storage crashed, zero storage passed
+silently while being wrong.
+
+1. **The uninitialized-tensor tripwire crashed on its own findings.** `init_weights`
+   called `get_submodule(name.rsplit('.', 1)[0])`, which for a dot-less name like
+   `exit_freq_ema` hands `get_submodule` the tensor's own name and raises
+   "`exit_freq_ema` is not an nn.Module". It could only ever report tensors living inside
+   a submodule. This killed a training run, and was also the cause of the pre-existing
+   `tests/test_eet_losses.py::test_eet_global_router` failure.
+2. **`EarlyExitGPT`'s own buffers were never re-initialized.** `exit_freq_ema`,
+   `vocab_route_ema`, `token_ce_sum`, `token_ce_count`, `token_difficulty` and
+   `eet_phase_tracker` get their values in `__init__`, which `to_empty()` discards, and
+   nothing wrote them again. With zero storage, `--eet-depth-weight-type ema` computed
+   `1/clamp(0, min=0.05) = 20` for every exit and normalised to exactly 1.0, so the EMA
+   depth weighting was a silent no-op in every run that used it.
+3. **Only the last linear of each router was initialized.** `GPT.init_weights` does not
+   reach `eet_routers`, and the EET override set just the output layer, so an `mlp1` or
+   `mlp2` router's hidden layer held whatever `to_empty()` returned. All-zero means the
+   router emits an identical score for every token and the exit assignment at
+   initialization is decided by sort tie-breaking rather than by content. `mlp1` is the
+   router in the P01 configuration that produced the 0.06 gap.
+
+`init_weights` now runs its verification pass on the FINAL state (a subclass initializes
+after `super().init_weights(verify=False)` returns), so the banner no longer fires on
+tensors that are about to be set correctly. `tests/test_eet_p02.py` poisons the storage
+with NaN before `init_weights` so these tests pin the worst case instead of sampling the
+allocator.

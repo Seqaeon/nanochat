@@ -36,13 +36,22 @@ import sys
 from scripts.eet_context_oracle import bell_capacities
 
 
-HEADER_RE = re.compile(r"^\s*\[([A-Za-z0-9_]+)\]\s+(.*)$")
+# Only print_header's own banner counts as a run boundary. The training logs are full of
+# other bracketed prefixes ([sweep], [SCH], [EET], [ok], [GATE], [report], [oracle]) that
+# match this shape, and any one of them would silently reassign every following bpb line
+# to a run that does not exist -- which is how DENSE_D8 came back with "no validation bpb".
+# print_header always emits a dashed rule immediately above the tag, so require it.
+HEADER_RE = re.compile(r"^\s+\[([A-Za-z0-9_]+)\]\s+(.*)$")
+RULE_RE = re.compile(r"^\s*-{10,}\s*$")
 BPB_RE = re.compile(r"Validation bpb:\s*([0-9.]+)")
 MINBPB_RE = re.compile(r"Minimum validation bpb:\s*([0-9.]+)")
 FLOPS_ACT_RE = re.compile(r"FLOPs per token \(active\):\s*([0-9.e+\-]+)")
 FLOPS_TOT_RE = re.compile(r"FLOPs per token \(total\):\s*([0-9.e+\-]+)")
 TOKENS_RE = re.compile(r"Total number of training tokens:\s*([0-9,]+)")
 DT_RE = re.compile(r"\bdt:\s*([0-9.]+)ms")
+VOCAB_RE = re.compile(r'^\s*"vocab_size":\s*(\d+)')
+NEMBD_CFG_RE = re.compile(r'^\s*"n_embd":\s*(\d+)')
+NLAYER_CFG_RE = re.compile(r'^\s*"n_layer":\s*(\d+)')
 DEPTH_RE = re.compile(r"depth of the Transformer model|--depth\s+(\d+)")
 NEMBD_RE = re.compile(r"model_dim[^0-9]*(\d+)|n_embd[^0-9]*(\d+)")
 
@@ -50,15 +59,17 @@ NEMBD_RE = re.compile(r"model_dim[^0-9]*(\d+)|n_embd[^0-9]*(\d+)")
 # ---------------------------------------------------------------------------
 def parse_log(path):
     """Split the concatenated sweep log into one record per run tag."""
-    runs, cur = {}, None
+    runs, cur, prev_was_rule = {}, None, False
     with open(path, errors='replace') as f:
         for line in f:
-            m = HEADER_RE.match(line)
+            m = HEADER_RE.match(line) if prev_was_rule else None
+            prev_was_rule = bool(RULE_RE.match(line))
             if m and m.group(1) not in ('GATE', 'REPORT', 'T0A'):
                 cur = m.group(1)
                 runs.setdefault(cur, {'tag': cur, 'bpb': [], 'dt': [],
                                       'flops_active': None, 'flops_total': None,
-                                      'tokens': None})
+                                      'tokens': None, 'vocab_size': None,
+                                      'n_embd': None, 'n_layer': None})
                 continue
             if cur is None:
                 continue
@@ -75,6 +86,10 @@ def parse_log(path):
                 r['tokens'] = int(m2.group(1).replace(',', ''))
             if (m2 := DT_RE.search(line)):
                 r['dt'].append(float(m2.group(1)))
+            for key, rx in (('vocab_size', VOCAB_RE), ('n_embd', NEMBD_CFG_RE),
+                            ('n_layer', NLAYER_CFG_RE)):
+                if r[key] is None and (m2 := rx.match(line)):
+                    r[key] = int(m2.group(1))
     for r in runs.values():
         r['val_bpb'] = min(r['bpb']) if r['bpb'] else None
         # Skip the first steps: they carry compile and warmup time.
@@ -195,18 +210,49 @@ def main():
     bpb_dense = dense['val_bpb']
     flops_dense = dense['flops_active'] or dense['flops_total']
 
+    # bpb is only comparable at one vocabulary, and the repo ships a 265-token stub at
+    # ./tokenizer that trains without complaint. Refuse rather than print a table.
+    vocabs = {t: r['vocab_size'] for t, r in runs.items() if r['vocab_size']}
+    if vocabs:
+        if min(vocabs.values()) < 1000:
+            print("[report] ABORT: runs trained at vocab_size "
+                  f"{sorted(set(vocabs.values()))}. That is the byte-level stub, not a "
+                  "trained tokenizer, and every bpb below would be meaningless.")
+            for t, v in sorted(vocabs.items()):
+                print(f"           {t}: vocab_size={v}")
+            print("[report] Set TOKENIZER_DIR to a real tokenizer and rerun those arms.")
+            return 1
+        if len(set(vocabs.values())) > 1:
+            print(f"[report] ABORT: arms disagree on vocab_size {sorted(set(vocabs.values()))}; "
+                  "bpb is not comparable across vocabularies.")
+            return 1
+    if dense['n_embd'] and not args.n_embd:
+        args.n_embd = dense['n_embd']
+
     # Split the printed per-token FLOPs into blocks and everything else (the LM head and
     # embeddings), so the head can be charged at full price to every arm.
     blocks_analytic = sum(sum(block_flops_per_token(d, T, windows[i % len(windows)], args.ffn_mult))
                           for i in range(args.depth))
-    head_flops = max(0.0, (flops_dense or blocks_analytic) - blocks_analytic)
+    counted_head = max(0.0, (flops_dense or blocks_analytic) - blocks_analytic)
+    # GPT.estimate_flops subtracts wte from the parameter count, so a TIED lm_head
+    # vanishes from the printed figure entirely. The head is still 6*d*V per token at
+    # runtime and routing never touches it, so a Pareto claim that ignores it overstates
+    # the saving. Price it explicitly and report both axes.
+    v_pad = ((args.vocab_size + 63) // 64) * 64
+    true_head = 6.0 * d * v_pad
+    head_flops = max(counted_head, true_head)
 
     print("=" * 78)
     print(f"  EET P02 REPORT   depth={args.depth}  d_model={d}  target_active={args.target_active_frac}")
     print(f"  dense control:   {dense_tag}  val_bpb={bpb_dense:.4f}"
           + (f"  dt={dense['dt_ms']:.1f}ms" if dense['dt_ms'] else ""))
-    print(f"  active FLOPs/token: printed={flops_dense:.4e}  blocks={blocks_analytic:.4e}"
-          f"  head+embed={head_flops:.4e} ({100*head_flops/(flops_dense or 1):.1f}% and NOT reduced by routing)")
+    print(f"  active FLOPs/token: printed={flops_dense:.4e}  blocks={blocks_analytic:.4e}")
+    print(f"  LM head: counted by estimate_flops={counted_head:.4e}, actually run={true_head:.4e} "
+          f"({100*true_head/(blocks_analytic+true_head):.1f}% of the honest total, NOT reduced by routing)")
+    if counted_head < true_head * 0.5:
+        print("  NOTE: the repo's FLOP counter drops the tied LM head. The 'flop_r' column")
+        print("        below prices it back in, so it is larger (and the allowed gap smaller)")
+        print("        than the same ratio computed off the printed axis.")
     print("  per-block active fraction: " + " ".join(f"{f:.3f}" for f in per_block))
     print("=" * 78)
 

@@ -130,6 +130,26 @@ print_header() {
 
 init_state
 
+# ---------------------------------------------------- tokenizer preflight ---
+# The repo ships a 265-token stub at ./tokenizer (tokenizer.pkl is 1.9 KB). base_train
+# prints "Vocab size: 265" and trains happily, so a whole sweep can complete against a
+# byte-level vocabulary and produce bpb numbers that mean nothing and cannot be compared
+# with anything trained at V=32768. Refuse to start instead.
+TOK_VOCAB=$(PYTHONPATH=. python3 -c "
+from nanochat.tokenizer import get_tokenizer
+print(get_tokenizer('${TOKENIZER_DIR:-tokenizer}').get_vocab_size())" 2>/dev/null || echo 0)
+if [ "${TOK_VOCAB:-0}" -lt 1000 ]; then
+    echo ""
+    echo "[ABORT] --tokenizer-dir '${TOKENIZER_DIR:-tokenizer}' resolves to vocab_size=${TOK_VOCAB}."
+    echo "        That is the byte-level stub, not a trained tokenizer. Every run would"
+    echo "        train at that vocabulary and every bpb would be meaningless."
+    echo "        Point TOKENIZER_DIR at the real one, e.g.:"
+    echo "          TOKENIZER_DIR=\$HOME/.cache/nanochat/tokenizer bash \$0 ${DEPTH}"
+    echo "        and delete any arm already trained against the stub."
+    exit 1
+fi
+echo "  Tokenizer:        ${TOKENIZER_DIR:-tokenizer} (vocab_size ${TOK_VOCAB})"
+
 # ------------------------------------------------------------- common ------
 # Every arm after DENSE is pinned to DENSE's exact token count via --target-tokens,
 # so the whole sweep is iso-data. Without that pin the EET arms would get a slightly

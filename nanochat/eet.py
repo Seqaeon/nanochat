@@ -735,9 +735,12 @@ class EarlyExitGPT(GPT):
             self.eet_current_phase = int(state_dict[tracker_key][0].item())
 
     @torch.no_grad()
-    def init_weights(self):
+    def init_weights(self, verify=True):
         """Initialize base GPT weights + EET-specific parameters."""
-        super().init_weights()
+        # verify=False: the EET routers, translators and buffers below are still
+        # uninitialized at this point, so checking here would report tensors that are
+        # about to be set correctly. The check runs once at the end instead.
+        super().init_weights(verify=False)
 
         # to_empty() replaces ALL tensor storage (including registered buffers)
         # with uninitialized garbage or leaves them as meta tensors.
@@ -766,21 +769,45 @@ class EarlyExitGPT(GPT):
         # Routers: init with enough scale so output VARIES across tokens from step 1.
         # std=0.01 was too small — produced ~0.001 output variation → constant softmax.
         # std=0.1 gives ~0.01 softmax variation → enough for argmax to differentiate.
+        # GPT.init_weights does not reach the router submodules, so every linear in the
+        # chain has to be set here. Only the LAST one was, which left the hidden layers of
+        # an mlp1/mlp2 router holding whatever to_empty() handed back: all-zero on a fresh
+        # process, which makes the router output constant across tokens and defeats the
+        # whole point of a router, and arbitrary values once the allocator has history.
         for router in self.eet_routers:
-            if router.router_type == 'linear':
-                nn.init.normal_(router.net.weight, std=0.1)
-                nn.init.constant_(router.net.bias, 0.0)
-            else:
-                # Scale last linear in MLP chain
-                last_linear = list(router.net.modules())[-1]
-                if isinstance(last_linear, (Linear, nn.Linear)):
-                    nn.init.normal_(last_linear.weight, std=0.1)
-                    nn.init.constant_(last_linear.bias, 0.0)
+            linears = [m for m in router.modules() if isinstance(m, (Linear, nn.Linear))]
+            for lin in linears:
+                nn.init.normal_(lin.weight, std=lin.weight.shape[-1] ** -0.5)
+                if getattr(lin, 'bias', None) is not None:
+                    nn.init.constant_(lin.bias, 0.0)
+            # The output layer wants a larger scale: std=0.01 produced ~0.001 output
+            # variation and a constant softmax, std=0.1 gives ~0.01 and lets argmax
+            # differentiate from step 1.
+            if linears:
+                nn.init.normal_(linears[-1].weight, std=0.1)
+                if getattr(linears[-1], 'bias', None) is not None:
+                    nn.init.constant_(linears[-1].bias, 0.0)
 
         # Keep router params in float32 for gradient precision.
         # The per-token differentiation signal (~1e-7) rounds to zero in bf16.
         for router in self.eet_routers:
             router.float()
+
+        # Buffers registered on EarlyExitGPT itself. __init__ gives them a value, but
+        # the model is built on meta and then to_empty()'d, which throws that value away
+        # and hands back whatever the allocator has. Nothing else writes them, so without
+        # this they train on garbage: all-zero on a fresh process (which silently disables
+        # the EMA depth weighting) and arbitrary once the allocator has history. The NaN
+        # tripwire only fires on the arbitrary case, which is why this surfaced as an
+        # intermittent crash rather than a consistent one.
+        if getattr(self, 'exit_freq_ema', None) is not None:
+            self.exit_freq_ema.fill_(1.0 / self.n_exits)
+        if getattr(self, 'vocab_route_ema', None) is not None:
+            self.vocab_route_ema.fill_(1.0 / self.n_exits)
+        self.token_ce_sum.zero_()
+        self.token_ce_count.zero_()
+        self.token_difficulty.zero_()
+        self.eet_phase_tracker.fill_(int(self.eet_current_phase))
 
         # Translators: identity-like init (only when present)
         for translator in self.eet_translators:
@@ -790,6 +817,9 @@ class EarlyExitGPT(GPT):
             else:
                 nn.init.zeros_(translator.proj.weight)
                 nn.init.zeros_(translator.proj.bias)
+
+        if verify:
+            self._verify_initialized()
 
     @torch.compiler.disable
     @torch.no_grad()
