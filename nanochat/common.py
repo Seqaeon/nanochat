@@ -248,6 +248,23 @@ def wrap_model(model, parallel_type="ddp", compile=False, device=None, compile_r
     ddp_requested, rank, local_rank, world_size = get_dist_info()
 
     # 1) Parallel wrapping
+    # ddp_requested only says torchrun set RANK/LOCAL_RANK/WORLD_SIZE; it does NOT say a
+    # process group exists. If compute_init did not initialise one (single-process launch,
+    # a non-cuda device_type, or a container where NCCL init was skipped), constructing
+    # DDP raises "Default process group has not been initialized" from deep inside
+    # torch.distributed, which reads like a code bug rather than an environment one.
+    # At world size 1 DDP adds nothing, so fall through to the unwrapped model instead.
+    if parallel_type == "ddp" and ddp_requested and not is_ddp_initialized():
+        if world_size > 1:
+            raise RuntimeError(
+                f"DDP requested with WORLD_SIZE={world_size} but no process group is "
+                "initialised. compute_init() must run with device_type='cuda' before "
+                "wrap_model()."
+            )
+        print0(f"[ddp] torchrun env present (WORLD_SIZE={world_size}) but no process group "
+               "is initialised; running unwrapped. This is the single-process path.")
+        ddp_requested = False
+
     if parallel_type == "ddp" and ddp_requested:
         # Check if the model uses any sparse conditional routing
         cfg = getattr(model, 'config', None)

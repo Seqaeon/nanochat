@@ -796,7 +796,20 @@ user_config = vars(args).copy()  # for logging
 # Compute init and wandb logging
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+# torchrun launched us but CUDA was not detected: autodetect fell back to cpu, so no
+# process group is initialised and the run would either crash later in wrap_model or,
+# worse, silently train on CPU for hours. Neither is something to discover from the
+# wall-clock. Fail here with the reason.
+if all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE")) and device_type != "cuda":
+    import torch as _t
+    raise RuntimeError(
+        f"launched under torchrun but device_type resolved to '{device_type}'. "
+        f"torch.cuda.is_available()={_t.cuda.is_available()}, "
+        f"device_count={_t.cuda.device_count() if _t.cuda.is_available() else 0}. "
+        "The GPU was not visible at startup. Re-launch, or pass --device-type explicitly."
+    )
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+print0(f"Device: {device_type} (ddp={ddp}, world_size={ddp_world_size})")
 
 # nn.DataParallel optimization (multi-GPU without torchrun)
 is_dp = args.parallel == "dp" and device_type == "cuda" and torch.cuda.device_count() > 1
