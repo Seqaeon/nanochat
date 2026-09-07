@@ -237,16 +237,9 @@ def main():
     print0(f"  best |spearman| = {abs(best):.4f}  -> "
            f"{'SIGNAL, keep idea 6' if abs(best) >= 0.3 else 'NO SIGNAL, close idea 6'}")
 
-    if args.skip_fit:
-        return _write(args, results)
-
-    # ---------------- Test 5: per-depth readout ceiling -----------------------
-    print0("\n  TEST 5  per-depth readout ceiling (backbone frozen)")
-    # The backbone is no longer needed: everything below runs off the cached states and
-    # the head. Freeing it is the difference between fitting and OOM on a small card.
-    lm_head = lm_head.clone()
-    del model
-    torch.cuda.empty_cache() if device == 'cuda' else None
+    # --- per-layer profile: the Tier 0 measurement ---------------------------
+    # bpb of each layer read through the SHARED head, plus how far the residual moved.
+    # A healthy stack improves monotonically with depth; a collapsed one goes flat.
     n_fit = args.fit_batches
     ev_h = lambda l: torch.cat([H[l][i] for i in range(n_fit, n_batches)]).view(-1, d).to(device)
     ev_y = torch.cat(Y[n_fit:]).to(device)
@@ -267,9 +260,34 @@ def main():
             del logits, loss
         return nats / tot_bytes / LN2
 
-    shared, refit, raw_refit = {}, {}, {}
+    print0("\n  PER-LAYER PROFILE (shared head)")
+    print0(f"  {'layer':>6}{'bpb':>10}{'gain':>9}{'mean |dx|':>12}")
+    shared, gains = {}, {}
     for l in range(nl):
         shared[l] = eval_head(lm_head, l)
+        gains[l] = (shared[l-1] - shared[l]) if l else float('nan')
+        dl = float(torch.cat(DELTA[l]).mean()) if l else float('nan')
+        print0(f"  {l:>6}{shared[l]:>10.4f}"
+               f"{('%+.4f' % gains[l]) if l else '        -':>9}"
+               f"{(('%.2f' % dl) if l else '-'):>12}")
+    deep_gain = shared[max(0, nl - 5)] - shared[nl - 1]
+    results['per_layer_bpb'] = shared
+    results['deep_gain'] = deep_gain
+    print0(f"\n  bpb gained over the last 4 layers: {deep_gain:+.4f}")
+    print0(f"  dense d8 reference for the same span: +0.8008")
+    print0(f"  -> {'DEEP LAYERS ARE WORKING' if deep_gain > 0.05 else 'DEPTH COLLAPSE: the deep layers contribute nothing'}")
+
+    if args.skip_fit:
+        return _write(args, results)
+
+    # ---------------- Test 5: per-depth readout ceiling -----------------------
+    print0("\n  TEST 5  per-depth readout ceiling (backbone frozen)")
+    lm_head = lm_head.clone()
+    del model
+    torch.cuda.empty_cache() if device == 'cuda' else None
+
+    refit, raw_refit = {}, {}
+    for l in range(nl):
         head = lm_head.clone().float().requires_grad_(True)
         opt = torch.optim.Adam([head], lr=args.lr)
         fit_h = torch.cat([H[l][i] for i in range(n_fit)]).view(-1, d)

@@ -447,6 +447,8 @@ parser.add_argument("--eet-route-noise", type=float, default=0.0, help="EET P02 
 parser.add_argument("--eet-route-noise-end", type=float, default=-1.0, help="EET P02 T2: final noise scale for a linear anneal over training (<0 = hold --eet-route-noise constant)")
 parser.add_argument("--eet-coverage-diag", type=int, default=0, choices=[0, 1], help="EET P02 T0B: accumulate per-layer vocabulary coverage during eval and report it")
 parser.add_argument("--eet-kv-eager", type=int, default=0, choices=[0, 1], help="EET P02: run the split-KV attention outside torch.compile. Slower, but sidesteps inductor stride-guard failures on the attention mask so the quality gate still produces a bpb. Never use for a wallclock claim")
+parser.add_argument("--deep-supervision-lambda", type=float, default=0.0, help="Tier 0: weight on a CE term at every layer through the shared head. Prices what it costs a healthy backbone to be readable at every depth")
+parser.add_argument("--deep-supervision-frac", type=float, default=0.125, help="fraction of positions supervised per layer; keeps the cost near one extra head pass")
 parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1], help="EET: allow task loss gradients to propagate to router through continue weights (1/0)")
 parser.add_argument("--eet-reinforce-interval", type=int, default=0, help="EET: two-pass REINFORCE every N steps (0=disabled)")
 parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1, help="EET: REINFORCE loss weight")
@@ -1289,6 +1291,8 @@ def build_model_meta(depth):
         eet_route_noise_end=float(getattr(args, 'eet_route_noise_end', -1.0)),
         eet_coverage_diag=bool(getattr(args, 'eet_coverage_diag', 0)),
         eet_kv_eager=bool(getattr(args, 'eet_kv_eager', 0)),
+        deep_supervision_lambda=float(getattr(args, 'deep_supervision_lambda', 0.0)),
+        deep_supervision_frac=float(getattr(args, 'deep_supervision_frac', 0.125)),
         eet_exit_fracs=[float(x.strip()) for x in getattr(args, 'eet_exit_fracs', '').split(',') if x.strip()] if getattr(args, 'eet_exit_fracs', '') else None,
         eet_capacity_alignment_lambda=float(getattr(args, 'eet_capacity_alignment_lambda', 0.0)),
         eet_router_task_grad=bool(getattr(args, 'eet_router_task_grad', 1)),

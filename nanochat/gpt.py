@@ -605,6 +605,16 @@ class GPTConfig:
     eet_route_noise_end: float = -1.0              # <0 = hold eet_route_noise constant; else linear anneal
     # --- P02 Test 0B: per-layer vocabulary coverage diagnostic ---
     eet_coverage_diag: bool = False                # accumulate which token ids reach which layer
+    # --- Tier 0 test 2: deep supervision -------------------------------------
+    # Adds a CE term at every layer through the SHARED head, so every layer is trained to
+    # be prediction-readable. On a dense model this prices what EET gets for free and pays
+    # for: EET's layer 3 reads at 1.041 against dense's 1.783, but its layer 7 reads at
+    # 1.039 against dense's 0.982. If a healthy backbone cannot be made readable at every
+    # depth without losing more than the EET gap, no architecture can have both.
+    # Evaluated on a random subset of positions per layer so the cost is ~1 extra head
+    # pass rather than n_layer of them.
+    deep_supervision_lambda: float = 0.0
+    deep_supervision_frac: float = 0.125
     # Escape hatch: run the split-KV attention outside the compiled graph. Costs speed but
     # sidesteps any inductor stride-guard failure on the mask, so the T1 quality gate can
     # still produce a bpb number. Never use it for a wallclock claim.
@@ -873,6 +883,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_capacity_schedule", "eet_exit_fracs",
     "eet_capacity_alignment_lambda", "eet_router_task_grad",
     "eet_kv_mode", "eet_route_noise", "eet_route_noise_end", "eet_coverage_diag",
+    "deep_supervision_lambda", "deep_supervision_frac",
     "eet_kv_eager",
     "eet_depth_affine", "eet_capacity_anneal_frac", "eet_learned_schedule",
     "eet_departure_summary", "eet_route_consistency_lambda",
@@ -11489,6 +11500,10 @@ class GPT(nn.Module):
                 ctx_history.append(new_ctx)
         else:
             prev_ctx = None
+            _ds_lambda = float(getattr(self.config, 'deep_supervision_lambda', 0.0))
+            _ds_n = max(1, int(float(getattr(self.config, 'deep_supervision_frac', 0.125))
+                               * idx.size(0) * idx.size(1)))
+            _ds_loss = torch.zeros((), device=idx.device, dtype=torch.float32)
             collect_sim = float(getattr(self.config, 'p18_aux_sim_lambda', 0.0)) > 0
             if collect_sim:
                 self._layer_outputs = []
@@ -11508,6 +11523,15 @@ class GPT(nn.Module):
                     x, prev_ctx = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, prev_ctx, p24_global_signal=p24_global_signal)
                 else:
                     x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+                # Tier 0 test 2: make this layer prediction-readable through the shared head.
+                if (_ds_lambda > 0.0 and self.training and targets is not None
+                        and i < len(self.transformer.h) - 1):
+                    _sel = torch.randint(0, x.size(0) * x.size(1), (_ds_n,), device=x.device)
+                    _h = norm(x).view(-1, x.size(-1))[_sel]
+                    _lg = self.lm_head(_h)[..., :self.config.vocab_size].float()
+                    _lg = 20.0 * torch.tanh(_lg / 20.0)
+                    _ds_loss = _ds_loss + F.cross_entropy(
+                        _lg, targets.view(-1)[_sel], ignore_index=-1)
                 # 19C: Residual stream mixing after block output
                 if self.residual_mixers is not None:
                     gamma = self.residual_mix_gamma[i].to(x.dtype)
@@ -11567,6 +11591,11 @@ class GPT(nn.Module):
                                   ignore_index=-1, reduction=loss_reduction)
             else:
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            # Tier 0 test 2: averaged over the supervised layers so the weight means the
+            # same thing at any depth. Only ever added to a scalar ('mean') loss.
+            if _ds_lambda > 0.0 and self.training and loss_reduction == 'mean':
+                n_sup = max(1, len(self.transformer.h) - 1)
+                loss = loss + _ds_lambda * (_ds_loss / n_sup)
 
             # Design 10: Auxiliary context objective
             # Reads _last_ctx stored on each RemixedBlock during this forward pass.
