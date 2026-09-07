@@ -57,7 +57,7 @@ OUT_BASE="${OUT_BASE:-out/eet_tier0}"
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/tier0_d${DEPTH}.log}"
 STATE_FILE="${OUT_BASE}/state_d${DEPTH}.json"
 TARGET_FRAC="${TARGET_FRAC:-0.10}"
-DS_LAMBDA="${DS_LAMBDA:-1.0}"
+DS_LAMBDA="${DS_LAMBDA:-0.25}"
 mkdir -p "$OUT_BASE"
 
 echo "==============================================================="
