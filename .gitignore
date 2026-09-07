@@ -47,23 +47,25 @@ acts_d12_v131k.pt
 #   perms/           vocabulary permutations. A factorised head is fitted to one
 #                    specific assignment, so a box without it silently trains the
 #                    token-id control instead of the arm you asked for.
-#   tokenizer_131k/  the V=131072 tokenizer. Rebuilding one is a BPE training run,
+#   tokenizer*/      the tokenizers themselves. Rebuilding one is a BPE training run,
 #                    and two boxes that rebuilt separately are not the same tokenizer.
 # Directory negations come first: git cannot re-include a file whose parent
 # directory is excluded, and tokenizer_131k/ is excluded by name above.
+#
+# tokenizer/ stays TRACKED on purpose. Untracking it would make `git pull` DELETE the
+# tokenizer on every box whose copy is clean, or refuse the pull outright on a box whose
+# copy differs. Tracked and pinned instead, a pull repairs a box that is on a bad copy.
+# What it is pinned to lives in tokenizer/PINNED.json (V=32768) and
+# tests/test_tokenizer_pin.py fails if the tracked files ever stop matching it.
+#
+# The failure this guards against: tokenizer.pkl flip-flopped between the real 412 KB
+# V=32768 file and a 1.9 KB V=265 byte-level stub across five commits, because anything
+# that writes into ./tokenizer gets swept into the next commit. A run against the stub
+# does not fail. base_train prints "Vocab size: 265", pads to 320 and trains to
+# completion, so a whole sweep can produce bpb numbers that compare with nothing.
 !perms/
 !perms/**
+!tokenizer/
+!tokenizer/**
 !tokenizer_131k/
 !tokenizer_131k/**
-
-# tokenizer/ is NOT tracked. It was, and its tokenizer.pkl flip-flopped between the real
-# 412 KB V=32768 file and a 1.9 KB V=265 byte-level stub across five commits, because
-# anything that writes into ./tokenizer gets committed along with the next change. A run
-# against the stub does not fail: base_train prints "Vocab size: 265", pads to 320 and
-# trains to completion, so a whole sweep can produce bpb numbers that compare with
-# nothing. Keep the real tokenizer outside the repo (~/.cache/nanochat/tokenizer) or on
-# the box's own volume, and pass it with --tokenizer-dir.
-# NOTE: research_sweep.sh trains a NEW tokenizer when tokenizer.pkl is absent, so a fresh
-# checkout will silently build a different one from 8 shards. scripts/eet_p02_tests.sh
-# has a preflight that catches a stub vocabulary, but not a differently-trained one.
-tokenizer/

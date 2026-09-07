@@ -200,7 +200,14 @@ implementation detail rather than as a routed resource.
 
 ### P02 run gotchas (cost real GPU time, both now guarded)
 
-**The repo's `./tokenizer` is a 265-token stub.** `tokenizer.pkl` is 1.9 KB and
+**RESOLVED: `tokenizer/` stays tracked and is now pinned.** `tokenizer/PINNED.json` records
+the V=32768 tokenizer's SHA-256s and `tests/test_tokenizer_pin.py` fails if the tracked
+files stop matching it. Tracking is deliberate: untracking makes `git pull` DELETE the
+tokenizer on every box whose copy is clean, and refuse the pull outright on a box whose
+copy differs. Tracked and pinned, a pull repairs a box sitting on a bad copy. The
+paragraph below is the history that motivated the pin.
+
+**The repo's `./tokenizer` was a 265-token stub.** `tokenizer.pkl` is 1.9 KB and
 `get_tokenizer('tokenizer')` returns `vocab_size=265`. base_train prints
 `Vocab size: 265`, pads it to 320, and trains to completion without complaint. The first
 P02 attempt trained `DENSE_D8` and both iso-FLOP dense controls that way; their bpb
@@ -282,3 +289,85 @@ capacity in as a plain `int` (`n_q=K_cur`), marking the sequence dim static, and
 SDPA a contiguous mask. `--eet-kv-eager 1` runs that attention outside the compiled graph
 if it ever recurs: slower, so never use it for a wallclock claim, but the T1 quality gate
 still returns a bpb.
+
+---
+
+## 🔴 P02 RESULT: both hypotheses failed. EET closed.
+
+All EET arms at 265,814,016 tokens, d8/512, V=32768, `target_active_frac=0.10`, bell schedule.
+
+| arm | val bpb | vs EET base | dt (ms) | vs dense dt | MFU |
+|---|---|---|---|---|---|
+| EET base (kv none, deterministic) | 1.06433 | — | 227.6 | **1.12x slower** | 33.4 |
+| T1 fresh (per-layer KV restored) | 1.05617 | **-0.00816** | 289.6 | 1.42x slower | 26.2 |
+| T1 stale (banked exit KV) | 1.06448 | +0.00015 | 283.0 | 1.39x slower | 26.9 |
+| T2 random (uniform routing) | 1.06487 | +0.00054 | 244.0 | 1.20x slower | 31.1 |
+| T2 anneal (1.0 -> 0.0) | 1.06258 | -0.00175 | 437.6 | 2.15x slower | 17.4 |
+| dense d5 control | 1.04243 | — | 174.2 | | 23.0 |
+| dense d6 control | 1.03339 | — | 176.5 | | 24.5 |
+
+**Caveat on the absolute gap.** `DENSE_D8` ran at 440,401,920 tokens, not 265,814,016: the
+state file still held the token budget measured during the V=265 stub runs, and a d8 model
+gets a larger Chinchilla horizon at V=32768. Extrapolating the two iso-data dense controls
+(exponent **-0.1158** from d5 and d6) puts dense d8 at 266M tokens at **~0.968**, so the
+EET gap is about **+0.096**. That is a two-point extrapolation across a 1.76x FLOP gap and
+should be replaced by a rerun of `DENSE_D8 --target-tokens 265814016`. It does not change
+the verdict, because the T1/T2 decisions rest on within-EET deltas at identical budgets.
+
+### Verdict against the pre-registered criteria
+
+| test | threshold | result |
+|---|---|---|
+| T1 (context restoration) | gap <= 0.045 | best arm +0.088. **FAIL** |
+| T2 (routing coverage) | gap <= 0.045 | best arm +0.095. **FAIL** |
+
+Pre-registered consequence, written before the runs: *if T1 and T2 both fail, the
+"architectural" verdict is confirmed; close the direction rather than sweeping more flags.*
+**Both failed. EET is closed.**
+
+### What the runs actually established
+
+**Defect 2 (data starvation) was wrong, and the coverage diagnostic falsified it directly.**
+The prediction was that a router reading only `norm(wte(idx))` makes exit depth a
+per-vocabulary lookup, so deep layers only ever train on a fixed slice of the vocabulary.
+Measured coverage at layer 7:
+
+    L0:100.0%/100.0%  L1:100.0%/100.0%  L2:100.0%/97.9%  L3:100.0%/85.4%
+    L4:100.0%/55.0%   L5:99.9%/24.6%    L6:99.8%/12.1%   L7:99.7%/10.0%
+    (vocabulary fraction / token-mass fraction)
+
+Layer 7 sees **99.7% of the vocabulary**, 32,575 of 32,666 distinct ids. Only the token
+*mass* is 10%. Routing is a within-sequence top-K, so a token that loses the competition in
+one sequence wins it in another and every id reaches every depth. The T0B gate as
+pre-registered watched token mass, which was the wrong quantity; vocabulary coverage was
+the right one and it kills the hypothesis outright.
+
+**The learned router is worth nothing.** T2 random (Gumbel noise 10.0, effectively uniform
+routing) scores 1.06487 against the learned router's 1.06433: a difference of +0.0005.
+Replacing the router with a coin flip costs nothing measurable. Whatever the global router
+on `x0` is doing, it is not selecting better than chance, which retires the
+"interpretable, prior-informed adaptive computation" framing entirely.
+
+**Context restoration is real but tiny, and co-training absorbs almost all of it.** The T0A
+oracle measured +0.234 bpb for context destruction on a model never trained to tolerate it.
+Restoring fresh per-layer keys and values in training recovers **0.008**, about 8% of the
+gap and about 3% of what the oracle predicted. Banked (stale) KV recovers nothing, so what
+little there is comes from the keys being in the right per-layer subspace, not from their
+presence. The write-depth / read-depth decoupling framing rests on this effect and it is
+too small to carry a paper.
+
+**There is no speedup to trade quality against.** EET is 1.12x *slower* than dense in
+wallclock at d8/512, and MFU drops from 37.3 to 33.4. The historical "25% speedup" does not
+reproduce at this configuration. The reason is visible in the FLOP split: at V=32768 the
+LM head is **35.2%** of active FLOPs per token and routing never touches it, blocks are
+52.7% and attention 12.1%. Routing the blocks down to a 0.606 average active fraction only
+buys a **0.72x** overall FLOP ratio, worth **+0.037 bpb** on the measured dense curve, and
+gather/scatter overhead plus the MFU loss eats even that.
+
+### Do not retry
+
+- Restoring exited tokens' keys and values, in any variant. Fresh per-layer KV is the
+  upper bound and it is worth 0.008.
+- Stochastic or exploratory routing schedules. Uniform-random routing already matches the
+  learned router, so there is nothing for exploration to discover.
+- Router architecture work on the `x0` global router. It performs at chance.

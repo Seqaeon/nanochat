@@ -1,0 +1,8 @@
+{
+  "vocab_size": 32768,
+  "sha256": {
+    "tokenizer.pkl": "06978be3b6fa73254b3adc4a2f7b499bc7f9d7eb9d74f37b7a1620bd84e02808",
+    "token_bytes.pt": "80869a4cf3e7873f43f271e0b1bd73457b2705e5aaa4fb6210dd0d630b139dcd",
+    "freq_table.pt": "aa15a485ac0bb7297c3f9d0222de74019ede0efd9632284cd4b397dad260f07c"
+  }
+}

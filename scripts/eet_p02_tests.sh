@@ -237,12 +237,28 @@ run_experiment() {
 # Step 1 -- DENSE control. Needed three times over: as the gap reference, as the
 #           subject of the T0A oracle, and as the source of the iso-data token count.
 # ============================================================================
+DENSE_PIN=""
+_stored="$(get_var tokens_d${DEPTH})"
+if [ -n "$_stored" ] && [ "$(get_var tokens_vocab_d${DEPTH})" = "$TOK_VOCAB" ]; then
+    DENSE_PIN="--target-tokens $_stored"
+    echo "[iso-data] DENSE pinned to the stored budget ${_stored}"
+fi
 run_experiment "DENSE_D${DEPTH}" \
     "Dense control (no early exit). Reference for every gap in this sweep." \
-    --use-eet 0
+    --use-eet 0 $DENSE_PIN --target-tokens 265814016
 
 # Pin every later arm to this exact token budget.
+# The stored budget is only valid for the vocabulary it was measured at: a d8 model at
+# V=32768 gets 440,401,920 Chinchilla tokens, at V=265 it gets 265,814,016. Reusing the
+# stale one silently trained DENSE_D8 on 1.66x the data of every arm it was the control
+# for, which is not an iso-data comparison at all.
 TOKENS="$(get_var tokens_d${DEPTH})"
+TOKENS_VOCAB="$(get_var tokens_vocab_d${DEPTH})"
+if [ -n "$TOKENS" ] && [ "$TOKENS_VOCAB" != "$TOK_VOCAB" ]; then
+    echo "[iso-data] stored budget ${TOKENS} was measured at vocab ${TOKENS_VOCAB:-unknown},"
+    echo "           but the tokenizer is now ${TOK_VOCAB}. Discarding it and remeasuring."
+    TOKENS=""
+fi
 if [ -z "$TOKENS" ]; then
     # head -1, not tail -1: DENSE is always the first run in the log, and on a resumed
     # sweep the last occurrence would belong to whichever arm ran most recently.
@@ -253,7 +269,8 @@ if [ -z "$TOKENS" ]; then
     fi
     if [ -n "$TOKENS" ]; then
         set_var "tokens_d${DEPTH}" "$TOKENS"
-        echo "[iso-data] pinning all later arms to ${TOKENS} tokens"
+        set_var "tokens_vocab_d${DEPTH}" "$TOK_VOCAB"
+        echo "[iso-data] pinning all later arms to ${TOKENS} tokens (vocab ${TOK_VOCAB})"
     else
         echo "[warn] no dense token count in $LOGFILE and none stored in the state file."
         echo "       Later arms will use their own Chinchilla budget, so the sweep is NOT"
