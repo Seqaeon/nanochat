@@ -256,10 +256,10 @@ if [ -n "$_stored" ] && [ "$(get_var tokens_vocab_d${DEPTH})" = "$TOK_VOCAB" ]; 
     DENSE_PIN="--target-tokens $_stored"
     echo "[iso-data] DENSE pinned to the stored budget ${_stored}"
 fi
-run_experiment "DENSE_D${DEPTH}" \
-    "Dense control (no early exit). Reference for the gap." \
-    --use-eet 0 $DENSE_PIN
-
+#run_experiment "DENSE_D${DEPTH}" \
+#    "Dense control (no early exit). Reference for the gap." \
+#    --use-eet 0 $DENSE_PIN
+#
 TOKENS="$(get_var tokens_d${DEPTH})"
 ISO_DATA=""
 [ -n "$TOKENS" ] && ISO_DATA="--target-tokens $TOKENS"
