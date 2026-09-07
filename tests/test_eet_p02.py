@@ -288,3 +288,33 @@ def test_oracle_is_a_no_op_at_full_capacity():
     for ab in ('ctx', 'depth', 'both'):
         got = oracle_forward(model, x, y, per_block, score, ab, token_bytes)
         assert abs(float(got[0]) - float(ref[0])) < 2e-2, (ab, float(got[0]), float(ref[0]))
+
+
+def test_oracle_dense_row_matches_the_models_own_forward():
+    """The oracle's unablated row must BE the model's dense forward.
+
+    The gate is a delta against this row, so a divergence here (a missed residual mixer,
+    the wrong compute dtype, a skipped x0 decay) would bias every number the decision
+    rests on.
+    """
+    import math
+    from nanochat.common import COMPUTE_DTYPE
+    from nanochat.gpt import GPT
+    from scripts.eet_context_oracle import oracle_forward
+
+    torch.manual_seed(0)
+    cfg = GPTConfig(n_layer=4, n_head=2, n_kv_head=2, n_embd=16, vocab_size=128,
+                    sequence_len=32, window_pattern="SSSL")
+    model = GPT(cfg)
+    model.eval()
+    x, y = _batch(cfg, B=2, T=32)
+    token_bytes = torch.ones(cfg.vocab_size, dtype=torch.long)
+
+    with torch.no_grad():
+        ref = model(x, y, loss_reduction='none').view(-1)
+    ref_bpb = float(ref.sum()) / float(len(ref)) / math.log(2.0)
+
+    nats, nbytes = oracle_forward(model, x, y, [1.0] * cfg.n_layer,
+                                  torch.rand(x.shape), 'dense', token_bytes)
+    orc_bpb = float(nats) / int(nbytes) / math.log(2.0)
+    assert abs(orc_bpb - ref_bpb) < 2e-3, (orc_bpb, ref_bpb)

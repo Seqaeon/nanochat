@@ -233,7 +233,14 @@ if [ ! -f "$ORACLE_JSON" ] && [ -d "$DENSE_CKPT" ]; then
         --rank freq,random,ce --ablation ctx,depth,both \
         --eval-tokens "$ORACLE_EVAL_TOKENS" \
         --gate-delta-bpb 0.02 \
-        --out "$ORACLE_JSON" 2>&1 | tee -a "$LOGFILE"
+        --out "$ORACLE_JSON" 2>&1 | tee -a "$LOGFILE" || true
+fi
+
+if [ ! -f "$ORACLE_JSON" ]; then
+    echo ""
+    echo "[GATE T0A] The oracle produced no result. Failing OPEN: the T1 arms will run"
+    echo "           anyway, so the sweep still answers the question, but the cheap"
+    echo "           screen was lost. Fix the oracle and rerun it to save the GPU time."
 fi
 
 T1_ENABLED=1
@@ -359,4 +366,4 @@ python -m scripts.eet_p02_report \
     --out-base "$EET_OUT_BASE" --depth "$DEPTH" \
     --target-active-frac "$TARGET_FRAC" \
     --oracle "$ORACLE_JSON" \
-    --log "$LOGFILE" 2>&1 | tee -a "$LOGFILE"
+    --log "$LOGFILE" 2>&1 | tee -a "$LOGFILE" || true

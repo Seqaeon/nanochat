@@ -61,7 +61,7 @@ import torch
 import torch.nn.functional as F
 
 from nanochat.checkpoint_manager import find_last_step, load_checkpoint
-from nanochat.common import print0
+from nanochat.common import COMPUTE_DTYPE, print0
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.gpt import GPT, GPTConfig, norm
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -70,6 +70,9 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 # ---------------------------------------------------------------------------
 # EET's capacity schedule, reproduced exactly (see nanochat/eet.py compute_skip)
 # ---------------------------------------------------------------------------
+READOUT_CHUNK = 2   # sequences per lm_head call; see readout_nats
+
+
 def bell_capacities(n_layer, min_exit_layer, target_frac, schedule='bell'):
     """Return (routing_layers, per_block_active_frac).
 
@@ -167,12 +170,19 @@ def oracle_forward(model, idx, targets, per_block_frac, rank_score, ablation, to
     rank_of = torch.empty_like(order)
     rank_of.scatter_(1, order, torch.arange(T, device=device).expand(B, -1))
 
-    x = model.transformer.wte(idx)
-    x = x.to(model.cos.dtype if model.cos.dtype.is_floating_point else torch.float32)
+    # Mirror GPT.forward exactly. Any divergence here would show up as a constant offset
+    # on every ablation, which mostly cancels in the deltas but would still make the
+    # oracle's 'dense' row disagree with the checkpoint's own val_bpb. --check compares
+    # them so a drift is visible rather than silent.
+    x = model.transformer.wte(idx) if model.embedding_model is None else model.embedding_model(idx)[0]
+    x = x.to(COMPUTE_DTYPE)
     x = norm(x)
     x0 = x
     x_exit = x0.clone()          # readout state per token, for the depth ablations
     prev_active = torch.ones(B, T, dtype=torch.bool, device=device)
+    decay_base = (torch.sigmoid(model.depth_decay_raw)
+                  if getattr(model, '_use_residual_decay', False) and model.depth_decay_raw is not None
+                  else None)
 
     for i, block in enumerate(model.transformer.h):
         frac = per_block_frac[i]
@@ -180,6 +190,8 @@ def oracle_forward(model, idx, targets, per_block_frac, rank_score, ablation, to
         active = rank_of >= (T - k_keep)   # keep the LAST k_keep in exit order
 
         x0_w = model.x0_lambdas[i]
+        if decay_base is not None:
+            x0_w = x0_w * (decay_base ** i)
         x_input = model.resid_lambdas[i] * x + x0_w * x0
         ve = None
         if str(i) in model.value_embeds:
@@ -195,6 +207,11 @@ def oracle_forward(model, idx, targets, per_block_frac, rank_score, ablation, to
             x_new = block.forward_split(x_input, cos_sin, q_pos, k, v,
                                         model.window_sizes[i], key_mask=key_mask)
 
+        if model.residual_mixers is not None:
+            gamma = model.residual_mix_gamma[i].to(x_new.dtype)
+            mixed = model.residual_mixers[i](x_new.transpose(1, 2)).transpose(1, 2)
+            x_new = x_new + gamma * mixed
+
         if ablation in ('depth', 'both'):
             # A token that just left is frozen: record its state and stop updating it.
             just_left = prev_active & ~active
@@ -207,12 +224,17 @@ def oracle_forward(model, idx, targets, per_block_frac, rank_score, ablation, to
     if ablation in ('depth', 'both'):
         x = torch.where(prev_active.unsqueeze(-1), x, x_exit)
 
-    return readout_nats(model, norm(x), targets, token_bytes)
+    return readout_nats(model, norm(x), targets, token_bytes, chunk=READOUT_CHUNK)
 
 
 @torch.no_grad()
-def readout_nats(model, hidden, targets, token_bytes, chunk=8):
-    """Mirror of GPT.forward's dense readout: lm_head, depad, fp32, softcap 20."""
+def readout_nats(model, hidden, targets, token_bytes, chunk=2):
+    """Mirror of GPT.forward's dense readout: lm_head, depad, fp32, softcap 20.
+
+    Chunked over the batch because the fp32 logits are (chunk, T, V): at T=2048 and
+    V=32768 that is 0.5 GB per sequence, and the oracle runs 12 of these forwards per
+    batch (3 router proxies x 4 ablations).
+    """
     device = hidden.device
     sum_nats = torch.zeros((), dtype=torch.float32, device=device)
     sum_bytes = torch.zeros((), dtype=torch.int64, device=device)
@@ -251,7 +273,15 @@ def main():
     ap.add_argument("--gate-delta-bpb", type=float, default=0.02,
                     help="pre-registered threshold on delta_bpb(ctx)")
     ap.add_argument("--out", type=str, default=None, help="write JSON results here")
+    ap.add_argument("--check", action="store_true", default=True,
+                    help="compare the oracle's unablated 'dense' row against the model's own "
+                         "forward on the first batch (on by default; it costs one batch)")
+    ap.add_argument("--no-check", dest="check", action="store_false")
+    ap.add_argument("--readout-chunk", type=int, default=2,
+                    help="sequences per lm_head call; lower it if the readout OOMs")
     args = ap.parse_args()
+    global READOUT_CHUNK
+    READOUT_CHUNK = args.readout_chunk
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(0)
@@ -260,6 +290,9 @@ def main():
     assert not getattr(config, 'use_code_head', False), (
         "the oracle replicates the standard dense readout; rerun the control with the "
         "default lm_head or extend readout_nats()")
+    assert not getattr(config, 'use_remix_linear', False), (
+        "remix-linear blocks return (x, ctx) and thread context block-to-block; the "
+        "oracle's loop does not, and would mis-measure rather than fail")
     n_layer = config.n_layer
     routing_layers, per_block = bell_capacities(
         n_layer, args.min_exit_layer, args.target_active_frac, args.capacity_schedule)
@@ -280,7 +313,9 @@ def main():
     freq_table = None
     if 'freq' in args.rank:
         from nanochat.eet import FrequencyPrior
-        freq_table = FrequencyPrior(config.vocab_size, args.tokenizer_dir, device).freq_bias
+        # FrequencyPrior._load_or_compute map_location's the cached table to CPU and
+        # ignores its device argument, so move it explicitly.
+        freq_table = FrequencyPrior(config.vocab_size, args.tokenizer_dir, device).freq_bias.to(device)
 
     steps = max(1, args.eval_tokens // (args.device_batch_size * args.max_seq_len))
     ranks = [r.strip() for r in args.rank.split(',') if r.strip()]
@@ -292,8 +327,24 @@ def main():
         device=device, data_dir=args.data_dir, max_shards=args.max_shards)
     it = iter(loader)
 
+    check_done = not args.check
     for s in range(steps):
         idx, targets = next(it)
+        if not check_done:
+            check_done = True
+            with torch.no_grad():
+                ref_loss = model(idx, targets, loss_reduction='none').view(-1)
+                nb = token_bytes[targets.reshape(-1).clamp(min=0)]
+                ref_bpb = float((ref_loss * (nb > 0)).sum()) / float(nb.sum()) / math.log(2.0)
+            on, ob = oracle_forward(model, idx, targets, per_block,
+                                    torch.rand(idx.shape, device=idx.device), 'dense', token_bytes)
+            orc_bpb = float(on) / int(ob) / math.log(2.0)
+            print0(f"[check] model forward bpb={ref_bpb:.4f}  oracle 'dense' bpb={orc_bpb:.4f}"
+                   f"  diff={orc_bpb - ref_bpb:+.4f}")
+            if abs(orc_bpb - ref_bpb) > 2e-3:
+                print0("[check] WARNING: the oracle's dense reimplementation does not match the "
+                       "model's own forward. Deltas below are still self-consistent, but fix "
+                       "this before quoting the absolute numbers.")
         # Per-token CE from the untouched model, needed by the 'ce' proxy.
         per_token_ce = None
         if 'ce' in ranks:
