@@ -10991,6 +10991,29 @@ class GPT(nn.Module):
         total_flops = total_flops + derived_matmul_flops
         active_flops = total_flops - 6 * inactive_expert_params
         active_params = nparams - inactive_expert_params
+
+        # EET: routing physically removes tokens from later blocks, so a block reached by
+        # a fraction a of the tokens does a of its matmul work and a^2 of its attention
+        # kernel work (queries and keys both shrink). Nothing above models that, so before
+        # this every EET point was reported at essentially dense cost -- EET base came out
+        # at 2.867e8 against dense's 2.863e8 -- and every Pareto plot in the repo had EET
+        # at the wrong x-coordinate. Worse, the inverse-width arms had their extra
+        # parameters counted while their routing saving was not, so they looked ~1.9x
+        # dense when the honest figure is 0.86x.
+        if getattr(self.config, 'use_eet', False) and getattr(self.config, 'eet_compute_skip', False):
+            a = eet_active_fractions(
+                self.config.n_layer,
+                int(getattr(self.config, 'eet_min_exit_layer', 1)),
+                float(getattr(self.config, 'eet_target_active_frac', 0.125)),
+                str(getattr(self.config, 'eet_capacity_schedule', 'bell')))
+            saved = 0.0
+            for i, (blk, ai) in enumerate(zip(self.transformer.h, a)):
+                bp = sum(p_.numel() for p_ in blk.parameters())
+                window = self.window_sizes[i][0]
+                eff = t if window < 0 else min(window, t)
+                saved += 6 * bp * (1.0 - ai)                    # matmuls scale with a
+                saved += 12 * h * q * eff * (1.0 - ai * ai)     # attention scales with a^2
+            active_flops = max(active_flops - saved, 0.0)
         return total_flops, active_flops, active_params
 
 

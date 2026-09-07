@@ -57,7 +57,7 @@ OUT_BASE="${OUT_BASE:-out/eet_tier0}"
 LOGFILE="${SWEEP_LOG:-${OUT_BASE}/tier0_d${DEPTH}.log}"
 STATE_FILE="${OUT_BASE}/state_d${DEPTH}.json"
 TARGET_FRAC="${TARGET_FRAC:-0.10}"
-DS_LAMBDA="${DS_LAMBDA:-0.25}"
+DS_LAMBDA="${DS_LAMBDA:-1.0}"
 mkdir -p "$OUT_BASE"
 
 echo "==============================================================="
@@ -246,6 +246,29 @@ for _ME in 1 4; do
   done
 done
 
+# ---- T3: spread the readability pressure instead of concentrating it -------
+# T0B at lambda 0.25 is the result that reopened this. A DENSE model asked to be readable
+# at every depth GENTLY keeps its hierarchy and costs almost nothing:
+#     lambda 1.00  bpb 1.0228  gap +0.0330  last-4-layer gain +0.0497
+#     lambda 0.25  bpb 1.0032  gap +0.0133  last-4-layer gain +0.1032  (|dx| L5-7: 57/36/79)
+# So the readability/hierarchy tension is a DIAL, not the cliff a single lambda=1.0 point
+# suggested. And it points at the distribution, not the amount: EET's pressure is harsh
+# and concentrated (45% of tokens are read out of layers 1-3), while deep supervision is
+# gentle and uniform. Same objective, opposite distribution, and only the uniform one
+# keeps its depth.
+#
+# This arm applies the gentle uniform pressure ON TOP of routing, at min_exit=1 where the
+# collapse is worst. If it works, layers 1-3 stop over-committing and the collapse point
+# should move or soften. Cost: one extra head pass on 12.5% of positions, training only.
+#
+# PASS: bpb below the min_exit=1 control's 1.0622 by more than 0.02 AND last-4-layer
+# profile gain above 0.05. A bpb win with a flat profile means something else helped and
+# the mechanism story is wrong.
+run_experiment "T3_SPREAD_DS025_D${DEPTH}" \
+    "T3: EET min_exit=1 + gentle uniform readability (deep-supervision lambda 0.25)" \
+    $EET_FLAGS $ISO --eet-min-exit-layer 1 \
+    --deep-supervision-lambda 0.25 --deep-supervision-frac 0.125 || true
+
 # ---- per-layer profile on every checkpoint: THE Tier 0 measurement ---------
 echo ""
 echo "==============================================================="
@@ -254,7 +277,8 @@ echo "==============================================================="
 for tag in "DENSE_D${DEPTH}" "T0A_CTRL_EARLYEXIT_D${DEPTH}" "T0A_LATEEXIT_D${DEPTH}" \
            "T0B_DEEPSUP_D${DEPTH}" "T0B_DEEPSUP_L025_D${DEPTH}" \
            "T2_WIDTH_ME1_P05_D${DEPTH}" "T2_WIDTH_ME1_P10_D${DEPTH}" \
-           "T2_WIDTH_ME4_P05_D${DEPTH}" "T2_WIDTH_ME4_P10_D${DEPTH}"; do
+           "T2_WIDTH_ME4_P05_D${DEPTH}" "T2_WIDTH_ME4_P10_D${DEPTH}" \
+           "T3_SPREAD_DS025_D${DEPTH}"; do
     CK="${OUT_BASE}/${tag}/depth_${DEPTH}/ckpt_base/base"
     LAST=$(ls "$CK"/model_*.pt 2>/dev/null | sort | tail -1 || true)
     if [ -z "$LAST" ]; then echo "[profile] $tag: no checkpoint, skipped"; continue; fi

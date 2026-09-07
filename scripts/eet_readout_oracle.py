@@ -57,14 +57,30 @@ LN2 = math.log(2.0)
 
 
 def infer_config(sd, seq_len, window_pattern, head_dim):
-    """Reconstruct GPTConfig from a bare state dict."""
+    """Reconstruct GPTConfig from a bare state dict.
+
+    The FFN width is read back per layer rather than assumed uniform. An inverse-width
+    checkpoint (--eet-width-power) has a different hidden size in every block, and building
+    it with the default schedule produced shape mismatches that load_state_dict swallowed
+    under strict=False, leaving a randomly initialised model that silently profiled as
+    nothing at all.
+    """
     n_layer = 1 + max(int(k.split('.')[2]) for k in sd if k.startswith('transformer.h.'))
     n_embd = sd['transformer.h.0.attn.c_q.weight'].shape[1]
     vocab = sd['lm_head.weight'].shape[0]
     n_head = n_embd // head_dim
-    return GPTConfig(sequence_len=seq_len, vocab_size=vocab, n_layer=n_layer,
-                     n_head=n_head, n_kv_head=n_head, n_embd=n_embd,
-                     window_pattern=window_pattern)
+    mults = []
+    for i in range(n_layer):
+        w = sd.get(f'transformer.h.{i}.mlp.c_fc.weight')
+        mults.append(round(w.shape[0] / n_embd, 6) if w is not None else 4.0)
+    kw = dict(sequence_len=seq_len, vocab_size=vocab, n_layer=n_layer,
+              n_head=n_head, n_kv_head=n_head, n_embd=n_embd,
+              window_pattern=window_pattern)
+    if len(set(mults)) > 1 or abs(mults[0] - 4.0) > 1e-6:
+        kw['p34_ffn_schedule'] = ','.join(str(m) for m in mults)
+        print0(f"[readout] per-layer FFN widths from the checkpoint: "
+               + " ".join(f"{m:.2f}" for m in mults))
+    return GPTConfig(**kw)
 
 
 def load_dense(path, device, seq_len, window_pattern, head_dim):
@@ -76,6 +92,14 @@ def load_dense(path, device, seq_len, window_pattern, head_dim):
     model.to_empty(device=device)
     model.init_weights(verify=False)
     missing, unexpected = model.load_state_dict(sd, strict=False, assign=True)
+    shape_bad = [k for k, v in sd.items()
+                 if k in dict(model.named_parameters()) and
+                 tuple(dict(model.named_parameters())[k].shape) != tuple(v.shape)]
+    if shape_bad or len(missing) > 4:
+        raise RuntimeError(
+            "the reconstructed config does not match the checkpoint, so the profile would "
+            "describe a partly random model rather than the trained one.\n"
+            f"  shape mismatches: {shape_bad[:5]}\n  missing: {missing[:5]}")
     if missing:
         print0(f"[readout] {len(missing)} missing keys (e.g. {missing[:3]})")
     # An EET checkpoint carries the router and its buffers on top of an identical

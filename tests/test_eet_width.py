@@ -114,3 +114,58 @@ def test_width_power_is_inert_without_eet():
     cfg = GPTConfig(n_layer=8, n_head=4, n_kv_head=4, n_embd=512, vocab_size=1024,
                     sequence_len=128, window_pattern="L", eet_width_power=1.0)
     assert resolve_ffn_schedule(cfg, 8) == [4.0] * 8
+
+
+def test_estimate_flops_credits_the_routing_saving():
+    """EET's reported active FLOPs must fall with the capacity schedule.
+
+    Before this, estimate_flops was 6*params + attn kernel with no notion of routing, so
+    EET base reported 2.867e8 against dense's 2.863e8 and every Pareto point sat at the
+    wrong x-coordinate. The inverse-width arms were worse: their extra parameters were
+    counted while their routing saving was not, so they read ~1.9x dense when the honest
+    figure is 0.86x, which is what made them look catastrophic.
+    """
+    base = dict(sequence_len=2048, vocab_size=32768, n_layer=8, n_head=4, n_kv_head=4,
+                n_embd=512, window_pattern="SSSL")
+    with torch.device("meta"):
+        dense_flops = GPT(GPTConfig(**base)).estimate_flops()[1]
+
+    # (min_exit, width_power) -> ratio from the independent analytic model
+    expect = {(1, 0.0): 0.722, (1, 0.5): 0.765, (1, 1.0): 0.861,
+              (4, 0.0): 0.831, (4, 0.5): 0.855, (4, 1.0): 0.910}
+    for (me, wp), want in expect.items():
+        cfg = GPTConfig(**base, use_eet=True, eet_global_router=True, eet_compute_skip=True,
+                        eet_min_exit_layer=me, eet_target_active_frac=0.10,
+                        eet_capacity_schedule='bell', eet_warmup_frac=0.0,
+                        eet_explore_frac=0.0, eet_loss_variant='none',
+                        eet_width_power=wp, eet_width_cap=16.0)
+        with torch.device("meta"):
+            got = EarlyExitGPT(cfg).estimate_flops()[1] / dense_flops
+        assert abs(got - want) < 0.01, (me, wp, got, want)
+        assert got < 1.0, f"routing must never report MORE than dense: {me} {wp} {got}"
+
+
+def test_a_width_checkpoint_round_trips_through_the_oracle():
+    """The profiler must rebuild an inverse-width model exactly from its state dict.
+
+    infer_config assumed a uniform FFN. On a width checkpoint every block has a different
+    hidden size, so the rebuilt model mismatched, load_state_dict(strict=False) swallowed
+    it, and the profile silently described a randomly initialised model -- which is why all
+    four width arms produced empty profiles.
+    """
+    from scripts.eet_readout_oracle import infer_config
+
+    cfg = GPTConfig(sequence_len=128, vocab_size=1024, n_layer=8, n_head=4, n_kv_head=4,
+                    n_embd=512, window_pattern="SSSL", use_eet=True, eet_global_router=True,
+                    eet_compute_skip=True, eet_min_exit_layer=1, eet_target_active_frac=0.10,
+                    eet_warmup_frac=0.0, eet_explore_frac=0.0, eet_loss_variant='none',
+                    eet_width_power=1.0, eet_width_cap=16.0)
+    torch.manual_seed(0)
+    sd = EarlyExitGPT(cfg).state_dict()
+    rebuilt = GPT(infer_config(sd, 128, "SSSL", 128))
+    params = dict(rebuilt.named_parameters())
+    bad = [k for k, v in sd.items()
+           if k in params and tuple(params[k].shape) != tuple(v.shape)]
+    assert not bad, bad
+    missing, _ = rebuilt.load_state_dict(sd, strict=False)
+    assert not missing, missing[:5]
