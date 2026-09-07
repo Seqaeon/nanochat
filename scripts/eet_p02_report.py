@@ -66,10 +66,12 @@ def parse_log(path):
             prev_was_rule = bool(RULE_RE.match(line))
             if m and m.group(1) not in ('GATE', 'REPORT', 'T0A'):
                 cur = m.group(1)
-                runs.setdefault(cur, {'tag': cur, 'bpb': [], 'dt': [],
-                                      'flops_active': None, 'flops_total': None,
-                                      'tokens': None, 'vocab_size': None,
-                                      'n_embd': None, 'n_layer': None})
+                # Overwrite, do not setdefault: a rerun of the same arm appends a fresh
+                # section to the same log and must replace the earlier one entirely.
+                runs[cur] = {'tag': cur, 'bpb': [], 'dt': [],
+                             'flops_active': None, 'flops_total': None,
+                             'tokens': None, 'vocab_size': None,
+                             'n_embd': None, 'n_layer': None}
                 continue
             if cur is None:
                 continue
@@ -92,6 +94,8 @@ def parse_log(path):
                     r[key] = int(m2.group(1))
     for r in runs.values():
         r['val_bpb'] = min(r['bpb']) if r['bpb'] else None
+        if r['val_bpb'] is None:
+            r['failed'] = True
         # Skip the first steps: they carry compile and warmup time.
         tail = r['dt'][10:] if len(r['dt']) > 20 else r['dt']
         r['dt_ms'] = statistics.median(tail) if tail else None
@@ -213,19 +217,19 @@ def main():
     # bpb is only comparable at one vocabulary, and the repo ships a 265-token stub at
     # ./tokenizer that trains without complaint. Refuse rather than print a table.
     vocabs = {t: r['vocab_size'] for t, r in runs.items() if r['vocab_size']}
-    if vocabs:
+    if vocabs and len(set(vocabs.values())) > 1 or (vocabs and min(vocabs.values()) < 1000):
+        good = max(vocabs.values())
+        stale = sorted(t for t, v in vocabs.items() if v != good)
+        print(f"[report] ABORT: arms did not all train at the same vocabulary, so their bpb "
+              f"is not comparable.")
+        for t, v in sorted(vocabs.items()):
+            flag = "  <-- RERUN THIS ARM" if v != good else ""
+            print(f"           {t:<28} vocab_size={v}{flag}")
         if min(vocabs.values()) < 1000:
-            print("[report] ABORT: runs trained at vocab_size "
-                  f"{sorted(set(vocabs.values()))}. That is the byte-level stub, not a "
-                  "trained tokenizer, and every bpb below would be meaningless.")
-            for t, v in sorted(vocabs.items()):
-                print(f"           {t}: vocab_size={v}")
-            print("[report] Set TOKENIZER_DIR to a real tokenizer and rerun those arms.")
-            return 1
-        if len(set(vocabs.values())) > 1:
-            print(f"[report] ABORT: arms disagree on vocab_size {sorted(set(vocabs.values()))}; "
-                  "bpb is not comparable across vocabularies.")
-            return 1
+            print("[report] The small one is the byte-level stub tokenizer.")
+        print(f"[report] Each arm is read from its LAST section in the log, so an arm listed "
+              f"here has not been rerun since. Rerun: {' '.join(stale)}")
+        return 1
     if dense['n_embd'] and not args.n_embd:
         args.n_embd = dense['n_embd']
 
@@ -286,6 +290,7 @@ def main():
             continue
         r = runs[tag]
         if r['val_bpb'] is None:
+            print(f"{tag.rsplit('_D', 1)[0]:<22}{'-- most recent run produced no validation bpb (failed) --':>60}")
             continue
         base = tag.rsplit('_D', 1)[0]
         kv = next((v for k, v in kv_of.items() if base.startswith(k)), 'none')

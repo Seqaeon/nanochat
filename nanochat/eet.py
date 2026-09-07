@@ -25,7 +25,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from nanochat.common import COMPUTE_DTYPE, print0, is_ddp_initialized
-from nanochat.gpt import GPT, GPTConfig, Linear, Block, norm, has_ve
+from nanochat.gpt import GPT, GPTConfig, Linear, Block, norm, has_ve, forward_split_eager
 from torch.utils.checkpoint import checkpoint
 
 
@@ -1944,6 +1944,14 @@ class EarlyExitGPT(GPT):
             # the computation no longer erases itself from everyone else's context.
             kv_mode = getattr(config, 'eet_kv_mode', 'none')
             use_split_kv = kv_mode in ('fresh', 'stale') and kv_cache is None
+            if use_split_kv:
+                # Capacities are int(survivor * T), so a symbolic T makes every per-layer
+                # query count symbolic too and the split-KV mask's stride stops being
+                # guarded. EET's whole premise is static shapes, so pin the sequence dim.
+                try:
+                    torch._dynamo.mark_static(idx, 1)
+                except Exception:
+                    pass
             n_kv_head = blocks[0].attn.n_kv_head
             head_dim = blocks[0].attn.head_dim
             bank_k = bank_v = None
@@ -2039,9 +2047,14 @@ class EarlyExitGPT(GPT):
                         bank_k = bank_k.scatter(1, idxkv, k_act)
                         bank_v = bank_v.scatter(1, idxkv, v_act)
                         k_all, v_all = bank_k, bank_v
-                    x_out = block.forward_split(
-                        x_input, (cos_act, sin_act), active_idx,
-                        k_all, v_all, self.window_sizes[i],
+                    _split = (forward_split_eager
+                              if getattr(config, 'eet_kv_eager', False)
+                              else block.forward_split)
+                    _split_args = ((block,) if getattr(config, 'eet_kv_eager', False) else ())
+                    x_out = _split(
+                        *_split_args,
+                        x_q=x_input, cos_sin_q=(cos_act, sin_act), q_pos=active_idx,
+                        k=k_all, v=v_all, window_size=self.window_sizes[i], n_q=K_cur,
                     )
                 else:
                     x_out = block(x_input, ve, (cos_act, sin_act), self.window_sizes[i], kv_cache)

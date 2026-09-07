@@ -515,6 +515,7 @@ def run_training_sweep(args):
         "--eet-route-noise", str(getattr(args, 'eet_route_noise', 0.0)),
         "--eet-route-noise-end", str(getattr(args, 'eet_route_noise_end', -1.0)),
         "--eet-coverage-diag", str(getattr(args, 'eet_coverage_diag', 0)),
+        "--eet-kv-eager", str(getattr(args, 'eet_kv_eager', 0)),
         # SCH: Structured Code Output Heads
         "--use-code-head", str(getattr(args, 'use_code_head', 0)),
         "--sch-head-type", str(getattr(args, 'sch_head_type', 'code')),
@@ -1381,6 +1382,7 @@ if __name__ == "__main__":
     parser.add_argument("--eet-route-noise", type=float, default=0.0)
     parser.add_argument("--eet-route-noise-end", type=float, default=-1.0)
     parser.add_argument("--eet-coverage-diag", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--eet-kv-eager", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
     

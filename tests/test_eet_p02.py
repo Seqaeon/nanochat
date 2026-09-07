@@ -13,6 +13,7 @@ where the ~0.06 bpb gap to dense comes from:
 These tests prove the mechanisms behave as specified. They do not test whether the
 hypotheses are true, which is what the training sweep is for.
 """
+import pytest
 import torch
 
 from nanochat.gpt import GPTConfig
@@ -425,3 +426,44 @@ def test_every_router_parameter_is_initialized_after_the_meta_path():
         with torch.no_grad():
             logits = m.eet_routers[0](m.transformer.wte(x).float())
         assert float(logits.std(dim=1).mean()) > 1e-6, f"{rtype}: router output constant across tokens"
+
+
+def test_kv_eager_matches_the_compiled_path():
+    """The escape hatch must change only WHERE attention runs, not what it computes."""
+    x, y = _batch(_config())
+    outs = {}
+    for eager in (False, True):
+        torch.manual_seed(0)
+        m = EarlyExitGPT(_config(eet_kv_mode='stale', eet_kv_eager=eager))
+        m.eval()
+        with torch.no_grad():
+            outs[eager] = m(x, y, eet_do_route=True, eet_phase=3)
+    assert torch.allclose(outs[False], outs[True], atol=1e-5), (outs[False], outs[True])
+
+
+def test_split_kv_query_count_is_a_python_int():
+    """n_q must reach the mask as a concrete int, not a tensor size.
+
+    Reading K off x_q.size(1) let torch.compile carry it symbolically, and inductor then
+    baked one layer's mask stride into a kernel another layer reused, failing in the
+    BACKWARD with "expected size 64==64, stride 430848==3691776".
+    """
+    torch.manual_seed(0)
+    cfg = _config(n_layer=2)
+    m = EarlyExitGPT(cfg)
+    m.eval()
+    block = m.transformer.h[0]
+    B, T, C = 2, 32, cfg.n_embd
+    x = torch.randn(B, T, C)
+    cos, sin = m.cos[:, :T], m.sin[:, :T]
+    K = 7
+    pos = torch.arange(K).unsqueeze(0).expand(B, -1).contiguous()
+
+    with torch.no_grad():
+        k, v = block.attn._project_kv(_norm(x), None, cos, sin)
+        cos_q, sin_q = cos[:, :K], sin[:, :K]
+        out = block.forward_split(x[:, :K], (cos_q, sin_q), pos, k, v, (-1, 0), n_q=K)
+    assert out.shape == (B, K, C)
+    # A wrong n_q must fail loudly rather than silently reshape.
+    with pytest.raises(RuntimeError):
+        block.forward_split(x[:, :K], (cos_q, sin_q), pos, k, v, (-1, 0), n_q=K + 1)

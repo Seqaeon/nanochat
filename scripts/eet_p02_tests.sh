@@ -55,13 +55,20 @@ export PYTHONPATH="${PYTHONPATH:-.}"
 
 FORCE=0
 SKIP_GATES=0
+REDO_ORACLE=0
+REDO_TAGS=""
 DEPTH=8
-for arg in "$@"; do
-    case $arg in
-        --force)      FORCE=1 ;;
-        --skip-gates) SKIP_GATES=1 ;;
-        *)            DEPTH=$arg ;;
+while [ $# -gt 0 ]; do
+    case $1 in
+        --force)       FORCE=1 ;;
+        --skip-gates)  SKIP_GATES=1 ;;
+        --redo-oracle) REDO_ORACLE=1 ;;
+        --redo)        shift; REDO_TAGS="$REDO_TAGS $1" ;;
+        --help|-h)
+            sed -n '2,52p' "$0"; exit 0 ;;
+        *)             DEPTH=$1 ;;
     esac
+    shift
 done
 
 EET_OUT_BASE="${EET_OUT_BASE:-out/eet_p02}"
@@ -130,22 +137,38 @@ print_header() {
 
 init_state
 
+for _tag in $REDO_TAGS; do
+    python3 -c "
+import json
+s = json.load(open('$STATE_FILE'))
+gone = s.get('completed', {}).pop('$_tag', None) is not None
+s.get('started', {}).pop('$_tag', None)
+json.dump(s, open('$STATE_FILE','w'), indent=2)
+print('[redo] cleared $_tag' if gone else '[redo] $_tag was not marked completed')"
+done
+
 # ---------------------------------------------------- tokenizer preflight ---
 # The repo ships a 265-token stub at ./tokenizer (tokenizer.pkl is 1.9 KB). base_train
 # prints "Vocab size: 265" and trains happily, so a whole sweep can complete against a
 # byte-level vocabulary and produce bpb numbers that mean nothing and cannot be compared
 # with anything trained at V=32768. Refuse to start instead.
-TOK_VOCAB=$(PYTHONPATH=. python3 -c "
+TOK_PROBE=$(PYTHONPATH=. python -c "
 from nanochat.tokenizer import get_tokenizer
-print(get_tokenizer('${TOKENIZER_DIR:-tokenizer}').get_vocab_size())" 2>/dev/null || echo 0)
-if [ "${TOK_VOCAB:-0}" -lt 1000 ]; then
+print(get_tokenizer('${TOKENIZER_DIR:-tokenizer}').get_vocab_size())" 2>&1) || TOK_PROBE=""
+TOK_VOCAB=$(printf '%s' "$TOK_PROBE" | tail -1 | tr -dc '0-9')
+if [ -z "$TOK_VOCAB" ]; then
+    echo ""
+    echo "[ABORT] could not read a vocabulary from '${TOKENIZER_DIR:-tokenizer}':"
+    printf '%s\n' "$TOK_PROBE" | tail -3 | sed 's/^/        /'
+    exit 1
+fi
+if [ "$TOK_VOCAB" -lt 1000 ]; then
     echo ""
     echo "[ABORT] --tokenizer-dir '${TOKENIZER_DIR:-tokenizer}' resolves to vocab_size=${TOK_VOCAB}."
     echo "        That is the byte-level stub, not a trained tokenizer. Every run would"
     echo "        train at that vocabulary and every bpb would be meaningless."
-    echo "        Point TOKENIZER_DIR at the real one, e.g.:"
-    echo "          TOKENIZER_DIR=\$HOME/.cache/nanochat/tokenizer bash \$0 ${DEPTH}"
-    echo "        and delete any arm already trained against the stub."
+    echo "        Point TOKENIZER_DIR at a real one and rerun any arm already trained"
+    echo "        against the stub with --redo <TAG>."
     exit 1
 fi
 echo "  Tokenizer:        ${TOKENIZER_DIR:-tokenizer} (vocab_size ${TOK_VOCAB})"
@@ -223,13 +246,19 @@ TOKENS="$(get_var tokens_d${DEPTH})"
 if [ -z "$TOKENS" ]; then
     # head -1, not tail -1: DENSE is always the first run in the log, and on a resumed
     # sweep the last occurrence would belong to whichever arm ran most recently.
-    TOKENS=$(grep -h "Total number of training tokens:" "$LOGFILE" | head -1 \
-             | sed 's/.*: *//' | tr -d ', ')
+    TOKENS=""
+    if [ -f "$LOGFILE" ]; then
+        TOKENS=$(grep -h "Total number of training tokens:" "$LOGFILE" 2>/dev/null \
+                 | head -1 | sed 's/.*: *//' | tr -d ', ' || true)
+    fi
     if [ -n "$TOKENS" ]; then
         set_var "tokens_d${DEPTH}" "$TOKENS"
         echo "[iso-data] pinning all later arms to ${TOKENS} tokens"
     else
-        echo "[warn] could not read the dense token count; later arms use their own Chinchilla budget"
+        echo "[warn] no dense token count in $LOGFILE and none stored in the state file."
+        echo "       Later arms will use their own Chinchilla budget, so the sweep is NOT"
+        echo "       iso-data. Set it by hand:"
+        echo "         python3 -c \"import json;s=json.load(open('$STATE_FILE'));s.setdefault('vars',{})['tokens_d${DEPTH}']='<N>';json.dump(s,open('$STATE_FILE','w'),indent=2)\""
     fi
 fi
 ISO_DATA=""
@@ -242,8 +271,26 @@ ISO_DATA=""
 DENSE_CKPT="$(run_dir_for "DENSE_D${DEPTH}")/ckpt_base/base"
 ORACLE_JSON="${EET_OUT_BASE}/oracle_d${DEPTH}.json"
 
+[ "$REDO_ORACLE" -eq 1 ] && rm -f "$ORACLE_JSON"
+echo "  Oracle result:    $ORACLE_JSON"
+if [ -f "$ORACLE_JSON" ]; then
+    echo "  Oracle:           present, will NOT rerun (delete that exact file, or pass --redo-oracle)"
+elif [ ! -d "$DENSE_CKPT" ]; then
+    echo "  Oracle:           SKIPPED, no dense checkpoint at $DENSE_CKPT"
+else
+    echo "  Oracle:           will run"
+fi
+
 if [ ! -f "$ORACLE_JSON" ] && [ -d "$DENSE_CKPT" ]; then
     print_header "T0A" "Context oracle on the dense checkpoint (no training)"
+    FREQ_N=$(PYTHONPATH=. python -c "
+import torch; print(torch.load('${TOKENIZER_DIR:-tokenizer}/freq_table.pt', weights_only=True).numel())" 2>/dev/null | tr -dc '0-9')
+    if [ "${FREQ_N:-0}" != "$TOK_VOCAB" ]; then
+        echo "[ABORT] ${TOKENIZER_DIR:-tokenizer}/freq_table.pt has ${FREQ_N} entries but the"
+        echo "        tokenizer has ${TOK_VOCAB}. The oracle's 'freq' ranking would be wrong."
+        echo "        Rebuild it: python -m scripts.code_assign --build-freq-table"
+        exit 1
+    fi
     python -m scripts.eet_context_oracle \
         --ckpt-dir "$DENSE_CKPT" \
         --data-dir "${DATA_DIR:-data}" --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" \
@@ -304,7 +351,10 @@ if [ "$SKIP_GATES" -eq 0 ]; then
     # The JSON is written to a file rather than interpolated into the python -c
     # string: it contains double quotes, which would terminate the shell argument.
     COV_JSON="${EET_OUT_BASE}/coverage_d${DEPTH}.json"
-    grep -h "EET_COVERAGE_JSON" "$LOGFILE" | tail -1 | sed 's/.*EET_COVERAGE_JSON //' > "$COV_JSON" || true
+    if [ -f "$LOGFILE" ]; then
+        grep -h "EET_COVERAGE_JSON" "$LOGFILE" 2>/dev/null | tail -1 \
+            | sed 's/.*EET_COVERAGE_JSON //' > "$COV_JSON" || true
+    fi
     if [ -s "$COV_JSON" ]; then
         T2_ENABLED=$(python3 -c "
 import json, sys

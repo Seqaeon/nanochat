@@ -605,6 +605,10 @@ class GPTConfig:
     eet_route_noise_end: float = -1.0              # <0 = hold eet_route_noise constant; else linear anneal
     # --- P02 Test 0B: per-layer vocabulary coverage diagnostic ---
     eet_coverage_diag: bool = False                # accumulate which token ids reach which layer
+    # Escape hatch: run the split-KV attention outside the compiled graph. Costs speed but
+    # sidesteps any inductor stride-guard failure on the mask, so the T1 quality gate can
+    # still produce a bpb number. Never use it for a wallclock claim.
+    eet_kv_eager: bool = False
     eet_router_task_grad: bool = True              # allow task loss gradients to propagate to router through continue weights
     eet_reinforce_interval: int = 0                 # two-pass REINFORCE every N steps (0=disabled). Runs dense forward to get counterfactual CE.
     eet_reinforce_lambda: float = 0.1               # REINFORCE loss weight
@@ -869,6 +873,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_capacity_schedule", "eet_exit_fracs",
     "eet_capacity_alignment_lambda", "eet_router_task_grad",
     "eet_kv_mode", "eet_route_noise", "eet_route_noise_end", "eet_coverage_diag",
+    "eet_kv_eager",
     "eet_depth_affine", "eet_capacity_anneal_frac", "eet_learned_schedule",
     "eet_departure_summary", "eet_route_consistency_lambda",
     "eet_dense_distill_interval", "eet_dense_distill_lambda",
@@ -8146,7 +8151,7 @@ class CausalSelfAttention(nn.Module):
         return k, v
 
     def forward_split(self, x_q, cos_sin_q, q_pos, k, v, window_size, ve_q=None,
-                      key_mask=None):
+                      key_mask=None, n_q=None):
         """EET context-restoring attention: few queries, full-length keys/values.
 
         Standard ``forward`` requires queries and keys to be the same token set, which is
@@ -8166,11 +8171,21 @@ class CausalSelfAttention(nn.Module):
             key_mask:  optional (B, T) bool; False positions are excluded from every
                        query's attention. Used by the context oracle to reproduce EET's
                        context loss on a dense model without changing its depth.
+            n_q:       the query count as a plain Python int. Pass it whenever the caller
+                       knows it. Reading it off x_q.size(1) instead lets torch.compile
+                       carry it as a symbolic size, and inductor then bakes one layer's
+                       mask stride into a kernel that another layer reuses:
+                         assert_size_stride(constant_pad_nd, (64, 1, s0, 2056), ...)
+                         AssertionError: expected size 64==64, stride 430848==3691776
+                       (430848 = 204*2112, 3691776 = 1748*2112: two different layers'
+                       capacities sharing one compiled backward).
 
         Returns:
             (B, K, C) attention output for the active tokens.
         """
         B, K, C = x_q.size()
+        if n_q is not None:
+            K = int(n_q)          # concrete: forces a guard instead of a symbolic size
         T = k.size(1)
         q = self.c_q(x_q).view(B, K, self.n_head, self.head_dim)
         cos_q, sin_q = cos_sin_q
@@ -8193,8 +8208,11 @@ class CausalSelfAttention(nn.Module):
         self_ok = k_pos == qp
         mask = mask | self_ok
 
+        # Canonical layout: SDPA pads the mask's last dim for alignment, and a
+        # non-contiguous input makes that pad's stride harder for inductor to guard.
         y = F.scaled_dot_product_attention(
-            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), attn_mask=mask
+            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+            attn_mask=mask.contiguous()
         ).transpose(1, 2)
 
         if self.head_importance is not None:
@@ -8202,6 +8220,12 @@ class CausalSelfAttention(nn.Module):
             y = y * his.view(1, 1, self.n_head, 1)
         y = y.contiguous().view(B, K, -1)
         return self.c_proj(y)
+
+
+@torch._dynamo.disable
+def forward_split_eager(block, *args, **kwargs):
+    """Run Block.forward_split outside the compiled graph (config.eet_kv_eager)."""
+    return block.forward_split(*args, **kwargs)
 
 
 class SpectralReparamLinear(nn.Module):
@@ -9818,12 +9842,14 @@ class Block(nn.Module):
             pass
         return x
 
-    def forward_split(self, x_q, cos_sin_q, q_pos, k, v, window_size, key_mask=None):
+    def forward_split(self, x_q, cos_sin_q, q_pos, k, v, window_size, key_mask=None,
+                      n_q=None):
         """Block forward where attention reads full-length keys/values (EET kv_mode)."""
         norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
         norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
         attn_out = self.attn.forward_split(
-            norm_fn_attn(x_q), cos_sin_q, q_pos, k, v, window_size, key_mask=key_mask
+            norm_fn_attn(x_q), cos_sin_q, q_pos, k, v, window_size,
+            key_mask=key_mask, n_q=n_q
         )
         x = x_q + attn_out
         if self.mlp is not None:

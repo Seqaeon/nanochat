@@ -249,3 +249,36 @@ after `super().init_weights(verify=False)` returns), so the banner no longer fir
 tensors that are about to be set correctly. `tests/test_eet_p02.py` poisons the storage
 with NaN before `init_weights` so these tests pin the worst case instead of sampling the
 allocator.
+
+### More P02 run gotchas
+
+**The sweep log is append-only, so the report must read each arm's LAST section.** It read
+the first, so an arm rerun against the real tokenizer was still judged on the original
+run's `vocab_size`, `val_bpb` and `dt`. That is why the stub abort kept firing after
+everything had been retrained. Fixed; the abort now names exactly which arms are stale and
+which to rerun.
+
+**Reruns without `--force`.** `--force` wipes every completed arm. `--redo <TAG>` clears
+one arm from the state file, and `--redo-oracle` deletes the oracle result so it is
+recomputed. The sweep prints the resolved oracle path on startup, because the gate is a
+file check (`out/eet_p02/oracle_d<D>.json`) and deleting a copy at the repo root does
+nothing.
+
+**The oracle's frequency proxy needs a matching `freq_table.pt`.** `FrequencyPrior` loads
+it from the tokenizer directory, and a table left over from a different vocabulary changes
+which tokens the oracle masks without failing. The sweep now aborts if its entry count
+does not equal the tokenizer's vocabulary size.
+
+**`torch.compile` stride guard on the split-KV mask.** T3 died in the BACKWARD with
+
+    assert_size_stride(constant_pad_nd, (64, 1, s0, 2056), (3691776, 3691776, 2112, 1))
+    AssertionError: expected size 64==64, stride 430848==3691776 at dim=0
+
+430848 = 204*2112 and 3691776 = 1748*2112: two different layers' capacities sharing one
+compiled backward. `forward_split` was reading the query count off `x_q.size(1)`, which
+torch.compile can carry symbolically, and the capacities are `int(survivor * T)` so a
+symbolic sequence length makes every per-layer count symbolic too. Fixed by passing the
+capacity in as a plain `int` (`n_q=K_cur`), marking the sequence dim static, and handing
+SDPA a contiguous mask. `--eet-kv-eager 1` runs that attention outside the compiled graph
+if it ever recurs: slower, so never use it for a wallclock claim, but the T1 quality gate
+still returns a bpb.
