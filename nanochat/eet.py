@@ -1638,7 +1638,7 @@ class EarlyExitGPT(GPT):
                     soft_active = soft_active + p_exit_i * ((config.eet_min_exit_layer + idx + 1) / n_layer)
                 soft_active = soft_active + p_exits[-1] * 1.0
                 
-                x = x_final
+                x = x_final.to(COMPUTE_DTYPE)
                 exit_hidden = x_final
                 avg_active = soft_active.mean()
                 total_exit_frac = (exit_layer_hard < len(routing_layers)).float().mean()
@@ -1931,7 +1931,14 @@ class EarlyExitGPT(GPT):
 
             # Pre-allocate x_final to store the representation of each token at the moment of exit.
             # Start x_final as a copy of x0. When a token exits, we scatter its latest state from x_active into x_final.
-            x_final = x0.clone()
+            # CONTRACT: x_final is fp32; every scatter source is cast INTO it and every
+            # consumer casts back out. router_task_grad's blend produces fp32, and a
+            # `.to(x_final.dtype)` guard is erased by tracing whenever the dtypes already
+            # match, so the only reliable way to make the aten.scatter.src dtypes agree is
+            # to make the destination unconditionally fp32. Without this, compiling with
+            # --eet-router-task-grad 1 raises "scatter(): Expected self.dtype to be equal
+            # to src.dtype", or silently falls back to eager and costs the whole speedup.
+            x_final = x0.clone().float()
             # x_active holds the current active token representations.
             x_active = x.clone()
 
@@ -1997,7 +2004,7 @@ class EarlyExitGPT(GPT):
                 # --- Layer 8 Reentry: restore all tokens at final layer ---
                 if i == n_layer - 1 and getattr(config, 'eet_reenter_final', False):
                     # Scatter current active tokens into x_final before resetting active_idx
-                    x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active)
+                    x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active.float())
                     
                     active_idx = torch.arange(T, device=x.device).unsqueeze(0).expand(B, -1).contiguous()
                     K_cur = T
@@ -2045,7 +2052,7 @@ class EarlyExitGPT(GPT):
                     if kv_mode == 'fresh':
                         # Project keys/values at THIS layer for every position, using each
                         # token's current state if active and its frozen exit state if not.
-                        x_full = x_final.scatter(1, idx3.expand(-1, -1, C), x_active)
+                        x_full = x_final.scatter(1, idx3.expand(-1, -1, C), x_active.float()).to(COMPUTE_DTYPE)
                         x_input_full = self.resid_lambdas[i] * x_full + x0_w * x0
                         k_all, v_all = block.attn._project_kv(
                             attn_norm(x_input_full), ve_full, cos_full, sin_full
@@ -2091,7 +2098,7 @@ class EarlyExitGPT(GPT):
                 # (full B,T,C operation) and runs at every routing layer for no benefit.
                 need_candidate_states = is_soft_training or loss_variant == 'quality'
                 if need_candidate_states and (i in routing_set or i == n_layer - 1):
-                    x_at_layer_i = x_final.scatter(1, idx3.expand(-1, -1, C), x_active)
+                    x_at_layer_i = x_final.scatter(1, idx3.expand(-1, -1, C), x_active.float()).to(COMPUTE_DTYPE)
                     state_to_append = norm(x_at_layer_i)
                     candidate_states.append(state_to_append.detach())
                     hard_candidate_states.append(state_to_append.detach())
@@ -2149,7 +2156,7 @@ class EarlyExitGPT(GPT):
                         # AND "good intermediate features" (for continuing tokens).
                         if getattr(config, 'eet_detach_exit_from_backbone', False):
                             x_exited = x_exited.detach()
-                        x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
+                        x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited.float())
 
                         # Continuing tokens: update active_idx and x_active
                         active_idx_next = torch.gather(active_idx, 1, keep_local)  # (B, K_next)
@@ -2183,7 +2190,7 @@ class EarlyExitGPT(GPT):
                         active_idx = active_idx_next
                     else:
                         # Construct temporary full state to evaluate the per-layer router
-                        x_at_layer_i = x_final.scatter(1, idx3.expand(-1, -1, C), x_active)
+                        x_at_layer_i = x_final.scatter(1, idx3.expand(-1, -1, C), x_active.float()).to(COMPUTE_DTYPE)
                         
                         # Run router on the FULL hidden state x (which has static shape B, T, C)
                         # and detach it to prevent router gradients from flowing to backbone
@@ -2218,7 +2225,7 @@ class EarlyExitGPT(GPT):
                         # Backbone gradient isolation (same as global router path)
                         if getattr(config, 'eet_detach_exit_from_backbone', False):
                             x_exited = x_exited.detach()
-                        x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited)
+                        x_final = x_final.scatter(1, exit_idx_global.unsqueeze(-1).expand(-1, -1, C), x_exited.float())
 
                         # Continuing tokens: update active_idx and x_active
                         active_idx_next = torch.gather(active_idx, 1, keep_local)  # (B, K_next)
@@ -2242,8 +2249,8 @@ class EarlyExitGPT(GPT):
                 gamma = self.exit_gamma[-1].to(x_active.dtype)
                 beta = self.exit_beta[-1].to(x_active.dtype)
                 x_active = x_active * gamma + beta
-            x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active)
-            x = x_final
+            x_final = x_final.scatter(1, active_idx.unsqueeze(-1).expand(-1, -1, C), x_active.float())
+            x = x_final.to(COMPUTE_DTYPE)
 
             # Record final exit probs
             if is_global_router:

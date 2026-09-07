@@ -8210,8 +8210,11 @@ class CausalSelfAttention(nn.Module):
 
         # Canonical layout: SDPA pads the mask's last dim for alignment, and a
         # non-contiguous input makes that pad's stride harder for inductor to guard.
+        # Keys and values come from a full-length state the caller assembles, and one
+        # fp32 parameter anywhere in that expression (resid_lambdas, the x0 weights)
+        # promotes the whole thing. Align here rather than trusting every caller.
         y = F.scaled_dot_product_attention(
-            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+            q.transpose(1, 2), k.to(q.dtype).transpose(1, 2), v.to(q.dtype).transpose(1, 2),
             attn_mask=mask.contiguous()
         ).transpose(1, 2)
 
