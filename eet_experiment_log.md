@@ -306,20 +306,40 @@ All EET arms at 265,814,016 tokens, d8/512, V=32768, `target_active_frac=0.10`, 
 | dense d5 control | 1.04243 | — | 174.2 | | 23.0 |
 | dense d6 control | 1.03339 | — | 176.5 | | 24.5 |
 
-**Caveat on the absolute gap.** `DENSE_D8` ran at 440,401,920 tokens, not 265,814,016: the
-state file still held the token budget measured during the V=265 stub runs, and a d8 model
-gets a larger Chinchilla horizon at V=32768. Extrapolating the two iso-data dense controls
-(exponent **-0.1158** from d5 and d6) puts dense d8 at 266M tokens at **~0.968**, so the
-EET gap is about **+0.096**. That is a two-point extrapolation across a 1.76x FLOP gap and
-should be replaced by a rerun of `DENSE_D8 --target-tokens 265814016`. It does not change
-the verdict, because the T1/T2 decisions rest on within-EET deltas at identical budgets.
+**The dense control, measured.** `DENSE_D8` first ran at 440,401,920 tokens rather than
+265,814,016, because the state file still held the budget measured during the V=265 stub
+runs. Rerun at the matched budget it scores **0.991231**. (A two-point extrapolation from
+d5 and d6 had predicted 0.968; the measured number is 0.023 worse, so the gaps below are
+smaller than first reported and the allowed gap is smaller too. The measured value stands.)
+
+Iso-data dense curve, three measured points at 265,814,016 tokens:
+
+| depth | active FLOPs/token | bpb |
+|---|---|---|
+| 5 | 1.509967e8 | 1.042433 |
+| 6 | 1.627932e8 | 1.033392 |
+| 8 | 2.862643e8 | **0.991231** |
+
+Local log-log slope d6 to d8 is **-0.0738** (three-point fit -0.0769). EET's FLOP ratio with
+the head priced in is **0.722**, so the allowed gap is **+0.024**.
+
+| arm | bpb | gap vs dense | over budget |
+|---|---|---|---|
+| EET base | 1.06433 | +0.0731 | 3.03x |
+| T1 fresh | 1.05617 | **+0.0649** | 2.70x |
+| T1 stale | 1.06448 | +0.0732 | 3.04x |
+| T2 random | 1.06487 | +0.0736 | 3.06x |
+| T2 anneal | 1.06258 | +0.0713 | 2.96x |
+
+Every arm fails the pre-registered 0.045 threshold, and there is no wallclock budget at all
+because EET is slower than dense here.
 
 ### Verdict against the pre-registered criteria
 
 | test | threshold | result |
 |---|---|---|
-| T1 (context restoration) | gap <= 0.045 | best arm +0.088. **FAIL** |
-| T2 (routing coverage) | gap <= 0.045 | best arm +0.095. **FAIL** |
+| T1 (context restoration) | gap <= 0.045 | best arm +0.065. **FAIL** |
+| T2 (routing coverage) | gap <= 0.045 | best arm +0.071. **FAIL** |
 
 Pre-registered consequence, written before the runs: *if T1 and T2 both fail, the
 "architectural" verdict is confirmed; close the direction rather than sweeping more flags.*
@@ -371,3 +391,38 @@ gather/scatter overhead plus the MFU loss eats even that.
 - Stochastic or exploratory routing schedules. Uniform-random routing already matches the
   learned router, so there is nothing for exploration to discover.
 - Router architecture work on the `x0` global router. It performs at chance.
+
+
+### Why there is no speedup at this configuration, and where it would come from
+
+The routing path did run: the effective config records `use_eet: true`,
+`eet_compute_skip: true`, `eet_global_router: true`, `eet_target_active_frac: 0.1`. The
+problem is the FLOP split, on one H200 at d8/512/V=32768:
+
+| component | share of active FLOPs/token | routed? |
+|---|---|---|
+| transformer blocks | 52.7% | yes, to 0.606 average active |
+| **LM head** | **35.2%** | **no** |
+| attention kernel | 12.1% | yes, as a^2 |
+
+The best possible overall ratio is therefore **0.722**, a 28% FLOP cut, and gather/scatter
+on (128, 2048, 512) tensors plus the aux-loss machinery eats it: EET base is **1.12x
+slower** than dense in wallclock.
+
+That share is strongly depth-dependent. At d24 (d_model 1536) the head falls to **6.4%**
+and blocks rise to **86.9%**, and the same bell schedule gives a ratio of **0.586** rather
+than 0.722. So EET's economics genuinely improve with depth. That is not a plan on its own:
+the quality gap would have to close by roughly 3x at the same time, and nothing tried here
+moved it by more than 8%.
+
+Two per-step costs in the P01 configuration are worth separating from the architecture
+before quoting any timing: `--eet-depth-weight-type ema` runs a Python loop over the exits
+with scalar buffer writes inside the forward, and `--eet-loss-variant ce_guided
+--eet-surprise-lambda 0.1` adds a top-k vocabulary entropy term. A timing probe with
+`--eet-depth-weight-type none --eet-capacity-alignment-lambda 0 --eet-surprise-lambda 0`
+isolates backbone routing cost from aux-loss cost.
+
+**Fixed here:** `eet_route_noise`'s anneal recomputed a Python float from `eet_step` every
+step and used it inside the compiled graph, so dynamo guarded on its value and recompiled
+every step. That is why T2 anneal took 437ms against 244ms for the same arm at constant
+noise. The scale is now a tensor.

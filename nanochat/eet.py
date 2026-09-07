@@ -1959,12 +1959,25 @@ class EarlyExitGPT(GPT):
             # --- P02 Test 2: stochastic routing (training only) ----------------------
             route_noise = float(getattr(config, 'eet_route_noise', 0.0))
             route_noise_end = float(getattr(config, 'eet_route_noise_end', -1.0))
-            if route_noise_end >= 0.0 and eet_total_steps > 1:
-                _prog = min(1.0, max(0.0, eet_step / max(1, eet_total_steps - 1)))
-                route_noise_now = route_noise + (route_noise_end - route_noise) * _prog
+            # The scale must be a TENSOR, not a Python float. Annealing makes it a
+            # different float every step, and dynamo guards on the value of a float used
+            # inside the graph, so the anneal arm recompiled on every single step: 437ms
+            # against 244ms for the same arm at a constant noise level. Same reason
+            # eet_lambda_r/e are converted to scalar tensors (see forward's docstring).
+            # use_route_noise stays a Python bool because it is derived from the CONFIG,
+            # not from the step, so it is stable for the whole run.
+            use_route_noise = self.training and (
+                route_noise > 0.0 or (route_noise_end > 0.0)
+            )
+            if use_route_noise:
+                if route_noise_end >= 0.0 and eet_total_steps > 1:
+                    _prog = min(1.0, max(0.0, eet_step / max(1, eet_total_steps - 1)))
+                    _scale = route_noise + (route_noise_end - route_noise) * _prog
+                else:
+                    _scale = route_noise
+                route_noise_now = torch.tensor(_scale, device=x.device, dtype=torch.float32)
             else:
-                route_noise_now = route_noise
-            use_route_noise = self.training and route_noise_now > 0.0
+                route_noise_now = None
 
             # --- P02 Test 0B: per-layer vocabulary coverage --------------------------
             # Enabled in training as well as eval, because the claim under test is about
@@ -2106,8 +2119,8 @@ class EarlyExitGPT(GPT):
                         # Training only: eval keeps the deterministic argmax policy.
                         if use_route_noise:
                             _u = torch.rand_like(continue_score.float()).clamp_(1e-9, 1.0 - 1e-9)
-                            _g = -torch.log(-torch.log(_u))
-                            continue_score = continue_score + route_noise_now * _g.to(continue_score.dtype)
+                            _g = -torch.log(-torch.log(_u)) * route_noise_now
+                            continue_score = continue_score + _g.to(continue_score.dtype)
 
                         _, sorted_idx = torch.sort(continue_score, dim=-1, descending=True)
 
