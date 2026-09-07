@@ -687,6 +687,43 @@ class EarlyExitGPT(GPT):
         self.register_buffer('token_difficulty', torch.zeros(config.vocab_size, dtype=torch.float32))
         self.register_buffer('eet_phase_tracker', torch.tensor([1], dtype=torch.int32))
         self.eet_current_phase = 1
+        # P02 Test 0B: filled lazily in eval when config.eet_coverage_diag is set
+        self._coverage_counts = None
+
+    def coverage_report(self):
+        """Per-layer vocabulary coverage of the routing policy.
+
+        Tests the claim that deterministic per-token routing starves deep layers of DATA
+        rather than of gradient magnitude: with an exit depth that is a function of the
+        token embedding alone, a deep layer only ever sees a fixed slice of the vocabulary.
+
+        Returns a list of dicts, one per layer, with:
+          vocab_frac  fraction of the vocabulary that reached this layer at least once
+          mass_frac   fraction of all token occurrences that reached this layer
+          n_seen      number of distinct token ids that reached this layer
+        Returns None if no coverage was accumulated.
+        """
+        if self._coverage_counts is None:
+            return None
+        total_mass = float(self._coverage_counts[0].sum().item())
+        if total_mass <= 0:
+            return None
+        # Denominator is what layer 0 saw, i.e. the vocabulary actually present in the
+        # eval stream, not the padded vocab size (which would flatter every layer).
+        n_seen_0 = max(1, int((self._coverage_counts[0] > 0).sum().item()))
+        report = []
+        for i, counts in enumerate(self._coverage_counts):
+            n_seen = int((counts > 0).sum().item())
+            report.append({
+                'layer': i,
+                'n_seen': n_seen,
+                'vocab_frac': n_seen / n_seen_0,
+                'mass_frac': float(counts.sum().item()) / total_mass,
+            })
+        return report
+
+    def reset_coverage(self):
+        self._coverage_counts = None
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
                               missing_keys, unexpected_keys, error_msgs):
@@ -1871,6 +1908,37 @@ class EarlyExitGPT(GPT):
             # Diagnostic active counts per block
             active_counts = []
 
+            # --- P02 Test 1: context restoration -------------------------------------
+            # 'none' keeps the historical behaviour (active queries see active keys only).
+            # 'fresh'/'stale' let surviving tokens read every position, so a token leaving
+            # the computation no longer erases itself from everyone else's context.
+            kv_mode = getattr(config, 'eet_kv_mode', 'none')
+            use_split_kv = kv_mode in ('fresh', 'stale') and kv_cache is None
+            n_kv_head = blocks[0].attn.n_kv_head
+            head_dim = blocks[0].attn.head_dim
+            bank_k = bank_v = None
+
+            # --- P02 Test 2: stochastic routing (training only) ----------------------
+            route_noise = float(getattr(config, 'eet_route_noise', 0.0))
+            route_noise_end = float(getattr(config, 'eet_route_noise_end', -1.0))
+            if route_noise_end >= 0.0 and eet_total_steps > 1:
+                _prog = min(1.0, max(0.0, eet_step / max(1, eet_total_steps - 1)))
+                route_noise_now = route_noise + (route_noise_end - route_noise) * _prog
+            else:
+                route_noise_now = route_noise
+            use_route_noise = self.training and route_noise_now > 0.0
+
+            # --- P02 Test 0B: per-layer vocabulary coverage --------------------------
+            # Enabled in training as well as eval, because the claim under test is about
+            # what deep layers see DURING TRAINING. The bincount below breaks the
+            # torch.compile graph, so this is for short diagnostic runs, not real ones.
+            coverage_diag = bool(getattr(config, 'eet_coverage_diag', False))
+            if coverage_diag and getattr(self, '_coverage_counts', None) is None:
+                self._coverage_counts = [
+                    torch.zeros(config.vocab_size, dtype=torch.long, device=x.device)
+                    for _ in range(n_layer)
+                ]
+
             for i, block in enumerate(blocks):
                 if i == n_layer - 1:
                     K_before_reentry = K_cur
@@ -1907,13 +1975,50 @@ class EarlyExitGPT(GPT):
 
                 # Gather value embeddings
                 ve = None
+                ve_full = None
                 if str(i) in self.value_embeds:
                     ve_full = self.value_embeds[str(i)](idx).to(x_input.dtype)
                     ve_dim = ve_full.size(-1)
                     ve = torch.gather(ve_full, 1, idx3.expand(-1, -1, ve_dim))
 
-                # Run block on active tokens only
-                x_out = block(x_input, ve, (cos_act, sin_act), self.window_sizes[i], kv_cache)
+                if coverage_diag:
+                    _ids_here = torch.gather(idx, 1, active_idx).reshape(-1)
+                    self._coverage_counts[i] += torch.bincount(
+                        _ids_here, minlength=config.vocab_size
+                    )
+
+                # Run block on active tokens only. Once tokens have started leaving,
+                # kv_mode decides whether the survivors can still see them.
+                if use_split_kv and K_cur < T:
+                    attn_norm = block.norm_attn if block.norm_attn is not None else norm
+                    if kv_mode == 'fresh':
+                        # Project keys/values at THIS layer for every position, using each
+                        # token's current state if active and its frozen exit state if not.
+                        x_full = x_final.scatter(1, idx3.expand(-1, -1, C), x_active)
+                        x_input_full = self.resid_lambdas[i] * x_full + x0_w * x0
+                        k_all, v_all = block.attn._project_kv(
+                            attn_norm(x_input_full), ve_full, cos_full, sin_full
+                        )
+                    else:
+                        # 'stale': refresh only the active slots of the bank; exited tokens
+                        # keep the keys/values their own exit layer produced.
+                        k_act, v_act = block.attn._project_kv(
+                            attn_norm(x_input), ve, cos_act, sin_act
+                        )
+                        idxkv = active_idx.view(B, K_cur, 1, 1).expand(-1, -1, n_kv_head, head_dim)
+                        bank_k = bank_k.scatter(1, idxkv, k_act)
+                        bank_v = bank_v.scatter(1, idxkv, v_act)
+                        k_all, v_all = bank_k, bank_v
+                    x_out = block.forward_split(
+                        x_input, (cos_act, sin_act), active_idx,
+                        k_all, v_all, self.window_sizes[i],
+                    )
+                else:
+                    x_out = block(x_input, ve, (cos_act, sin_act), self.window_sizes[i], kv_cache)
+                    if use_split_kv and kv_mode == 'stale':
+                        # K_cur == T here, so the block just produced the whole bank.
+                        bank_k = block.attn._last_k
+                        bank_v = block.attn._last_v
 
                 # Residual mixer (active tokens only).
                 if self.residual_mixers is not None:
@@ -1950,6 +2055,16 @@ class EarlyExitGPT(GPT):
                         exit_score_full = soft_weights[:, :, rl_counter]                        # (B, T)
                         exit_score = torch.gather(exit_score_full, 1, active_idx)                # (B, K_cur)
                         continue_score = 1.0 - exit_score                                       # (B, K_cur)
+
+                        # P02 Test 2: Gumbel top-K. Same K, same static shapes, but the
+                        # assignment is resampled every step, so a given token id visits
+                        # every depth over training instead of being permanently pinned to
+                        # one exit slot by a router that only sees its embedding.
+                        # Training only: eval keeps the deterministic argmax policy.
+                        if use_route_noise:
+                            _u = torch.rand_like(continue_score.float()).clamp_(1e-9, 1.0 - 1e-9)
+                            _g = -torch.log(-torch.log(_u))
+                            continue_score = continue_score + route_noise_now * _g.to(continue_score.dtype)
 
                         _, sorted_idx = torch.sort(continue_score, dim=-1, descending=True)
 

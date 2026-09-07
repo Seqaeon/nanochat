@@ -442,6 +442,10 @@ parser.add_argument("--eet-target-active-frac", type=float, default=0.125, help=
 parser.add_argument("--eet-capacity-schedule", type=str, default="bell", choices=["uniform", "linear", "geometric", "bell"], help="EET: capacity schedule for compute skip")
 parser.add_argument("--eet-exit-fracs", type=str, default="", help="EET: comma-separated list of float exit fractions (sums to ~1.0) overriding schedule")
 parser.add_argument("--eet-capacity-alignment-lambda", type=float, default=0.0, help="EET: weight for load-balancing/capacity alignment loss (0=disabled)")
+parser.add_argument("--eet-kv-mode", type=str, default="none", choices=["none", "fresh", "stale"], help="EET P02 T1: context for exited tokens. none=active keys only (current), fresh=re-project keys/values for every position at each layer (quality upper bound), stale=reuse the keys/values banked at each token's exit layer (near free)")
+parser.add_argument("--eet-route-noise", type=float, default=0.0, help="EET P02 T2: Gumbel noise scale added to the exit score before top-K, training only. 0=deterministic, 0.3=mild, 1.0=strong, >=10=uniform random")
+parser.add_argument("--eet-route-noise-end", type=float, default=-1.0, help="EET P02 T2: final noise scale for a linear anneal over training (<0 = hold --eet-route-noise constant)")
+parser.add_argument("--eet-coverage-diag", type=int, default=0, choices=[0, 1], help="EET P02 T0B: accumulate per-layer vocabulary coverage during eval and report it")
 parser.add_argument("--eet-router-task-grad", type=int, default=1, choices=[0, 1], help="EET: allow task loss gradients to propagate to router through continue weights (1/0)")
 parser.add_argument("--eet-reinforce-interval", type=int, default=0, help="EET: two-pass REINFORCE every N steps (0=disabled)")
 parser.add_argument("--eet-reinforce-lambda", type=float, default=0.1, help="EET: REINFORCE loss weight")
@@ -1266,6 +1270,10 @@ def build_model_meta(depth):
         eet_compute_skip=bool(getattr(args, 'eet_compute_skip', 0)),
         eet_target_active_frac=float(getattr(args, 'eet_target_active_frac', 0.125)),
         eet_capacity_schedule=getattr(args, 'eet_capacity_schedule', 'bell'),
+        eet_kv_mode=getattr(args, 'eet_kv_mode', 'none'),
+        eet_route_noise=float(getattr(args, 'eet_route_noise', 0.0)),
+        eet_route_noise_end=float(getattr(args, 'eet_route_noise_end', -1.0)),
+        eet_coverage_diag=bool(getattr(args, 'eet_coverage_diag', 0)),
         eet_exit_fracs=[float(x.strip()) for x in getattr(args, 'eet_exit_fracs', '').split(',') if x.strip()] if getattr(args, 'eet_exit_fracs', '') else None,
         eet_capacity_alignment_lambda=float(getattr(args, 'eet_capacity_alignment_lambda', 0.0)),
         eet_router_task_grad=bool(getattr(args, 'eet_router_task_grad', 1)),
@@ -2204,6 +2212,17 @@ while True:
                     eval_kwargs['eet_phase'] = 1
             val_bpb, val_loss = evaluate_bpb(model, val_loader, eval_steps, token_bytes, **eval_kwargs)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f} | val_loss: {val_loss:.6f}")
+        # EET P02 T0B: per-layer vocabulary coverage of the routing policy
+        if getattr(args, 'eet_coverage_diag', 0):
+            _cov_model = model.module if hasattr(model, 'module') else model
+            _cov = _cov_model.coverage_report() if hasattr(_cov_model, 'coverage_report') else None
+            if _cov is not None:
+                _cov_str = " ".join(
+                    f"L{r['layer']}:{r['vocab_frac']*100:.1f}%/{r['mass_frac']*100:.1f}%" for r in _cov
+                )
+                print0(f"Step {step:05d} | EET coverage (vocab/mass reaching layer): {_cov_str}")
+                print0(f"EET_COVERAGE_JSON {json.dumps(_cov)}")
+                _cov_model.reset_coverage()
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         if val_loss < min_val_loss:

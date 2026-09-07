@@ -590,6 +590,21 @@ class GPTConfig:
     eet_capacity_schedule: str = 'bell'            # capacity schedule ('uniform' | 'linear' | 'geometric' | 'bell')
     eet_exit_fracs: list[float] | None = None      # custom per-slot exit fractions override (comma-separated list of floats)
     eet_capacity_alignment_lambda: float = 0.0     # weight for load-balancing/capacity alignment loss (0=disabled)
+    # --- P02 Test 1: context restoration for exited tokens (compute_skip path) ---
+    # 'none'  : active queries attend only to active keys (current behaviour, destroys context)
+    # 'fresh' : keys/values projected at THIS layer from every token's current-or-frozen state.
+    #           Upper bound on quality; costs an extra 4*d^2 per exited token per layer.
+    # 'stale' : keys/values banked at the layer each token exited (projected by that layer's
+    #           W_k/W_v), reused unchanged afterwards. Near free: only active tokens project.
+    eet_kv_mode: str = 'none'
+    # --- P02 Test 2: stochastic routing (training only; eval stays deterministic) ---
+    # Gumbel noise scale added to the per-slot exit score before top-K. Scores are softmax
+    # probabilities in [0, 1], so 0.0 = deterministic, ~0.3 = mild exploration,
+    # ~1.0 = strong, >=10 = effectively uniform-random routing.
+    eet_route_noise: float = 0.0
+    eet_route_noise_end: float = -1.0              # <0 = hold eet_route_noise constant; else linear anneal
+    # --- P02 Test 0B: per-layer vocabulary coverage diagnostic ---
+    eet_coverage_diag: bool = False                # accumulate which token ids reach which layer
     eet_router_task_grad: bool = True              # allow task loss gradients to propagate to router through continue weights
     eet_reinforce_interval: int = 0                 # two-pass REINFORCE every N steps (0=disabled). Runs dense forward to get counterfactual CE.
     eet_reinforce_lambda: float = 0.1               # REINFORCE loss weight
@@ -853,6 +868,7 @@ RESEARCH_ALLOWED_KEYS = {
     "eet_compute_skip", "eet_target_active_frac",
     "eet_capacity_schedule", "eet_exit_fracs",
     "eet_capacity_alignment_lambda", "eet_router_task_grad",
+    "eet_kv_mode", "eet_route_noise", "eet_route_noise_end", "eet_coverage_diag",
     "eet_depth_affine", "eet_capacity_anneal_frac", "eet_learned_schedule",
     "eet_departure_summary", "eet_route_consistency_lambda",
     "eet_dense_distill_interval", "eet_dense_distill_lambda",
@@ -8117,6 +8133,76 @@ class CausalSelfAttention(nn.Module):
             y = self.c_proj(y)
         return y
 
+    def _project_kv(self, x_kv, ve_kv, cos_kv, sin_kv):
+        """Project a full-length (B, T, C) state into RoPE'd, QK-normed keys and values."""
+        B, T, _ = x_kv.size()
+        k = self.c_k(x_kv).view(B, T, self.n_kv_head, self.head_dim)
+        v = self.c_v(x_kv).view(B, T, self.n_kv_head, self.head_dim)
+        if ve_kv is not None and self.ve_gate is not None:
+            ve_kv = ve_kv.view(B, T, self.n_kv_head, self.head_dim)
+            gate = 2 * torch.sigmoid(self.ve_gate(x_kv[..., :self.ve_gate_channels]))
+            v = v + gate.unsqueeze(-1) * ve_kv
+        k = norm(apply_rotary_emb(k, cos_kv, sin_kv))
+        return k, v
+
+    def forward_split(self, x_q, cos_sin_q, q_pos, k, v, window_size, ve_q=None,
+                      key_mask=None):
+        """EET context-restoring attention: few queries, full-length keys/values.
+
+        Standard ``forward`` requires queries and keys to be the same token set, which is
+        why the compute-skip path currently drops exited tokens out of attention entirely.
+        This variant keeps the query set small (the surviving tokens) while letting them
+        read every position, so removing a token from the computation no longer removes it
+        from everyone else's context.
+
+        Args:
+            x_q:       (B, K, C) hidden states of the active tokens (queries only).
+            cos_sin_q: RoPE tables already gathered at the active positions.
+            q_pos:     (B, K) absolute position of each active token, ascending.
+            k, v:      (B, T, n_kv_head, head_dim) keys/values for ALL positions, already
+                       RoPE'd and QK-normed (see ``_project_kv``).
+            window_size: (left, right) as elsewhere; left < 0 means full context.
+            ve_q:      unused for keys/values, kept for signature symmetry.
+            key_mask:  optional (B, T) bool; False positions are excluded from every
+                       query's attention. Used by the context oracle to reproduce EET's
+                       context loss on a dense model without changing its depth.
+
+        Returns:
+            (B, K, C) attention output for the active tokens.
+        """
+        B, K, C = x_q.size()
+        T = k.size(1)
+        q = self.c_q(x_q).view(B, K, self.n_head, self.head_dim)
+        cos_q, sin_q = cos_sin_q
+        q = norm(apply_rotary_emb(q, cos_q, sin_q))
+        if self.attn_logit_scale is not None:
+            scale = F.softplus(self.attn_logit_scale).to(q.dtype)
+            q = q * scale.view(1, 1, self.n_head, 1)
+
+        # Causal + sliding-window mask over absolute positions: (B, 1, K, T)
+        k_pos = torch.arange(T, device=x_q.device).view(1, 1, 1, T)
+        qp = q_pos.view(B, 1, K, 1)
+        mask = k_pos <= qp
+        left = window_size[0] if window_size is not None else -1
+        if left is not None and left >= 0:
+            mask = mask & (k_pos > qp - left)
+        if key_mask is not None:
+            mask = mask & key_mask.view(B, 1, 1, T)
+        # A query whose whole row is masked would make softmax produce NaN. Keep the
+        # diagonal alive so every query can at least attend to itself.
+        self_ok = k_pos == qp
+        mask = mask | self_ok
+
+        y = F.scaled_dot_product_attention(
+            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), attn_mask=mask
+        ).transpose(1, 2)
+
+        if self.head_importance is not None:
+            his = F.softplus(self.head_importance).to(y.dtype)
+            y = y * his.view(1, 1, self.n_head, 1)
+        y = y.contiguous().view(B, K, -1)
+        return self.c_proj(y)
+
 
 class SpectralReparamLinear(nn.Module):
     """Phase 19G: Spectral Reparameterization.
@@ -9730,6 +9816,21 @@ class Block(nn.Module):
             # The noise added to .data before forward is part of this step's computation only.
             # The gradient update will apply to the noised weights, which is the intended SAM-like behavior.
             pass
+        return x
+
+    def forward_split(self, x_q, cos_sin_q, q_pos, k, v, window_size, key_mask=None):
+        """Block forward where attention reads full-length keys/values (EET kv_mode)."""
+        norm_fn_attn = self.norm_attn if self.norm_attn is not None else norm
+        norm_fn_mlp = self.norm_mlp if self.norm_mlp is not None else norm
+        attn_out = self.attn.forward_split(
+            norm_fn_attn(x_q), cos_sin_q, q_pos, k, v, window_size, key_mask=key_mask
+        )
+        x = x_q + attn_out
+        if self.mlp is not None:
+            block_out = self.mlp(norm_fn_mlp(x))
+            if self.residual_alpha is not None:
+                block_out = F.softplus(self.residual_alpha).to(block_out.dtype) * block_out
+            x = x + block_out
         return x
 
     def forward_attn_only(self, x, ve, cos_sin, window_size, kv_cache):

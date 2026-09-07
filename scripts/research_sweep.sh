@@ -383,6 +383,7 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;
+        --num-iterations|\
         --use-eet|--eet-frozen-kv|--eet-router-type|--eet-router-hidden|\
         --eet-freq-prior-alpha|--eet-pos-prior-beta|--eet-domain-prior|\
         --eet-warmup-frac|--eet-explore-frac|--eet-reconstruct-lambda|\
@@ -394,7 +395,7 @@ while [[ $# -gt 0 ]]; do
         --eet-quality-lambda|--eet-quality-entropy-bonus|\
         --eet-gumbel-temp-start|--eet-gumbel-temp-end|--eet-gumbel-hard|--eet-commitment-beta|--eet-global-router|\
         --eet-freq-efficiency-alpha|--eet-diversity-lambda|--eet-ce-guided-lambda|--eet-depth-weight-type|--eet-depth-weight-max|\
-        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final|--eet-compute-skip|--eet-target-active-frac|--eet-capacity-schedule|--eet-exit-fracs|--eet-capacity-alignment-lambda|--eet-router-task-grad|--eet-reinforce-interval|--eet-reinforce-lambda|--eet-exit-adapter-rank|--eet-router-after-block|--eet-ffn-skip|--eet-ffn-target-frac|--eet-ffn-full-attn|--eet-router-lr-mult|--eet-model-lr-mult|--eet-depth-affine|--eet-capacity-anneal-frac|--eet-learned-schedule|--eet-departure-summary|--eet-route-consistency-lambda|--eet-dense-distill-interval|--eet-dense-distill-lambda|--eet-depth-lr-scale|--eet-depth-grad-scale|--eet-detach-aux-from-backbone|--eet-detach-exit-from-backbone)
+        --eet-use-override|--eet-override-prob-start|--eet-override-prob-end|--eet-reenter-final|--eet-compute-skip|--eet-target-active-frac|--eet-capacity-schedule|--eet-exit-fracs|--eet-capacity-alignment-lambda|--eet-router-task-grad|--eet-reinforce-interval|--eet-reinforce-lambda|--eet-exit-adapter-rank|--eet-router-after-block|--eet-ffn-skip|--eet-ffn-target-frac|--eet-ffn-full-attn|--eet-router-lr-mult|--eet-model-lr-mult|--eet-depth-affine|--eet-capacity-anneal-frac|--eet-learned-schedule|--eet-departure-summary|--eet-route-consistency-lambda|--eet-dense-distill-interval|--eet-dense-distill-lambda|--eet-depth-lr-scale|--eet-depth-grad-scale|--eet-detach-aux-from-backbone|--eet-detach-exit-from-backbone|--eet-kv-mode|--eet-route-noise|--eet-route-noise-end|--eet-coverage-diag)
             EXTRA_ARGS+=("$1" "$2")
             shift 2
             ;;

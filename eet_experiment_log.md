@@ -104,3 +104,96 @@ EET is a Mixture-of-Depths (MoD) style early exit architecture for autoregressiv
 - **Backbone divergence:** Weight cosine similarity between Dense and EET backbones is nearly zero (0.01–0.09). The EET backbone learns fundamentally different representations.
 - **Training gap vs Routing gap:** 78% of the quality gap stems from backbone co-training degradation, not inference-time routing decisions. However, attempts to fix the training gap (detaching, scaling, adapters) all failed.
 - **The gap appears architectural:** The ~0.06 bpb cost is the inherent price of routing 90% of tokens to early exits with a shared LM head. At d24 scale, the gap persists.
+
+---
+
+## 🧪 P02 — The Three Decision Tests (pre-registered)
+
+The "Key Diagnostic Findings" section above concludes that the remaining ~0.06 bpb is
+architectural. That conclusion is not yet supported: all thirteen abandoned ideas targeted
+gradient flow, learning rates, representation alignment, distillation or scheduling, and
+none targeted the two things that actually differ from a dense model.
+
+### Break-even, stated first
+
+On the repo's iso-data dense curve (`mst_isodata.html`, d10–d16), the local log-log slope
+near d8 is about **-0.085**. The LM head is roughly **29% of active FLOPs per token** at
+d8/512/V=32k and routing does not shrink it, so the bell schedule's 39% saving on the
+blocks is only a **~31% saving overall**.
+
+| what EET spends | allowed bpb gap |
+|---|---|
+| 0.69× dense active FLOPs | **+0.034** |
+| 0.75× dense wallclock    | **+0.027** |
+
+EET is at +0.06, so it is 2.2× over budget and must give back **0.026–0.033 bpb**.
+`scripts/eet_p02_report.py` recomputes this from the sweep's own dense controls rather
+than from a borrowed exponent.
+
+### The two untested defects
+
+**Defect 1 — context destruction.** In the `compute_skip` path an exited token loses its
+keys and values in every later layer, so at d8 layers 5–7 attend over 25%, 12% and 10% of
+the sequence. The survivors are by construction the hard tokens, and they are denied most
+of their context. MoD avoids this by interleaving full-capacity blocks; EET has no full
+block after layer 1. `early_exit_architecture_idea.md` called Option B (frozen KV) "the one
+worth pursuing", but the fast path shipped Option A because Option B was not
+`torch.compile`-static. Restoring full-context reads costs about **1.6% of a dense layer**.
+
+**Defect 2 — data starvation.** `use_pos_embed` is off, so the global router's input is
+`norm(wte(idx))` and exit depth is a per-vocabulary-item lookup table. Layer 7 therefore
+trains on a fixed ~10% slice of the vocabulary for the whole run and never sees `the`. This
+explains the measured "78% of the gap is backbone co-training", and it explains why
+depth-LR-scale (#6) made things worse and depth-grad-scale (#7) did nothing: a layer short
+of *samples* cannot be fixed with a learning rate.
+
+### Mechanisms added
+
+| flag | values | what it does |
+|---|---|---|
+| `--eet-kv-mode` | `none` / `fresh` / `stale` | `fresh` re-projects keys and values at every layer for every position (quality upper bound, +12% FLOPs). `stale` reuses the keys and values banked at each token's exit layer (near free). `none` is the historical behaviour and is bit-identical to it. |
+| `--eet-route-noise` | float | Gumbel noise on the exit score before top-K, **training only**. Capacities and therefore the FLOP budget are unchanged; only the assignment is resampled, so every token id visits every depth over training. 0 = deterministic, ~0.3 mild, ~1.0 strong, ≥10 effectively uniform-random. |
+| `--eet-route-noise-end` | float | linear anneal of the above (`<0` holds it constant). |
+| `--eet-coverage-diag` | 0/1 | per-layer vocabulary and token-mass coverage. Breaks the compile graph, so use it on short diagnostic runs with `--compile 0`. |
+
+### Pre-registered criteria (do not edit after seeing results)
+
+| test | criterion |
+|---|---|
+| T0A gate | `delta_bpb(freq/ctx)` on the dense checkpoint ≥ **0.020**, else Defect 1 is closed and the T1 arms are skipped automatically. |
+| T0B gate | token mass reaching the last layer ≤ **0.50** under deterministic routing, else Defect 2 is closed and the T2 arms are skipped. |
+| T1 pass | best `--eet-kv-mode` arm reaches gap ≤ **0.045** bpb. |
+| T2 pass | best `--eet-route-noise` arm reaches gap ≤ **0.045** bpb. |
+| T3 pass | combined arm reaches gap ≤ break-even wallclock (≈0.027 at d8), at two depths, with the gap not widening from d8 to d16. |
+
+**If T1 and T2 both fail, the "architectural" verdict is confirmed. Close the direction
+rather than sweeping more flags.**
+
+### Files
+
+- `scripts/eet_context_oracle.py` — T0A. Imposes EET's key masking on a trained *dense*
+  checkpoint with depth held constant, so it separates the cost of losing context from the
+  cost of losing depth without any training. Ranks tokens by frequency (the router proxy),
+  at random (control) and by the model's own CE (best-case router).
+- `scripts/eet_p02_tests.sh` — the sweep. Runs the dense control first, then enforces both
+  gates automatically before spending GPU time on the arms behind them. Every arm after
+  `DENSE` is pinned to the dense run's exact token count, so the whole sweep is iso-data.
+  It also runs the **iso-FLOP iso-data dense controls at d5 and d6**, which no earlier EET
+  sweep had and which the Pareto claim cannot be made without.
+- `scripts/eet_p02_report.py` — break-even arithmetic and pass/fail. Charges the LM head at
+  full price to every arm and fits the dense exponent from the sweep's own controls.
+- `tests/test_eet_p02.py` — proves the mechanisms do what they claim, including that
+  `kv_mode none` is bit-identical to the old path and that route noise leaves capacities
+  untouched.
+
+### Novelty note
+
+Closing the gap is necessary but not sufficient. "Matches dense, 25% faster" is not a
+main-track result in 2026: **Mixture-of-Recursions** (NeurIPS 2025) already owns learned
+per-token depth with capacity routing and explicit KV strategies for tokens that stop
+early, and **N-vium** (2026) reports 57.9% wallclock speedup at 1.5B with no perplexity
+cost. If P02 succeeds, the paper framing has to change with it: the defensible primitive is
+**decoupling write-depth from read-depth** (how deep a token is refined versus how deep it
+stays readable by others), which no published work routes as two separate budgets.
+MoD is symmetric skip, MoR is symmetric recursion, and CALM/SkipDecode patch the KV as an
+implementation detail rather than as a routed resource.
