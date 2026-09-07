@@ -1535,28 +1535,35 @@ def test_every_c00_arm_still_parses():
         assert not unknown, f"c00 arm {tag} passes undefined flags: {unknown}"
 
 
-def test_new_flags_reach_research_compare_and_the_sweep_whitelist():
-    """base_train accepting a flag is not enough: it arrives through two hops.
+@pytest.mark.parametrize("prefix", ["--sch-", "--eet-"])
+def test_new_flags_reach_research_compare_and_the_sweep_whitelist(prefix):
+    """base_train accepting a flag is not enough: it arrives through three hops.
 
-    research_compare must both DECLARE the flag (so the sweep can set it) and
-    EMIT it into the base_train command line (so the value survives the hop).
-    Declaring without emitting silently pins every arm to the default, which
-    looks like a working sweep producing identical configurations.
+    research_sweep.sh must WHITELIST the flag (or it dies with "Unknown argument"),
+    research_compare must both DECLARE it (or argparse rejects it with "unrecognized
+    arguments") and EMIT it into the base_train command line (or the value silently
+    falls back to the default, which looks like a working sweep producing identical
+    configurations).
+
+    Parametrised over both flag families because the EET P02 flags were added to the
+    whitelist and to base_train but not to research_compare, and every arm of the sweep
+    died at the second hop after the dense control had already been paid for.
     """
     import re
     parser = _base_train_parser()
-    sch_flags = {a for act in parser._actions for a in act.option_strings if a.startswith("--sch-")}
+    flags = {a for act in parser._actions for a in act.option_strings if a.startswith(prefix)}
     compare = open("scripts/research_compare.py").read()
     sweep = open("scripts/research_sweep.sh").read()
-    whitelist = set(re.findall(r"--sch-[a-z0-9-]+", sweep))
+    pat = re.escape(prefix) + r"[a-z0-9-]+"
+    whitelist = set(re.findall(pat, sweep))
 
-    declared = set(re.findall(r'parser\.add_argument\("(--sch-[a-z0-9-]+)"', compare))
+    declared = set(re.findall(r'parser\.add_argument\("(' + pat + r')"', compare))
     # emission is a bare list element: `"--flag", str(...)` with no add_argument
-    emitted = set(re.findall(r'^\s*"(--sch-[a-z0-9-]+)",\s', compare, re.M))
+    emitted = set(re.findall(r'^\s*"(' + pat + r')",\s', compare, re.M))
 
-    assert not sch_flags - declared, f"not declared in research_compare.py: {sorted(sch_flags - declared)}"
-    assert not sch_flags - emitted, f"declared but never emitted to base_train: {sorted(sch_flags - emitted)}"
-    assert not sch_flags - whitelist, f"not in the research_sweep.sh whitelist: {sorted(sch_flags - whitelist)}"
+    assert not flags - declared, f"not declared in research_compare.py: {sorted(flags - declared)}"
+    assert not flags - emitted, f"declared but never emitted to base_train: {sorted(flags - emitted)}"
+    assert not flags - whitelist, f"not in the research_sweep.sh whitelist: {sorted(flags - whitelist)}"
 
 
 @pytest.mark.parametrize("script", ["scripts/c05_sch_phase5_alternatives.sh",

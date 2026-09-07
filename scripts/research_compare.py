@@ -127,6 +127,9 @@ def run_training_sweep(args):
         *(["--target-flops", str(args.target_flops)] if getattr(args, 'target_flops', 0) > 0 else []),
         *(["--target-active-flops", str(args.target_active_flops)] if getattr(args, 'target_active_flops', 0) > 0 else []),
         *(["--target-param-data-ratio", str(args.target_param_data_ratio)] if (args.target_param_data_ratio > 0 and not _iso_flops(args)) else []),
+        # An explicit iteration count overrides every budget above in base_train, so it is
+        # only forwarded when the caller actually asked for one (short diagnostic runs).
+        *(["--num-iterations", str(args.num_iterations)] if getattr(args, 'num_iterations', -1) > 0 else []),
         "--eval-every", str(eval_every),        
         "--log-every", str(log_every),
         "--core-metric-every", "0" if args.skip_core else str(args.core_metric_every),
@@ -507,6 +510,11 @@ def run_training_sweep(args):
         "--eet-depth-grad-scale", str(getattr(args, 'eet_depth_grad_scale', 0)),
         "--eet-detach-aux-from-backbone", str(getattr(args, 'eet_detach_aux_from_backbone', 0)),
         "--eet-detach-exit-from-backbone", str(getattr(args, 'eet_detach_exit_from_backbone', 0)),
+        # EET P02: context restoration, stochastic routing, coverage diagnostic
+        "--eet-kv-mode", str(getattr(args, 'eet_kv_mode', 'none')),
+        "--eet-route-noise", str(getattr(args, 'eet_route_noise', 0.0)),
+        "--eet-route-noise-end", str(getattr(args, 'eet_route_noise_end', -1.0)),
+        "--eet-coverage-diag", str(getattr(args, 'eet_coverage_diag', 0)),
         # SCH: Structured Code Output Heads
         "--use-code-head", str(getattr(args, 'use_code_head', 0)),
         "--sch-head-type", str(getattr(args, 'sch_head_type', 'code')),
@@ -859,6 +867,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", type=str, default=None, help="explicit data directory")
     parser.add_argument("--max-shards", type=int, default=-1, help="maximum number of dataset shards to use")
     parser.add_argument("--target-tokens", type=int, default=-1, help="explicit number of tokens to train for per model")
+    parser.add_argument("--num-iterations", type=int, default=-1, help="explicit iteration count, overriding every token/FLOP budget (-1 = disable). For short diagnostic runs.")
     parser.add_argument("--target-param-data-ratio", type=float, default=-1.0, help="Chinchilla token:param ratio (e.g. 20.0); -1 = use base_train.py default (10.5)")
     parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations per model architecture to reach exact target FLOPs (-1 = disable)")
     parser.add_argument("--target-active-flops", type=float, default=-1.0, help="as --target-flops but on the ACTIVE FLOPs/token axis, which is the one the Pareto plots use. Required for an isoFLOP profile that mixes gated and dense arms (-1 = disable)")
@@ -1367,6 +1376,11 @@ if __name__ == "__main__":
     parser.add_argument("--sch-rank-probe", type=int, default=0, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--sch-eval-steps", type=int, default=100, help="SCH: passthrough to base_train (see nanochat/code_head.py)")
     parser.add_argument("--eet-detach-exit-from-backbone", type=int, default=0, choices=[0, 1])
+    # EET P02 decision tests (see scripts/eet_p02_tests.sh)
+    parser.add_argument("--eet-kv-mode", type=str, default="none", choices=["none", "fresh", "stale"])
+    parser.add_argument("--eet-route-noise", type=float, default=0.0)
+    parser.add_argument("--eet-route-noise-end", type=float, default=-1.0)
+    parser.add_argument("--eet-coverage-diag", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
     
