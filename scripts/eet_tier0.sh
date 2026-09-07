@@ -146,7 +146,7 @@ _stored="$(get_var tokens_d${DEPTH})"
 if [ -n "$_stored" ] && [ "$(get_var tokens_vocab_d${DEPTH})" = "$TOK_VOCAB" ]; then
     DENSE_PIN="--target-tokens $_stored"
 fi
-run_experiment "DENSE_D${DEPTH}" "Dense control" --use-eet 0 $DENSE_PIN
+#run_experiment "DENSE_D${DEPTH}" "Dense control" --use-eet 0 $DENSE_PIN
 
 if [ -z "$_stored" ] && [ -f "$LOGFILE" ]; then
     TOK_N=$(grep -h "Total number of training tokens:" "$LOGFILE" 2>/dev/null | head -1 \
