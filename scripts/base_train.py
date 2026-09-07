@@ -413,7 +413,7 @@ parser.add_argument("--eet-translator-rank", type=int, default=0, help="EET: Tun
 parser.add_argument("--eet-max-frozen-kv-frac", type=float, default=0.75, help="EET: max fraction of tokens that can exit")
 parser.add_argument("--eet-exit-threshold", type=float, default=0.5, help="EET: sigmoid threshold for exit decision")
 parser.add_argument("--eet-min-exit-layer", type=int, default=1, help="EET: earliest layer a token can exit at")
-parser.add_argument("--eet-loss-variant", type=str, default="reconstruct", choices=["reconstruct", "entropy_surprise", "adversarial", "quality", "layer_weighted", "ce_guided"], help="EET: loss variant to use for early exit training")
+parser.add_argument("--eet-loss-variant", type=str, default="reconstruct", choices=["none", "reconstruct", "entropy_surprise", "adversarial", "quality", "layer_weighted", "ce_guided"], help="EET: loss variant for early exit training. 'none' runs routing with no auxiliary loss at all: the router then gets no gradient and is a frozen projection, which is the right control given random routing was measured to tie the learned router")
 parser.add_argument("--eet-topk-vocab", type=int, default=512, help="EET: top-k vocabulary size for cheap entropy calculation")
 parser.add_argument("--eet-entropy-lambda", type=float, default=0.3, help="EET: entropy pressure weight (λ_ent) for entropy_surprise loss")
 parser.add_argument("--eet-surprise-lambda", type=float, default=0.1, help="EET: surprise pressure weight (λ_sur) for entropy_surprise loss")

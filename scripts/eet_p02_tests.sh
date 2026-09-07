@@ -196,15 +196,15 @@ EET_BASE_FLAGS="--use-eet 1 --eet-frozen-kv 0 --eet-reenter-final 0 \
   --eet-router-type mlp1 \
   --eet-warmup-frac 0.0 --eet-explore-frac 0.0 \
   --eet-exit-adapter-rank 0 --eet-router-after-block 0 \
-  --eet-loss-variant ce_guided --eet-capacity-schedule bell \
+  --eet-capacity-schedule bell \
   --eet-global-router 1 \
-  --eet-ce-guided-lambda 1.0 --eet-surprise-lambda 0.1 --eet-min-exit-layer 1 \
+  --eet-min-exit-layer 1 \
   --eet-gumbel-temp-start 1.0 --eet-gumbel-temp-end 0.1 --eet-gumbel-hard 1 \
-  --eet-depth-weight-type ema --eet-compute-skip 1 --eet-target-active-frac ${TARGET_FRAC} \
+  --eet-compute-skip 1 --eet-target-active-frac ${TARGET_FRAC} \
   --eet-reinforce-interval 0 --eet-reinforce-lambda 0.0 \
   --eet-ffn-skip 0 --eet-ffn-target-frac 0.00 \
   --eet-model-lr-mult 1.0 --eet-router-lr-mult 1.0 \
-  --eet-capacity-alignment-lambda 1.0"
+  --eet-capacity-alignment-lambda 0.0"
 
 run_dir_for() { echo "${EET_OUT_BASE}/$1/depth_${2:-$DEPTH}"; }
 
@@ -264,9 +264,25 @@ TOKENS="$(get_var tokens_d${DEPTH})"
 ISO_DATA=""
 [ -n "$TOKENS" ] && ISO_DATA="--target-tokens $TOKENS"
 
-run_experiment "EET_NOTASKGRAD_D${DEPTH}" \
-    "EET_BASE with --eet-router-task-grad 0: compiles, 0.702x dense step time" \
-    $EET_BASE_FLAGS $ISO_DATA --eet-router-task-grad 0 || true
+# --eet-router-task-grad 0 alone is NOT enough. Measured per-flag on one GPU, one process:
+#     bare        157.5 ms
+#     +gumbel     160.0   (+2.5)
+#     +ce_guided  185.0   (+27.5)
+#     +cap_align  189.5   (+32.0)
+#     +ema        203.8   (+46.3)
+# The three auxiliary terms cost ~106 ms between them, about as much as task-grad did.
+# This arm removes all of it. The router then receives no gradient and is a frozen
+# projection, which is the honest control: random routing was measured to tie the learned
+# router (1.06487 vs 1.06433), so nothing of value is being switched off.
+run_experiment "EET_FAST_D${DEPTH}" \
+    "EET routing with no aux loss and no task-grad: the 0.702x configuration" \
+    $EET_BASE_FLAGS $ISO_DATA \
+    --eet-router-task-grad 0 \
+    --eet-loss-variant none \
+    --eet-depth-weight-type none \
+    --eet-capacity-alignment-lambda 0.0 \
+    --eet-surprise-lambda 0.0 \
+    --eet-ce-guided-lambda 0.0 || true
 
 # ---- ORIGINAL P02 ARMS, DISABLED -------------------------------------------
 # ============================================================================
