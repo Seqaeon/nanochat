@@ -240,10 +240,11 @@ mst_config() {                            # mst_config <depth>
 mst_shared_d_config() {                   # mst_shared_d_config <depth>
     local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
     local SD=$(( D / N_SUBS ))
+    local INNER="${FFN_INNER_DIM:-$SD}"
     echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
       --mst-head-dim 0 --mst-input-mode learned_proj \
       --mst-routing-mode soft_weighted --mst-routing-topk 0 \
-      --mst-ffn-mode shared_dense --mst-ffn-inner-dim $D \
+      --mst-ffn-mode shared_dense --mst-ffn-inner-dim $INNER \
       --mst-transition-mode aggregate_distribute \
       --mst-final-mode concat_proj --mst-final-topk 0 \
       --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
