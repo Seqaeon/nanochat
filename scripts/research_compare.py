@@ -1153,7 +1153,7 @@ if __name__ == "__main__":
     parser.add_argument("--mst-routing-topk", type=int, default=4)
     parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01)
     parser.add_argument("--mst-diversity-weight", type=float, default=0.0)
-    parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear"])
+    parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear", "shared_dense"])
     parser.add_argument("--mst-transition-mode", type=str, default="parallel",
                         choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all", "micro_attention", "micro_attention_shared_kv"])
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",
