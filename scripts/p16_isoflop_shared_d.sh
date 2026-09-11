@@ -82,12 +82,12 @@ if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     DENSE_DEPTHS="${CLI_DEPTHS[*]}"
 fi
 
-# Function to return the highest Chinchilla training FLOPs between the two arms for any depth
+# Function to return the Chinchilla training FLOPs based on Top-1 Sparse baseline
 default_flops_for_depth() {
     case "$1" in
         8)  echo "4.914076e+16" ;;
         12) echo "2.334370e+17" ;;
-        16) echo "8.464552e+17" ;;
+        16) echo "7.648178e+17" ;;
         24) echo "6.445339e+18" ;;
         *)  echo "4.914076e+16" ;;
     esac
