@@ -955,22 +955,41 @@ class BatchedMSTLayer(nn.Module):
             self.stream_router_w = nn.Parameter(torch.empty(N, N * d))
         self._last_stream_load = None  # diagnostics
 
-        # --- Batched FFN weights: standard d → 4d → d, or shared_dense D → inner → D ---
-        self._ffn_shared_dense = (getattr(config, 'mst_ffn_mode', 'standard') == 'shared_dense')
-        if self._ffn_shared_dense:
+        # --- Batched FFN weights: standard, shared_dense, grouped_up_shared_down, shared_swiglu ---
+        self.mst_ffn_every = int(getattr(config, 'mst_ffn_every', 1))
+        self._skip_ffn = (self.mst_ffn_every > 1 and (layer_idx + 1) % self.mst_ffn_every != 0)
+        self._ffn_mode = getattr(config, 'mst_ffn_mode', 'standard')
+        self._ffn_shared_dense = (self._ffn_mode == 'shared_dense')
+
+        self.fc_w = None
+        self.fc_proj_w = None
+        self.fc_shared_w = None
+        self.fc_shared_proj_w = None
+        self.fc_shared_gate_w = None
+
+        if self._skip_ffn:
+            self._inner = 0
+        elif self._ffn_mode == 'shared_dense':
             shared_inner = int(getattr(config, 'mst_ffn_inner_dim', 0)) or D
             self._inner = shared_inner
             self.fc_shared_w = nn.Parameter(torch.empty(shared_inner, D))
             self.fc_shared_proj_w = nn.Parameter(torch.empty(D, shared_inner))
-            self.fc_w = None
-            self.fc_proj_w = None
+        elif self._ffn_mode == 'shared_swiglu':
+            shared_inner = int(getattr(config, 'mst_ffn_inner_dim', 0)) or d
+            self._inner = shared_inner
+            self.fc_shared_gate_w = nn.Parameter(torch.empty(shared_inner, D))
+            self.fc_shared_w = nn.Parameter(torch.empty(shared_inner, D))
+            self.fc_shared_proj_w = nn.Parameter(torch.empty(D, shared_inner))
+        elif self._ffn_mode == 'grouped_up_shared_down':
+            sub_inner = int(getattr(config, 'mst_ffn_inner_dim', 0)) or d
+            self._inner = sub_inner
+            self.fc_w = nn.Parameter(torch.empty(N * sub_inner, d))
+            self.fc_shared_proj_w = nn.Parameter(torch.empty(D, N * sub_inner))
         else:
-            inner = 4 * d
+            inner = int(getattr(config, 'mst_ffn_inner_dim', 0)) or (4 * d)
             self._inner = inner
             self.fc_w = nn.Parameter(torch.empty(N * inner, d))
             self.fc_proj_w = nn.Parameter(torch.empty(N * d, inner))
-            self.fc_shared_w = None
-            self.fc_shared_proj_w = None
 
         # --- Batched VE gates: stored as 2D (N*n_head, ve_gate_channels) ---
         self.ve_gate_channels = min(d, 32)
@@ -1297,11 +1316,8 @@ class BatchedMSTLayer(nn.Module):
             c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
             c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
         c_proj_w = None if self._wo_dense else self.c_proj_w.view(N, d, self.qkv_dim)
-        if self._ffn_shared_dense:
-            fc_w, fc_proj_w = None, None
-        else:
-            fc_w = self.fc_w.view(N, self._inner, d)
-            fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
+        fc_w = self.fc_w.view(N, self._inner, d) if self.fc_w is not None else None
+        fc_proj_w = self.fc_proj_w.view(N, d, self._inner) if self.fc_proj_w is not None else None
         distribute_w = self.distribute_w.view(N, d, d) if (self._couples and self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and not self._mean_transition) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
@@ -1453,34 +1469,45 @@ class BatchedMSTLayer(nn.Module):
         # compute is genuinely skipped. The up-projection lives inside each branch on
         # purpose: computing it densely and then dispatching would throw away exactly the
         # work we are trying not to do.
-        if self._ffn_shared_dense:
+        if self._skip_ffn:
+            pass
+        elif self._ffn_mode == 'shared_dense':
             x_flat = x.reshape(B, T, N * d)  # (B, T, D)
             h = F.relu(F.linear(x_flat, self.fc_shared_w.to(dtype=x_flat.dtype))).square()
             ffn_out_flat = F.linear(h, self.fc_shared_proj_w.to(dtype=h.dtype))
             ffn_out = ffn_out_flat.view(B, T, N, d)
+            sub_states = sub_states + ffn_out
+        elif self._ffn_mode == 'shared_swiglu':
+            x_flat = x.reshape(B, T, N * d)  # (B, T, D)
+            gate = F.linear(x_flat, self.fc_shared_gate_w.to(dtype=x_flat.dtype))
+            up = F.linear(x_flat, self.fc_shared_w.to(dtype=x_flat.dtype))
+            h = F.silu(gate) * up
+            ffn_out_flat = F.linear(h, self.fc_shared_proj_w.to(dtype=h.dtype))
+            ffn_out = ffn_out_flat.view(B, T, N, d)
+            sub_states = sub_states + ffn_out
+        elif self._ffn_mode == 'grouped_up_shared_down':
+            h = F.relu(_batched_linear(x, fc_w)).square()  # (B, T, N, sub_inner)
+            h_flat = h.reshape(B, T, N * self._inner)     # (B, T, N * sub_inner)
+            ffn_out_flat = F.linear(h_flat, self.fc_shared_proj_w.to(dtype=h_flat.dtype))
+            ffn_out = ffn_out_flat.view(B, T, N, d)
+            sub_states = sub_states + ffn_out
         elif stream_w is not None and self._stream_dispatch:
             ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w)
+            if stream_w is not None:
+                ffn_out = stream_w.unsqueeze(-1) * ffn_out
+            sub_states = sub_states + ffn_out
         else:
             h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
             # Apply cross-sub gate before nonlinearity — gate controls which features survive relu²
             if self._cross_sub_gate_rank > 0:
                 h = h * gate
             h = F.relu(h).square()                      # relu²
-            # Stage 18: the Monarch permutation. fc_w and fc_proj_w are already the two
-            # block-diagonal factors; this is the P between them that the FFN was missing,
-            # so stream j's down-projection reads hidden units from every stream's
-            # up-projection. Applied ONCE and never inverted -- unlike the Stage 14 stream-
-            # axis permutation, which is a change of basis and must be undone before the
-            # residual. fc_proj_w already writes back in canonical stream order.
-            # It commutes exactly with relu² (elementwise), so this side is arbitrary.
             if self._ffn_monarch != 'none':
                 h = mix_channels(h, self._ffn_monarch, N, self._inner)
             ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
-        # The gate multiplies the output either way: it is what carries the router's
-        # straight-through gradient into the loss.
-        if stream_w is not None and not self._ffn_shared_dense:
-            ffn_out = stream_w.unsqueeze(-1) * ffn_out
-        sub_states = sub_states + ffn_out
+            if stream_w is not None:
+                ffn_out = stream_w.unsqueeze(-1) * ffn_out
+            sub_states = sub_states + ffn_out
 
         if self._mix_ffn:
             sub_states = mix_channels(sub_states, self._mix_mode, N, d, inverse=True)
@@ -1729,12 +1756,25 @@ class BatchedMSTLayer(nn.Module):
             nn.init.zeros_(self.c_proj_dense_w)
         else:
             c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
-        if self._ffn_shared_dense:
+        if self._skip_ffn:
+            fc, fc_proj = None, None
+        elif self._ffn_mode == 'shared_dense':
             D = self.N * self.d
             shared_s = 1.0 / (D ** 0.5)
             nn.init.uniform_(self.fc_shared_w, -shared_s, shared_s)
             nn.init.zeros_(self.fc_shared_proj_w)
             fc, fc_proj = None, None
+        elif self._ffn_mode == 'shared_swiglu':
+            D = self.N * self.d
+            shared_s = 1.0 / (D ** 0.5)
+            nn.init.uniform_(self.fc_shared_gate_w, -shared_s, shared_s)
+            nn.init.uniform_(self.fc_shared_w, -shared_s, shared_s)
+            nn.init.zeros_(self.fc_shared_proj_w)
+            fc, fc_proj = None, None
+        elif self._ffn_mode == 'grouped_up_shared_down':
+            fc = self.fc_w.view(N, self._inner, d)
+            nn.init.zeros_(self.fc_shared_proj_w)
+            fc_proj = None
         else:
             fc = self.fc_w.view(N, self._inner, d)
             fc_proj = self.fc_proj_w.view(N, d, self._inner)
@@ -1771,8 +1811,9 @@ class BatchedMSTLayer(nn.Module):
             if c_proj is not None:
                 nn.init.zeros_(c_proj[j])
             # FFN
-            if not self._ffn_shared_dense:
+            if fc is not None:
                 nn.init.uniform_(fc[j], -sub_s, sub_s)
+            if fc_proj is not None:
                 nn.init.zeros_(fc_proj[j])
             # VE gate
             if ve_gate is not None:
@@ -1849,7 +1890,7 @@ class BatchedMSTLayer(nn.Module):
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
     return (
-        config.mst_ffn_mode in ('standard', 'shared_dense')
+        config.mst_ffn_mode in ('standard', 'shared_dense', 'grouped_up_shared_down', 'shared_swiglu')
         and config.mst_transition_mode in ('aggregate_distribute', 'free_for_all', 'micro_attention')
         and config.mst_sub_layers == 1
         and not config.mst_ffn_shared_up

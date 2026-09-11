@@ -30,7 +30,8 @@ set -o pipefail
 
 FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
-    echo "usage: $0 [--force] [--seeds N] [--arms mst|shared_d|dense|all] [--timer-only] [depth ...]"
+    echo "usage: $0 [--force] [--seeds N] [--arms mst|shared_d|sandwiched|grouped_shared|swiglu|new|dense|all] [--timer-only] [depth ...]"
+    echo "  --new-only runs all 3 new arms (sandwiched, grouped_shared, swiglu) together."
     echo "  --timer-only runs TIMER_STEPS (default 20) steps of every arm and projects the"
     echo "  full sweep from the measured dt, including startup and final-validation time."
     echo "  depths given positionally replace the built-in list for whichever arms run."
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
         --arms) ARMS="$2"; shift 2 ;;
         --mst-only) ARMS=mst; shift ;;
         --shared-d-only) ARMS=shared_d; shift ;;
+        --sandwiched-only) ARMS=sandwiched; shift ;;
+        --grouped-shared-only) ARMS=grouped_shared; shift ;;
+        --swiglu-only) ARMS=swiglu; shift ;;
+        --new-only|--new-arms-only|--new-arms) ARMS=new; shift ;;
         --dense-only) ARMS=dense; shift ;;
         --timer-only) TIMER=1; shift ;;
         -*) echo "unknown arg: $1"; usage; exit 1 ;;
@@ -52,8 +57,8 @@ for d in "${CLI_DEPTHS[@]}"; do
     [[ "$d" =~ ^[0-9]+$ ]] || { echo "depth must be a positive integer, got '$d'"; usage; exit 1; }
 done
 case "$ARMS" in
-    all|mst|shared_d|dense) ;;
-    *) echo "--arms must be one of: mst, shared_d, dense, all (got '$ARMS')"; exit 1 ;;
+    all|mst|shared_d|sandwiched|grouped_shared|swiglu|new|dense) ;;
+    *) echo "--arms must be one of: mst, shared_d, sandwiched, grouped_shared, swiglu, new, dense, all (got '$ARMS')"; exit 1 ;;
 esac
 
 N_SUBS="${N_SUBS:-4}"
@@ -63,11 +68,17 @@ ASPECT_RATIO="${ASPECT_RATIO:-64}"
 # Override via positional CLI args (e.g. `bash scripts/p16_isoflop_shared_d.sh 12`)
 MST_DEPTHS="${MST_DEPTHS-8}"
 SHARED_D_DEPTHS="${SHARED_D_DEPTHS-8}"
+SANDWICHED_DEPTHS="${SANDWICHED_DEPTHS-8}"
+GROUPED_SHARED_DEPTHS="${GROUPED_SHARED_DEPTHS-8}"
+SWIGLU_DEPTHS="${SWIGLU_DEPTHS-8}"
 DENSE_DEPTHS="${DENSE_DEPTHS-8}"
 
 if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     MST_DEPTHS="${CLI_DEPTHS[*]}"
     SHARED_D_DEPTHS="${CLI_DEPTHS[*]}"
+    SANDWICHED_DEPTHS="${CLI_DEPTHS[*]}"
+    GROUPED_SHARED_DEPTHS="${CLI_DEPTHS[*]}"
+    SWIGLU_DEPTHS="${CLI_DEPTHS[*]}"
     DENSE_DEPTHS="${CLI_DEPTHS[*]}"
 fi
 
@@ -82,15 +93,19 @@ default_flops_for_depth() {
     esac
 }
 
-PRIMARY_DEPTH=$(echo "$MST_DEPTHS $SHARED_D_DEPTHS $DENSE_DEPTHS" | tr ' ' '\n' | grep -v '^$' | head -1)
+PRIMARY_DEPTH=$(echo "$MST_DEPTHS $SHARED_D_DEPTHS $SANDWICHED_DEPTHS $GROUPED_SHARED_DEPTHS $SWIGLU_DEPTHS $DENSE_DEPTHS" | tr ' ' '\n' | grep -v '^$' | head -1)
 PRIMARY_DEPTH="${PRIMARY_DEPTH:-8}"
 FLOPS="${FLOPS:-$(default_flops_for_depth "$PRIMARY_DEPTH")}"
 
 case "$ARMS" in
-    mst)      SHARED_D_DEPTHS=""; DENSE_DEPTHS="" ;;
-    shared_d) MST_DEPTHS="";      DENSE_DEPTHS="" ;;
-    dense)    MST_DEPTHS="";      SHARED_D_DEPTHS="" ;;
-    all)      DENSE_DEPTHS="" ;;   # Focus comparison on MST Top-1 vs. Shared D
+    mst)            SHARED_D_DEPTHS=""; SANDWICHED_DEPTHS=""; GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
+    shared_d)       MST_DEPTHS="";      SANDWICHED_DEPTHS=""; GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
+    sandwiched)     MST_DEPTHS="";      SHARED_D_DEPTHS="";   GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
+    grouped_shared) MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
+    swiglu)         MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     GROUPED_SHARED_DEPTHS=""; DENSE_DEPTHS="" ;;
+    new)            MST_DEPTHS="";      SHARED_D_DEPTHS="";   DENSE_DEPTHS="" ;;  # Runs all 3 new arms alone
+    dense)          MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS="" ;;
+    all)            DENSE_DEPTHS="" ;;   # Focus comparison on all MST variants
 esac
 
 OUT_BASE="${OUT_BASE:-out/p16_isoflop_shared_d}"
@@ -236,7 +251,7 @@ mst_config() {                            # mst_config <depth>
       --mst-wo-mode dense --mst-stream-topk 1 --mst-stream-router-noise 1.0"
 }
 
-# Arm 2: Proposed Shared D->D->D FFN arm (dense cross-sub FFN refinement for all subs)
+# Arm 2: Proposed Shared D->d->D FFN arm (dense cross-sub FFN refinement for all subs)
 mst_shared_d_config() {                   # mst_shared_d_config <depth>
     local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
     local SD=$(( D / N_SUBS ))
@@ -255,10 +270,66 @@ mst_shared_d_config() {                   # mst_shared_d_config <depth>
       --mst-wo-mode dense --mst-stream-topk 0"
 }
 
+# Arm 3: Sandwiched / Alternating Shared FFN (every 2 layers, with wider M=D)
+mst_sandwiched_config() {                 # mst_sandwiched_config <depth>
+    local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
+    local SD=$(( D / N_SUBS ))
+    local INNER="${FFN_INNER_DIM:-$D}"
+    echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
+      --mst-head-dim 0 --mst-input-mode learned_proj \
+      --mst-routing-mode soft_weighted --mst-routing-topk 0 \
+      --mst-ffn-mode shared_dense --mst-ffn-every 2 --mst-ffn-inner-dim $INNER \
+      --mst-transition-mode aggregate_distribute \
+      --mst-final-mode concat_proj --mst-final-topk 0 \
+      --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+      --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+      --mst-transition-width-mult ${N_SUBS}.0 --mst-sub-lr-scale 2.0 \
+      --mst-multi-scale-windows 1 \
+      --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+      --mst-wo-mode dense --mst-stream-topk 0"
+}
+
+# Arm 4: Grouped Up-Projection + Shared Down-Projection (private stream expansion, joint mixing)
+mst_grouped_shared_config() {             # mst_grouped_shared_config <depth>
+    local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
+    local SD=$(( D / N_SUBS ))
+    local INNER="${FFN_INNER_DIM:-$SD}"
+    echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
+      --mst-head-dim 0 --mst-input-mode learned_proj \
+      --mst-routing-mode soft_weighted --mst-routing-topk 0 \
+      --mst-ffn-mode grouped_up_shared_down --mst-ffn-inner-dim $INNER \
+      --mst-transition-mode aggregate_distribute \
+      --mst-final-mode concat_proj --mst-final-topk 0 \
+      --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+      --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+      --mst-transition-width-mult ${N_SUBS}.0 --mst-sub-lr-scale 2.0 \
+      --mst-multi-scale-windows 1 \
+      --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+      --mst-wo-mode dense --mst-stream-topk 0"
+}
+
+# Arm 5: Shared SwiGLU FFN (multiplicative gating)
+mst_swiglu_config() {                     # mst_swiglu_config <depth>
+    local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
+    local SD=$(( D / N_SUBS ))
+    local INNER="${FFN_INNER_DIM:-$SD}"
+    echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
+      --mst-head-dim 0 --mst-input-mode learned_proj \
+      --mst-routing-mode soft_weighted --mst-routing-topk 0 \
+      --mst-ffn-mode shared_swiglu --mst-ffn-inner-dim $INNER \
+      --mst-transition-mode aggregate_distribute \
+      --mst-final-mode concat_proj --mst-final-topk 0 \
+      --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+      --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+      --mst-transition-width-mult ${N_SUBS}.0 --mst-sub-lr-scale 2.0 \
+      --mst-multi-scale-windows 1 \
+      --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+      --mst-wo-mode dense --mst-stream-topk 0"
+}
+
 echo "============================================================"
 echo "  P16 isoFLOP comparison   C = ${FLOPS} active FLOPs"
 echo "  arms: ${ARMS}"
-echo "  MST Top-1: ${MST_DEPTHS:-(none)}   MST Shared D->D: ${SHARED_D_DEPTHS:-(none)}"
 echo "  out ${OUT_BASE}"
 echo "============================================================"
 
@@ -278,6 +349,33 @@ for d in $SHARED_D_DEPTHS; do
         continue
     fi
     run "ISOF_mst_shared_d_d${d}" "$d" $(mst_shared_d_config "$d")
+done
+
+for d in $SANDWICHED_DEPTHS; do
+    SD=$(( (((d * ASPECT_RATIO + 127) / 128) * 128) / N_SUBS ))
+    if [ $(( SD % 64 )) -ne 0 ]; then
+        echo "SKIP Sandwiched d${d}: sub_dim ${SD} not divisible by 64"
+        continue
+    fi
+    run "ISOF_mst_sandwiched_d${d}" "$d" $(mst_sandwiched_config "$d")
+done
+
+for d in $GROUPED_SHARED_DEPTHS; do
+    SD=$(( (((d * ASPECT_RATIO + 127) / 128) * 128) / N_SUBS ))
+    if [ $(( SD % 64 )) -ne 0 ]; then
+        echo "SKIP Grouped-Shared d${d}: sub_dim ${SD} not divisible by 64"
+        continue
+    fi
+    run "ISOF_mst_grouped_shared_d${d}" "$d" $(mst_grouped_shared_config "$d")
+done
+
+for d in $SWIGLU_DEPTHS; do
+    SD=$(( (((d * ASPECT_RATIO + 127) / 128) * 128) / N_SUBS ))
+    if [ $(( SD % 64 )) -ne 0 ]; then
+        echo "SKIP SwiGLU d${d}: sub_dim ${SD} not divisible by 64"
+        continue
+    fi
+    run "ISOF_mst_swiglu_d${d}" "$d" $(mst_swiglu_config "$d")
 done
 
 for d in $DENSE_DEPTHS; do

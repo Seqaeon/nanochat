@@ -380,6 +380,7 @@ def run_training_sweep(args):
         "--mst-routing-aux-weight", str(getattr(args, 'mst_routing_aux_weight', 0.01)),
         "--mst-diversity-weight", str(getattr(args, 'mst_diversity_weight', 0.0)),
         "--mst-ffn-mode", str(getattr(args, 'mst_ffn_mode', 'standard')),
+        "--mst-ffn-every", str(getattr(args, 'mst_ffn_every', 1)),
         "--mst-transition-mode", str(getattr(args, 'mst_transition_mode', 'parallel')),
         "--mst-final-mode", str(getattr(args, 'mst_final_mode', 'aggregate_proj')),
         "--mst-final-topk", str(getattr(args, 'mst_final_topk', -1)),
@@ -1153,7 +1154,9 @@ if __name__ == "__main__":
     parser.add_argument("--mst-routing-topk", type=int, default=4)
     parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01)
     parser.add_argument("--mst-diversity-weight", type=float, default=0.0)
-    parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear", "shared_dense"])
+    parser.add_argument("--mst-ffn-mode", type=str, default="standard",
+                        choices=["standard", "no_downproj", "linear", "shared_dense", "grouped_up_shared_down", "shared_swiglu"])
+    parser.add_argument("--mst-ffn-every", type=int, default=1, help="MST: apply FFN every N layers (1=every, 2=even-only)")
     parser.add_argument("--mst-transition-mode", type=str, default="parallel",
                         choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all", "micro_attention", "micro_attention_shared_kv"])
     parser.add_argument("--mst-final-mode", type=str, default="aggregate_proj",

@@ -402,7 +402,8 @@ class GPTConfig:
     mst_routing_aux_weight: float = 0.01       # load balancing loss coefficient
     mst_diversity_weight: float = 0.0          # cosine diversity penalty (0=off; e.g. 0.01 to encourage sub specialization)
     # Axis 3 — FFN Internal Transition
-    mst_ffn_mode: str = 'standard'             # 'standard' (d→4d→d) | 'no_downproj' (d→4d)
+    mst_ffn_mode: str = 'standard'             # 'standard'|'no_downproj'|'shared_dense'|'grouped_up_shared_down'|'shared_swiglu'
+    mst_ffn_every: int = 1                     # apply FFN every N layers (1=every, 2=even-only for sandwiched FFN)
     # Axis 4 — Layer-to-Layer Transition
     mst_transition_mode: str = 'parallel'      # 'parallel'|'aggregate_distribute'|'cross_attend'|'concat_proj'|'free_for_all'
     # Axis 5 — Final Layer → Vocabulary
@@ -845,7 +846,7 @@ RESEARCH_ALLOWED_KEYS = {
     "mst_input_mode", "mst_rotated_slice_learned",
     "mst_routing_mode", "mst_routing_topk", "mst_routing_aux_weight",
     "mst_diversity_weight",
-    "mst_ffn_mode", "mst_transition_mode", "mst_final_mode",
+    "mst_ffn_mode", "mst_ffn_every", "mst_transition_mode", "mst_final_mode",
     "mst_sub_aux_weight", "mst_progressive_merge", "mst_multi_scale_windows",
     "mst_delta_residual", "mst_sub_layers",
     # MST Stage 7: Scaling improvements

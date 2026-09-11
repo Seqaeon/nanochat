@@ -245,8 +245,10 @@ parser.add_argument("--mst-routing-mode", type=str, default="soft_weighted",
 parser.add_argument("--mst-routing-topk", type=int, default=4, help="MST R-B: k for top-k hard routing")
 parser.add_argument("--mst-routing-aux-weight", type=float, default=0.01, help="MST: load balance aux loss weight")
 parser.add_argument("--mst-diversity-weight", type=float, default=0.0, help="MST: cosine diversity penalty weight (0=off, e.g. 0.01)")
-parser.add_argument("--mst-ffn-mode", type=str, default="standard", choices=["standard", "no_downproj", "linear", "shared_dense"],
-                    help="MST Axis 3: FFN mode (standard=d->4d->d, no_downproj=d->4d, shared_dense=D->D->D)")
+parser.add_argument("--mst-ffn-mode", type=str, default="standard",
+                    choices=["standard", "no_downproj", "linear", "shared_dense", "grouped_up_shared_down", "shared_swiglu"],
+                    help="MST Axis 3: FFN mode (standard, no_downproj, shared_dense, grouped_up_shared_down, shared_swiglu)")
+parser.add_argument("--mst-ffn-every", type=int, default=1, help="MST: apply FFN every N layers (1=every, 2=even-only)")
 parser.add_argument("--mst-transition-mode", type=str, default="parallel",
                     choices=["parallel", "aggregate_distribute", "cross_attend", "concat_proj", "free_for_all", "micro_attention", "micro_attention_shared_kv"],
                     help="MST Axis 4: layer-to-layer transition mode")
@@ -1173,6 +1175,7 @@ def build_model_meta(depth):
         mst_routing_aux_weight=getattr(args, 'mst_routing_aux_weight', 0.01),
         mst_diversity_weight=getattr(args, 'mst_diversity_weight', 0.0),
         mst_ffn_mode=getattr(args, 'mst_ffn_mode', 'standard'),
+        mst_ffn_every=getattr(args, 'mst_ffn_every', 1),
         mst_transition_mode=getattr(args, 'mst_transition_mode', 'parallel'),
         mst_final_mode=getattr(args, 'mst_final_mode', 'aggregate_proj'),
         mst_final_topk=getattr(args, 'mst_final_topk', -1),
@@ -2017,6 +2020,7 @@ if model_config.use_mst and master_process:
                 'input_mode':          c.mst_input_mode,
                 'routing_mode':        c.mst_routing_mode,
                 'ffn_mode':            c.mst_ffn_mode,
+                'ffn_every':           c.mst_ffn_every,
                 'transition_mode':     c.mst_transition_mode,
                 'final_mode':          c.mst_final_mode,
                 'n_subs':              c.mst_n_subs,
