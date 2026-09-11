@@ -30,8 +30,8 @@ set -o pipefail
 
 FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
-    echo "usage: $0 [--force] [--seeds N] [--arms mst|shared_d|sandwiched|grouped_shared|swiglu|new|dense|all] [--timer-only] [depth ...]"
-    echo "  --new-only runs all 3 new arms (sandwiched, grouped_shared, swiglu) together."
+    echo "usage: $0 [--force] [--seeds N] [--arms mst|shared_d|sandwiched|grouped_shared|swiglu|new_arms|dense|all] [--new-arms-only] [--timer-only] [depth ...]"
+    echo "  --new-arms-only runs only the 3 new variants (sandwiched, grouped_shared, swiglu)"
     echo "  --timer-only runs TIMER_STEPS (default 20) steps of every arm and projects the"
     echo "  full sweep from the measured dt, including startup and final-validation time."
     echo "  depths given positionally replace the built-in list for whichever arms run."
@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
         --sandwiched-only) ARMS=sandwiched; shift ;;
         --grouped-shared-only) ARMS=grouped_shared; shift ;;
         --swiglu-only) ARMS=swiglu; shift ;;
-        --new-only|--new-arms-only|--new-arms) ARMS=new; shift ;;
+        --new-arms-only|--new-arms) ARMS=new_arms; shift ;;
         --dense-only) ARMS=dense; shift ;;
         --timer-only) TIMER=1; shift ;;
         -*) echo "unknown arg: $1"; usage; exit 1 ;;
@@ -57,8 +57,8 @@ for d in "${CLI_DEPTHS[@]}"; do
     [[ "$d" =~ ^[0-9]+$ ]] || { echo "depth must be a positive integer, got '$d'"; usage; exit 1; }
 done
 case "$ARMS" in
-    all|mst|shared_d|sandwiched|grouped_shared|swiglu|new|dense) ;;
-    *) echo "--arms must be one of: mst, shared_d, sandwiched, grouped_shared, swiglu, new, dense, all (got '$ARMS')"; exit 1 ;;
+    all|mst|shared_d|sandwiched|grouped_shared|swiglu|new_arms|new|dense) ;;
+    *) echo "--arms must be one of: mst, shared_d, sandwiched, grouped_shared, swiglu, new_arms, dense, all (got '$ARMS')"; exit 1 ;;
 esac
 
 N_SUBS="${N_SUBS:-4}"
@@ -103,7 +103,7 @@ case "$ARMS" in
     sandwiched)     MST_DEPTHS="";      SHARED_D_DEPTHS="";   GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
     grouped_shared) MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     SWIGLU_DEPTHS=""; DENSE_DEPTHS="" ;;
     swiglu)         MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     GROUPED_SHARED_DEPTHS=""; DENSE_DEPTHS="" ;;
-    new)            MST_DEPTHS="";      SHARED_D_DEPTHS="";   DENSE_DEPTHS="" ;;  # Runs all 3 new arms alone
+    new_arms|new)   MST_DEPTHS="";      SHARED_D_DEPTHS="";   DENSE_DEPTHS="" ;;
     dense)          MST_DEPTHS="";      SHARED_D_DEPTHS="";   SANDWICHED_DEPTHS="";     GROUPED_SHARED_DEPTHS=""; SWIGLU_DEPTHS="" ;;
     all)            DENSE_DEPTHS="" ;;   # Focus comparison on all MST variants
 esac
