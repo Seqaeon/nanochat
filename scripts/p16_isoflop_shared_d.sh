@@ -8,16 +8,23 @@
 #   yields a better quality-compute trade-off under a fixed training budget.
 #
 # THE BUDGET
-#   C = 6.7105e+17 active FLOPs.
-#   Matches MST L=16's compute-optimal training budget. Under this fixed compute:
-#     - MST Top-1 (~5.75e8 active FLOPs/tok) trains on ~1.167B tokens.
-#     - MST Shared D->D (~7.00e8 active FLOPs/tok) trains on ~0.958B tokens.
-#   Both arms consume the exact same compute, providing an honest isoFLOP comparison.
+#   Training compute is derived using the repo's Chinchilla scaling law:
+#     tokens = 10.5 * (transformer_matrices + lm_head)
+#     training_flops = tokens * active_flops_per_token
+#   
+#   Evaluated at Depth 8 (D=512, sub_dim=128):
+#     - MST SP2_k1:     26,760,192 scaling params * 10.5 = 280.98M tok * 1.5622e8 = 4.3895e+16 FLOPs
+#     - MST Shared D:   26,743,808 scaling params * 10.5 = 280.81M tok * 1.7500e8 = 4.9141e+16 FLOPs
+#   The higher of the two is 4.914076e+16 (Shared D->D), which is fixed as the
+#   training compute budget for BOTH arms at depth 8.
+#
+#   (For Depth 12: max is 2.334370e+17; for Depth 16: max is 8.464552e+17).
 #
 # USAGE
-#   bash scripts/p16_isoflop_shared_d.sh
-#   bash scripts/p16_isoflop_shared_d.sh --timer-only 16
-#   bash scripts/p16_isoflop_shared_d.sh --arms shared_d 16
+#   bash scripts/p16_isoflop_shared_d.sh              # Runs Depth 8 at C = 4.914076e+16
+#   bash scripts/p16_isoflop_shared_d.sh --timer-only  # Quick 20-step timing probe
+#   bash scripts/p16_isoflop_shared_d.sh --arms shared_d
+#   bash scripts/p16_isoflop_shared_d.sh 12            # Runs Depth 12 at C = 2.334370e+17
 # ============================================================================
 set -o pipefail
 
@@ -49,20 +56,35 @@ case "$ARMS" in
     *) echo "--arms must be one of: mst, shared_d, dense, all (got '$ARMS')"; exit 1 ;;
 esac
 
-FLOPS="${FLOPS:-6.7105e+17}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
 
-# Default depths: L=16 (D=1024, d=256) and L=24 (D=1536, d=384), both divisible by 64
-MST_DEPTHS="${MST_DEPTHS-16 24}"
-SHARED_D_DEPTHS="${SHARED_D_DEPTHS-16 24}"
-DENSE_DEPTHS="${DENSE_DEPTHS-16 24}"
+# Default depth is L=8 (D=512, d=128), the standard exploration & parity depth.
+# Override via positional CLI args (e.g. `bash scripts/p16_isoflop_shared_d.sh 12`)
+MST_DEPTHS="${MST_DEPTHS-8}"
+SHARED_D_DEPTHS="${SHARED_D_DEPTHS-8}"
+DENSE_DEPTHS="${DENSE_DEPTHS-8}"
 
 if [ ${#CLI_DEPTHS[@]} -gt 0 ]; then
     MST_DEPTHS="${CLI_DEPTHS[*]}"
     SHARED_D_DEPTHS="${CLI_DEPTHS[*]}"
     DENSE_DEPTHS="${CLI_DEPTHS[*]}"
 fi
+
+# Function to return the highest Chinchilla training FLOPs between the two arms for any depth
+default_flops_for_depth() {
+    case "$1" in
+        8)  echo "4.914076e+16" ;;
+        12) echo "2.334370e+17" ;;
+        16) echo "8.464552e+17" ;;
+        24) echo "6.445339e+18" ;;
+        *)  echo "4.914076e+16" ;;
+    esac
+}
+
+PRIMARY_DEPTH=$(echo "$MST_DEPTHS $SHARED_D_DEPTHS $DENSE_DEPTHS" | tr ' ' '\n' | grep -v '^$' | head -1)
+PRIMARY_DEPTH="${PRIMARY_DEPTH:-8}"
+FLOPS="${FLOPS:-$(default_flops_for_depth "$PRIMARY_DEPTH")}"
 
 case "$ARMS" in
     mst)      SHARED_D_DEPTHS=""; DENSE_DEPTHS="" ;;
