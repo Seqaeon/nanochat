@@ -955,11 +955,22 @@ class BatchedMSTLayer(nn.Module):
             self.stream_router_w = nn.Parameter(torch.empty(N, N * d))
         self._last_stream_load = None  # diagnostics
 
-        # --- Batched FFN weights: standard d → 4d → d ---
-        inner = 4 * d
-        self._inner = inner
-        self.fc_w = nn.Parameter(torch.empty(N * inner, d))
-        self.fc_proj_w = nn.Parameter(torch.empty(N * d, inner))
+        # --- Batched FFN weights: standard d → 4d → d, or shared_dense D → inner → D ---
+        self._ffn_shared_dense = (getattr(config, 'mst_ffn_mode', 'standard') == 'shared_dense')
+        if self._ffn_shared_dense:
+            shared_inner = int(getattr(config, 'mst_ffn_inner_dim', 0)) or D
+            self._inner = shared_inner
+            self.fc_shared_w = nn.Parameter(torch.empty(shared_inner, D))
+            self.fc_shared_proj_w = nn.Parameter(torch.empty(D, shared_inner))
+            self.fc_w = None
+            self.fc_proj_w = None
+        else:
+            inner = 4 * d
+            self._inner = inner
+            self.fc_w = nn.Parameter(torch.empty(N * inner, d))
+            self.fc_proj_w = nn.Parameter(torch.empty(N * d, inner))
+            self.fc_shared_w = None
+            self.fc_shared_proj_w = None
 
         # --- Batched VE gates: stored as 2D (N*n_head, ve_gate_channels) ---
         self.ve_gate_channels = min(d, 32)
@@ -1286,8 +1297,11 @@ class BatchedMSTLayer(nn.Module):
             c_k_w = self.c_k_w.view(N, self.qkv_dim, d)
             c_v_w = self.c_v_w.view(N, self.qkv_dim, d)
         c_proj_w = None if self._wo_dense else self.c_proj_w.view(N, d, self.qkv_dim)
-        fc_w = self.fc_w.view(N, self._inner, d)
-        fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
+        if self._ffn_shared_dense:
+            fc_w, fc_proj_w = None, None
+        else:
+            fc_w = self.fc_w.view(N, self._inner, d)
+            fc_proj_w = self.fc_proj_w.view(N, d, self._inner)
         distribute_w = self.distribute_w.view(N, d, d) if (self._couples and self._transition_mode == 'aggregate_distribute' and not self._transition_mlp and not self._mean_transition) else None
         ve_gate_w = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
@@ -1439,7 +1453,12 @@ class BatchedMSTLayer(nn.Module):
         # compute is genuinely skipped. The up-projection lives inside each branch on
         # purpose: computing it densely and then dispatching would throw away exactly the
         # work we are trying not to do.
-        if stream_w is not None and self._stream_dispatch:
+        if self._ffn_shared_dense:
+            x_flat = x.reshape(B, T, N * d)  # (B, T, D)
+            h = F.relu(F.linear(x_flat, self.fc_shared_w.to(dtype=x_flat.dtype))).square()
+            ffn_out_flat = F.linear(h, self.fc_shared_proj_w.to(dtype=h.dtype))
+            ffn_out = ffn_out_flat.view(B, T, N, d)
+        elif stream_w is not None and self._stream_dispatch:
             ffn_out = self._ffn_dispatched(x, stream_w, fc_w, fc_proj_w)
         else:
             h = _batched_linear(x, fc_w)              # (B, T, N, 4d)
@@ -1459,7 +1478,7 @@ class BatchedMSTLayer(nn.Module):
             ffn_out = _batched_linear(h, fc_proj_w)    # (B, T, N, d)
         # The gate multiplies the output either way: it is what carries the router's
         # straight-through gradient into the loss.
-        if stream_w is not None:
+        if stream_w is not None and not self._ffn_shared_dense:
             ffn_out = stream_w.unsqueeze(-1) * ffn_out
         sub_states = sub_states + ffn_out
 
@@ -1710,8 +1729,15 @@ class BatchedMSTLayer(nn.Module):
             nn.init.zeros_(self.c_proj_dense_w)
         else:
             c_proj = self.c_proj_w.view(N, d, self.qkv_dim)
-        fc = self.fc_w.view(N, self._inner, d)
-        fc_proj = self.fc_proj_w.view(N, d, self._inner)
+        if self._ffn_shared_dense:
+            D = self.N * self.d
+            shared_s = 1.0 / (D ** 0.5)
+            nn.init.uniform_(self.fc_shared_w, -shared_s, shared_s)
+            nn.init.zeros_(self.fc_shared_proj_w)
+            fc, fc_proj = None, None
+        else:
+            fc = self.fc_w.view(N, self._inner, d)
+            fc_proj = self.fc_proj_w.view(N, d, self._inner)
         ve_gate = self.ve_gate_w.view(N, self.n_head, self.ve_gate_channels) if self.ve_gate_w is not None else None
 
         if self._shared_kv_attn:
@@ -1745,8 +1771,9 @@ class BatchedMSTLayer(nn.Module):
             if c_proj is not None:
                 nn.init.zeros_(c_proj[j])
             # FFN
-            nn.init.uniform_(fc[j], -sub_s, sub_s)
-            nn.init.zeros_(fc_proj[j])
+            if not self._ffn_shared_dense:
+                nn.init.uniform_(fc[j], -sub_s, sub_s)
+                nn.init.zeros_(fc_proj[j])
             # VE gate
             if ve_gate is not None:
                 nn.init.uniform_(ve_gate[j], -sub_s, sub_s)
@@ -1822,7 +1849,7 @@ class BatchedMSTLayer(nn.Module):
 def _can_use_batched_layer(config):
     """Check if the config is compatible with BatchedMSTLayer."""
     return (
-        config.mst_ffn_mode == 'standard'
+        config.mst_ffn_mode in ('standard', 'shared_dense')
         and config.mst_transition_mode in ('aggregate_distribute', 'free_for_all', 'micro_attention')
         and config.mst_sub_layers == 1
         and not config.mst_ffn_shared_up
