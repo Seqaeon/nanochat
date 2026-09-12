@@ -154,6 +154,8 @@ def main():
     ap.add_argument("--shapes", nargs="+", default=["square", "ffn", "head"],
                     choices=list(SHAPES))
     ap.add_argument("--outdir", default="out/b00_binary_phase0")
+    ap.add_argument("--backend", default="auto", choices=["auto", "nvcc", "nvrtc"],
+                    help="nvrtc compiles at runtime and needs NO nvcc; auto falls back to it")
     a = ap.parse_args()
 
     import torch
@@ -174,19 +176,52 @@ def main():
         print("         NOT carry the paper's headline number.")
 
     nvcc, extra = find_toolchain()
-    if nvcc is None:
+    use_nvrtc = a.backend == "nvrtc" or (a.backend == "auto" and nvcc is None)
+    if a.backend == "nvcc" and nvcc is None:
         print(extra)
         return 1
+    if use_nvrtc:
+        print("backend: nvrtc (runtime compilation, no nvcc required)")
+        if nvcc is None:
+            print("  reason: no nvcc. Note `pip install nvidia-cuda-nvcc-cu12` ships ONLY")
+            print("  ptxas, never the nvcc frontend, so that install can never provide it.")
+            print("  It IS still worth installing: NVRTC needs its crt/ headers.")
+        from scripts.nvrtc_b1 import benchmark as nvrtc_benchmark
+        shapes = {}
+        for group in a.shapes:
+            for label, dims in SHAPES[group]:
+                shapes[label] = tuple(int(x) for x in dims.split())
+        measured = {}
+        measured.update(nvrtc_benchmark(arch, shapes, rounds=a.rounds))
+        if xor_native:
+            sq = {k2: v for k2, v in shapes.items() if k2.startswith("square")}
+            if sq:
+                measured.update(nvrtc_benchmark(arch, sq, rounds=a.rounds, use_xor=True))
+        os.makedirs(a.outdir, exist_ok=True)
+        jpath = os.path.join(a.outdir, "o3_kernel_gate.json")
+        with open(jpath, "w") as f:
+            json.dump({"device": p.name, "sm": arch, "xor_native": xor_native,
+                       "backend": "nvrtc", "rounds": a.rounds, "ratios": measured}, f, indent=2)
+        print(f"wrote {jpath}")
+        if measured:
+            best = max(measured.values())
+            print(f"best measured ratio on THIS device: {best:.2f}x  "
+                  f"({'CLEARS' if best >= BREAK_EVEN else 'BELOW'} the {BREAK_EVEN}x break-even)")
+        print("=" * 72)
+        print(f"GATE: a b1 kernel needs >= {BREAK_EVEN}x over bf16 for the matched-bytes")
+        print("binary model to tie on wall clock. Below that: drop the speed claim, keep")
+        print("memory and energy, and say so in the abstract rather than burying it.")
+        return 0
     print(f"nvcc: {nvcc}")
     print(f"link: {extra}")
 
     os.makedirs(a.outdir, exist_ok=True)
     and_bin = os.path.join(a.outdir, "b1_and")
     xor_bin = os.path.join(a.outdir, "b1_xor")
-    if sh(f"{nvcc} -O3 -arch=sm_{arch} {SRC} {extra} -o {and_bin}").returncode:
+    if sh(f"{nvcc} -O3 -arch=sm_{arch} -I{os.path.dirname(SRC)} {SRC} {extra} -o {and_bin}").returncode:
         return 1
     if xor_native:
-        sh(f"{nvcc} -O3 -arch=sm_{arch} -DUSE_XOR {SRC} {extra} -o {xor_bin}")
+        sh(f"{nvcc} -O3 -arch=sm_{arch} -DUSE_XOR -I{os.path.dirname(SRC)} {SRC} {extra} -o {xor_bin}")
 
     print()
     sh("nvidia-smi -q -d POWER | grep -iE 'current power limit|default power limit'", quiet=True)

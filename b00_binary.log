@@ -30,6 +30,23 @@ binary vs dense:  FLOPs 1.00x   BOPs(arith) 256x cheaper   energy 120.5x cheaper
                   inference bytes 16.0x smaller   training state 11.1x smaller
   binary weights WITHOUT the counter optimiser: training state 1.37x smaller   (the optimiser is 39.3/60.4 of the baseline)
 
+==================================================================================
+SPENDING CURVE  (dense depth 8, V=32,768, 240 MiB, 126M params)
+==================================================================================
+ binary depth         params  x params     MiB  x bytes  x FLOPs  kernel needed
+----------------------------------------------------------------------------------
+            8    125,829,648      1.0x      15    16.0x     1.0x           1.0x
+           12    286,262,424      2.3x      34     7.0x     2.6x           2.6x
+           16    536,872,992      4.3x      64     3.7x     5.4x           5.4x
+           20    896,535,720      7.1x     107     2.2x     9.9x           9.9x
+           24  1,384,124,976     11.0x     165     1.5x    16.4x          16.4x
+----------------------------------------------------------------------------------
+  'kernel needed' is the b1-over-bf16 speedup required to TIE on wall clock.
+  The top row spends NOTHING on extra parameters: 16x smaller, same FLOPs,
+  so any kernel above 1.0x is already a wall-clock win. The bottom row spends
+  everything. The paper picks a point on this curve and defends it; it does
+  not get to quote the memory of one end and the speed of the other.
+
 ================================================================================
 MATCHED INFERENCE BYTES  (budget = dense depth 8 = 240.0 MiB, V=32,768)
 ================================================================================
@@ -44,13 +61,76 @@ fully binary                   27 1,979,979,958   7.013e+09    3.507e+09   236.0
 
   WALL-CLOCK BREAK-EVEN: at equal bytes the binary model issues 24.5x the MACs,
   so a b1 kernel must be >= 24.5x faster per MAC than bf16 just to TIE on time.
-    at  1.93x (O3 measured, state B    ) -> binary is 12.7x SLOWER
-    at  4.19x (O3 measured, state A    ) -> binary is 5.8x SLOWER
-    at 64.00x (Ampere b1 spec ceiling  ) -> binary is 2.6x faster
+    NO MEASURED KERNEL RATIO ON THIS DEVICE.
+    Run:  python -m scripts.o3_kernel_gate     (writes o3_kernel_gate.json)
+    The numbers below are STALE PLACEHOLDERS from a 20 W power-capped
+    laptop where the same binary gave 1.93x and 4.19x in two states.
+    They describe that laptop and nothing else. Do not read them as a
+    property of the hardware you are on now.
+    at   1.93x (STALE laptop, state B                       ) -> binary is 12.7x SLOWER
+    at   4.19x (STALE laptop, state A                       ) -> binary is 5.8x SLOWER
+    at  64.00x (Ampere b1 spec ceiling                      ) -> binary is 2.6x faster
   So the kernel must reach 38% of the Ampere b1 spec ceiling to break even.
 
 gate: PASS
-device: NVIDIA A100-SXM4-80GB  sm_80  79.3 GiB  108 SMs
-nvcc not found; install the CUDA toolkit (the runtime alone is not enough)
-[skip] sensitivity_d8_V32768: CKPT not found at out/dense_d8_V32k_model_001014.pt
+device: NVIDIA A100-SXM4-40GB  sm_80  39.5 GiB  108 SMs
+nvcc not found. This is a CUDA runtime image without the compiler.
+  pip install -q nvidia-cuda-nvcc-cu12
+then re-run in a FRESH process (a notebook kernel that already
+imported torch will not see the new package on sys.path).
+Searched: PATH, CUDA_HOME, CUDA_PATH, torch's CUDA_HOME,
+site-packages/nvidia/*/bin/nvcc, /usr/local/cuda*/bin/nvcc.
+No system CUDA toolkit is required.
+[o5] --data-dir defaulted to ./data
+[o5] 300 shard(s); val split = data/shard_06542.parquet
+baseline dense bpb = 1.7677   (5s per eval, 40 steps x 8 x 2048 tokens)
+
+component                  params     weig/row    weig/none     acts/row    acts/none     both/row    both/none
+---------------------------------------------------------------------------------------------------------------
+attn.qkv                6,291,456      -0.0073      +1.6016      -0.0153      -0.0133      +0.0290      +1.6762
+attn.c_proj             2,097,152      +0.0226      +1.5647      +0.0232      +0.0176      +0.1404      +1.2720
+attn.ve_gate                  512      +0.0082      +0.1062      +0.0229      +0.0187      +0.0490      +0.1072
+mlp.c_fc                8,388,608      +0.0782      +1.4665      +0.1200      +0.1669      +0.2164      +1.5410
+mlp.c_proj              8,388,608      +0.1483      +1.7702      +0.4448      +2.5051      +0.3121      +2.7605
+lm_head                16,777,216      +0.4374      +0.9523      +0.6901      +0.7702      +0.8546      +1.3797
+wte                    16,777,216      +0.0717      +0.0717      +0.0000      +0.0000      +0.0717      +0.0717
+value_embeds           67,108,864      +0.0187      +0.1487      +0.0000      +0.0000      +0.0187      +0.1487
+ALL body matmuls       25,165,824      +0.1416      +1.8999      +0.8593      +2.4508      +0.5640      +2.7737
+ALL interfaces        100,663,296      +0.5965      +1.5271      +0.6901      +0.7702      +0.9619      +2.6042
+EVERYTHING            125,829,632      +0.2672      +6.9337      +0.4467      +2.3477      +0.4373      +4.2827
+
+sensitivity ranking by delta bpb, mode=both scale=row, worst first:
+   +0.9619  ALL interfaces       (100,663,296 params)
+   +0.8546  lm_head              (16,777,216 params)
+   +0.5640  ALL body matmuls     (25,165,824 params)
+   +0.4373  EVERYTHING           (125,829,632 params)
+   +0.3121  mlp.c_proj           (8,388,608 params)
+   +0.2164  mlp.c_fc             (8,388,608 params)
+   +0.1404  attn.c_proj          (2,097,152 params)
+   +0.0717  wte                  (16,777,216 params)
+   +0.0490  attn.ve_gate         (512 params)
+   +0.0290  attn.qkv             (6,291,456 params)
+   +0.0187  value_embeds         (67,108,864 params)
+
+weights-only vs both: how much of the damage is the ACTIVATIONS
+  attn.qkv             W1A16  -0.0073   W1A1  +0.0290   activations are 125.3% of it
+  attn.c_proj          W1A16  +0.0226   W1A1  +0.1404   activations are  83.9% of it
+  attn.ve_gate         W1A16  +0.0082   W1A1  +0.0490   activations are  83.2% of it
+  mlp.c_fc             W1A16  +0.0782   W1A1  +0.2164   activations are  63.9% of it
+  mlp.c_proj           W1A16  +0.1483   W1A1  +0.3121   activations are  52.5% of it
+  lm_head              W1A16  +0.4374   W1A1  +0.8546   activations are  48.8% of it
+  wte                  W1A16  +0.0717   W1A1  +0.0717   activations are   0.0% of it
+  value_embeds         W1A16  +0.0187   W1A1  +0.0187   activations are   0.0% of it
+  ALL body matmuls     W1A16  +0.1416   W1A1  +0.5640   activations are  74.9% of it
+  ALL interfaces       W1A16  +0.5965   W1A1  +0.9619   activations are  38.0% of it
+  EVERYTHING           W1A16  +0.2672   W1A1  +0.4373   activations are  38.9% of it
+
+W1A16 IS NOT BINARISATION. It changes no operation: still a bf16 GEMM over a
+matrix holding two values per row. Only the 'both' column corresponds to the
+plan's claim, and only --scale none is strict; a per-row float scale is a float.
+
+READ THIS BEFORE USING THE NUMBERS: projection PENALISES. A component that
+survives here is strong evidence it survives from-scratch training; one that
+fails here is weak evidence, because a model trained binary shapes its own
+weight distribution for sign() and this one never did.
 ############ B00 done. results in out/b00_binary_phase0 ############
