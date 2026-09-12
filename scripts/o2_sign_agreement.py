@@ -28,6 +28,7 @@ Run:  python -m scripts.o2_sign_agreement --steps 300
 """
 import argparse
 import math
+import time
 
 import torch
 
@@ -106,7 +107,26 @@ def build(depth, vocab, seq, device, binary):
     return m, cfg
 
 
+_LOADERS = {}
+
+
+def get_loader(split, args, device, tok):
+    """One dataloader per split, reused across every arm.
+
+    Constructing a tokenizing loader scans the shard directory and spins up tokenizer
+    threads. Doing that once per run, ~46 times, dominated the wall clock: a d8 sweep
+    that was costed at 10 minutes of arithmetic took 90.
+    """
+    key = (split, args.batch, args.seq)
+    if key not in _LOADERS:
+        _LOADERS[key] = tokenizing_distributed_data_loader_bos_bestfit(
+            tok, args.batch, args.seq, split=split, device=device,
+            data_dir=args.data_dir, max_shards=args.max_shards)
+    return _LOADERS[key]
+
+
 def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
+    t_run = time.time()
     torch.manual_seed(args.seed)
     model, cfg = build(args.depth, args.vocab, args.seq, device, binary)
     params = [p for p in model.parameters() if p.requires_grad]
@@ -115,8 +135,7 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
     else:
         opt = torch.optim.AdamW(params, lr=args.adam_lr, betas=(0.9, 0.95),
                                 weight_decay=0.0)
-    loader = tokenizing_distributed_data_loader_bos_bestfit(
-        tok, args.batch, args.seq, split="train", device=device, data_dir=args.data_dir)
+    loader = get_loader("train", args, device, tok)
     agrees, mses, dens = [], [], []
     from nanochat.binary import BinaryLinear, BinaryEmbedding
     bmods = [m for m in model.modules() if isinstance(m, (BinaryLinear, BinaryEmbedding))]
@@ -143,8 +162,7 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
         if step >= args.steps - 20:
             last_losses.append(float(loss))
     model.eval()
-    val = tokenizing_distributed_data_loader_bos_bestfit(
-        tok, args.batch, args.seq, split="val", device=device, data_dir=args.data_dir)
+    val = get_loader("val", args, device, tok)
     # Dead bits: latent weights outside the STE clip window receive no gradient and can
     # never flip again. This exists because the run contains a contradiction: for binary,
     # `signonly` cost +0.4940 and stopped learning while `lognormal` cost -0.0252 and did
@@ -162,6 +180,7 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
                - sum(last_losses) / max(1, len(last_losses)))
     del model, opt
     torch.cuda.empty_cache()
+    run_arm.last_seconds = time.time() - t_run
     return (float(bpb), sum(agrees) / len(agrees), sum(mses) / len(mses), trained,
             sum(dens) / max(1, len(dens)), dead)
 
@@ -175,6 +194,8 @@ def tune_lr(binary, opt_name, args, device, tok, token_bytes, grid):
     everything. Tune first, then corrupt.
     """
     best, best_lr = None, grid[0]
+    full_steps = args.steps
+    args.steps = args.tune_steps or max(50, full_steps // 3)
     for lr in grid:
         if opt_name == "sgd":
             args.sgd_lr = lr
@@ -184,7 +205,11 @@ def tune_lr(binary, opt_name, args, device, tok, token_bytes, grid):
                                                 tok, token_bytes)
         tag = "binary" if binary else "dense"
         print(f"    lr {lr:<9g} bpb {bpb:.4f}  loss drop {trained:+.4f}  "
-              f"nonzero-grad {100*dn:.1f}%")
+              f"nonzero-grad {100*dn:.1f}%  [{run_arm.last_seconds:.0f}s]", flush=True)
+        if lr == grid[0]:
+            n_runs = len(grid) + 6
+            print(f"    ({run_arm.last_seconds:.0f}s per run x ~{n_runs} runs in this cell "
+                  f"= ~{run_arm.last_seconds*n_runs/60:.0f} min; x4 cells)", flush=True)
         if best is None or bpb < best:
             best, best_lr = bpb, lr
     # An optimum at the edge of the grid means the real optimum is probably OUTSIDE
@@ -192,6 +217,7 @@ def tune_lr(binary, opt_name, args, device, tok, token_bytes, grid):
     # that LR is suspect. Binary needs far larger steps than dense under SGD, because
     # only sign CROSSINGS change the function and a latent weight must traverse the
     # whole clip window to produce one.
+    args.steps = full_steps
     if best_lr in (max(grid), min(grid)):
         edge = "MAX" if best_lr == max(grid) else "MIN"
         print(f"    WARNING: best lr {best_lr:g} is the {edge} of the grid. The optimum is")
@@ -206,11 +232,18 @@ def main():
     ap.add_argument("--seq", type=int, default=256)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--steps", type=int, default=300)
+    ap.add_argument("--tune-steps", type=int, default=0,
+                    help="steps for the LR search (0 = steps//3). LR tuning is ~22 of the "
+                         "~46 runs in a full sweep and does not need the full budget to "
+                         "rank learning rates.")
     ap.add_argument("--eval-steps", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sgd-lr", type=float, default=0.05)
     ap.add_argument("--adam-lr", type=float, default=3e-3)
     ap.add_argument("--data-dir", default="data")
+    ap.add_argument("--max-shards", type=int, default=8,
+                    help="scanning 300 shards per loader construction is pure overhead "
+                         "for a 300-step probe")
     ap.add_argument("--optimizers", nargs="+", default=["sgd", "adamw"])
     ap.add_argument("--sgd-lr-grid", type=float, nargs="+",
                     default=[10, 3, 1, 0.3, 0.1, 0.03],

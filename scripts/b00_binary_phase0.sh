@@ -74,7 +74,7 @@
 set -o pipefail
 
 FORCE=0
-RUN_GROUPS="cost kernel sensitivity signagree smoke"
+RUN_GROUPS="cost kernel sensitivity smoke signagree"
 DEPTHS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -174,6 +174,20 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
             [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
         fi
     fi
+    # ---- O6: does a natively binary transformer train at all? ---------------
+    if has smoke; then
+        ARM="smoke_d${DEPTH}"
+        if done_already "$ARM"; then
+            echo "[skip] $ARM" | log
+        else
+            EXTRA=""
+            [ -n "$DATA_DIR" ] && EXTRA="--data-dir $DATA_DIR"
+            python -m scripts.o6_binary_smoke --depth "$DEPTH" --vocab "$VOCAB_SIZE" \
+                --steps "${O6_STEPS:-400}" --batch "$DEVICE_BATCH_SIZE" --arch both $EXTRA \
+                2>&1 | tee "${OUT_BASE}/${ARM}.txt" | log
+            [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
+        fi
+    fi
     # ---- O2: sign-agreement probe. Needs BinaryLinear; tiny models. ---------
     if has signagree; then
         ARM="signagree_d${DEPTH}"
@@ -202,19 +216,5 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
         fi
     fi
 
-    # ---- O6: does a natively binary transformer train at all? ---------------
-    if has smoke; then
-        ARM="smoke_d${DEPTH}"
-        if done_already "$ARM"; then
-            echo "[skip] $ARM" | log
-        else
-            EXTRA=""
-            [ -n "$DATA_DIR" ] && EXTRA="--data-dir $DATA_DIR"
-            python -m scripts.o6_binary_smoke --depth "$DEPTH" --vocab "$VOCAB_SIZE" \
-                --steps "${O6_STEPS:-400}" --batch "$DEVICE_BATCH_SIZE" --arch both $EXTRA \
-                2>&1 | tee "${OUT_BASE}/${ARM}.txt" | log
-            [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
-        fi
-    fi
 done
 echo "############ B00 done. results in ${OUT_BASE} ############" | log
