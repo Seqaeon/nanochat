@@ -151,7 +151,12 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
     if has sensitivity; then
         ARM="sensitivity_d${DEPTH}_V${VOCAB_SIZE}"
         if [ ! -f "$CKPT" ]; then
-            echo "[skip] $ARM: CKPT not found at $CKPT" | log
+            echo "[skip] $ARM: no checkpoint at '$CKPT'." | log
+            echo "        Point CKPT at a trained dense checkpoint, e.g." | log
+            echo "        CKPT=/root/nanochat/out/dense_d8_V32k_model_001014.pt \\" | log
+            echo "            bash scripts/b00_binary_phase0.sh --group sensitivity 8" | log
+            echo "        It must match --depth/--vocab/--seq/--window-pattern; the" | log
+            echo "        depth-8 V=32,768 dense arm is 125,829,648 params, 320 MiB." | log
         elif done_already "$ARM"; then
             echo "[skip] $ARM" | log
         else

@@ -1,0 +1,56 @@
+############ B00 depth=8 V=32768 ############
+==============================================================================
+GATE: reproduce known dense quantities
+==============================================================================
+  depth  4 (seq=1024, wp=L)
+    params   36,700,296 vs   36,700,296  PASS
+    flops  8.178970e+07 vs 8.178970e+07  PASS
+  depth  8 (seq=2048, wp=SSSL)
+    params  125,829,648 vs  125,829,648  PASS
+    flops  2.862643e+08 vs 2.862643e+08  PASS
+------------------------------------------------------------------------------
+GATE: optimiser bytes, real model at depth 4
+Scaling the LR for the AdamW parameters ∝1/√(256/768) = 1.732051
+  parameters          36,700,296
+  param bytes             92.0 MiB  (21.0 bits/param)
+  optimiser state        172.0 MiB  (39.3 bits/param)
+  MEASURED TOTAL          60.4 bits/param  (model uses measured 39.3 state bits/param)
+
+==============================================================================
+THREE AXES  depth=8  V=32,768  n_embd=512
+==============================================================================
+arm                        FLOPs/tok   BOPs arith      pJ/tok  infer MiB  train MiB
+--------------------------------------------------------------------------------
+dense bf16 + MuonAdamW     2.863e+08    3.664e+10   2.344e+08      240.0      829.5
+BitNet-like W1.58A8        2.863e+08    2.290e+09   4.914e+07      198.0      787.5
+fully binary + MuonAdamW   2.863e+08    1.431e+08   1.944e+06       15.0      604.5
+fully binary + counter     2.863e+08    1.431e+08   1.944e+06       15.0       75.0
+--------------------------------------------------------------------------------
+binary vs dense:  FLOPs 1.00x   BOPs(arith) 256x cheaper   energy 120.5x cheaper
+                  inference bytes 16.0x smaller   training state 11.1x smaller
+  binary weights WITHOUT the counter optimiser: training state 1.37x smaller   (the optimiser is 39.3/60.4 of the baseline)
+
+================================================================================
+MATCHED INFERENCE BYTES  (budget = dense depth 8 = 240.0 MiB, V=32,768)
+================================================================================
+arm                         depth        params   FLOPs/tok   BOPs arith     MiB
+--------------------------------------------------------------------------------
+dense bf16                      8   125,829,648   2.863e+08    3.664e+10   240.0
+fully binary                   27 1,979,979,958   7.013e+09    3.507e+09   236.0
+--------------------------------------------------------------------------------
+  at equal bytes the binary model has 15.7x the parameters, 24.5x the FLOPs,
+  and still 10.4x FEWER bit-operations.
+  THE BET: does a 1980M-parameter 1-bit model beat a 126M-parameter bf16 one?
+
+  WALL-CLOCK BREAK-EVEN: at equal bytes the binary model issues 24.5x the MACs,
+  so a b1 kernel must be >= 24.5x faster per MAC than bf16 just to TIE on time.
+    at  1.93x (O3 measured, state B    ) -> binary is 12.7x SLOWER
+    at  4.19x (O3 measured, state A    ) -> binary is 5.8x SLOWER
+    at 64.00x (Ampere b1 spec ceiling  ) -> binary is 2.6x faster
+  So the kernel must reach 38% of the Ampere b1 spec ceiling to break even.
+
+gate: PASS
+device: NVIDIA A100-SXM4-80GB  sm_80  79.3 GiB  108 SMs
+nvcc not found; install the CUDA toolkit (the runtime alone is not enough)
+[skip] sensitivity_d8_V32768: CKPT not found at out/dense_d8_V32k_model_001014.pt
+############ B00 done. results in out/b00_binary_phase0 ############

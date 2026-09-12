@@ -21,6 +21,7 @@ Run:
   python -m scripts.o3_kernel_gate --rounds 8 --shapes square ffn head
 """
 import argparse
+import glob
 import os
 import shutil
 import subprocess
@@ -39,6 +40,76 @@ SHAPES = {
                    ("head V=131k", "4096 131072 512")],
 }
 BREAK_EVEN = 24.5  # from scripts/o4_cost_model.py, matched inference bytes at depth 8
+
+
+def find_toolchain():
+    """Locate nvcc and cuBLAS.
+
+    A CUDA *runtime* image (which is what most GPU containers ship) has no nvcc.
+    The pip wheels do: `nvidia-cuda-nvcc-cu12` carries nvcc and `nvidia-cublas-cu12`
+    carries both the header and the library, and torch already pulls the latter in.
+    So search PATH, then CUDA_HOME, then site-packages, and build the include and
+    link flags from whatever is found.  Returns (nvcc, extra_flags) or (None, hint).
+    """
+    import site
+    roots = list(site.getsitepackages())
+    try:
+        roots.append(site.getusersitepackages())
+    except Exception:
+        pass
+
+    nvcc = shutil.which("nvcc")
+    if nvcc is None and os.environ.get("CUDA_HOME"):
+        cand = os.path.join(os.environ["CUDA_HOME"], "bin", "nvcc")
+        nvcc = cand if os.path.exists(cand) else None
+    if nvcc is None:
+        for r in roots:
+            hits = glob.glob(os.path.join(r, "nvidia", "*", "bin", "nvcc"))
+            if hits:
+                nvcc = hits[0]
+                break
+    if nvcc is None:
+        return None, ("nvcc not found. This is a CUDA runtime image without the compiler.\n"
+                      "  pip install -q nvidia-cuda-nvcc-cu12 nvidia-cublas-cu12\n"
+                      "then re-run. No system CUDA toolkit is required.")
+
+    # Find the library FIRST, then take the header from the SAME package, so a
+    # cu13 header is never paired with a cu12 library.
+    flags = []
+    libpath = None
+    for r in roots:
+        hits = sorted(glob.glob(os.path.join(r, "nvidia", "*", "lib", "libcublas.so*")))
+        if hits:
+            libpath = hits[-1]
+            break
+
+    incdir = None
+    if libpath:
+        sibling = os.path.join(os.path.dirname(os.path.dirname(libpath)), "include")
+        if os.path.exists(os.path.join(sibling, "cublas_v2.h")):
+            incdir = sibling
+    if incdir is None:
+        for r in roots:
+            for d in sorted(glob.glob(os.path.join(r, "nvidia", "*", "include"))):
+                if os.path.exists(os.path.join(d, "cublas_v2.h")):
+                    incdir = d
+                    break
+            if incdir:
+                break
+    if incdir:
+        flags.append(f"-I{incdir}")
+
+    if libpath:
+        # pip wheels ship only the versioned soname, so plain -lcublas will not
+        # resolve, and nvcc refuses a bare ".so.12" path as an input file.  Go
+        # through the host linker by soname and bake in an rpath so it runs.
+        libdir, soname = os.path.dirname(libpath), os.path.basename(libpath)
+        flags.append(f"-L{libdir}")
+        flags.append(f"-Xlinker -l:{soname}")
+        flags.append(f"-Xlinker -rpath={libdir}")
+    else:
+        flags.append("-lcublas")
+    return nvcc, " ".join(flags)
 
 
 def sh(cmd, quiet=False):
@@ -77,17 +148,20 @@ def main():
         print("         (up to 5x slower on GH200). AND mode only, and this device must")
         print("         NOT carry the paper's headline number.")
 
-    if shutil.which("nvcc") is None:
-        print("nvcc not found; install the CUDA toolkit (the runtime alone is not enough)")
+    nvcc, extra = find_toolchain()
+    if nvcc is None:
+        print(extra)
         return 1
+    print(f"nvcc: {nvcc}")
+    print(f"link: {extra}")
 
     os.makedirs(a.outdir, exist_ok=True)
     and_bin = os.path.join(a.outdir, "b1_and")
     xor_bin = os.path.join(a.outdir, "b1_xor")
-    if sh(f"nvcc -O3 -arch=sm_{arch} {SRC} -lcublas -o {and_bin}").returncode:
+    if sh(f"{nvcc} -O3 -arch=sm_{arch} {SRC} {extra} -o {and_bin}").returncode:
         return 1
     if xor_native:
-        sh(f"nvcc -O3 -arch=sm_{arch} -DUSE_XOR {SRC} -lcublas -o {xor_bin}")
+        sh(f"{nvcc} -O3 -arch=sm_{arch} -DUSE_XOR {SRC} {extra} -o {xor_bin}")
 
     print()
     sh("nvidia-smi -q -d POWER | grep -iE 'current power limit|default power limit'", quiet=True)
