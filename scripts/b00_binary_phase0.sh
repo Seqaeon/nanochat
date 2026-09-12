@@ -176,7 +176,7 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
     fi
     # ---- O2: sign-agreement probe. Needs BinaryLinear; tiny models. ---------
     if has signagree; then
-        ARM="signagree_d2"
+        ARM="signagree_d${DEPTH}"
         if done_already "$ARM"; then
             echo "[skip] $ARM" | log
         else
@@ -186,7 +186,14 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
             # the function, so a latent weight must traverse the whole clip window to
             # move anything. The default grid topped out at 1.0 and binary chose that
             # edge, which means the optimum was outside it and the arm was undertrained.
+            # Depth/seq/batch were NOT passed here, so every run silently used O2's own
+            # depth-2 default and the sweep's positional depth did nothing. At d2 the LR
+            # landscape is chaotic (lr 30 -> loss drop +6.07 but bpb 3.03; lr 3 -> -4.99)
+            # and there is no ground truth to validate the uncorrupted arms against. At
+            # d8 V=32,768 there is: O5 measured dense 1.7571 and fully binary 2.0127.
             python -m scripts.o2_sign_agreement --steps "${O2_STEPS:-300}" \
+                --depth "$DEPTH" --vocab "$VOCAB_SIZE" \
+                --seq "${O2_SEQ:-512}" --batch "$DEVICE_BATCH_SIZE" \
                 --sgd-lr-grid ${O2_SGD_GRID:-10 3 1 0.3 0.1 0.03} \
                 --adam-lr-grid ${O2_ADAM_GRID:-1e-2 3e-3 1e-3 3e-4 1e-4} \
                 --kinds exact signonly lognormal_1.0 flipa_0.95 flipa_0.85 flipa_0.70 $EXTRA \
