@@ -74,6 +74,11 @@ VOCAB_SIZE="${VOCAB_SIZE:-32768}"
 TOKENIZER_DIR="${TOKENIZER_DIR:-tokenizer}"
 DATA_DIR="${DATA_DIR:-data}"
 DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-16}"
+# -1 = auto-compute from the token budget (B_REF * (D/D_REF)^0.383, rounded to a
+# power of two), which is what every other sweep uses. Override only to pin the
+# batch across arms; note the LRs and weight decay are BOTH derived from it
+# (base_train.py:1749, :1799), so changing it changes more than the batch.
+TOTAL_BATCH_SIZE="${TOTAL_BATCH_SIZE:--1}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
 WINDOW_PATTERN="${WINDOW_PATTERN:-L}"
 # These were being silently ignored: base_train's --log-every DEFAULTS TO 1, so an
@@ -160,6 +165,7 @@ for DEPTH in "${DEPTHS[@]}"; do
             python -m scripts.base_train \
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
+                --total-batch-size "$TOTAL_BATCH_SIZE" \
                 --window-pattern "$WINDOW_PATTERN" \
                 --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
                 --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \
