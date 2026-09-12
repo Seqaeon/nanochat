@@ -136,6 +136,7 @@ def main():
     ap.add_argument("--window-pattern", default="SSSL")
     ap.add_argument("--tokenizer-dir", default="tokenizer")
     ap.add_argument("--data-dir", default=None, help="parquet shard dir; val split is the LAST shard")
+    ap.add_argument("--max-shards", type=int, default=None)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--eval-steps", type=int, default=20)
     ap.add_argument("--scale", nargs="+", default=["row", "none"])
@@ -161,7 +162,8 @@ def main():
 
     def val_batches():
         return tokenizing_distributed_data_loader_bos_bestfit(
-            tok, a.batch, a.seq, split="val", device=dev, data_dir=a.data_dir)
+            tok, a.batch, a.seq, split="val", device=dev, data_dir=a.data_dir,
+            max_shards=a.max_shards)
 
     def score():
         bpb, _ = evaluate_bpb(model, val_batches(), a.eval_steps, token_bytes)
