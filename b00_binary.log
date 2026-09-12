@@ -74,56 +74,191 @@ fully binary                   27 1,979,979,958   7.013e+09    3.507e+09   236.0
 
 gate: PASS
 device: NVIDIA A100-SXM4-40GB  sm_80  39.5 GiB  108 SMs
-nvcc not found. This is a CUDA runtime image without the compiler.
-  pip install -q nvidia-cuda-nvcc-cu12
-then re-run in a FRESH process (a notebook kernel that already
-imported torch will not see the new package on sys.path).
-Searched: PATH, CUDA_HOME, CUDA_PATH, torch's CUDA_HOME,
-site-packages/nvidia/*/bin/nvcc, /usr/local/cuda*/bin/nvcc.
-No system CUDA toolkit is required.
+backend: nvrtc (runtime compilation, no nvcc required)
+  reason: no nvcc. Note `pip install nvidia-cuda-nvcc-cu12` ships ONLY
+  ptxas, never the nvcc frontend, so that install can never provide it.
+  It IS still worth installing: NVRTC needs its crt/ headers.
+  square 4096      round 0  b1  328.38 TOPS  bf16  208.20 TFLOPS    1.58x
+  square 4096      round 1  b1  329.35 TOPS  bf16  208.67 TFLOPS    1.58x
+  square 4096      round 2  b1  329.25 TOPS  bf16  208.72 TFLOPS    1.58x
+  square 4096      round 3  b1  329.33 TOPS  bf16  208.80 TFLOPS    1.58x
+  square 4096      round 4  b1  328.86 TOPS  bf16  208.66 TFLOPS    1.58x
+  square 4096      round 5  b1  329.35 TOPS  bf16  208.72 TFLOPS    1.58x
+  square 4096      AND correctness=PASS  median ratio: 1.58x
+  ffn d=512        round 0  b1  233.75 TOPS  bf16  207.13 TFLOPS    1.13x
+  ffn d=512        round 1  b1  234.56 TOPS  bf16  207.00 TFLOPS    1.13x
+  ffn d=512        round 2  b1  234.73 TOPS  bf16  207.00 TFLOPS    1.13x
+  ffn d=512        round 3  b1  234.32 TOPS  bf16  207.38 TFLOPS    1.13x
+  ffn d=512        round 4  b1  234.73 TOPS  bf16  207.51 TFLOPS    1.13x
+  ffn d=512        round 5  b1  234.81 TOPS  bf16  207.38 TFLOPS    1.13x
+  ffn d=512        AND correctness=PASS  median ratio: 1.13x
+  ffn d=1024       round 0  b1  325.26 TOPS  bf16  255.22 TFLOPS    1.27x
+  ffn d=1024       round 1  b1  326.33 TOPS  bf16  256.48 TFLOPS    1.27x
+  ffn d=1024       round 2  b1  326.44 TOPS  bf16  256.97 TFLOPS    1.27x
+  ffn d=1024       round 3  b1  326.84 TOPS  bf16  256.58 TFLOPS    1.27x
+  ffn d=1024       round 4  b1  326.52 TOPS  bf16  256.93 TFLOPS    1.27x
+  ffn d=1024       round 5  b1  326.41 TOPS  bf16  256.88 TFLOPS    1.27x
+  ffn d=1024       AND correctness=PASS  median ratio: 1.27x
+  ffn d=2048       round 0  b1  403.14 TOPS  bf16  272.37 TFLOPS    1.48x
+  ffn d=2048       round 1  b1  400.34 TOPS  bf16  270.06 TFLOPS    1.48x
+  ffn d=2048       round 2  b1  395.24 TOPS  bf16  268.87 TFLOPS    1.47x
+  ffn d=2048       round 3  b1  395.73 TOPS  bf16  266.12 TFLOPS    1.49x
+  ffn d=2048       round 4  b1  396.23 TOPS  bf16  265.42 TFLOPS    1.49x
+  ffn d=2048       round 5  b1  398.13 TOPS  bf16  269.88 TFLOPS    1.48x
+  ffn d=2048       AND correctness=PASS  median ratio: 1.48x
+  head V=32k       round 0  b1  282.76 TOPS  bf16  237.26 TFLOPS    1.19x
+  head V=32k       round 1  b1  280.59 TOPS  bf16  235.15 TFLOPS    1.19x
+  head V=32k       round 2  b1  280.25 TOPS  bf16  236.54 TFLOPS    1.18x
+  head V=32k       round 3  b1  278.55 TOPS  bf16  232.90 TFLOPS    1.20x
+  head V=32k       round 4  b1  275.37 TOPS  bf16  232.42 TFLOPS    1.18x
+  head V=32k       round 5  b1  273.92 TOPS  bf16  233.51 TFLOPS    1.17x
+  head V=32k       AND correctness=PASS  median ratio: 1.19x
+  head V=131k      round 0  b1  203.98 TOPS  bf16  230.85 TFLOPS    0.88x
+  head V=131k      round 1  b1  203.58 TOPS  bf16  232.97 TFLOPS    0.87x
+  head V=131k      round 2  b1  199.58 TOPS  bf16  232.68 TFLOPS    0.86x
+  head V=131k      round 3  b1  205.52 TOPS  bf16  231.24 TFLOPS    0.89x
+  head V=131k      round 4  b1  206.04 TOPS  bf16  231.41 TFLOPS    0.89x
+  head V=131k      round 5  b1  204.46 TOPS  bf16  232.15 TFLOPS    0.88x
+  head V=131k      AND correctness=PASS  median ratio: 0.88x
+  square 4096      round 0  b1  406.57 TOPS  bf16  269.11 TFLOPS    1.51x
+  square 4096      round 1  b1  407.86 TOPS  bf16  269.14 TFLOPS    1.52x
+  square 4096      round 2  b1  407.93 TOPS  bf16  269.03 TFLOPS    1.52x
+  square 4096      round 3  b1  408.02 TOPS  bf16  269.51 TFLOPS    1.51x
+  square 4096      round 4  b1  408.02 TOPS  bf16  269.32 TFLOPS    1.51x
+  square 4096      round 5  b1  408.33 TOPS  bf16  269.62 TFLOPS    1.51x
+  square 4096      XOR correctness=PASS  median ratio: 1.51x
+wrote out/b00_binary_phase0/o3_kernel_gate.json
+best measured ratio on THIS device: 1.58x  (BELOW the 24.5x break-even)
+========================================================================
+GATE: a b1 kernel needs >= 24.5x over bf16 for the matched-bytes
+binary model to tie on wall clock. Below that: drop the speed claim, keep
+memory and energy, and say so in the abstract rather than burying it.
 [o5] --data-dir defaulted to ./data
 [o5] 300 shard(s); val split = data/shard_06542.parquet
-baseline dense bpb = 1.7677   (5s per eval, 40 steps x 8 x 2048 tokens)
+baseline dense bpb = 1.7571   (3s per eval, 40 steps x 8 x 2048 tokens)
+calibration: ON, baseline fitted gain = 1.104
 
+
+======================================================================
+LEAVE-ONE-OUT FROM THE FULLY BINARY MODEL
+======================================================================
+fully binary baseline (scale=row): bpb 2.0127 (+0.2556 vs dense)
+restored to bf16           params       bpb  in-situ cost
+---------------------------------------------------------
+attn.qkv                6,291,456    2.0251       -0.0123
+attn.c_proj             2,097,152    2.0172       -0.0045
+attn.ve_gate                  512    2.0287       -0.0159
+mlp.c_fc                8,388,608    2.0239       -0.0111
+mlp.c_proj              8,388,608    2.0049       +0.0078
+lm_head                16,777,216    1.9218       +0.0909
+wte                    16,777,216    1.9873       +0.0254
+value_embeds           67,108,864    2.0080       +0.0048
+---------------------------------------------------------
+in-situ cost = what binarising that component costs INSIDE a fully binary
+model. This is the number that orders the Phase 1 ladder, not the 'add'
+column, which charges a component for receiving bf16 input it will never see.
+
+ladder order (most expensive to binarise last), scale=row:
+   +0.0909  lm_head              (16,777,216 params)
+   +0.0254  wte                  (16,777,216 params)
+   +0.0078  mlp.c_proj           (8,388,608 params)
+   +0.0048  value_embeds         (67,108,864 params)
+   -0.0045  attn.c_proj          (2,097,152 params)
+   -0.0111  mlp.c_fc             (8,388,608 params)
+   -0.0123  attn.qkv             (6,291,456 params)
+   -0.0159  attn.ve_gate         (512 params)
+fully binary baseline (scale=none): bpb 2.4485 (+0.6914 vs dense)
+restored to bf16           params       bpb  in-situ cost
+---------------------------------------------------------
+attn.qkv                6,291,456    2.4516       -0.0031
+attn.c_proj             2,097,152    2.4458       +0.0027
+attn.ve_gate                  512    2.4484       +0.0001
+mlp.c_fc                8,388,608    2.4485       +0.0000
+mlp.c_proj              8,388,608    2.9492       -0.5008
+lm_head                16,777,216    2.4406       +0.0079
+wte                    16,777,216    2.4476       +0.0009
+value_embeds           67,108,864    2.4482       +0.0003
+---------------------------------------------------------
+in-situ cost = what binarising that component costs INSIDE a fully binary
+model. This is the number that orders the Phase 1 ladder, not the 'add'
+column, which charges a component for receiving bf16 input it will never see.
+
+ladder order (most expensive to binarise last), scale=none:
+   +0.0079  lm_head              (16,777,216 params)
+   +0.0027  attn.c_proj          (2,097,152 params)
+   +0.0009  wte                  (16,777,216 params)
+   +0.0003  value_embeds         (67,108,864 params)
+   +0.0001  attn.ve_gate         (512 params)
+   +0.0000  mlp.c_fc             (8,388,608 params)
+   -0.0031  attn.qkv             (6,291,456 params)
+   -0.5008  mlp.c_proj           (8,388,608 params)
 component                  params     weig/row    weig/none     acts/row    acts/none     both/row    both/none
 ---------------------------------------------------------------------------------------------------------------
-attn.qkv                6,291,456      -0.0073      +1.6016      -0.0153      -0.0133      +0.0290      +1.6762
-attn.c_proj             2,097,152      +0.0226      +1.5647      +0.0232      +0.0176      +0.1404      +1.2720
-attn.ve_gate                  512      +0.0082      +0.1062      +0.0229      +0.0187      +0.0490      +0.1072
-mlp.c_fc                8,388,608      +0.0782      +1.4665      +0.1200      +0.1669      +0.2164      +1.5410
-mlp.c_proj              8,388,608      +0.1483      +1.7702      +0.4448      +2.5051      +0.3121      +2.7605
-lm_head                16,777,216      +0.4374      +0.9523      +0.6901      +0.7702      +0.8546      +1.3797
-wte                    16,777,216      +0.0717      +0.0717      +0.0000      +0.0000      +0.0717      +0.0717
-value_embeds           67,108,864      +0.0187      +0.1487      +0.0000      +0.0000      +0.0187      +0.1487
-ALL body matmuls       25,165,824      +0.1416      +1.8999      +0.8593      +2.4508      +0.5640      +2.7737
-ALL interfaces        100,663,296      +0.5965      +1.5271      +0.6901      +0.7702      +0.9619      +2.6042
-EVERYTHING            125,829,632      +0.2672      +6.9337      +0.4467      +2.3477      +0.4373      +4.2827
+attn.qkv                6,291,456      +0.0036      +1.1456      -0.0043      -0.0048      +0.0332      +1.1395
+attn.c_proj             2,097,152      +0.0285      +1.0633      +0.0320      +0.0254      +0.1469      +0.9617
+attn.ve_gate                  512      +0.0297      +0.0914      +0.0430      +0.0364      +0.0679      +0.0959
+mlp.c_fc                8,388,608      +0.0502      +1.2086      +0.0593      +0.1399      +0.0880      +1.1758
+mlp.c_proj              8,388,608      +0.1583      +1.2693      +0.1793      +0.5569      +0.1370      +0.6849
+lm_head                16,777,216      +0.4051      +0.5029      +0.6394      +0.6430      +0.7615      +1.3737
+wte                    16,777,216      +0.0742      +0.0742      +0.0000      +0.0000      +0.0742      +0.0742
+value_embeds           67,108,864      +0.0023      +0.1211      +0.0000      +0.0000      +0.0023      +0.1211
+ALL body matmuls       25,165,824      +0.0353      +1.3541      +0.1833      +0.5567      +0.0990      +0.6825
+ALL interfaces        100,663,296      +0.5767      +0.8442      +0.6394      +0.6430      +0.9021      +2.7142
+EVERYTHING            125,829,632      +0.2117      +1.3566      +0.1767      +1.3689      +0.2556      +0.6914
+
+MONOTONICITY VIOLATIONS: a union costs LESS than one of its parts.
+union               part                mode/scale           union      part
+ALL body matmuls    mlp.c_fc            weights/row         0.0353    0.0502
+ALL body matmuls    mlp.c_proj          weights/row         0.0353    0.1583
+ALL body matmuls    mlp.c_proj          acts/none           0.5567    0.5569
+ALL body matmuls    attn.c_proj         both/row            0.0990    0.1469
+ALL body matmuls    mlp.c_proj          both/row            0.0990    0.1370
+ALL body matmuls    attn.qkv            both/none           0.6825    1.1395
+ALL body matmuls    attn.c_proj         both/none           0.6825    0.9617
+ALL body matmuls    mlp.c_fc            both/none           0.6825    1.1758
+ALL body matmuls    mlp.c_proj          both/none           0.6825    0.6849
+EVERYTHING          ALL interfaces      weights/row         0.2117    0.5767
+EVERYTHING          lm_head             weights/row         0.2117    0.4051
+EVERYTHING          ALL body matmuls    acts/row            0.1767    0.1833
+EVERYTHING          ALL interfaces      acts/row            0.1767    0.6394
+EVERYTHING          lm_head             acts/row            0.1767    0.6394
+EVERYTHING          mlp.c_proj          acts/row            0.1767    0.1793
+EVERYTHING          ALL interfaces      both/row            0.2556    0.9021
+EVERYTHING          lm_head             both/row            0.2556    0.7615
+EVERYTHING          ALL interfaces      both/none           0.6914    2.7142
+EVERYTHING          lm_head             both/none           0.6914    1.3737
+Deltas are NOT composable. Two causes, and only the first is a measurement
+artifact: (1) logit-scale drift, removed by --calibrate; (2) sign() is
+idempotent-ish, so binarising an input that an upstream binarised layer has
+already coarsened costs less than binarising a full-precision one. (2) is a
+real property of the architecture and means single-component deltas are an
+UPPER BOUND on their marginal cost inside a fully binary model.
 
 sensitivity ranking by delta bpb, mode=both scale=row, worst first:
-   +0.9619  ALL interfaces       (100,663,296 params)
-   +0.8546  lm_head              (16,777,216 params)
-   +0.5640  ALL body matmuls     (25,165,824 params)
-   +0.4373  EVERYTHING           (125,829,632 params)
-   +0.3121  mlp.c_proj           (8,388,608 params)
-   +0.2164  mlp.c_fc             (8,388,608 params)
-   +0.1404  attn.c_proj          (2,097,152 params)
-   +0.0717  wte                  (16,777,216 params)
-   +0.0490  attn.ve_gate         (512 params)
-   +0.0290  attn.qkv             (6,291,456 params)
-   +0.0187  value_embeds         (67,108,864 params)
+   +0.9021  ALL interfaces       (100,663,296 params)
+   +0.7615  lm_head              (16,777,216 params)
+   +0.2556  EVERYTHING           (125,829,632 params)
+   +0.1469  attn.c_proj          (2,097,152 params)
+   +0.1370  mlp.c_proj           (8,388,608 params)
+   +0.0990  ALL body matmuls     (25,165,824 params)
+   +0.0880  mlp.c_fc             (8,388,608 params)
+   +0.0742  wte                  (16,777,216 params)
+   +0.0679  attn.ve_gate         (512 params)
+   +0.0332  attn.qkv             (6,291,456 params)
+   +0.0023  value_embeds         (67,108,864 params)
 
 weights-only vs both: how much of the damage is the ACTIVATIONS
-  attn.qkv             W1A16  -0.0073   W1A1  +0.0290   activations are 125.3% of it
-  attn.c_proj          W1A16  +0.0226   W1A1  +0.1404   activations are  83.9% of it
-  attn.ve_gate         W1A16  +0.0082   W1A1  +0.0490   activations are  83.2% of it
-  mlp.c_fc             W1A16  +0.0782   W1A1  +0.2164   activations are  63.9% of it
-  mlp.c_proj           W1A16  +0.1483   W1A1  +0.3121   activations are  52.5% of it
-  lm_head              W1A16  +0.4374   W1A1  +0.8546   activations are  48.8% of it
-  wte                  W1A16  +0.0717   W1A1  +0.0717   activations are   0.0% of it
-  value_embeds         W1A16  +0.0187   W1A1  +0.0187   activations are   0.0% of it
-  ALL body matmuls     W1A16  +0.1416   W1A1  +0.5640   activations are  74.9% of it
-  ALL interfaces       W1A16  +0.5965   W1A1  +0.9619   activations are  38.0% of it
-  EVERYTHING           W1A16  +0.2672   W1A1  +0.4373   activations are  38.9% of it
+  attn.qkv             W1A16  +0.0036   W1A1  +0.0332   activations are  89.1% of it
+  attn.c_proj          W1A16  +0.0285   W1A1  +0.1469   activations are  80.6% of it
+  attn.ve_gate         W1A16  +0.0297   W1A1  +0.0679   activations are  56.3% of it
+  mlp.c_fc             W1A16  +0.0502   W1A1  +0.0880   activations are  42.9% of it
+  mlp.c_proj           W1A16  +0.1583   W1A1  +0.1370   activations are -15.5% of it
+  lm_head              W1A16  +0.4051   W1A1  +0.7615   activations are  46.8% of it
+  wte                  W1A16  +0.0742   W1A1  +0.0742   activations are   0.0% of it
+  value_embeds         W1A16  +0.0023   W1A1  +0.0023   activations are   0.0% of it
+  ALL body matmuls     W1A16  +0.0353   W1A1  +0.0990   activations are  64.4% of it
+  ALL interfaces       W1A16  +0.5767   W1A1  +0.9021   activations are  36.1% of it
+  EVERYTHING           W1A16  +0.2117   W1A1  +0.2556   activations are  17.2% of it
 
 W1A16 IS NOT BINARISATION. It changes no operation: still a bf16 GEMM over a
 matrix holding two values per row. Only the 'both' column corresponds to the
