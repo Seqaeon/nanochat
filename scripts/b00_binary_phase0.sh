@@ -187,7 +187,9 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
             # move anything. The default grid topped out at 1.0 and binary chose that
             # edge, which means the optimum was outside it and the arm was undertrained.
             python -m scripts.o2_sign_agreement --steps "${O2_STEPS:-300}" \
-                --lr-grid ${O2_LR_GRID:-30 10 3 1 0.3 0.1} $EXTRA \
+                --sgd-lr-grid ${O2_SGD_GRID:-10 3 1 0.3 0.1 0.03} \
+                --adam-lr-grid ${O2_ADAM_GRID:-1e-2 3e-3 1e-3 3e-4 1e-4} \
+                --kinds exact signonly lognormal_1.0 flipa_0.95 flipa_0.85 flipa_0.70 $EXTRA \
                 2>&1 | tee "${OUT_BASE}/${ARM}.txt" | log
             [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
         fi

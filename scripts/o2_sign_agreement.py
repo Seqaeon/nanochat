@@ -39,23 +39,57 @@ from nanochat.loss_eval import evaluate_bpb
 
 
 def corrupt(g, kind, param):
+    """Corrupt a weight gradient, and report agreement over NONZERO entries only.
+
+    Two traps, both of which produced wrong readings before they were fixed.
+
+    1. `sign(0) == sign(0)` counts as agreement. A binary model's STE zeroes the
+       gradient of every latent weight outside the clip window, which is most of
+       them, so a naive agreement metric reported 0.946 where dense reported 0.742
+       for the SAME nominal corruption: the binary arm received about 5x less sign
+       corruption and then looked robust to it. Agreement is therefore measured over
+       the support of g.
+    2. Parameterising by flip PROBABILITY delivers different corruption strengths to
+       different architectures for the same reason. `flipa_<a>` targets an agreement
+       level instead, so the arms are matched on the quantity the hypothesis is about.
+    """
+    nz = g != 0
+    n_nz = int(nz.sum())
     if kind == "exact":
-        return g, 1.0, 0.0
+        return g, 1.0, 0.0, n_nz / max(g.numel(), 1)
     if kind == "signonly":
-        g2 = torch.sign(g) * g.abs().mean()
+        # Also norm-preserved, for the same reason.
+        g2 = torch.sign(g)
+        g2 = g2 * (g.norm() / g2.norm().clamp(min=1e-12))
     elif kind.startswith("lognormal"):
-        s = float(kind.split("_")[1])
-        g2 = g * torch.randn_like(g).mul(s).exp()
+        # Norm-preserving. Raw multiplicative lognormal noise has mean exp(s^2/2) and a
+        # heavy tail, so it inflates the update and the arm diverges: the dense cell hit
+        # +1.7464 bpb with a loss drop of -3.1014, which measures instability and not
+        # magnitude sensitivity. Rescaling to the original norm isolates the precision
+        # of the magnitudes from the size of the step.
+        sd = float(kind.split("_")[1])
+        g2 = g * torch.randn_like(g).mul(sd).exp()
+        n0, n1 = g.norm(), g2.norm().clamp(min=1e-12)
+        g2 = g2 * (n0 / n1)
+    elif kind.startswith("flipa"):
+        # flip (1 - target agreement) of the NONZERO entries
+        target = float(kind.split("_")[1])
+        p = max(0.0, 1.0 - target)
+        sel = (torch.rand_like(g) < p) & nz
+        g2 = torch.where(sel, -g, g)
     elif kind.startswith("flip"):
         p = float(kind.split("_")[1])
-        mask = (torch.rand_like(g) < p).to(g.dtype) * -2 + 1
-        g2 = g * mask
+        sel = (torch.rand_like(g) < p) & nz
+        g2 = torch.where(sel, -g, g)
     else:
         raise ValueError(kind)
-    agree = (torch.sign(g2) == torch.sign(g)).to(torch.float32).mean().item()
+    if n_nz:
+        agree = (torch.sign(g2[nz]) == torch.sign(g[nz])).to(torch.float32).mean().item()
+    else:
+        agree = 1.0
     denom = g.pow(2).sum().item() + 1e-12
     relmse = (g2 - g).pow(2).sum().item() / denom
-    return g2, agree, relmse
+    return g2, agree, relmse, n_nz / max(g.numel(), 1)
 
 
 def build(depth, vocab, seq, device, binary):
@@ -83,7 +117,9 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
                                 weight_decay=0.0)
     loader = tokenizing_distributed_data_loader_bos_bestfit(
         tok, args.batch, args.seq, split="train", device=device, data_dir=args.data_dir)
-    agrees, mses = [], []
+    agrees, mses, dens = [], [], []
+    from nanochat.binary import BinaryLinear, BinaryEmbedding
+    bmods = [m for m in model.modules() if isinstance(m, (BinaryLinear, BinaryEmbedding))]
     first_losses, last_losses = [], []
     model.train()
     for step in range(args.steps):
@@ -95,11 +131,12 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
         for p in params:
             if p.grad is None:
                 continue
-            g2, a, m = corrupt(p.grad, kind, p)
+            g2, a, m, dn = corrupt(p.grad, kind, p)
             p.grad.copy_(g2)
             if step % max(1, args.steps // 20) == 0:
                 agrees.append(a)
                 mses.append(m)
+                dens.append(dn)
         opt.step()
         if step < 20:
             first_losses.append(float(loss))
@@ -108,12 +145,25 @@ def run_arm(kind, binary, opt_name, args, device, tok, token_bytes):
     model.eval()
     val = tokenizing_distributed_data_loader_bos_bestfit(
         tok, args.batch, args.seq, split="val", device=device, data_dir=args.data_dir)
+    # Dead bits: latent weights outside the STE clip window receive no gradient and can
+    # never flip again. This exists because the run contains a contradiction: for binary,
+    # `signonly` cost +0.4940 and stopped learning while `lognormal` cost -0.0252 and did
+    # not, yet BOTH are magnitude corruptions. Hypothesis: signonly hands every nonzero
+    # gradient the same magnitude, which shoves latent weights near the boundary out of
+    # the window, so it measures dead-bit creation rather than loss of magnitude
+    # information. If dead% spikes under signonly and not under lognormal, that is it.
+    dead = float("nan")
+    if bmods:
+        d = sum(int((m.weight.detach().abs() > m.clip).sum()) for m in bmods)
+        t = sum(m.weight.numel() for m in bmods)
+        dead = 100.0 * d / max(t, 1)
     bpb, _ = evaluate_bpb(model, val, args.eval_steps, token_bytes)
     trained = (sum(first_losses) / max(1, len(first_losses))
                - sum(last_losses) / max(1, len(last_losses)))
     del model, opt
     torch.cuda.empty_cache()
-    return float(bpb), sum(agrees) / len(agrees), sum(mses) / len(mses), trained
+    return (float(bpb), sum(agrees) / len(agrees), sum(mses) / len(mses), trained,
+            sum(dens) / max(1, len(dens)), dead)
 
 
 def tune_lr(binary, opt_name, args, device, tok, token_bytes, grid):
@@ -130,9 +180,11 @@ def tune_lr(binary, opt_name, args, device, tok, token_bytes, grid):
             args.sgd_lr = lr
         else:
             args.adam_lr = lr
-        bpb, _, _, trained = run_arm("exact", binary, opt_name, args, device, tok, token_bytes)
+        bpb, _, _, trained, dn, _dead = run_arm("exact", binary, opt_name, args, device,
+                                                tok, token_bytes)
         tag = "binary" if binary else "dense"
-        print(f"    lr {lr:<9g} bpb {bpb:.4f}  loss drop {trained:+.4f}")
+        print(f"    lr {lr:<9g} bpb {bpb:.4f}  loss drop {trained:+.4f}  "
+              f"nonzero-grad {100*dn:.1f}%")
         if best is None or bpb < best:
             best, best_lr = bpb, lr
     # An optimum at the edge of the grid means the real optimum is probably OUTSIDE
@@ -160,8 +212,16 @@ def main():
     ap.add_argument("--adam-lr", type=float, default=3e-3)
     ap.add_argument("--data-dir", default="data")
     ap.add_argument("--optimizers", nargs="+", default=["sgd", "adamw"])
-    ap.add_argument("--lr-grid", type=float, nargs="+", default=None,
-                    help="LRs to tune over per (arch, optimiser) on the exact arm")
+    ap.add_argument("--sgd-lr-grid", type=float, nargs="+",
+                    default=[10, 3, 1, 0.3, 0.1, 0.03],
+                    help="SGD LRs to tune over. Binary needs ~10x dense: only sign "
+                         "CROSSINGS change the function, so a latent weight must cross "
+                         "the whole clip window before anything moves.")
+    ap.add_argument("--adam-lr-grid", type=float, nargs="+",
+                    default=[1e-2, 3e-3, 1e-3, 3e-4, 1e-4],
+                    help="Adam LRs. A SINGLE shared --lr-grid is a bug: tuning Adam over "
+                         "an SGD-scale grid (0.1 to 30) makes every Adam cell garbage, "
+                         "which is exactly what happened on the first A100 run.")
     ap.add_argument("--min-loss-drop", type=float, default=0.10,
                     help="the exact arm must learn at least this much or the whole "
                          "(arch, optimiser) cell is reported as INCONCLUSIVE")
@@ -184,8 +244,7 @@ def main():
     for opt_name in a.optimizers:
         for arch in a.arch:
             print(f"=== {arch.upper()} / {opt_name.upper()} ===")
-            grid = a.lr_grid or ([0.5, 0.15, 0.05, 0.015] if opt_name == "sgd"
-                                 else [3e-3, 1e-3, 3e-4])
+            grid = a.sgd_lr_grid if opt_name == "sgd" else a.adam_lr_grid
             print(f"  tuning lr on the uncorrupted arm over {grid}")
             lr = tune_lr(arch == "binary", opt_name, a, device, tok, token_bytes, grid)
             if opt_name == "sgd":
@@ -194,16 +253,18 @@ def main():
                 a.adam_lr = lr
             print(f"  chosen lr = {lr:g}")
             print(f"{'corruption':<16}{'agreement':>11}{'rel MSE':>11}{'bpb':>10}"
-                  f"{'vs exact':>11}{'loss drop':>11}")
+                  f"{'vs exact':>11}{'loss drop':>11}{'nonzero':>10}{'dead':>9}")
             base, base_trained = None, None
             for kind in a.kinds:
-                bpb, agree, mse, trained = run_arm(kind, arch == "binary", opt_name, a,
-                                                   device, tok, token_bytes)
+                bpb, agree, mse, trained, dn, dead = run_arm(kind, arch == "binary",
+                                                             opt_name, a, device, tok,
+                                                             token_bytes)
                 if base is None:
                     base, base_trained = bpb, trained
                 results[(arch, opt_name, kind)] = (bpb, agree, mse, trained)
                 print(f"{kind:<16}{agree:>11.3f}{mse:>11.3f}{bpb:>10.4f}"
-                      f"{bpb-base:>+11.4f}{trained:>+11.4f}")
+                      f"{bpb-base:>+11.4f}{trained:>+11.4f}{100*dn:>9.1f}%"
+                      + ("      -" if dead != dead else f"{dead:>8.2f}%"))
             if base_trained is not None and base_trained < a.min_loss_drop:
                 print(f"  INCONCLUSIVE: the uncorrupted arm learned only {base_trained:+.4f}")
                 print(f"  (< --min-loss-drop {a.min_loss_drop}). A model that is not learning is")
