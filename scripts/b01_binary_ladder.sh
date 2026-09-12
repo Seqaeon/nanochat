@@ -113,7 +113,17 @@ rung_flags() {
 }
 
 for DEPTH in "${DEPTHS[@]}"; do
-    # Pin every arm to the DENSE arm's token budget, the c05 way. Binary arms carry
+    # NOTE ON --target-param-data-ratio: it stays POSITIVE even though the budget is
+    # pinned explicitly. --target-tokens wins the budget at base_train.py:1769, but
+    # D_REF at :1785 is `target_param_data_ratio * get_scaling_params(d12_ref)` and is
+    # used UNCONDITIONALLY for the batch-size derivation. Passing -1 there (as c05
+    # does) makes D_REF negative, so batch_size_ratio is negative and
+    # `B_REF * ratio**0.383` returns a COMPLEX number, which dies at
+    # `math.log2(...)` with "TypeError: must be real number, not complex".
+    # p13_isodata.sh has this right: pin with --target-tokens and leave the ratio at
+    # 10.5, where it is inert for the budget and sane for D_REF.
+    #
+    # Pin every arm to the DENSE arm's token budget. Binary arms carry
     # extra per-channel scale parameters, and get_scaling_params is
     # transformer_matrices + lm_head, so per-arm Chinchilla would hand each rung a
     # slightly different budget and confound data with architecture.
@@ -143,7 +153,7 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
                 --window-pattern "$WINDOW_PATTERN" \
-                --target-tokens "$TARGET_TOKENS" --target-param-data-ratio -1 \
+                --target-tokens "$TARGET_TOKENS" --target-param-data-ratio 10.5 \
                 --seed "$s" --model-tag "$ARM" $FLAGS \
                 2>&1 | tee "${OUT_BASE}/${ARM}.log" | log
             [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"

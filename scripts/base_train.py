@@ -1790,6 +1790,21 @@ B_REF = 2**19 # optimal batch size at d12 ~= 524,288 tokens (measured empiricall
 # The optimal batch size grows as approximately D^0.383, so e.g. if D doubles from d12 to d24, B should grow by 2^0.383 ≈ 1.3x.
 total_batch_size = args.total_batch_size # user-provided override is possible
 if total_batch_size == -1:
+    # D_REF is derived from --target-param-data-ratio UNCONDITIONALLY, even when the
+    # budget is pinned by --target-tokens (which wins above). A negative ratio, used
+    # by some sweeps to mean "disable per-arm Chinchilla", makes D_REF negative, so
+    # batch_size_ratio is negative and `ratio ** 0.383` returns a COMPLEX number that
+    # dies three lines later inside math.log2 as "must be real number, not complex".
+    # Diagnose it here instead of there.
+    if D_REF <= 0 or target_tokens <= 0:
+        raise SystemExit(
+            f"Cannot auto-compute the batch size: D_REF={D_REF:,.0f}, "
+            f"target_tokens={target_tokens:,}.\n"
+            f"  --target-param-data-ratio is {args.target_param_data_ratio}, and D_REF is "
+            f"that times the d12 scaling params, so a negative ratio poisons the batch-size\n"
+            f"  derivation even though --target-tokens correctly overrides the BUDGET.\n"
+            f"  To pin the budget, pass --target-tokens N and leave the ratio POSITIVE "
+            f"(10.5), as scripts/p13_isodata.sh does. Or set --total-batch-size explicitly.")
     batch_size_ratio = target_tokens / D_REF
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
