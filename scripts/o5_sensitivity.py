@@ -37,6 +37,8 @@ Run:
   python -m scripts.o5_sensitivity --ckpt out/dense_d8_V32k_model_001014.pt
 """
 import argparse
+import glob
+import os
 import time
 
 import torch
@@ -135,7 +137,10 @@ def main():
     ap.add_argument("--seq", type=int, default=2048)
     ap.add_argument("--window-pattern", default="SSSL")
     ap.add_argument("--tokenizer-dir", default="tokenizer")
-    ap.add_argument("--data-dir", default=None, help="parquet shard dir; val split is the LAST shard")
+    ap.add_argument("--data-dir", default=None,
+                    help="parquet shard dir; val split is the LAST shard. Defaults to ./data "
+                         "when that exists, because the ~/.cache/nanochat fallback may hold "
+                         "only dummy_val.parquet")
     ap.add_argument("--max-shards", type=int, default=None)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--eval-steps", type=int, default=20)
@@ -146,6 +151,25 @@ def main():
                          "matching the plan's definition")
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these component names")
     a = ap.parse_args()
+
+    # Prefer the repo's own data/ symlink over the cache fallback: a fresh cache can
+    # contain nothing but dummy_val.parquet, which is 100 rows of "hello world this is
+    # a dummy dataset" and silently produces meaningless bpb.
+    if a.data_dir is None and os.path.isdir("data"):
+        import glob as _g
+        if _g.glob(os.path.join("data", "*.parquet")):
+            a.data_dir = "data"
+            print("[o5] --data-dir defaulted to ./data")
+
+    # Bootstrap data and tokenizer exactly as the other sweeps do, so a fresh
+    # clone with no ~/.cache/nanochat does not die inside the dataloader with
+    # "No dataset parquet files found".  Downloads 2 shards if none are present;
+    # 2 is the minimum, because the val split is parquet_paths[-1:].
+    try:
+        from scripts._sweep_utils import check_and_prepare_env
+        check_and_prepare_env(a, label="o5")
+    except Exception as e:
+        print(f"[o5] data bootstrap skipped ({type(e).__name__}: {e})")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     cfg = build_config(a.depth, a.vocab, a.seq, a.window_pattern)
@@ -164,6 +188,18 @@ def main():
         return tokenizing_distributed_data_loader_bos_bestfit(
             tok, a.batch, a.seq, split="val", device=dev, data_dir=a.data_dir,
             max_shards=a.max_shards)
+
+    # Refuse to report a number measured on the placeholder corpus.
+    from nanochat.dataset import list_parquet_files
+    _shards = list_parquet_files(data_dir=a.data_dir, max_shards=a.max_shards)
+    _val = _shards[-1] if _shards else None
+    print(f"[o5] {len(_shards)} shard(s); val split = {_val}")
+    if _val and "dummy" in os.path.basename(_val).lower():
+        raise SystemExit(
+            "REFUSING TO RUN: the val shard is " + os.path.basename(_val) + ", the placeholder "
+            "corpus (100 rows of repeated 'hello world this is a dummy dataset'). Any bpb from "
+            "it is meaningless. Point --data-dir at real shards, or run "
+            "`python -m nanochat.dataset -n 2` to download some.")
 
     def score():
         bpb, _ = evaluate_bpb(model, val_batches(), a.eval_steps, token_bytes)

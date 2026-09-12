@@ -22,8 +22,10 @@ Run:
 """
 import argparse
 import glob
+import json
 import os
 import shutil
+import re
 import subprocess
 import sys
 
@@ -58,20 +60,35 @@ def find_toolchain():
     except Exception:
         pass
 
-    nvcc = shutil.which("nvcc")
-    if nvcc is None and os.environ.get("CUDA_HOME"):
-        cand = os.path.join(os.environ["CUDA_HOME"], "bin", "nvcc")
-        nvcc = cand if os.path.exists(cand) else None
-    if nvcc is None:
-        for r in roots:
-            hits = glob.glob(os.path.join(r, "nvidia", "*", "bin", "nvcc"))
-            if hits:
-                nvcc = hits[0]
-                break
+    roots.append(os.path.join(sys.prefix, "lib", f"python{sys.version_info.major}."
+                              f"{sys.version_info.minor}", "site-packages"))
+    roots = [r for r in dict.fromkeys(roots) if os.path.isdir(r)]
+
+    cands = []
+    w = shutil.which("nvcc")
+    if w:
+        cands.append(w)
+    for env in ("CUDA_HOME", "CUDA_PATH"):
+        if os.environ.get(env):
+            cands.append(os.path.join(os.environ[env], "bin", "nvcc"))
+    try:
+        from torch.utils.cpp_extension import CUDA_HOME as TORCH_CUDA_HOME
+        if TORCH_CUDA_HOME:
+            cands.append(os.path.join(TORCH_CUDA_HOME, "bin", "nvcc"))
+    except Exception:
+        pass
+    for r in roots:
+        cands += sorted(glob.glob(os.path.join(r, "nvidia", "*", "bin", "nvcc")))
+    cands += sorted(glob.glob("/usr/local/cuda*/bin/nvcc"))
+    nvcc = next((c for c in cands if c and os.path.exists(c)), None)
     if nvcc is None:
         return None, ("nvcc not found. This is a CUDA runtime image without the compiler.\n"
-                      "  pip install -q nvidia-cuda-nvcc-cu12 nvidia-cublas-cu12\n"
-                      "then re-run. No system CUDA toolkit is required.")
+                      "  pip install -q nvidia-cuda-nvcc-cu12\n"
+                      "then re-run in a FRESH process (a notebook kernel that already\n"
+                      "imported torch will not see the new package on sys.path).\n"
+                      "Searched: PATH, CUDA_HOME, CUDA_PATH, torch's CUDA_HOME,\n"
+                      "site-packages/nvidia/*/bin/nvcc, /usr/local/cuda*/bin/nvcc.\n"
+                      "No system CUDA toolkit is required.")
 
     # Find the library FIRST, then take the header from the SAME package, so a
     # cu13 header is never paired with a cu12 library.
@@ -123,6 +140,14 @@ def sh(cmd, quiet=False):
     return r
 
 
+RATIO_RE = re.compile(r"median ratio .*?:\s*([0-9.]+)x")
+
+
+def parse_ratio(stdout):
+    m = RATIO_RE.search(stdout or "")
+    return float(m.group(1)) if m else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=6)
@@ -170,14 +195,33 @@ def main():
     print("watts and the ratios below are a property of the cap, not of the kernel.")
     print()
 
+    measured = {}
     for group in a.shapes:
         for label, dims in SHAPES[group]:
             print(f"=== {label}  ({dims})  AND ===")
-            sh(f"{and_bin} {dims} {a.rounds}", quiet=True)
+            r = sh(f"{and_bin} {dims} {a.rounds}", quiet=True)
+            v = parse_ratio(r.stdout)
+            if v is not None:
+                measured[label] = v
             if xor_native and group == "square":
                 print(f"=== {label}  ({dims})  XOR ===")
-                sh(f"{xor_bin} {dims} {a.rounds}", quiet=True)
+                rx = sh(f"{xor_bin} {dims} {a.rounds}", quiet=True)
+                vx = parse_ratio(rx.stdout)
+                if vx is not None:
+                    measured[label + " (XOR)"] = vx
             print()
+
+    # Write what was MEASURED so scripts/o4_cost_model.py stops reprinting stale
+    # placeholders from a different machine.
+    jpath = os.path.join(a.outdir, "o3_kernel_gate.json")
+    with open(jpath, "w") as f:
+        json.dump({"device": p.name, "sm": arch, "xor_native": xor_native,
+                   "rounds": a.rounds, "ratios": measured}, f, indent=2)
+    print(f"wrote {jpath}")
+    if measured:
+        best = max(measured.values())
+        print(f"best measured ratio on THIS device: {best:.2f}x  "
+              f"({'CLEARS' if best >= BREAK_EVEN else 'BELOW'} the {BREAK_EVEN}x break-even)")
 
     print("=" * 72)
     print(f"GATE: a b1 kernel needs >= {BREAK_EVEN}x over bf16 for the matched-bytes binary")

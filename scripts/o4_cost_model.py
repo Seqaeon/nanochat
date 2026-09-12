@@ -7,6 +7,9 @@ before any arm is scored against them.
 Run: python -m scripts.o4_cost_model
 """
 import argparse
+import json
+import os
+
 import torch
 
 from nanochat.gpt import GPT, GPTConfig
@@ -134,7 +137,63 @@ def report_table(depth, vocab_size=32768):
     print()
 
 
-def matched_bytes_arm(dense_depth=8, vocab_size=32768, max_depth=200):
+def load_measured_ratios(path="out/b00_binary_phase0/o3_kernel_gate.json"):
+    """Ratios MEASURED by scripts/o3_kernel_gate.py on the device it ran on.
+
+    Without this the break-even table reprints numbers from a 20 W-capped laptop on
+    whatever machine you happen to be using, which is worse than printing nothing.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def spending_curve(dense_depth=8, vocab_size=32768, max_depth=200, ratios_path=None):
+    """How much of the 16x memory saving do you SPEND on parameters?
+
+    "Matched inference bytes" is one endpoint of a curve, and it is the endpoint most
+    hostile to binary: it spends the entire saving on more model, which maximises the
+    FLOPs burden.  Nothing forces that choice.  At the other endpoint, same
+    architecture, binary is 16x smaller at 1.00x the FLOPs with every MAC cheaper,
+    and any kernel above 1x is a win.  Printing only the hostile endpoint, as an
+    earlier version of this script did, is not an analysis.
+    """
+    ref = KNOWN.get(dense_depth, dict(seq=2048, wp="SSSL"))
+    p_d, f_d = measure(dense_depth, vocab_size, ref["seq"], ref["wp"])
+    r_d = cost_report(p_d, f_d, DENSE_BF16, NANOCHAT_MUONADAMW, seq_len=ref["seq"])
+    budget = r_d.total_inference_bytes
+
+    print("=" * 82)
+    print(f"SPENDING CURVE  (dense depth {dense_depth}, V={vocab_size:,}, "
+          f"{budget/2**20:.0f} MiB, {p_d['total']/1e6:.0f}M params)")
+    print("=" * 82)
+    print(f"{'binary depth':>13}{'params':>15}{'x params':>10}{'MiB':>8}{'x bytes':>9}"
+          f"{'x FLOPs':>9}{'kernel needed':>15}")
+    print("-" * 82)
+    for depth in range(dense_depth, max_depth + 1):
+        p_b, f_b = measure(depth, vocab_size, ref["seq"], ref["wp"])
+        r_b = cost_report(p_b, f_b, FULLY_BINARY, counter_rule(4), seq_len=ref["seq"])
+        mib = r_b.total_inference_bytes / 2**20
+        if r_b.total_inference_bytes > budget:
+            break
+        if depth == dense_depth or depth % 4 == 0 or depth >= max_depth:
+            print(f"{depth:>13}{p_b['total']:>15,d}{p_b['total']/p_d['total']:>9.1f}x"
+                  f"{mib:>8.0f}{budget/r_b.total_inference_bytes:>8.1f}x"
+                  f"{f_b/f_d:>8.1f}x{f_b/f_d:>14.1f}x")
+    print("-" * 82)
+    print("  'kernel needed' is the b1-over-bf16 speedup required to TIE on wall clock.")
+    print("  The top row spends NOTHING on extra parameters: 16x smaller, same FLOPs,")
+    print("  so any kernel above 1.0x is already a wall-clock win. The bottom row spends")
+    print("  everything. The paper picks a point on this curve and defends it; it does")
+    print("  not get to quote the memory of one end and the speed of the other.")
+    print()
+
+
+def matched_bytes_arm(dense_depth=8, vocab_size=32768, max_depth=200, ratios_path=None):
     """The comparison that actually matters: what does binary BUY at equal bytes?
 
     Same-architecture-lower-precision rows all share one FLOPs number by construction.
@@ -179,11 +238,24 @@ def matched_bytes_arm(dense_depth=8, vocab_size=32768, max_depth=200):
     need = f_b / f_d
     print(f"  WALL-CLOCK BREAK-EVEN: at equal bytes the binary model issues {need:.1f}x the MACs,")
     print(f"  so a b1 kernel must be >= {need:.1f}x faster per MAC than bf16 just to TIE on time.")
-    for label, ratio in (("O3 measured, state B", 1.93), ("O3 measured, state A", 4.19),
-                         ("Ampere b1 spec ceiling", 64.0)):
+    meas = load_measured_ratios(ratios_path or "out/b00_binary_phase0/o3_kernel_gate.json")
+    rows = []
+    if meas and meas.get("ratios"):
+        for label, r in sorted(meas["ratios"].items(), key=lambda kv: -kv[1]):
+            rows.append((f"MEASURED {label} on {meas.get('device','?')}", r))
+    else:
+        print("    NO MEASURED KERNEL RATIO ON THIS DEVICE.")
+        print("    Run:  python -m scripts.o3_kernel_gate     (writes o3_kernel_gate.json)")
+        print("    The numbers below are STALE PLACEHOLDERS from a 20 W power-capped")
+        print("    laptop where the same binary gave 1.93x and 4.19x in two states.")
+        print("    They describe that laptop and nothing else. Do not read them as a")
+        print("    property of the hardware you are on now.")
+        rows = [("STALE laptop, state B", 1.93), ("STALE laptop, state A", 4.19)]
+    rows.append(("Ampere b1 spec ceiling", 64.0))
+    for label, ratio in rows:
         v = need / ratio
-        verdict = f"{v:.1f}x SLOWER" if v > 1 else f"{1/v:.1f}x faster"
-        print(f"    at {ratio:5.2f}x ({label:<24}) -> binary is {verdict}")
+        verdict = f"{v:.1f}x SLOWER" if v > 1 else f"{1 / v:.1f}x faster"
+        print(f"    at {ratio:6.2f}x ({label:<44}) -> binary is {verdict}")
     print(f"  So the kernel must reach {100*need/64:.0f}% of the Ampere b1 spec ceiling to break even.")
     print()
 
@@ -193,6 +265,8 @@ if __name__ == "__main__":
     ap.add_argument("--depths", type=int, nargs="+", default=[4, 8, 12])
     ap.add_argument("--vocab", type=int, nargs="+", default=[32768])
     ap.add_argument("--skip-optimizer", action="store_true")
+    ap.add_argument("--ratios", default=None,
+                    help="o3_kernel_gate.json with ratios measured on THIS device")
     a = ap.parse_args()
     passed = validate()
     if not a.skip_optimizer:
@@ -201,5 +275,6 @@ if __name__ == "__main__":
     for v in a.vocab:
         for d in a.depths:
             report_table(d, v)
-    matched_bytes_arm(8)
+    spending_curve(8)
+    matched_bytes_arm(8, ratios_path=a.ratios)
     print("gate:", "PASS" if passed else "FAIL")
