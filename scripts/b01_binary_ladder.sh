@@ -76,6 +76,14 @@ DATA_DIR="${DATA_DIR:-data}"
 DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-16}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
 WINDOW_PATTERN="${WINDOW_PATTERN:-L}"
+# These were being silently ignored: base_train's --log-every DEFAULTS TO 1, so an
+# unwired LOG_EVERY prints a line per step, and an unwired MAX_SHARDS scans every
+# shard. Mirrors the set p13_isodata.sh:297-305 passes.
+LOG_EVERY="${LOG_EVERY:-200}"
+EVAL_EVERY="${EVAL_EVERY:--1}"
+SAVE_EVERY="${SAVE_EVERY:-200}"
+MAX_SHARDS="${MAX_SHARDS:-}"
+COMPILE_REGIONAL="${COMPILE_REGIONAL:-0}"
 SWEEP_LOG="${SWEEP_LOG:-}"
 STATE="${STATE:-${OUT_BASE}/state.json}"
 mkdir -p "$OUT_BASE"
@@ -153,6 +161,9 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
                 --window-pattern "$WINDOW_PATTERN" \
+                --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
+                --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \
+                ${MAX_SHARDS:+--max-shards $MAX_SHARDS} \
                 --target-tokens "$TARGET_TOKENS" --target-param-data-ratio 10.5 \
                 --seed "$s" --model-tag "$ARM" $FLAGS \
                 2>&1 | tee "${OUT_BASE}/${ARM}.log" | log
