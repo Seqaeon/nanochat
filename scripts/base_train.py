@@ -795,7 +795,7 @@ parser.add_argument("--sch-holdout-tokens", type=int, default=0, help="SCH: hold
 parser.add_argument("--sch-holdout-seed", type=int, default=7, help="SCH: seed selecting the held-out token ids (must match across arms being compared)")
 parser.add_argument("--sch-holdout-min-id", type=int, default=256, help="SCH: never hold out ids below this (byte fallbacks and special tokens)")
 parser.add_argument("--sch-holdout-mode", type=str, default="target", choices=list(HOLDOUT_MODES), help="SCH: 'target' masks held-out ids as prediction targets only (isolates the output head, the claim under test); 'full' also rewrites them in the inputs, so the model never sees them at all")
-parser.add_argument("--sch-decile-metrics", type=int, default=1, choices=[0, 1], help="SCH: report validation bpb per token-frequency decile at the end of training (the money plot)")
+parser.add_argument("--sch-decile-metrics", type=int, default=0, choices=[0, 1], help="SCH: report validation bpb per token-frequency decile at the end of training. DEFAULT 0: this defaulted to 1, which made the end-of-training SCH diagnostics block run for EVERY architecture (the trigger at the bottom of this file is an OR over the sch_* flags), and it OOMs. All 16 c0*/c1* sweeps pass this flag explicitly, so none of them depended on the default.")
 parser.add_argument("--sch-rank-probe", type=int, default=0, help="SCH: contexts to use for the end-of-training logit-rank SVD (0 = skip; 50000 is the Phase 0 setting)")
 parser.add_argument("--sch-eval-steps", type=int, default=100, help="SCH: validation batches used by the end-of-training diagnostics")
 parser.add_argument("--seed", type=int, default=-1, help="RNG seed for weight init and data-order-independent randomness (-1 = unseeded, the historical default). Needed for seed-variance runs; note the dataloader order is not seeded by this.")
@@ -3165,6 +3165,9 @@ if _mst_tracker is not None:
 # ── SCH: end-of-training diagnostics ─────────────────────────────────────────
 # Every metric in section 6 of the plan, written once per run to sch_results.csv
 # so a sweep is a table rather than a log-scraping exercise.
+# NOTE: this is an OR over the sch_* flags, so any one of them being on by default
+# makes this run for every architecture. --sch-decile-metrics used to default to 1
+# and did exactly that, OOMing runs that have no code head at all.
 if (bool(int(getattr(args, 'use_code_head', 0))) or args.sch_holdout_tokens > 0
         or args.sch_decile_metrics or args.sch_rank_probe) and master_process:
     try:

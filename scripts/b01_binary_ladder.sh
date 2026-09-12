@@ -197,6 +197,7 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
                 --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \
                 --core-metric-every "$CORE_METRIC_EVERY" \
+                --sch-decile-metrics 0 --sch-rank-probe 0 --sch-holdout-tokens 0 \
                 ${MATRIX_LR:+--matrix-lr $MATRIX_LR} \
                 ${EMBEDDING_LR:+--embedding-lr $EMBEDDING_LR} \
                 ${UNEMBEDDING_LR:+--unembedding-lr $UNEMBEDDING_LR} \
