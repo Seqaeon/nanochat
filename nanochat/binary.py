@@ -59,6 +59,19 @@ class BinaryLinear(nn.Module):
 
     def __init__(self, in_features, out_features, bias=False, binarise_acts=True,
                  weight_scale="row", act_scale="token", clip=1.0):
+        """weight_scale is "row" | "none" | "threshold".
+
+        "threshold" is section 3.3's arm, and it is not an arbitrary substitution.
+        A POSITIVE per-channel scale is provably redundant wherever its output is
+        consumed by another sign(), because sign(alpha*z) == sign(z) for alpha > 0.
+        So alpha can only be load-bearing where the value meets something
+        scale-sensitive: the residual accumulation, the attention scores, and the
+        logits. This mode drops the multiplicative alpha and learns an ADDITIVE
+        per-channel threshold instead, which is byte-identical (one float per
+        channel) and asks whether the scale's real job was thresholding.
+        Phase 0 measured the target it has to beat: removing scales outright costs
+        0.4358 bpb (2.4485 against 2.0127, dense 1.7571).
+        """
         super().__init__()
         self.in_features, self.out_features = in_features, out_features
         self.binarise_acts = binarise_acts
@@ -77,8 +90,34 @@ class BinaryLinear(nn.Module):
         # Section 3.9 of the plan already amended the definition to permit one float
         # per output channel, so making it learnable costs nothing that was not
         # already being paid and lets a zero-init layer grow its own scale back.
-        self.log_alpha = nn.Parameter(torch.zeros(out_features, 1)) \
+        # SHAPE IS 1-D ON PURPOSE. As (out_features, 1) this is 2-D, and
+        # GPT.setup_optimizer routes every ndim==2 parameter to Muon
+        # (gpt.py:11290, catch-all at :11343). That breaks it three ways:
+        #   1. Newton-Schulz orthogonalises the update, and the only orthogonal
+        #      factor of an (N,1) matrix is the unit column, so every channel gets
+        #      an identical update magnitude. A per-channel scale whose channels
+        #      cannot differ in the update is not a per-channel scale.
+        #   2. optim.py:448 multiplies the LR by max(1, shape[-2]/shape[-1])**0.5,
+        #      which is 32x at out_features=1024.
+        #   3. Muon applies weight decay (gpt.py:11460) while every AdamW group in
+        #      setup_optimizer uses 0.0, so the scale is dragged toward exp(0)=1.
+        # 1-D routes to struct_adamw_params instead. Never fired before because
+        # binary.py had only run through standalone probes, never base_train.
+        self.log_alpha = nn.Parameter(torch.zeros(out_features)) \
             if weight_scale == "row" else None
+        self.theta = nn.Parameter(torch.zeros(out_features)) \
+            if weight_scale == "threshold" else None
+        # ONE scalar per layer alongside the per-channel threshold. Without it the
+        # arm is not the experiment it claims to be: theta is additive and cannot
+        # control output magnitude, so sign(W)@x comes out ~sqrt(in_features) too
+        # large (measured std 3.42 against row-scale's 0.54) and the arm would fail
+        # for a scale reason rather than an information one. A single scalar is
+        # 1 float per LAYER against out_features per layer, so the byte comparison
+        # against "row" is unchanged, and it isolates the real question: does the
+        # multiplicative scale need to be PER CHANNEL, or is per-channel
+        # thresholding plus one global gain enough?
+        self.log_g = nn.Parameter(torch.zeros(())) \
+            if weight_scale == "threshold" else None
 
     def reset_parameters(self):
         # Same constraint as BinaryEmbedding: stay inside the clip window. The usual
@@ -95,15 +134,18 @@ class BinaryLinear(nn.Module):
     def binary_weight(self):
         w = sign_ste(self.weight, self.clip)
         if self.log_alpha is not None:
-            w = w * self.log_alpha.exp()
+            w = w * self.log_alpha.exp().unsqueeze(-1)
         return w
 
     @torch.no_grad()
     def set_scale_from_weight(self):
-        """Initialise alpha from mean|W|, floored so a zero row is not born dead."""
+        """Initialise alpha (or the threshold arm's global gain) from mean|W|."""
+        if self.log_g is not None:
+            g = self.weight.abs().mean().clamp_min(self.SCALE_FLOOR)
+            self.log_g.copy_(g.log())
         if self.log_alpha is None:
             return
-        a = self.weight.abs().mean(dim=1, keepdim=True).clamp_min(self.SCALE_FLOOR)
+        a = self.weight.abs().mean(dim=1).clamp_min(self.SCALE_FLOOR)
         self.log_alpha.copy_(a.log())
 
     def forward(self, x):
@@ -113,7 +155,21 @@ class BinaryLinear(nn.Module):
                 xb = xb * x.detach().abs().mean(dim=-1, keepdim=True)
         else:
             xb = x
-        return F.linear(xb, self.binary_weight().to(xb.dtype), self.bias)
+        y = F.linear(xb, self.binary_weight().to(xb.dtype), self.bias)
+        if self.log_g is not None:
+            y = y * self.log_g.exp().to(y.dtype)
+        if self.theta is not None:
+            y = y + self.theta.to(y.dtype)
+        return y
+
+    def flops_per_token(self):
+        """Same shape of matmul as the nn.Linear it replaced: 2 FLOPs per MAC.
+
+        Binarisation changes what an operation COSTS, not how many there are, which
+        is the whole reason section 3.1 replaces the FLOPs axis. Reporting anything
+        else here would smuggle the claim into the baseline accounting.
+        """
+        return 2 * self.in_features * self.out_features
 
     def extra_repr(self):
         return (f"in={self.in_features}, out={self.out_features}, "
@@ -151,6 +207,16 @@ class BinaryEmbedding(nn.Module):
         if self.scale == "row":
             out = out * rows.detach().abs().mean(dim=-1, keepdim=True)
         return out
+
+    def flops_per_token(self):
+        """Zero: this is a lookup, exactly as nn.Embedding is.
+
+        GPT.estimate_flops calls this on any wte that is not a bare nn.Embedding,
+        because a CODED input embedding is a matmul rather than a gather and the 6N
+        proxy would misprice it. A learned 1-bit table is still a gather, so the
+        answer is 0 and the parameters are excluded from the proxy as usual.
+        """
+        return 0
 
     def extra_repr(self):
         return f"V={self.num_embeddings}, D={self.embedding_dim}, scale={self.scale}"

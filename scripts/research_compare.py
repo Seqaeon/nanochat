@@ -369,6 +369,14 @@ def run_training_sweep(args):
         "--mol-block-lr-scale", str(getattr(args, 'mol_block_lr_scale', 1.0)),
         "--mol-per-block-ve", str(getattr(args, 'mol_per_block_ve', 0)),
         # MST: Modular Sub-Transformer
+        "--use-binary", str(getattr(args, "use_binary", 0)),
+        "--binary-acts", str(getattr(args, "binary_acts", 1)),
+        "--binary-weight-scale", str(getattr(args, "binary_weight_scale", 'row')),
+        "--binary-act-scale", str(getattr(args, "binary_act_scale", 'token')),
+        "--binary-clip", str(getattr(args, "binary_clip", 1.0)),
+        "--binary-linear", str(getattr(args, "binary_linear", 1)),
+        "--binary-embeddings", str(getattr(args, "binary_embeddings", 1)),
+        "--binary-skip", str(getattr(args, "binary_skip", '')),
         "--use-mst", str(getattr(args, 'use_mst', 0)),
         "--mst-n-subs", str(getattr(args, 'mst_n_subs', 8)),
         "--mst-sub-dim", str(getattr(args, 'mst_sub_dim', 64)),
@@ -1142,6 +1150,14 @@ if __name__ == "__main__":
     parser.add_argument("--mol-per-block-ve", type=int, default=0, choices=[0,1], help="MoL: per-block VE slices")
     parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier")
     # MST: Modular Sub-Transformer
+    parser.add_argument("--use-binary", type=int, default=0)
+    parser.add_argument("--binary-acts", type=int, default=1)
+    parser.add_argument("--binary-weight-scale", type=str, default='row')
+    parser.add_argument("--binary-act-scale", type=str, default='token')
+    parser.add_argument("--binary-clip", type=float, default=1.0)
+    parser.add_argument("--binary-linear", type=int, default=1)
+    parser.add_argument("--binary-embeddings", type=int, default=1)
+    parser.add_argument("--binary-skip", type=str, default='')
     parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
     parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers")
     parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension per sub-transformer")

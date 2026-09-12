@@ -388,6 +388,15 @@ class GPTConfig:
     mol_capacity_factor: float = 1.0           # per-block capacity when dispatching
     mol_block_lr_scale: float = 1.0            # per-thin-block LR multiplier (their recipe has none)
     mol_per_block_ve: int = 0                  # G3-equivalent: each thin block reads its own VE slice
+    # ── Fully binary transformer (fully-binary-transformer-plan.md) ──
+    use_binary: bool = False                   # master switch: swap Linear/Embedding for binary
+    binary_acts: bool = True                   # False = W1A16 rung, which changes no operation
+    binary_weight_scale: str = "row"           # row | none | threshold  (see nanochat/binary.py)
+    binary_act_scale: str = "token"            # token | none
+    binary_clip: float = 1.0                   # STE clip window; latent weights init inside it
+    binary_linear: bool = True                 # binarise nn.Linear
+    binary_embeddings: bool = True             # binarise nn.Embedding (wte + value_embeds)
+    binary_skip: str = ""                      # comma-separated name substrings left in fp
     # ── MST: Modular Sub-Transformer Architecture ──
     use_mst: bool = False                      # master switch for MST mode
     mst_n_subs: int = 8                        # N = number of sub-transformers per layer
@@ -10851,6 +10860,13 @@ class GPT(nn.Module):
         wte_numel = sum(p.numel() for p in self.transformer.wte.parameters())
         nparams_exclude = (wte_numel + wpe_numel + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        # Binary per-channel scales (log_alpha / theta / log_g) are elementwise
+        # rescales of the output, not matmul weights, so the 6N proxy overcharges
+        # them. Tiny in absolute terms (512 floats against 3.1M matrix params per
+        # layer at d=512) but the accounting claim is the point of this direction.
+        for _n, _p in self.named_parameters():
+            if _n.rsplit(".", 1)[-1] in ("log_alpha", "theta", "log_g"):
+                nparams_exclude += _p.numel()
         # SCH: the head's FLOPs are NOT 6 * head_params.
         #   - the frozen Phi does V*M MACs per token while owning zero parameters,
         #     so the 6N proxy would report the code head as almost free;

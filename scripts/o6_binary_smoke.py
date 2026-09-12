@@ -89,29 +89,33 @@ def main():
         print(f"\n=== {arch.upper()}  depth={a.depth} d={n_embd} V={a.vocab} ===")
         print(f"{'step':>6}{'loss':>10}{'flip%':>9}{'bal min':>9}{'bal max':>9}{'dead%':>8}")
         losses = []
+        ever_grad = set()
         for step in range(a.steps):
             x, y = next(loader)
             out = model(x, targets=y)
             loss = out[0] if isinstance(out, tuple) else out
             opt.zero_grad(set_to_none=True)
             loss.backward()
-            if step == 0:
-                # A gate O6 did not have, and needed. Its first version PASSED both
-                # gates while 24 of ~48 matmuls were dead: nanochat zero-initialises
-                # every c_proj, and a scale derived as detached mean|W| makes a zero
-                # row output zero AND receive zero gradient, so the layer is frozen
-                # from step 0. A loss curve hides that completely, because the rest of
-                # the model happily learns around it.
-                az = [n for n, q in model.named_parameters()
-                      if q.requires_grad and q.grad is not None and not q.grad.any()]
-                tot = sum(1 for _, q in model.named_parameters() if q.requires_grad)
-                print(f"  step 0: {len(az)}/{tot} parameter tensors have ALL-ZERO gradient")
-                if az:
-                    for n in az[:8]:
+            if step < 10:
+                # NOT at step 0. nanochat zero-initialises every c_proj, and a zero
+                # output projection blocks gradient to c_q/c_k/c_v/c_fc INSIDE that
+                # block on the first backward only; after one update it all flows.
+                # Checking at step 0 flagged 40/60 tensors in a DENSE model that goes
+                # on to reach 1.85 bpb, which is a false positive in the gate, not a
+                # defect in the model. What matters is whether a tensor EVER receives
+                # gradient, so accumulate over the transient instead.
+                for n, q in model.named_parameters():
+                    if q.requires_grad and q.grad is not None and q.grad.any():
+                        ever_grad.add(n)
+                if step == 9:
+                    allp = [n for n, q in model.named_parameters() if q.requires_grad]
+                    never = [n for n in allp if n not in ever_grad]
+                    print(f"  steps 0-9: {len(never)}/{len(allp)} tensors NEVER received "
+                          f"a gradient")
+                    for n in never[:8]:
                         print(f"    dead: {n}")
-                    print("  GATE (every tensor receives gradient): FAIL")
-                else:
-                    print("  GATE (every tensor receives gradient): PASS")
+                    print(f"  GATE (every tensor receives gradient): "
+                          f"{'FAIL' if never else 'PASS'}")
             opt.step()
             losses.append(float(loss))
             if step % a.log_every == 0 or step == a.steps - 1:

@@ -229,6 +229,15 @@ parser.add_argument("--mol-dispatch", type=int, default=1, choices=[0, 1], help=
 parser.add_argument("--mol-capacity-factor", type=float, default=1.0, help="MoL: per-block capacity when dispatching")
 parser.add_argument("--mol-per-block-ve", type=int, default=0, choices=[0,1], help="MoL: each thin block reads its own VE slice (G3 equivalent)")
 parser.add_argument("--mol-block-lr-scale", type=float, default=1.0, help="MoL: per-thin-block LR multiplier (fairness ablation; their recipe has none)")
+# ── Fully binary transformer ─────────────────────────────────────────────────
+parser.add_argument("--use-binary", type=int, default=0, help="swap Linear/Embedding for binary (fully-binary-transformer-plan.md)")
+parser.add_argument("--binary-acts", type=int, default=1, help="0 = W1A16 rung: weights binary, activations fp, which changes NO operation")
+parser.add_argument("--binary-weight-scale", type=str, default="row", choices=["row", "none", "threshold"], help="row=per-channel multiplicative; none=strict (costs 0.4358 bpb); threshold=per-channel additive + one global gain")
+parser.add_argument("--binary-act-scale", type=str, default="token", choices=["token", "none"])
+parser.add_argument("--binary-clip", type=float, default=1.0, help="STE clip window; latent weights are initialised inside it or they are born dead")
+parser.add_argument("--binary-linear", type=int, default=1)
+parser.add_argument("--binary-embeddings", type=int, default=1, help="binarise wte and value_embeds, the interfaces the 1-bit literature leaves in fp")
+parser.add_argument("--binary-skip", type=str, default="", help="comma-separated name substrings left in fp; this is how the Phase 1 ladder rungs are built")
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
 parser.add_argument("--mst-sub-dim", type=int, default=64, help="MST: dimension d per sub-transformer")
@@ -1164,6 +1173,14 @@ def build_model_meta(depth):
         mol_capacity_factor=getattr(args, 'mol_capacity_factor', 1.0),
         mol_block_lr_scale=getattr(args, 'mol_block_lr_scale', 1.0),
         mol_per_block_ve=getattr(args, 'mol_per_block_ve', 0),
+        use_binary=bool(getattr(args, 'use_binary', 0)),
+        binary_acts=bool(getattr(args, 'binary_acts', 1)),
+        binary_weight_scale=getattr(args, 'binary_weight_scale', 'row'),
+        binary_act_scale=getattr(args, 'binary_act_scale', 'token'),
+        binary_clip=float(getattr(args, 'binary_clip', 1.0)),
+        binary_linear=bool(getattr(args, 'binary_linear', 1)),
+        binary_embeddings=bool(getattr(args, 'binary_embeddings', 1)),
+        binary_skip=getattr(args, 'binary_skip', ''),
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
         mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
@@ -1416,6 +1433,29 @@ if args.seed >= 0:
     torch.cuda.manual_seed_all(args.seed)
     print0(f"Seeded weight init with --seed {args.seed}")
 model.init_weights() # 3) All tensors get initialized
+# 3b) Swap in the binary layers. AFTER init_weights because binarise_model_ copies
+# the donor weights in as latent values (and repairs zero-initialised rows, which
+# nanochat produces for every c_proj and which a detached mean|W| scale would
+# otherwise freeze forever). BEFORE setup_optimizer so the new scale parameters are
+# seen by the param-group sort, and before the DDP wrap.
+if getattr(model_config, "use_binary", False):
+    from nanochat.binary import binarise_model_
+    _skip = tuple(x for x in model_config.binary_skip.split(",") if x)
+    _sw = binarise_model_(
+        model,
+        binarise_acts=model_config.binary_acts,
+        linear=model_config.binary_linear,
+        embeddings=model_config.binary_embeddings,
+        skip=_skip,
+        weight_scale=model_config.binary_weight_scale,
+        act_scale=model_config.binary_act_scale,
+        clip=model_config.binary_clip,
+    )
+    print0(f"BINARY: swapped {len(_sw)} modules "
+           f"({sum(1 for _, k in _sw if k == 'Linear')} Linear, "
+           f"{sum(1 for _, k in _sw if k == 'Embedding')} Embedding), "
+           f"acts={'1b' if model_config.binary_acts else 'fp'}, "
+           f"scale={model_config.binary_weight_scale}, skip={_skip or '()'}")
 if args.seed >= 0:
     torch.manual_seed(args.seed + 1000 * ddp_rank)
 
@@ -1689,6 +1729,31 @@ for key, value in param_counts.items():
 num_params = param_counts['total']
 num_flops_per_token, num_active_flops_per_token, num_active_params = orig_model.estimate_flops()
 print0(f"Estimated FLOPs per token (total):  {num_flops_per_token:e}")
+# The three axes FLOPs cannot see. A W1A1 model has IDENTICAL FLOPs/token to its
+# dense twin, so the line above is blind to the entire claim; it is also blind to
+# wte/wpe/value_embeds, which are 80% of the parameters at depth 8 V=32,768.
+# Emitted on every run so Phase 4's Pareto figure needs no re-runs.
+try:
+    from nanochat.bitcost import (cost_report, DENSE_BF16, FULLY_BINARY,
+                                  NANOCHAT_MUONADAMW, PrecisionSpec)
+    _counts = orig_model.num_scaling_params()
+    if getattr(model_config, "use_binary", False):
+        _wb = 1
+        _ab = 1 if model_config.binary_acts else 16
+        _eb = 1 if model_config.binary_embeddings else 16
+        _hb = 16 if "lm_head" in model_config.binary_skip else 1
+        _prec = PrecisionSpec(w_bits=_wb, a_bits=_ab, embed_bits=_eb, head_bits=_hb)
+    else:
+        _prec = DENSE_BF16
+    _rep = cost_report(_counts, num_flops_per_token, _prec, NANOCHAT_MUONADAMW,
+                       seq_len=args.max_seq_len)
+    print0(f"COST_AXES precision={_prec.name} "
+           f"bops_arith={_rep.bops_arithmetic:.4e} "
+           f"energy_pj_per_token={_rep.energy_pj_per_token:.4e} "
+           f"inference_MiB={_rep.total_inference_bytes/2**20:.2f} "
+           f"training_state_MiB={_rep.total_state_bytes/2**20:.2f}")
+except Exception as _e:
+    print0(f"COST_AXES unavailable ({type(_e).__name__}: {_e})")
 print0(f"Estimated FLOPs per token (active): {num_active_flops_per_token:e}")
 print0(f"Estimated active params:            {num_active_params:,}")
 

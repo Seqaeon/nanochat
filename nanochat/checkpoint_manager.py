@@ -217,6 +217,26 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
         for n in notes:
             log0(f"[checkpoint_manager] {n}")
 
+        # Rebuild the binary module tree before loading. Mirrors the hook in
+        # scripts/base_train.py immediately after init_weights(). Without this a
+        # binary checkpoint is reconstructed as a dense GPT, strict load_state_dict
+        # fails on the BinaryLinear/BinaryEmbedding keys and the per-channel scales,
+        # and eval_core reports "ERROR loading checkpoint" and then SILENTLY SKIPS
+        # the arm, which is worse than a crash because the arm just vanishes from
+        # the results table.
+        if getattr(model_config, "use_binary", False):
+            from nanochat.binary import binarise_model_
+            binarise_model_(
+                model,
+                binarise_acts=getattr(model_config, "binary_acts", True),
+                linear=getattr(model_config, "binary_linear", True),
+                embeddings=getattr(model_config, "binary_embeddings", True),
+                skip=tuple(x for x in getattr(model_config, "binary_skip", "").split(",") if x),
+                weight_scale=getattr(model_config, "binary_weight_scale", "row"),
+                act_scale=getattr(model_config, "binary_act_scale", "token"),
+                clip=float(getattr(model_config, "binary_clip", 1.0)),
+            )
+
         model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":

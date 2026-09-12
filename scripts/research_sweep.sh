@@ -353,6 +353,8 @@ while [[ $# -gt 0 ]]; do
             EXTRA_ARGS+=("--dense-intermediate-ln" "$2")
             shift 2
             ;;
+        --use-binary|--binary-acts|--binary-weight-scale|--binary-act-scale|\
+        --binary-clip|--binary-linear|--binary-embeddings|--binary-skip|\
         --use-mol|--mol-n-blocks|--mol-n-shared|--mol-topk|--mol-thin-dim|--mol-head-dim|\
         --mol-ffn-mult|--mol-router-aux|--mol-routed-attn|--mol-dispatch|--mol-capacity-factor|--mol-block-lr-scale|--mol-per-block-ve|\
         --use-mst|--mst-n-subs|--mst-sub-dim|--mst-head-dim|--mst-input-mode|--mst-rotated-slice-learned|\
