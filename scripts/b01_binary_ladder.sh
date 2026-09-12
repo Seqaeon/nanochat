@@ -95,6 +95,10 @@ EVAL_EVERY="${EVAL_EVERY:--1}"
 SAVE_EVERY="${SAVE_EVERY:-200}"
 MAX_SHARDS="${MAX_SHARDS:-}"
 COMPILE_REGIONAL="${COMPILE_REGIONAL:-0}"
+# CORE is an downstream-capability benchmark, not an architecture signal, and
+# --core-metric-every defaults to 2000 AND fires on the last step regardless, so
+# every arm was paying for it. Off until there is a final architecture to evaluate.
+CORE_METRIC_EVERY="${CORE_METRIC_EVERY:-0}"
 SWEEP_LOG="${SWEEP_LOG:-}"
 STATE="${STATE:-${OUT_BASE}/state.json}"
 mkdir -p "$OUT_BASE"
@@ -179,6 +183,7 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --window-pattern "$WINDOW_PATTERN" \
                 --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
                 --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \
+                --core-metric-every "$CORE_METRIC_EVERY" \
                 ${MAX_SHARDS:+--max-shards $MAX_SHARDS} \
                 --target-tokens "$TARGET_TOKENS" --target-param-data-ratio 10.5 \
                 --seed "$s" --model-tag "$ARM" $FLAGS \

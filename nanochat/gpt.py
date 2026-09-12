@@ -11365,6 +11365,31 @@ class GPT(nn.Module):
                           eet_router_matrix_params + eet_router_adamw_params +
                           template_bank_params)
 
+        # Binary per-channel scales get their OWN group at a low LR.
+        #
+        # log_alpha / log_g are LOG-parameterised, and everything else in this model
+        # is not. Left in research_adamw_params they receive
+        # embedding_lr * dmodel_lr_scale = 0.2 * (512/768)^-0.5 ~= 0.245, and since
+        # Adam's step magnitude is ~lr, the scale multiplies by exp(0.245) ~= 1.28
+        # EVERY STEP. The scales blow up or collapse within a few dozen steps and the
+        # model cannot learn. Checking that log_alpha avoids Muon was not enough; the
+        # AdamW LR it landed on was the actual problem.
+        _bin_scale_names = ("log_alpha", "theta", "log_g")
+        binary_scale_params = [q for n, q in self.named_parameters()
+                               if n.rsplit(".", 1)[-1] in _bin_scale_names]
+        if binary_scale_params:
+            _bs_ids = {id(q) for q in binary_scale_params}
+            _drop = lambda lst: [q for q in lst if id(q) not in _bs_ids]
+            gate_matrix_params = _drop(gate_matrix_params)
+            struct_matrix_params = _drop(struct_matrix_params)
+            gate_adamw_params = _drop(gate_adamw_params)
+            struct_adamw_params = _drop(struct_adamw_params)
+            research_adamw_params = _drop(research_adamw_params)
+            embedding_params = _drop(embedding_params)
+            lm_head_params = _drop(lm_head_params)
+            value_embeds_params = _drop(value_embeds_params)
+            all_params = _drop(all_params) + binary_scale_params
+
         assert len(list(self.parameters())) == len(all_params), (
             f"Parameter count mismatch even after catch-all: model has "
             f"{len(list(self.parameters()))} params, optimizer groups cover {len(all_params)}")
@@ -11400,6 +11425,9 @@ class GPT(nn.Module):
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=research_adamw_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            # scalar_lr * 0.01, the same treatment resid_lambdas get, because a log
+            # scale needs to move slowly and multiplicatively.
+            dict(kind='adamw', params=binary_scale_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]

@@ -143,3 +143,51 @@ def test_ladder_skip_leaves_named_modules_dense():
     assert not isinstance(m.lm_head, BinaryLinear), "skip did not spare lm_head"
     inner = [mod for mod in m.transformer.h.modules() if isinstance(mod, BinaryLinear)]
     assert inner, "skip spared the body too"
+
+
+def test_binary_scale_params_get_a_sane_learning_rate():
+    """Avoiding Muon was not enough: the AdamW LR they landed on was the real bug.
+
+    log_alpha and log_g are LOG-parameterised. In research_adamw_params they got
+    embedding_lr * dmodel_lr_scale ~= 0.245, and Adam's step magnitude is ~lr, so the
+    scale multiplied by exp(0.245) ~= 1.28 EVERY STEP. R5 learned nothing.
+    """
+    cfg = tiny_config(use_binary=True)
+    m = build(cfg)
+    opts = m.setup_optimizer()
+    opts = opts if isinstance(opts, (list, tuple)) else [opts]
+    scale_ids = {id(p) for n, p in m.named_parameters()
+                 if n.rsplit(".", 1)[-1] in ("log_alpha", "theta", "log_g")}
+    assert scale_ids
+    seen = []
+    for o in opts:
+        for g in o.param_groups:
+            if any(id(p) in scale_ids for p in g["params"]):
+                seen.append(g["lr"])
+    assert seen, "binary scale parameters are in no optimiser group"
+    worst = max(seen)
+    # exp(lr) is the per-step multiplier on a log-parameterised scale.
+    assert worst < 0.05, (
+        f"binary scale LR {worst:.4f} multiplies the scale by exp({worst:.4f})="
+        f"{math.exp(worst):.3f} per step")
+
+
+def test_a_collapsed_scale_does_not_kill_the_latent_weight():
+    """R5's actual death: loss fell to 7.28, reversed, then pinned at exactly
+    ln(32768)=10.3972 forever. w = sign(W)*alpha, so dL/dW is proportional to alpha;
+    once a scale reaches zero the latent weight gets no gradient and never recovers.
+    SCALE_FLOOR was applied only at init, so nothing stopped log_alpha -> -inf."""
+    lin = BinaryLinear(32, 16)
+    lin.reset_parameters()
+    with torch.no_grad():
+        lin.log_alpha.fill_(-60.0)   # exp(-60)=8.8e-27: not zero, but dead in practice
+    x = torch.randn(4, 32)
+    lin(x).sum().backward()
+    # The guarantee is the floor, not an underflow accident: alpha never drops below
+    # SCALE_FLOOR however far log_alpha runs, so dL/dW keeps a usable magnitude.
+    alpha = lin.log_alpha.exp() + lin.SCALE_FLOOR
+    assert float(alpha.min()) == pytest.approx(lin.SCALE_FLOOR, rel=1e-5)
+    assert float(lin.binary_weight().abs().min()) >= lin.SCALE_FLOOR * 0.99
+    g = lin.weight.grad
+    assert g is not None and float(g.abs().max()) > 1e-8, \
+        f"latent weight gradient is {float(g.abs().max()):.3e}: layer is dead"

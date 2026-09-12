@@ -134,7 +134,21 @@ class BinaryLinear(nn.Module):
     def binary_weight(self):
         w = sign_ste(self.weight, self.clip)
         if self.log_alpha is not None:
-            w = w * self.log_alpha.exp().unsqueeze(-1)
+            # ADDITIVE floor, not a clamp. The forward is w = sign(W) * alpha, so
+            # dL/dW is proportional to alpha: if a scale reaches zero the LATENT
+            # WEIGHT stops receiving gradient and the layer is dead forever. This is
+            # the same structural failure as the zero-initialised c_proj bug, but
+            # reached by TRAINING rather than by init, and it is what killed R5: the
+            # loss went 10.96 -> 7.28 -> 8.27 -> 10.04 and then pinned at 10.397207,
+            # which is exactly ln(32768), i.e. a constant-logit model.
+            #
+            # SCALE_FLOOR was only ever applied in set_scale_from_weight, so nothing
+            # stopped log_alpha running to -inf during training. A torch.clamp would
+            # not fix it either: at the clamp the gradient is zero and the scale is
+            # stuck. Adding the floor keeps alpha >= SCALE_FLOOR unconditionally, so
+            # the latent weight keeps a gradient path even if the scale itself stalls.
+            alpha = self.log_alpha.exp() + self.SCALE_FLOOR
+            w = w * alpha.unsqueeze(-1)
         return w
 
     @torch.no_grad()
@@ -157,7 +171,7 @@ class BinaryLinear(nn.Module):
             xb = x
         y = F.linear(xb, self.binary_weight().to(xb.dtype), self.bias)
         if self.log_g is not None:
-            y = y * self.log_g.exp().to(y.dtype)
+            y = y * (self.log_g.exp() + self.SCALE_FLOOR).to(y.dtype)
         if self.theta is not None:
             y = y + self.theta.to(y.dtype)
         return y
