@@ -182,7 +182,12 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
         else
             EXTRA=""
             [ -n "$DATA_DIR" ] && EXTRA="--data-dir $DATA_DIR"
-            python -m scripts.o2_sign_agreement --steps "${O2_STEPS:-300}" $EXTRA \
+            # Binary needs far larger SGD steps than dense: only sign CROSSINGS change
+            # the function, so a latent weight must traverse the whole clip window to
+            # move anything. The default grid topped out at 1.0 and binary chose that
+            # edge, which means the optimum was outside it and the arm was undertrained.
+            python -m scripts.o2_sign_agreement --steps "${O2_STEPS:-300}" \
+                --lr-grid ${O2_LR_GRID:-30 10 3 1 0.3 0.1} $EXTRA \
                 2>&1 | tee "${OUT_BASE}/${ARM}.txt" | log
             [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
         fi
