@@ -79,8 +79,14 @@ DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-16}"
 # batch across arms; note the LRs and weight decay are BOTH derived from it
 # (base_train.py:1749, :1799), so changing it changes more than the batch.
 TOTAL_BATCH_SIZE="${TOTAL_BATCH_SIZE:--1}"
-MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
-WINDOW_PATTERN="${WINDOW_PATTERN:-L}"
+# Match the repo's standard config (p13, and every existing dense leg) so these
+# arms land on the SAME Pareto curve. 1024/L was carried over from the Ampere
+# probes, where SDPA has no sliding-window support and warns about it; on H100
+# FlashAttention-3 handles windows natively, and full attention on every layer
+# costs 1.05x the FLOPs while making the results incomparable to the repo's
+# existing d8 dense baselines.
+MAX_SEQ_LEN="${MAX_SEQ_LEN:-2048}"
+WINDOW_PATTERN="${WINDOW_PATTERN:-SSSL}"
 # These were being silently ignored: base_train's --log-every DEFAULTS TO 1, so an
 # unwired LOG_EVERY prints a line per step, and an unwired MAX_SHARDS scans every
 # shard. Mirrors the set p13_isodata.sh:297-305 passes.
