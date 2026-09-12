@@ -99,6 +99,16 @@ COMPILE_REGIONAL="${COMPILE_REGIONAL:-0}"
 # --core-metric-every defaults to 2000 AND fires on the last step regardless, so
 # every arm was paying for it. Off until there is a final architecture to evaluate.
 CORE_METRIC_EVERY="${CORE_METRIC_EVERY:-0}"
+# Learning rates. Left unset these are the DENSE-tuned values, and applying them
+# unchanged to a binary arm is not an architectural comparison: O2's one durable
+# finding is that binary needs materially different LRs, because only sign
+# CROSSINGS change the function so a latent weight must traverse the whole clip
+# window before anything moves. The first R5 run at dense LRs (matrix 1.414e-2)
+# went UP over three separate 200-step windows and landed at +0.6418 bpb; O6, at
+# plain AdamW 1e-3 on everything, got +0.1957. Tune before believing any rung.
+MATRIX_LR="${MATRIX_LR:-}"
+EMBEDDING_LR="${EMBEDDING_LR:-}"
+UNEMBEDDING_LR="${UNEMBEDDING_LR:-}"
 SWEEP_LOG="${SWEEP_LOG:-}"
 STATE="${STATE:-${OUT_BASE}/state.json}"
 mkdir -p "$OUT_BASE"
@@ -165,7 +175,10 @@ for DEPTH in "${DEPTHS[@]}"; do
         FLAGS=$(rung_flags "$RUNG")
         [ "$FLAGS" = "UNKNOWN" ] && { echo "unknown rung $RUNG" | log; exit 1; }
         for s in $(seq 1 "$SEEDS"); do
-            TAG="${RUNG}_s${s}"
+            LRTAG=""
+            [ -n "$MATRIX_LR" ] && LRTAG="${LRTAG}_m${MATRIX_LR}"
+            [ -n "$EMBEDDING_LR" ] && LRTAG="${LRTAG}_e${EMBEDDING_LR}"
+            TAG="${RUNG}${LRTAG}_s${s}"
             ARM="d${DEPTH}_${TAG}"
             if done_already "$ARM"; then
                 echo "[skip] $ARM" | log
@@ -184,6 +197,9 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
                 --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \
                 --core-metric-every "$CORE_METRIC_EVERY" \
+                ${MATRIX_LR:+--matrix-lr $MATRIX_LR} \
+                ${EMBEDDING_LR:+--embedding-lr $EMBEDDING_LR} \
+                ${UNEMBEDDING_LR:+--unembedding-lr $UNEMBEDDING_LR} \
                 ${MAX_SHARDS:+--max-shards $MAX_SHARDS} \
                 --target-tokens "$TARGET_TOKENS" --target-param-data-ratio 10.5 \
                 --seed "$s" --model-tag "$ARM" $FLAGS \
