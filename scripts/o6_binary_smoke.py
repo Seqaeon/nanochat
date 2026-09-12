@@ -95,6 +95,23 @@ def main():
             loss = out[0] if isinstance(out, tuple) else out
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            if step == 0:
+                # A gate O6 did not have, and needed. Its first version PASSED both
+                # gates while 24 of ~48 matmuls were dead: nanochat zero-initialises
+                # every c_proj, and a scale derived as detached mean|W| makes a zero
+                # row output zero AND receive zero gradient, so the layer is frozen
+                # from step 0. A loss curve hides that completely, because the rest of
+                # the model happily learns around it.
+                az = [n for n, q in model.named_parameters()
+                      if q.requires_grad and q.grad is not None and not q.grad.any()]
+                tot = sum(1 for _, q in model.named_parameters() if q.requires_grad)
+                print(f"  step 0: {len(az)}/{tot} parameter tensors have ALL-ZERO gradient")
+                if az:
+                    for n in az[:8]:
+                        print(f"    dead: {n}")
+                    print("  GATE (every tensor receives gradient): FAIL")
+                else:
+                    print("  GATE (every tensor receives gradient): PASS")
             opt.step()
             losses.append(float(loss))
             if step % a.log_every == 0 or step == a.steps - 1:

@@ -65,6 +65,20 @@ class BinaryLinear(nn.Module):
         self.weight_scale, self.act_scale, self.clip = weight_scale, act_scale, clip
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        # LEARNABLE per-output-channel scale, not a detached function of |W|.
+        #
+        # Deriving it as mean|W| kills any zero-initialised layer permanently: the
+        # scale is 0, so the binary weight is 0, the output is 0, and because the
+        # scale is detached the gradient to the latent weight is 0 too. nanochat
+        # zero-initialises every c_proj (the residual-branch projection of every
+        # block, so each block starts as identity), which meant 2 dead matmuls per
+        # layer, 24 of ~48 at depth 12, frozen from step 0 and unrecoverable.
+        #
+        # Section 3.9 of the plan already amended the definition to permit one float
+        # per output channel, so making it learnable costs nothing that was not
+        # already being paid and lets a zero-init layer grow its own scale back.
+        self.log_alpha = nn.Parameter(torch.zeros(out_features, 1)) \
+            if weight_scale == "row" else None
 
     def reset_parameters(self):
         # Same constraint as BinaryEmbedding: stay inside the clip window. The usual
@@ -74,12 +88,23 @@ class BinaryLinear(nn.Module):
                         std=min(1.0 / math.sqrt(self.in_features), self.clip / 3.0))
         if self.bias is not None:
             nn.init.zeros_(self.bias)
+        self.set_scale_from_weight()
+
+    SCALE_FLOOR = 1e-4
 
     def binary_weight(self):
         w = sign_ste(self.weight, self.clip)
-        if self.weight_scale == "row":
-            w = w * self.weight.detach().abs().mean(dim=1, keepdim=True)
+        if self.log_alpha is not None:
+            w = w * self.log_alpha.exp()
         return w
+
+    @torch.no_grad()
+    def set_scale_from_weight(self):
+        """Initialise alpha from mean|W|, floored so a zero row is not born dead."""
+        if self.log_alpha is None:
+            return
+        a = self.weight.abs().mean(dim=1, keepdim=True).clamp_min(self.SCALE_FLOOR)
+        self.log_alpha.copy_(a.log())
 
     def forward(self, x):
         if self.binarise_acts:
@@ -162,8 +187,20 @@ def binarise_model_(model, binarise_acts=True, linear=True, embeddings=True,
                 # the forward pass, so this is function-preserving up to the per-row
                 # scale, and it stops inherited magnitudes from being born dead.
                 w = child.weight
+                # A zero row carries no sign information at all, so give it random
+                # signs rather than the constant +1 that sign(0) would produce.
+                zero_rows = (w.abs().sum(dim=1) == 0)
+                if zero_rows.any():
+                    w = w.clone()
+                    w[zero_rows] = torch.randn_like(w[zero_rows]) * (clip / 3.0)
                 sc = w.abs().max().clamp(min=1e-12)
                 new.weight.copy_(w * (clip / 3.0) / sc)
+                # Preserve "starts as a no-op" by giving those rows the floor scale
+                # instead of a zero one, which keeps the block near identity at init
+                # while leaving the layer trainable.
+                new.set_scale_from_weight()
+                if zero_rows.any():
+                    new.log_alpha.data[zero_rows] = math.log(new.SCALE_FLOOR)
                 if child.bias is not None:
                     new.bias.copy_(child.bias)
                 _swap(mod, child_name, new)
