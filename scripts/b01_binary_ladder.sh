@@ -162,7 +162,11 @@ for DEPTH in "${DEPTHS[@]}"; do
                 continue
             fi
             echo "---- $ARM : $RUNG ${FLAGS:-(dense)} ----" | log
-            python -m scripts.base_train \
+            # -u is not optional here. Step logs go through print0 -> stdout, which
+            # Python BLOCK-BUFFERS when piped through tee, while checkpoint messages go
+            # through logging -> stderr unbuffered. Without it the log shows only the
+            # periodic saves and looks like training has stalled.
+            python -u -m scripts.base_train \
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
                 --total-batch-size "$TOTAL_BATCH_SIZE" \
