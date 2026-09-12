@@ -168,7 +168,8 @@ import torch;p=torch.cuda.get_device_properties(0);print(f'sm{p.major}{p.minor}'
                 --seq "$SEQ_LEN" --window-pattern "$WINDOW_PATTERN" \
                 --tokenizer-dir "$TOKENIZER_DIR" \
                 --batch "$DEVICE_BATCH_SIZE" --eval-steps "$EVAL_STEPS" \
-                --binarise weights acts both --scale row none $EXTRA \
+                --binarise weights acts both --scale row none \
+                --direction both-ways $EXTRA \
                 2>&1 | tee "${OUT_BASE}/${ARM}.txt" | log
             [ "${PIPESTATUS[0]}" -eq 0 ] && mark_done "$ARM"
         fi

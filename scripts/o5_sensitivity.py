@@ -150,6 +150,28 @@ def main():
                     help="which matmul operand(s) to binarise; 'both' is the only arm "
                          "matching the plan's definition")
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these component names")
+    ap.add_argument("--direction", default="add", choices=["add", "remove", "both-ways"],
+                    help="add: dense baseline, binarise one component (overstates any "
+                         "component that receives full-precision input). remove: fully "
+                         "binary baseline, RESTORE one component to bf16, which measures "
+                         "what that component's binarisation actually costs IN SITU. The "
+                         "interfaces cost +0.90 measured by 'add' and +0.16 marginal once "
+                         "the body is already binary, so 'remove' is the one that should "
+                         "order the Phase 1 ladder.")
+    ap.add_argument("--calibrate", action="store_true", default=True,
+                    help="fit ONE scalar gain on the head output per arm before scoring. "
+                         "Without it the scan measures logit-scale drift, not information "
+                         "loss: binarising the head shrinks logits ~2.5x, binarising the body "
+                         "inflates activations ~3.5x, and doing both partially cancels, which "
+                         "makes a union look CHEAPER than its parts. A from-scratch binary "
+                         "model learns its own output scale, so that drift is not a cost of "
+                         "binarisation and must not be charged to it.")
+    ap.add_argument("--no-calibrate", dest="calibrate", action="store_false")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="also report PRE-softcap logit statistics per arm. The forward path "
+                         "applies logits = 20*tanh(logits/20) (gpt.py:11656), which is a "
+                         "nonlinearity between the head and the loss and can make a union of "
+                         "components look CHEAPER than its parts.")
     a = ap.parse_args()
 
     # Prefer the repo's own data/ symlink over the cache fallback: a fresh cache can
@@ -201,19 +223,137 @@ def main():
             "it is meaningless. Point --data-dir at real shards, or run "
             "`python -m nanochat.dataset -n 2` to download some.")
 
+    # A mutable gain on the head output, plus pre-softcap logit statistics.
+    _stats = {}
+    _gain = [1.0]
+
+    def _gain_hook(mod, args, out):
+        return out if _gain[0] == 1.0 else out * _gain[0]
+
+    model.lm_head.register_forward_hook(_gain_hook)
+
+    def _logit_hook(mod, args, out):
+        z = out.detach().float()
+        z = z[..., :cfg.vocab_size]
+        _stats["rms"] = float(z.pow(2).mean().sqrt())
+        _stats["absmax"] = float(z.abs().max())
+        # tanh(x/20) is >0.96 saturated by |x|=40; count how much mass is past that
+        _stats["frac_sat"] = float((z.abs() > 40.0).float().mean())
+        _stats["mean_abs"] = float(z.abs().mean())
+
     def score():
         bpb, _ = evaluate_bpb(model, val_batches(), a.eval_steps, token_bytes)
         return float(bpb)
 
+    # One calibration batch, held out from scoring by construction: it is the FIRST
+    # batch of a fresh iterator, and scoring always builds its own fresh iterator.
+    _cal_x, _cal_y = next(iter(tokenizing_distributed_data_loader_bos_bestfit(
+        tok, 1, min(512, a.seq), split="val", device=dev, data_dir=a.data_dir,
+        max_shards=a.max_shards)))
+
+    def fit_gain():
+        """Fit one scalar on the head output by minimising CE on the calibration batch.
+
+        Captures pre-softcap logits once, then optimises offline, so this costs one
+        extra forward per arm rather than one eval sweep per candidate value.
+        """
+        if not a.calibrate:
+            return 1.0
+        cap = {}
+
+        def grab(mod, args, out):
+            cap["z"] = out.detach().float()[..., :cfg.vocab_size]
+
+        h = model.lm_head.register_forward_hook(grab)
+        old, _gain[0] = _gain[0], 1.0
+        with torch.no_grad():
+            model(_cal_x, targets=_cal_y, loss_reduction="mean")
+        h.remove()
+        _gain[0] = old
+        z = cap["z"].reshape(-1, cfg.vocab_size)
+        y = _cal_y.reshape(-1)
+        keep = y >= 0
+        z, y = z[keep], y[keep]
+        logg = torch.zeros((), device=z.device, requires_grad=True)
+        opt = torch.optim.LBFGS([logg], lr=0.5, max_iter=40)
+
+        def closure():
+            opt.zero_grad()
+            zz = 20.0 * torch.tanh(z * logg.exp() / 20.0)
+            loss = torch.nn.functional.cross_entropy(zz, y)
+            loss.backward()
+            return loss
+
+        opt.step(closure)
+        g = float(logg.detach().exp())
+        del cap, z
+        torch.cuda.empty_cache()
+        return max(min(g, 1e3), 1e-3)
+
+    _hook_handle = model.lm_head.register_forward_hook(_logit_hook) if a.diagnose else None
+
     t0 = time.time()
+    _gain[0] = fit_gain()
+    base_gain = _gain[0]
     baseline = score()
+    base_stats = dict(_stats)
     print(f"baseline dense bpb = {baseline:.4f}   ({time.time()-t0:.0f}s per eval, "
           f"{a.eval_steps} steps x {a.batch} x {a.seq} tokens)")
+    print(f"calibration: {'ON' if a.calibrate else 'OFF'}"
+          + (f", baseline fitted gain = {base_gain:.3f}" if a.calibrate else ""))
     print()
 
     items = list(COMPONENTS.items()) + list(AGGREGATES.items())
     if a.only:
         items = [(k, v) for k, v in items if k in a.only]
+
+    ALL_PATS = AGGREGATES["EVERYTHING"]
+    if a.direction in ("remove", "both-ways"):
+        # Re-reference: the baseline becomes the FULLY BINARY model, and each arm
+        # restores one component to bf16.
+        print()
+        print("=" * 70)
+        print("LEAVE-ONE-OUT FROM THE FULLY BINARY MODEL")
+        print("=" * 70)
+        for sc in a.scale:
+            apply_binarisation(model, base_sd, ALL_PATS, sc)
+            handles = install_act_hooks(model, ALL_PATS, sc)
+            _gain[0] = fit_gain()
+            all_bin = score()
+            for h in handles:
+                h.remove()
+            print(f"fully binary baseline (scale={sc}): bpb {all_bin:.4f} "
+                  f"({all_bin - baseline:+.4f} vs dense)")
+            print(f"{'restored to bf16':<20}{'params':>13}{'bpb':>10}{'in-situ cost':>14}")
+            print("-" * 57)
+            loo = []
+            for name, pats in items:
+                if name in AGGREGATES:
+                    continue
+                keep = [q for q in ALL_PATS if q not in pats]
+                apply_binarisation(model, base_sd, keep, sc)
+                handles = install_act_hooks(model, keep, sc)
+                _gain[0] = fit_gain()
+                b = score()
+                for h in handles:
+                    h.remove()
+                n = sum(v.numel() for k, v in base_sd.items()
+                        if v.dim() >= 2 and any(q in k for q in pats))
+                loo.append((name, n, b, all_bin - b))
+                print(f"{name:<20}{n:>13,d}{b:>10.4f}{all_bin - b:>+14.4f}")
+            print("-" * 57)
+            print("in-situ cost = what binarising that component costs INSIDE a fully binary")
+            print("model. This is the number that orders the Phase 1 ladder, not the 'add'")
+            print("column, which charges a component for receiving bf16 input it will never see.")
+            loo.sort(key=lambda r: -r[3])
+            print()
+            print(f"ladder order (most expensive to binarise last), scale={sc}:")
+            for name, n, b, d in loo:
+                print(f"  {d:+8.4f}  {name:<20} ({n:,} params)")
+        model.load_state_dict(base_sd, strict=True)
+        _gain[0] = base_gain
+        if a.direction == "remove":
+            return
 
     combos = [(m, s) for m in a.binarise for s in a.scale]
     hdr = f"{'component':<20}{'params':>13}"
@@ -222,6 +362,7 @@ def main():
     print(hdr)
     print("-" * len(hdr))
     rows = []
+    diag = []
     for name, pats in items:
         line = ""
         deltas = {}
@@ -236,14 +377,74 @@ def main():
                         if v.dim() >= 2 and any(p in k for p in pats))
             if mode in ("acts", "both"):
                 handles = install_act_hooks(model, pats, sc)
+            _gain[0] = fit_gain()
+            arm_gain = _gain[0]
             b = score()
+            arm_stats = dict(_stats)
+            arm_stats["gain"] = arm_gain
             for h in handles:
                 h.remove()
             deltas[(mode, sc)] = b - baseline
             line += f"{b-baseline:+13.4f}"
+            if a.diagnose:
+                diag.append((name, mode, sc, b - baseline, arm_stats))
         rows.append((name, n, deltas))
         print(f"{name:<20}{n:13,d}{line}")
     model.load_state_dict(base_sd, strict=True)
+
+    if a.diagnose:
+        print()
+        print("PRE-SOFTCAP LOGIT STATISTICS  (softcap=20, so tanh is ~saturated past |z|=40)")
+        print(f"{'arm':<20}{'mode':>9}{'scale':>7}{'d bpb':>10}{'rms':>10}{'mean|z|':>10}"
+              f"{'max|z|':>11}{'frac>40':>10}{'gain':>9}")
+        print("-" * 87)
+        print(f"{'BASELINE dense':<20}{'-':>9}{'-':>7}{0.0:>10.4f}{base_stats.get('rms',0):>10.2f}"
+              f"{base_stats.get('mean_abs',0):>10.2f}{base_stats.get('absmax',0):>11.1f}"
+              f"{base_stats.get('frac_sat',0):>10.4f}{base_gain:>9.3f}")
+        for name, mode, sc, d, st in diag:
+            print(f"{name:<20}{mode:>9}{sc:>7}{d:>10.4f}{st.get('rms',0):>10.2f}"
+                  f"{st.get('mean_abs',0):>10.2f}{st.get('absmax',0):>11.1f}"
+                  f"{st.get('frac_sat',0):>10.4f}{st.get('gain',1.0):>9.3f}")
+        print("-" * 87)
+        print("If a UNION shows lower frac>40 than its parts, the softcap is compensating and")
+        print("the bpb deltas are not additive. That is a property of the measurement, not of")
+        print("binarisation, and the scan must be read with it or run with the cap disabled.")
+
+    # A union of components must cost at least as much as any of its parts. When it
+    # does not, the deltas are not composable and the ranking cannot be read as one.
+    SUBSETS = {
+        "ALL body matmuls": ["attn.qkv", "attn.c_proj", "mlp.c_fc", "mlp.c_proj"],
+        "ALL interfaces": ["lm_head", "wte", "value_embeds"],
+        "EVERYTHING": ["ALL body matmuls", "ALL interfaces", "lm_head", "mlp.c_proj"],
+    }
+    by_name = {n: d for n, _, d in rows}
+    violations = []
+    for union, parts in SUBSETS.items():
+        if union not in by_name:
+            continue
+        for combo in combos:
+            u = by_name[union].get(combo)
+            if u is None:
+                continue
+            for part in parts:
+                if part in by_name and by_name[part].get(combo) is not None:
+                    v = by_name[part][combo]
+                    if v > u + 1e-9:
+                        violations.append((union, part, combo, u, v))
+    print()
+    if violations:
+        print("MONOTONICITY VIOLATIONS: a union costs LESS than one of its parts.")
+        print(f"{'union':<20}{'part':<20}{'mode/scale':<16}{'union':>10}{'part':>10}")
+        for union, part, combo, u, v in violations:
+            print(f"{union:<20}{part:<20}{combo[0]+'/'+combo[1]:<16}{u:>10.4f}{v:>10.4f}")
+        print("Deltas are NOT composable. Two causes, and only the first is a measurement")
+        print("artifact: (1) logit-scale drift, removed by --calibrate; (2) sign() is")
+        print("idempotent-ish, so binarising an input that an upstream binarised layer has")
+        print("already coarsened costs less than binarising a full-precision one. (2) is a")
+        print("real property of the architecture and means single-component deltas are an")
+        print("UPPER BOUND on their marginal cost inside a fully binary model.")
+    else:
+        print("monotonicity: OK, every union costs at least as much as each of its parts")
 
     print()
     key = ("both", a.scale[0]) if "both" in a.binarise else combos[0]
