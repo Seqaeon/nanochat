@@ -223,3 +223,67 @@ def test_native_block_output_is_binary_and_has_no_normalisation():
     names = [n for n, _ in blk.named_modules()]
     assert not any("norm" in n.lower() for n in names), \
         "a native binary block should carry no normalisation: sign is scale-free"
+
+
+def test_chunk_recomputation_is_exact_in_both_directions():
+    """Chunking HammingAttention caps the forward peak but not the training peak.
+
+    Softmax backward needs its own output and the value einsum needs the same weights,
+    so autograd saves w for every chunk and the chunks sum back to the full
+    (B, H, T, T) matrix. That is 30 GB for one layer at B=64, H=28, T=2048, and it
+    OOMed an 80 GB H100 on the first b03 attempt. Each chunk is now recomputed in
+    backward, which is only legitimate if it changes no number.
+    """
+    from nanochat.binary import HammingAttention
+    torch.manual_seed(0)
+    B, T, H, D = 2, 64, 4, 16
+    q, k, v = (torch.randn(B, T, H, D, requires_grad=True) for _ in range(3))
+
+    def run(chunk, training):
+        for t in (q, k, v):
+            t.grad = None
+        attn = HammingAttention(H * D, H, tau=1.0, chunk=chunk)
+        attn.train(training)
+        out = attn(q, k, v)
+        out.sum().backward()
+        return out.detach().clone(), q.grad.clone(), k.grad.clone()
+
+    o_full, gq_full, gk_full = run(0, True)     # unchunked reference
+    o_ck, gq_ck, gk_ck = run(16, True)          # chunked, recomputed in backward
+    o_st, gq_st, gk_st = run(16, False)         # chunked, weights stored (no recompute)
+
+    # Recomputation is the thing under test, and it must be bit-exact: same chunking,
+    # only the stored-versus-recomputed choice differs.
+    assert torch.equal(o_ck, o_st)
+    assert torch.equal(gq_ck, gq_st)
+    assert torch.equal(gk_ck, gk_st)
+
+    # Chunking itself is NOT bit-exact against the unchunked path, and never was: the
+    # key gradient accumulates one contribution per chunk, so the summation order
+    # differs. Forward and the query gradient are per-chunk and stay exact.
+    assert torch.equal(o_ck, o_full)
+    assert torch.equal(gq_ck, gq_full)
+    assert torch.allclose(gk_ck, gk_full, atol=1e-6)
+
+
+def test_model_dim_override_does_not_reach_the_d12_reference():
+    """--model-dim must widen the arm under test, never the d12 anchor.
+
+    base_train derives D_REF (and through it the auto batch size and the LR scaling)
+    from build_model_meta(12). Letting --model-dim widen that too moved the reference
+    and the arm together: at width 3584 it inflated D_REF ~21x, shrank the auto batch
+    from 2**19 to 2**17, and killed b03 at the grad-accum assert.
+    """
+    import ast, pathlib
+    src = pathlib.Path("scripts/base_train.py").read_text()
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "build_model_meta")
+    assert "apply_dim_override" in [a.arg for a in fn.args.args], \
+        "build_model_meta lost its override switch"
+    call = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "build_model_meta"
+                and n.args and getattr(n.args[0], "value", None) == 12)
+    kw = {k.arg: k.value.value for k in call.keywords}
+    assert kw.get("apply_dim_override") is False, \
+        "the d12 reference is being built with --model-dim applied"

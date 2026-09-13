@@ -897,11 +897,17 @@ print0(f"Vocab size: {vocab_size:,}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
-def build_model_meta(depth):
-    """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
+def build_model_meta(depth, apply_dim_override=True):
+    """Build a model on meta device for a given depth (shapes/dtypes only, no data).
+
+    apply_dim_override=False ignores --model-dim and uses the aspect ratio. The d12
+    REFERENCE model must be built that way: it is a fixed anchor for the batch-size and
+    LR derivations (D_REF, B_REF), so widening it along with the arm under test moves the
+    reference and the arm together and silently rescales the whole schedule.
+    """
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    if getattr(args, 'model_dim', 0) > 0:
+    if apply_dim_override and getattr(args, 'model_dim', 0) > 0:
         base_model_dim = args.model_dim
     else:
         base_dim = depth * args.aspect_ratio
@@ -1797,7 +1803,10 @@ else:
     target_tokens = int(args.target_param_data_ratio * active_scaling_params)
 
 # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
-d12_ref = build_model_meta(12) # creates the model on meta device
+d12_ref = build_model_meta(12, apply_dim_override=False) # the FIXED reference anchor;
+# --model-dim must NOT reach it. It did until b03: widening the arm to d=3584 also widened
+# the d12 reference, inflating D_REF ~21x, shrinking the auto batch size from 2**19 to 2**17,
+# and killing the run at the grad-accum assert with DEVICE_BATCH_SIZE=128.
 D_REF = args.target_param_data_ratio * get_scaling_params(d12_ref) # compute-optimal d12 training horizon in tokens (measured empirically)
 B_REF = 2**19 # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
 
@@ -2253,7 +2262,20 @@ else:
 effective_device_batch_size = args.device_batch_size * (ddp_world_size if is_dp else 1)
 tokens_per_fwdbwd = effective_device_batch_size * args.max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * (1 if is_dp else ddp_world_size) # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
+if total_batch_size % world_tokens_per_fwdbwd != 0:
+    raise SystemExit(
+        f"Gradient accumulation does not divide evenly.\n"
+        f"  total_batch_size          = {total_batch_size:,} tokens"
+        f"{' (auto-computed)' if args.total_batch_size == -1 else ' (--total-batch-size)'}\n"
+        f"  world_tokens_per_fwdbwd   = {world_tokens_per_fwdbwd:,} tokens"
+        f"  = device_batch_size {args.device_batch_size} x max_seq_len {args.max_seq_len}"
+        f"{f' x world_size {ddp_world_size}' if not is_dp else ''}\n"
+        + (f"  The micro-batch is LARGER than the whole batch. Lower --device-batch-size to "
+           f"{max(1, total_batch_size // (args.max_seq_len * (1 if is_dp else ddp_world_size)))} "
+           f"or below.\n" if world_tokens_per_fwdbwd > total_batch_size else
+           f"  Pick a --device-batch-size that divides it, or pass --total-batch-size explicitly.\n")
+        + f"  Both are normally powers of two, so a mismatch usually means one of them was "
+          f"derived from the wrong model.")
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")

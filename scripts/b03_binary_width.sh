@@ -84,10 +84,57 @@ for d in d_list:
     print(f"{d:>7}{acc(d):>13.2f}{d*acc(d):>13,.0f}{d*acc(d)/(DW*FP):>15.2f}x")
 PYEOF
 
+# ---------------------------------------------------------------------------
+# The batch plan, DERIVED. Two failures on the first H100 attempt, both from
+# reusing the d=512 batch settings at seven times the width:
+#
+#   1. AssertionError at the grad-accum check. --model-dim was reaching
+#      build_model_meta(12), so widening the arm widened the d12 REFERENCE too,
+#      inflating D_REF ~21x and shrinking the auto batch from 2**19 to 2**17
+#      while the micro-batch stayed at 128 x 2048. Fixed in base_train.py, but
+#      this sweep now pins --total-batch-size outright so the auto path cannot
+#      participate at all.
+#   2. CUDA OOM at width 1792. Fixed properly in HammingAttention (each query
+#      chunk is recomputed in backward instead of stored), and hedged here by
+#      scaling the micro-batch down as the width goes up.
+#
+# Activation bytes are linear in width, so hold width x device_batch constant.
+# Then clamp so the micro-batch divides the total batch on however many GPUs
+# are present, which is what assertion 1 was really about.
+# ---------------------------------------------------------------------------
+MAX_SEQ_LEN="${MAX_SEQ_LEN:-2048}"
+BASE_DBS="${BASE_DBS:-128}"          # the value validated at width 512
+WORLD="${WORLD:-$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || echo 1)}"
+[ "$WORLD" -ge 1 ] 2>/dev/null || WORLD=1
+D_REF_TOKENS=$(python3 -m scripts.code_head_budget --depth 12 --ratio 10.5 \
+    --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" 2>/dev/null)
+TARGET_TOKENS=$(python3 -m scripts.code_head_budget --depth "$DEPTH" --ratio 10.5 \
+    --tokenizer-dir "${TOKENIZER_DIR:-tokenizer}" 2>/dev/null)
+if [ -z "$D_REF_TOKENS" ] || [ -z "$TARGET_TOKENS" ]; then
+    echo "FATAL: could not derive the token budgets; refusing to type a batch size" ; exit 1
+fi
+export TARGET_TOKENS
+TOTAL_BATCH_SIZE=$(python3 -c "
+import math, sys
+T, D = int(sys.argv[1]), int(sys.argv[2])
+print(2 ** round(math.log2(2**19 * (T / D) ** 0.383)))" "$TARGET_TOKENS" "$D_REF_TOKENS")
+export TOTAL_BATCH_SIZE
+echo "batch plan: total $TOTAL_BATCH_SIZE tokens, seq $MAX_SEQ_LEN, world $WORLD" | tee -a "$SWEEP_LOG"
+
 for NAT in ${NATIVE_MODES:-0 1}; do
 for W in $WIDTHS; do
-    echo "==== width $W native $NAT ====" | tee -a "$SWEEP_LOG"
-    MODEL_DIM="$W" BINARY_NATIVE="$NAT" bash scripts/b01_binary_ladder.sh --rungs R5 --force "$DEPTH"
+    DBS=$(python3 -c "
+import math, sys
+w, base, total, seq, world = (int(x) for x in sys.argv[1:])
+cap = max(1, base * 512 // w)                     # activation bytes are linear in width
+fit = max(1, total // (seq * world))              # micro-batch must divide the total batch
+print(max(1, 2 ** int(math.floor(math.log2(min(cap, fit))))))" \
+        "$W" "$BASE_DBS" "$TOTAL_BATCH_SIZE" "$MAX_SEQ_LEN" "$WORLD")
+    GA=$(( TOTAL_BATCH_SIZE / (DBS * MAX_SEQ_LEN * WORLD) ))
+    echo "==== width $W native $NAT   device_batch $DBS  grad_accum $GA ====" | tee -a "$SWEEP_LOG"
+    MODEL_DIM="$W" BINARY_NATIVE="$NAT" DEVICE_BATCH_SIZE="$DBS" \
+        TOTAL_BATCH_SIZE="$TOTAL_BATCH_SIZE" MAX_SEQ_LEN="$MAX_SEQ_LEN" \
+        bash scripts/b01_binary_ladder.sh --rungs R5 --force "$DEPTH"
 done
 done
 

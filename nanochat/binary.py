@@ -15,6 +15,7 @@ of the plan amends the definition accordingly.
 import math
 
 import torch
+from torch.utils.checkpoint import checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -438,31 +439,48 @@ class HammingAttention(nn.Module):
         The unchunked version materialises the full (B, H, T, T) score tensor, which
         FlashAttention exists specifically to avoid. At B=128, T=2048, d=3584 that is
         28 GB in bf16 plus 56 GB for the fp32 softmax: 84 GB for ONE layer on an 80 GB
-        card. Chunking the queries caps it at (B, H, chunk, T) and changes nothing
-        about the result.
+        card. Chunking the queries caps the FORWARD peak at (B, H, chunk, T) and changes
+        nothing about the result.
+
+        Chunking alone does NOT cap the TRAINING peak, which is the trap this hit on an
+        H100. Softmax backward needs its own output and the value einsum needs the same
+        weights, so autograd saves `w` for every chunk, and the chunks sum back to the
+        full (B, H, T, T) matrix in fp32: at B=64, H=28, T=2048 that is 30 GB for ONE
+        layer, which is exactly the tensor chunking was supposed to avoid. Each chunk is
+        therefore recomputed in backward instead of stored, which makes the saved memory
+        O(chunk) as intended at roughly 30% more attention FLOPs.
         """
         B, T, H, D = q.shape
         qb, kb, vb = sign_ste(q, self.clip), sign_ste(k, self.clip), sign_ste(v, self.clip)
         radius = self.radius.view(1, -1, 1, 1)
         chunk = self.chunk if self.chunk > 0 else T
+        recompute = self.training and torch.is_grad_enabled() and chunk < T
         outs = []
         for start in range(0, T, chunk):
             stop = min(start + chunk, T)
-            qc = qb[:, start:stop]
-            # popcount as an integer matmul; a b1 kernel computes the same numbers
-            scores = torch.einsum("bthd,bshd->bhts", qc, kb)
-            pos = torch.arange(start, stop, device=q.device).unsqueeze(1)
-            keys = torch.arange(T, device=q.device).unsqueeze(0)
-            allowed = keys <= pos
-            scores = scores.masked_fill(~allowed.view(1, 1, stop - start, T), float("-inf"))
-            gate = scores - radius.to(scores.dtype) * D
-            if self.hard:
-                w = (gate > 0).to(q.dtype)
-                w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
+            args = (qb[:, start:stop], kb, vb, radius, start, stop, T, D)
+            if recompute:
+                outs.append(checkpoint(self._chunk, *args, use_reentrant=False))
             else:
-                w = torch.softmax(gate.float() / max(self.tau, 1e-6), dim=-1)
-            outs.append(torch.einsum("bhts,bshd->bthd", w.to(vb.dtype), vb))
+                outs.append(self._chunk(*args))
         return sign_ste(torch.cat(outs, dim=1), self.clip)
+
+    def _chunk(self, qc, kb, vb, radius, start, stop, T, D):
+        # popcount as an integer matmul; a b1 kernel computes the same numbers
+        scores = torch.einsum("bthd,bshd->bhts", qc, kb)
+        pos = torch.arange(start, stop, device=qc.device).unsqueeze(1)
+        keys = torch.arange(T, device=qc.device).unsqueeze(0)
+        allowed = keys <= pos
+        scores = scores.masked_fill(~allowed.view(1, 1, stop - start, T), float("-inf"))
+        gate = scores - radius.to(scores.dtype) * D
+        if self.hard:
+            w = (gate > 0).to(vb.dtype)
+            w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
+        else:
+            # softmax in fp32 for the reduction, then straight back down: holding the
+            # (B, H, chunk, T) weights in fp32 doubles the recompute peak for nothing.
+            w = torch.softmax(gate.float() / max(self.tau, 1e-6), dim=-1).to(vb.dtype)
+        return torch.einsum("bhts,bshd->bthd", w, vb)
 
     def extra_repr(self):
         return f"heads={self.n_head}, head_dim={self.head_dim}, tau={self.tau}, hard={self.hard}"

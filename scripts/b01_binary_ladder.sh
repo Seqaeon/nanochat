@@ -204,7 +204,7 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
                 --total-batch-size "$TOTAL_BATCH_SIZE" \
-                ${MODEL_DIM:+--model-dim $MODEL_DIM} \
+                $([ "$MODEL_DIM" != "0" ] && echo "--model-dim $MODEL_DIM") \
                 --binary-native "$BINARY_NATIVE" --binary-tau "$BINARY_TAU" \
                 --binary-resid-width "$BINARY_RESID_WIDTH" \
                 --window-pattern "$WINDOW_PATTERN" \
