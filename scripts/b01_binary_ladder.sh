@@ -189,6 +189,10 @@ for DEPTH in "${DEPTHS[@]}"; do
             [ -n "$EMBEDDING_LR" ] && LRTAG="${LRTAG}_e${EMBEDDING_LR}"
             [ "$MODEL_DIM" != "0" ] && LRTAG="${LRTAG}_d${MODEL_DIM}"
             [ "$BINARY_NATIVE" != "0" ] && LRTAG="${LRTAG}_nat"
+            # b03 runs two arms at the same width and different token budgets (the
+            # iso-token anchor and the iso-capacity slope point). Without this they
+            # share a tag, and research_compare skips the second as already done.
+            [ -n "${TAG_SUFFIX:-}" ] && LRTAG="${LRTAG}_${TAG_SUFFIX}"
             TAG="${RUNG}${LRTAG}_s${s}"
             ARM="d${DEPTH}_${TAG}"
             if done_already "$ARM"; then
