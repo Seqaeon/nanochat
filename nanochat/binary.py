@@ -241,6 +241,35 @@ def _swap(parent, name, new):
 
 
 @torch.no_grad()
+def nativise_model_(model, config, tau=1.0, hard=False, resid_width=1, verbose=False):
+    """Replace every gpt.Block in transformer.h with a BinaryBlock.
+
+    This is the CONSISTENCY change (plan section 4.2/4.3), distinct from the WIDTH
+    change. binarise_model_ quantises the operands of a real-valued design and
+    leaves softmax attention and the fp residual in place; this replaces the
+    operations themselves. O5's measured argument for it: four components had
+    NEGATIVE in-situ cost, so an fp component feeding binarised consumers was worse
+    than a consistent binary one.
+
+    Call this INSTEAD of binarise_model_ for the body, then binarise_model_ with
+    linear=False for the interfaces, or just let this run first and binarise the
+    remaining Linear/Embedding modules afterwards.
+    """
+    swapped = []
+    h = model.transformer.h
+    for i in range(len(h)):
+        blk = BinaryBlock(config, i, tau=tau, hard=hard, resid_width=resid_width)
+        blk = blk.to(next(model.parameters()).device, next(model.parameters()).dtype)
+        blk.reset_parameters()
+        h[i] = blk
+        swapped.append((f"transformer.h.{i}", "Block->BinaryBlock"))
+    if verbose:
+        for f, k in swapped:
+            print(f"  nativised {k:<22} {f}")
+    return swapped
+
+
+@torch.no_grad()
 def binarise_model_(model, binarise_acts=True, linear=True, embeddings=True,
                     skip=(), weight_scale="row", act_scale="token", clip=1.0,
                     verbose=False):
@@ -298,3 +327,249 @@ def binarise_model_(model, binarise_acts=True, linear=True, embeddings=True,
         for f, k in swapped:
             print(f"  binarised {k:<10} {f}")
     return swapped
+
+
+# ---------------------------------------------------------------------------
+# Natively binary operations (plan sections 4.2 and 4.3)
+#
+# Everything above this line QUANTISES a real-valued design: BinaryLinear computes
+# sign(W) @ sign(x), which is the same operation a linear layer computes, with
+# coarser operands. Phase 1 measured what that costs: +0.62 bpb at d=512, growing
+# with data.
+#
+# Section 3.8 v3 says why. A binary neuron summing n terms emits n+1 levels, so its
+# output carries log2(n) bits: 9.0 at n=512 against an fp neuron's ~16. The
+# information dies at the ACCUMULATION, not at the weights, and the remedy is width.
+# A native binary transformer is not d=512 with 1-bit weights, it is d=8192 BITS at
+# the same memory.
+#
+# These are the operations that make width usable: bundling instead of fp addition,
+# Hamming retrieval instead of softmax averaging.
+# ---------------------------------------------------------------------------
+
+
+def bundle(x, dim=0, keepdim=False):
+    """Majority vote: the VSA superposition operator, and the binary residual add.
+
+    Bundling is how a set of hypervectors becomes one that is similar to all of them.
+    Its capacity is O(D / log D) items before recall degrades, which is why width is
+    the resource and why bundling and width have to be introduced together.
+
+    Ties at an even count resolve to +1 rather than 0, because a zero would leave a
+    hole in the sign that every downstream popcount reads as "no information".
+
+    The sign goes through the SAME straight-through estimator as everything else. A
+    hard torch.where here severs the graph outright: the first version of this
+    function did exactly that and the whole block returned a tensor with no grad_fn.
+    The clip window must also scale with the number of bundled items, because a sum
+    of m terms in {-1,+1} lands in [-m, m] and a clip of 1.0 would zero the gradient
+    for every element except exact ties.
+    """
+    m = x.shape[dim] if dim is not None else x.numel()
+    s = x.sum(dim=dim, keepdim=keepdim)
+    return sign_ste(s, clip=float(max(m, 1)))
+
+
+class BundledResidual(nn.Module):
+    """Residual accumulation as majority bundling, with an accumulator-width knob.
+
+    An fp residual stream re-introduces exactly the precision the rest of the model
+    gave up, and O5 measured that mixing hurts: four components had NEGATIVE in-situ
+    cost, so an fp component feeding binarised consumers was worse than a consistent
+    binary one.
+
+    `width` is the plan's section 4.3 knob. width=1 is pure majority bundling, the
+    VSA operator. Larger widths keep a bounded integer accumulator and re-binarise
+    against a learned per-channel threshold, trading strict binarity for the ability
+    to carry a magnitude across a few layers. Normalisation is absent by
+    construction: sign is scale-free, so section 3.3's threshold absorbs what
+    RMSNorm was doing.
+    """
+
+    def __init__(self, n_embd, width=1, clip=1.0):
+        super().__init__()
+        self.width, self.clip = width, clip
+        self.threshold = nn.Parameter(torch.zeros(n_embd))
+
+    def forward(self, x, branch):
+        if self.width <= 1:
+            # A majority vote with a LEARNED bias, not a plain one. The first version
+            # called bundle() directly here, so self.threshold received no gradient
+            # at all and the layer had a dead parameter. A biased majority is also
+            # what section 3.3 means by the threshold absorbing normalisation.
+            s = x + branch
+            return sign_ste(s - self.threshold, clip=2.0)
+        acc = (x + branch).clamp(-self.width, self.width)
+        # clip scaled to the accumulator range, for the same reason as in bundle()
+        return sign_ste(acc - self.threshold, float(self.width))
+
+    def extra_repr(self):
+        return f"width={self.width} ({'majority bundling' if self.width <= 1 else 'int accumulator'})"
+
+
+class HammingAttention(nn.Module):
+    """Attention as Hamming-radius retrieval, not softmax-weighted averaging.
+
+    scores = popcount(XNOR(q, k)) = n - 2*hamming, computed as an ordinary matmul
+    over +-1 (they are the same number; see the identity below). What changes is
+    everything after: no softmax over fp scores, no 1/sqrt(d), no fp value average.
+    Keys above a learned threshold are retrieved and their values BUNDLED by
+    majority, which is Kanerva's sparse distributed memory read.
+
+        <q, k> = 2*agreements - n = n - 2*hamming(q, k)
+
+    A hard mask has no gradient, so training uses a temperature-annealed softmax over
+    the INTEGER scores as a differentiable surrogate and anneals toward the hard
+    threshold. Inference uses the hard path, which is the one a popcount kernel runs.
+    `tau -> 0` recovers hard top-k retrieval.
+    """
+
+    def __init__(self, n_embd, n_head, tau=1.0, hard=False, clip=1.0, chunk=256):
+        super().__init__()
+        assert n_embd % n_head == 0
+        self.n_head, self.head_dim = n_head, n_embd // n_head
+        self.tau, self.hard, self.clip, self.chunk = tau, hard, clip, chunk
+        # One threshold per head: the Hamming radius at which a key counts as a match.
+        self.radius = nn.Parameter(torch.zeros(n_head))
+
+    def forward(self, q, k, v):
+        """Chunked over query blocks.
+
+        The unchunked version materialises the full (B, H, T, T) score tensor, which
+        FlashAttention exists specifically to avoid. At B=128, T=2048, d=3584 that is
+        28 GB in bf16 plus 56 GB for the fp32 softmax: 84 GB for ONE layer on an 80 GB
+        card. Chunking the queries caps it at (B, H, chunk, T) and changes nothing
+        about the result.
+        """
+        B, T, H, D = q.shape
+        qb, kb, vb = sign_ste(q, self.clip), sign_ste(k, self.clip), sign_ste(v, self.clip)
+        radius = self.radius.view(1, -1, 1, 1)
+        chunk = self.chunk if self.chunk > 0 else T
+        outs = []
+        for start in range(0, T, chunk):
+            stop = min(start + chunk, T)
+            qc = qb[:, start:stop]
+            # popcount as an integer matmul; a b1 kernel computes the same numbers
+            scores = torch.einsum("bthd,bshd->bhts", qc, kb)
+            pos = torch.arange(start, stop, device=q.device).unsqueeze(1)
+            keys = torch.arange(T, device=q.device).unsqueeze(0)
+            allowed = keys <= pos
+            scores = scores.masked_fill(~allowed.view(1, 1, stop - start, T), float("-inf"))
+            gate = scores - radius.to(scores.dtype) * D
+            if self.hard:
+                w = (gate > 0).to(q.dtype)
+                w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
+            else:
+                w = torch.softmax(gate.float() / max(self.tau, 1e-6), dim=-1)
+            outs.append(torch.einsum("bhts,bshd->bthd", w.to(vb.dtype), vb))
+        return sign_ste(torch.cat(outs, dim=1), self.clip)
+
+    def extra_repr(self):
+        return f"heads={self.n_head}, head_dim={self.head_dim}, tau={self.tau}, hard={self.hard}"
+
+
+class BinaryKVFFN(nn.Module):
+    """The FFN as a binary associative memory: bind against learned keys, bundle values.
+
+    An FFN already IS a key-value memory (Geva et al., "Transformer Feed-Forward
+    Layers Are Key-Value Memories"); `W2 . act(W1 x)` scores the input against the
+    rows of W1 and mixes the rows of W2 by those scores. Written natively in Hamming
+    space that becomes: match against binary keys by popcount, gate, bundle the
+    matching binary values. Same object, operations native to the medium.
+    """
+
+    def __init__(self, n_embd, n_slots, tau=1.0, hard=False, clip=1.0):
+        super().__init__()
+        self.keys = nn.Parameter(torch.empty(n_slots, n_embd))
+        self.values = nn.Parameter(torch.empty(n_slots, n_embd))
+        self.threshold = nn.Parameter(torch.zeros(n_slots))
+        self.tau, self.hard, self.clip = tau, hard, clip
+        self.n_slots, self.n_embd = n_slots, n_embd
+
+    def reset_parameters(self):
+        std = min(1.0 / math.sqrt(self.n_embd), self.clip / 3.0)
+        nn.init.normal_(self.keys, 0.0, std)
+        nn.init.normal_(self.values, 0.0, std)
+        nn.init.zeros_(self.threshold)
+
+    def forward(self, x):
+        xb = sign_ste(x, self.clip)
+        kb = sign_ste(self.keys, self.clip)
+        vb = sign_ste(self.values, self.clip)
+        scores = F.linear(xb, kb.to(xb.dtype)) - self.threshold.to(xb.dtype)
+        if self.hard:
+            w = (scores > 0).to(x.dtype)
+            w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
+        else:
+            w = torch.softmax(scores.float() / max(self.tau, 1e-6), dim=-1)
+        w = w.to(vb.dtype)
+        return sign_ste(w @ vb, self.clip)
+
+    def extra_repr(self):
+        return f"d={self.n_embd}, slots={self.n_slots}, tau={self.tau}, hard={self.hard}"
+
+
+class BinaryBlock(nn.Module):
+    """A transformer block with no floating-point operations in its data path.
+
+    Drop-in for gpt.Block: same forward signature, so binarise_model_ can swap it.
+
+    What differs from binarising a dense block:
+      - attention is Hamming retrieval and majority bundling, not softmax averaging
+      - the FFN is a binary associative memory, not two projections and a nonlinearity
+      - the residual is majority bundling, not an fp add
+      - there is NO normalisation. sign() is scale-free, so RMSNorm has nothing to do
+        that the learned thresholds do not already do (plan section 3.3)
+
+    Rotary is applied to the fp projections BEFORE binarisation: a rotation of a +-1
+    vector is not +-1, so the order matters and position information would otherwise
+    be destroyed by the sign.
+    """
+
+    def __init__(self, config, layer_idx, tau=1.0, hard=False, resid_width=1):
+        super().__init__()
+        d = config.n_embd
+        self.n_head = max(1, d // 128)
+        self.head_dim = d // self.n_head
+        self.layer_idx = layer_idx
+        self.c_q = BinaryLinear(d, d)
+        self.c_k = BinaryLinear(d, d)
+        self.c_v = BinaryLinear(d, d)
+        self.c_proj = BinaryLinear(d, d)
+        self.attn = HammingAttention(d, self.n_head, tau=tau, hard=hard,
+                                     clip=config.binary_clip,
+                                     chunk=int(getattr(config, "binary_attn_chunk", 256)))
+        self.mlp = BinaryKVFFN(d, 4 * d, tau=tau, hard=hard, clip=config.binary_clip)
+        self.resid_attn = BundledResidual(d, width=resid_width, clip=config.binary_clip)
+        self.resid_mlp = BundledResidual(d, width=resid_width, clip=config.binary_clip)
+
+    def reset_parameters(self):
+        for m in (self.c_q, self.c_k, self.c_v, self.c_proj, self.mlp):
+            m.reset_parameters()
+
+    def init_weights(self):
+        self.reset_parameters()
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, token_active=None,
+                eet_frozen_kv=False, frozen_k=None, frozen_v=None):
+        assert kv_cache is None, "BinaryBlock has no KV cache path; training only for now"
+        B, T, D = x.shape
+        xb = sign_ste(x, self.attn.clip)
+        q = self.c_q(xb).view(B, T, self.n_head, self.head_dim)
+        k = self.c_k(xb).view(B, T, self.n_head, self.head_dim)
+        v = self.c_v(xb).view(B, T, self.n_head, self.head_dim)
+        if cos_sin is not None:
+            from nanochat.gpt import apply_rotary_emb
+            cos, sin = cos_sin
+            # Rotate BEFORE the sign inside HammingAttention: rotating +-1 does not
+            # give +-1, so binarising first would discard the position signal.
+            q = apply_rotary_emb(q, cos[:T], sin[:T])
+            k = apply_rotary_emb(k, cos[:T], sin[:T])
+        if ve is not None:
+            # Value embeddings enter by bundling, which is how a hypervector is added
+            # to another in this algebra.
+            v = bundle(torch.stack((v, ve.view(B, T, self.n_head, self.head_dim)), 0), dim=0)
+        a = self.attn(q, k, v).reshape(B, T, D)
+        x = self.resid_attn(xb, self.c_proj(a))
+        x = self.resid_mlp(x, self.mlp(x))
+        return x

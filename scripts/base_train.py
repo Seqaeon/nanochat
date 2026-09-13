@@ -237,6 +237,10 @@ parser.add_argument("--binary-act-scale", type=str, default="token", choices=["t
 parser.add_argument("--binary-clip", type=float, default=1.0, help="STE clip window; latent weights are initialised inside it or they are born dead")
 parser.add_argument("--binary-linear", type=int, default=1)
 parser.add_argument("--binary-embeddings", type=int, default=1, help="binarise wte and value_embeds, the interfaces the 1-bit literature leaves in fp")
+parser.add_argument("--binary-native", type=int, default=0, help="replace Block with BinaryBlock: Hamming-retrieval attention, binary KV-memory FFN, bundled residual, no normalisation. This is the CONSISTENCY change; --model-dim is the WIDTH change; they are separate claims")
+parser.add_argument("--binary-tau", type=float, default=1.0, help="retrieval temperature for the differentiable surrogate; -> 0 recovers hard top-k")
+parser.add_argument("--binary-hard", type=int, default=0, help="hard threshold retrieval (the path a popcount kernel runs); no gradient, so inference/eval only")
+parser.add_argument("--binary-resid-width", type=int, default=1, help="1 = majority bundling; >1 = bounded integer accumulator re-binarised against a learned threshold")
 parser.add_argument("--binary-skip", type=str, default="", help="comma-separated name substrings left in fp; this is how the Phase 1 ladder rungs are built")
 parser.add_argument("--use-mst", type=int, default=0, choices=[0, 1], help="MST: enable Modular Sub-Transformer mode")
 parser.add_argument("--mst-n-subs", type=int, default=8, help="MST: number of sub-transformers N per layer")
@@ -1181,6 +1185,10 @@ def build_model_meta(depth):
         binary_linear=bool(getattr(args, 'binary_linear', 1)),
         binary_embeddings=bool(getattr(args, 'binary_embeddings', 1)),
         binary_skip=getattr(args, 'binary_skip', ''),
+        binary_native=bool(getattr(args, 'binary_native', 0)),
+        binary_tau=float(getattr(args, 'binary_tau', 1.0)),
+        binary_hard=bool(getattr(args, 'binary_hard', 0)),
+        binary_resid_width=int(getattr(args, 'binary_resid_width', 1)),
         use_mst=bool(getattr(args, 'use_mst', 0)),
         mst_n_subs=getattr(args, 'mst_n_subs', 8),
         mst_sub_dim=getattr(args, 'mst_sub_dim', 64),
@@ -1439,8 +1447,16 @@ model.init_weights() # 3) All tensors get initialized
 # otherwise freeze forever). BEFORE setup_optimizer so the new scale parameters are
 # seen by the param-group sort, and before the DDP wrap.
 if getattr(model_config, "use_binary", False):
-    from nanochat.binary import binarise_model_
+    from nanochat.binary import binarise_model_, nativise_model_
     _skip = tuple(x for x in model_config.binary_skip.split(",") if x)
+    if getattr(model_config, "binary_native", False):
+        _nv = nativise_model_(model, model_config,
+                              tau=model_config.binary_tau,
+                              hard=model_config.binary_hard,
+                              resid_width=model_config.binary_resid_width)
+        print0(f"BINARY-NATIVE: replaced {len(_nv)} Blocks with BinaryBlock "
+               f"(Hamming attention, KV-memory FFN, bundled residual, no norm), "
+               f"tau={model_config.binary_tau}, resid_width={model_config.binary_resid_width}")
     _sw = binarise_model_(
         model,
         binarise_acts=model_config.binary_acts,

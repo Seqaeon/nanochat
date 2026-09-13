@@ -86,6 +86,15 @@ TOTAL_BATCH_SIZE="${TOTAL_BATCH_SIZE:--1}"
 # costs 1.05x the FLOPs while making the results incomparable to the repo's
 # existing d8 dense baselines.
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-2048}"
+# Explicit width override, so a matched-BYTES arm can be run without touching depth.
+# base_train derives model_dim = depth * aspect_ratio unless --model-dim is given.
+MODEL_DIM="${MODEL_DIM:-0}"
+# Native binary operations (sections 4.2/4.3): Hamming-retrieval attention, binary
+# KV-memory FFN, bundled residual, no normalisation. This is the CONSISTENCY change
+# and is separate from MODEL_DIM, which is the WIDTH change. Report them separately.
+BINARY_NATIVE="${BINARY_NATIVE:-0}"
+BINARY_TAU="${BINARY_TAU:-1.0}"
+BINARY_RESID_WIDTH="${BINARY_RESID_WIDTH:-1}"
 WINDOW_PATTERN="${WINDOW_PATTERN:-SSSL}"
 # These were being silently ignored: base_train's --log-every DEFAULTS TO 1, so an
 # unwired LOG_EVERY prints a line per step, and an unwired MAX_SHARDS scans every
@@ -178,6 +187,8 @@ for DEPTH in "${DEPTHS[@]}"; do
             LRTAG=""
             [ -n "$MATRIX_LR" ] && LRTAG="${LRTAG}_m${MATRIX_LR}"
             [ -n "$EMBEDDING_LR" ] && LRTAG="${LRTAG}_e${EMBEDDING_LR}"
+            [ "$MODEL_DIM" != "0" ] && LRTAG="${LRTAG}_d${MODEL_DIM}"
+            [ "$BINARY_NATIVE" != "0" ] && LRTAG="${LRTAG}_nat"
             TAG="${RUNG}${LRTAG}_s${s}"
             ARM="d${DEPTH}_${TAG}"
             if done_already "$ARM"; then
@@ -193,6 +204,9 @@ for DEPTH in "${DEPTHS[@]}"; do
                 --depth "$DEPTH" --tokenizer-dir "$TOKENIZER_DIR" --data-dir "$DATA_DIR" \
                 --device-batch-size "$DEVICE_BATCH_SIZE" --max-seq-len "$MAX_SEQ_LEN" \
                 --total-batch-size "$TOTAL_BATCH_SIZE" \
+                ${MODEL_DIM:+--model-dim $MODEL_DIM} \
+                --binary-native "$BINARY_NATIVE" --binary-tau "$BINARY_TAU" \
+                --binary-resid-width "$BINARY_RESID_WIDTH" \
                 --window-pattern "$WINDOW_PATTERN" \
                 --log-every "$LOG_EVERY" --eval-every "$EVAL_EVERY" \
                 --save-every "$SAVE_EVERY" --compile-regional "$COMPILE_REGIONAL" \

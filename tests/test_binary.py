@@ -191,3 +191,35 @@ def test_a_collapsed_scale_does_not_kill_the_latent_weight():
     g = lin.weight.grad
     assert g is not None and float(g.abs().max()) > 1e-8, \
         f"latent weight gradient is {float(g.abs().max()):.3e}: layer is dead"
+
+
+def test_native_block_every_param_gets_gradient():
+    """bundle() originally used a hard torch.where and severed the graph outright;
+    then the residual threshold was unused at width=1 and sat dead."""
+    from nanochat.binary import nativise_model_, BinaryBlock
+    cfg = tiny_config(use_binary=True, binary_native=True)
+    with torch.device("meta"):
+        m = GPT(cfg)
+    m.to_empty(device="cpu")
+    m.init_weights()
+    nativise_model_(m, cfg)
+    binarise_model_(m, binarise_acts=cfg.binary_acts)
+    assert sum(1 for x in m.modules() if isinstance(x, BinaryBlock)) == cfg.n_layer
+    x = torch.randint(0, cfg.vocab_size, (2, 32))
+    out = m(x, targets=x)
+    (out[0] if isinstance(out, tuple) else out).backward()
+    dead = [n for n, p in m.named_parameters()
+            if p.requires_grad and (p.grad is None or not p.grad.any())]
+    assert not dead, f"no gradient: {dead[:6]}"
+
+
+def test_native_block_output_is_binary_and_has_no_normalisation():
+    from nanochat.binary import BinaryBlock
+    cfg = tiny_config()
+    blk = BinaryBlock(cfg, 0)
+    blk.reset_parameters()
+    y = blk(torch.randn(2, 16, cfg.n_embd), None, None, -1, None)
+    assert set(y.flatten().tolist()) <= {-1.0, 1.0}, "block output is not binary"
+    names = [n for n, _ in blk.named_modules()]
+    assert not any("norm" in n.lower() for n in names), \
+        "a native binary block should carry no normalisation: sign is scale-free"

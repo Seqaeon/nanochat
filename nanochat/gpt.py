@@ -397,6 +397,14 @@ class GPTConfig:
     binary_linear: bool = True                 # binarise nn.Linear
     binary_embeddings: bool = True             # binarise nn.Embedding (wte + value_embeds)
     binary_skip: str = ""                      # comma-separated name substrings left in fp
+    binary_native: bool = False                # replace Block with BinaryBlock: Hamming
+                                               # attention, binary KV-memory FFN, bundled
+                                               # residual, no normalisation (sections 4.2/4.3)
+    binary_tau: float = 1.0                    # retrieval temperature; anneal toward hard
+    binary_hard: bool = False                  # hard threshold retrieval (the popcount path)
+    binary_resid_width: int = 1                # 1 = majority bundling; >1 = int accumulator
+    binary_attn_chunk: int = 256               # query-block size; 0 = unchunked, which
+                                               # needs 84GB for one layer at d=3584 T=2048
     # ── MST: Modular Sub-Transformer Architecture ──
     use_mst: bool = False                      # master switch for MST mode
     mst_n_subs: int = 8                        # N = number of sub-transformers per layer

@@ -224,6 +224,12 @@ def build_model(checkpoint_dir, step, device, phase, tokenizer_dir=None):
         # and eval_core reports "ERROR loading checkpoint" and then SILENTLY SKIPS
         # the arm, which is worse than a crash because the arm just vanishes from
         # the results table.
+        if getattr(model_config, "binary_native", False):
+            from nanochat.binary import nativise_model_
+            nativise_model_(model, model_config,
+                            tau=getattr(model_config, "binary_tau", 1.0),
+                            hard=getattr(model_config, "binary_hard", False),
+                            resid_width=getattr(model_config, "binary_resid_width", 1))
         if getattr(model_config, "use_binary", False):
             from nanochat.binary import binarise_model_
             binarise_model_(
