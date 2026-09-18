@@ -154,6 +154,36 @@ rung_flags() {
     esac
 }
 
+# ── Dataset & Tokenizer existence check ─────────────────────────────────────
+CHECK_DATA_DIR="${DATA_DIR:-data}"
+if [ -L "$CHECK_DATA_DIR" ] && [ ! -e "$CHECK_DATA_DIR" ]; then
+    echo "  [data] removing dangling symlink at $CHECK_DATA_DIR" | log
+    rm "$CHECK_DATA_DIR"
+fi
+if [ ! -e "$CHECK_DATA_DIR" ] && [ -d "/home/seqaeon/Drive-D/nanochat/data" ]; then
+    echo "  [data] linking /home/seqaeon/Drive-D/nanochat/data to $CHECK_DATA_DIR" | log
+    ln -s /home/seqaeon/Drive-D/nanochat/data "$CHECK_DATA_DIR"
+fi
+mkdir -p "$CHECK_DATA_DIR"
+
+NUM_SHARDS="${MAX_SHARDS:-8}"
+LAST_SHARD_IDX=$((NUM_SHARDS - 1))
+LAST_SHARD_FILE=$(printf "shard_%05d.parquet" $LAST_SHARD_IDX)
+VAL_SHARD_FILE="shard_06542.parquet"
+
+if [ -f "$CHECK_DATA_DIR/$LAST_SHARD_FILE" ] && [ -f "$CHECK_DATA_DIR/$VAL_SHARD_FILE" ]; then
+    echo "Dataset (up to $NUM_SHARDS shards) already exists in $CHECK_DATA_DIR, skipping download." | log
+else
+    echo "Dataset incomplete. Downloading $NUM_SHARDS shards to $CHECK_DATA_DIR..." | log
+    python -m nanochat.dataset -n "$NUM_SHARDS" --data-dir "$CHECK_DATA_DIR"
+fi
+
+if ! python -m scripts.ensure_tokenizer --vocab-size "$VOCAB_SIZE" --tokenizer-dir "$TOKENIZER_DIR" \
+        --data-dir "$CHECK_DATA_DIR" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+    echo "could not prepare the tokenizer at '${TOKENIZER_DIR}'; nothing was run." | log
+    exit 1
+fi
+
 for DEPTH in "${DEPTHS[@]}"; do
     # NOTE ON --target-param-data-ratio: it stays POSITIVE even though the budget is
     # pinned explicitly. --target-tokens wins the budget at base_train.py:1769, but
@@ -170,7 +200,7 @@ for DEPTH in "${DEPTHS[@]}"; do
     # transformer_matrices + lm_head, so per-arm Chinchilla would hand each rung a
     # slightly different budget and confound data with architecture.
     if [ -z "${TARGET_TOKENS:-}" ]; then
-        TARGET_TOKENS=$(python3 -m scripts.code_head_budget --depth "$DEPTH" --ratio 10.5 \
+        TARGET_TOKENS=$(python -m scripts.code_head_budget --depth "$DEPTH" --ratio 10.5 \
             --tokenizer-dir "$TOKENIZER_DIR" 2>/dev/null)
     fi
     if [ -z "$TARGET_TOKENS" ]; then

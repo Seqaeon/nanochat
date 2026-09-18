@@ -50,6 +50,10 @@ QUANT_REF="${QUANT_REF:-1.578246}"     # b02: QUANTISED binary d=512, matrix_lr 
 # Native only. The quantised arm is the thing we already know loses (+0.62), and its
 # d=512 point above is what the d=512 NATIVE arm below is compared against.
 NATIVE_MODES="${NATIVE_MODES:-1}"
+DATA_DIR="${DATA_DIR:-data}"
+TOKENIZER_DIR="${TOKENIZER_DIR:-tokenizer}"
+VOCAB_SIZE="${VOCAB_SIZE:-32768}"
+MAX_SHARDS="${MAX_SHARDS:-}"
 
 # Derived, never typed. A hand-matched width is right once and then silently
 # compares two budgets.
@@ -146,11 +150,41 @@ WORLD="${WORLD:-$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || echo 1)}"
 [ "$WORLD" -ge 1 ] 2>/dev/null || WORLD=1
 TOK="${TOKENIZER_DIR:-tokenizer}"
 
-budget () { python3 -m scripts.code_head_budget --depth "$DEPTH" --ratio "$2" \
+# ── Dataset & Tokenizer existence check ─────────────────────────────────────
+CHECK_DATA_DIR="${DATA_DIR:-data}"
+if [ -L "$CHECK_DATA_DIR" ] && [ ! -e "$CHECK_DATA_DIR" ]; then
+    echo "  [data] removing dangling symlink at $CHECK_DATA_DIR" | tee -a "$SWEEP_LOG"
+    rm "$CHECK_DATA_DIR"
+fi
+if [ ! -e "$CHECK_DATA_DIR" ] && [ -d "/home/seqaeon/Drive-D/nanochat/data" ]; then
+    echo "  [data] linking /home/seqaeon/Drive-D/nanochat/data to $CHECK_DATA_DIR" | tee -a "$SWEEP_LOG"
+    ln -s /home/seqaeon/Drive-D/nanochat/data "$CHECK_DATA_DIR"
+fi
+mkdir -p "$CHECK_DATA_DIR"
+
+NUM_SHARDS="${MAX_SHARDS:-8}"
+LAST_SHARD_IDX=$((NUM_SHARDS - 1))
+LAST_SHARD_FILE=$(printf "shard_%05d.parquet" $LAST_SHARD_IDX)
+VAL_SHARD_FILE="shard_06542.parquet"
+
+if [ -f "$CHECK_DATA_DIR/$LAST_SHARD_FILE" ] && [ -f "$CHECK_DATA_DIR/$VAL_SHARD_FILE" ]; then
+    echo "Dataset (up to $NUM_SHARDS shards) already exists in $CHECK_DATA_DIR, skipping download." | tee -a "$SWEEP_LOG"
+else
+    echo "Dataset incomplete. Downloading $NUM_SHARDS shards to $CHECK_DATA_DIR..." | tee -a "$SWEEP_LOG"
+    python -m nanochat.dataset -n "$NUM_SHARDS" --data-dir "$CHECK_DATA_DIR"
+fi
+
+if ! python -m scripts.ensure_tokenizer --vocab-size "${VOCAB_SIZE:-32768}" --tokenizer-dir "$TOK" \
+        --data-dir "$CHECK_DATA_DIR" ${MAX_SHARDS:+--max-shards "$MAX_SHARDS"}; then
+    echo "could not prepare the tokenizer at '${TOK}'; nothing was run." | tee -a "$SWEEP_LOG"
+    exit 1
+fi
+
+budget () { python -m scripts.code_head_budget --depth "$DEPTH" --ratio "$2" \
                 --model-dim "$1" --tokenizer-dir "$TOK" 2>/dev/null; }
 
 REF_TOKENS=$(budget 512 "$RATIO")     # the DENSE arm's budget, which produced $DENSE_REF
-D_REF_TOKENS=$(python3 -m scripts.code_head_budget --depth 12 --ratio "$RATIO" \
+D_REF_TOKENS=$(python -m scripts.code_head_budget --depth 12 --ratio "$RATIO" \
     --tokenizer-dir "$TOK" 2>/dev/null)
 if [ -z "$REF_TOKENS" ] || [ -z "$D_REF_TOKENS" ]; then
     echo "FATAL: could not derive the token budgets; refusing to type one" ; exit 1
@@ -206,10 +240,11 @@ print(max(1, 2 ** int(math.floor(math.log2(min(cap, fit))))))" \
     MODEL_DIM="$W" BINARY_NATIVE="$NAT" DEVICE_BATCH_SIZE="$DBS" \
         TOTAL_BATCH_SIZE="$TBS" MAX_SEQ_LEN="$MAX_SEQ_LEN" TARGET_TOKENS="$ARM_TOKENS" \
         TAG_SUFFIX="t$((ARM_TOKENS / 1000000))M" \
+        DATA_DIR="$CHECK_DATA_DIR" TOKENIZER_DIR="$TOK" ${MAX_SHARDS:+MAX_SHARDS="$MAX_SHARDS"} \
         bash scripts/b01_binary_ladder.sh --rungs R5 --force "$DEPTH"
 done
 done
 
 echo "############ B03 done ############" | tee -a "$SWEEP_LOG"
 echo "dense fp16 d=512 reference: $DENSE_REF   quantised binary d=512: $QUANT_REF" | tee -a "$SWEEP_LOG"
-grep -hE "^==== width|Minimum validation bpb" "$SWEEP_LOG" | tail -40
+grep -hE "^==== width|Minimum validation bpb" "$SWEEP_LOG" | tail -40 || true
