@@ -402,7 +402,7 @@ class GPTConfig:
                                                # residual, no normalisation (sections 4.2/4.3)
     binary_tau: float = 1.0                    # retrieval temperature; anneal toward hard
     binary_hard: bool = False                  # hard threshold retrieval (the popcount path)
-    binary_resid_width: int = 1                # 1 = majority bundling; >1 = int accumulator
+    binary_resid_width: int = 0                # 0 = derive from depth; 1 = majority bundling (destroys the stream); >1 = accumulator
     binary_attn_chunk: int = 256               # query-block size; 0 = unchunked, which
                                                # needs 84GB for one layer at d=3584 T=2048
     # ── MST: Modular Sub-Transformer Architecture ──

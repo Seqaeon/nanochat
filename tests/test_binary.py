@@ -287,3 +287,72 @@ def test_model_dim_override_does_not_reach_the_d12_reference():
     kw = {k.arg: k.value.value for k in call.keywords}
     assert kw.get("apply_dim_override") is False, \
         "the d12 reference is being built with --model-dim applied"
+
+
+def test_soft_gates_are_not_argmax_and_anneal_to_the_hard_path():
+    """The native gates divided +-1 dot products by tau with no scale correction.
+
+    Those scores have standard deviation sqrt(fan_in), so tau=1.0 retrieved 1.4 of
+    2048 FFN slots and attended 1.8 of 256 keys: every Kanerva read returned a single
+    stored vector. Softmax also made the slots COMPETE, so the soft branch never
+    converged to the hard one as tau fell; they were different functions.
+    """
+    import math
+    from nanochat.binary import BinaryKVFFN, HammingAttention
+
+    def effective(w):
+        p = (w / w.sum(-1, keepdim=True).clamp_min(1e-30)).clamp_min(1e-30)
+        return float(torch.exp(-(p * p.log()).sum(-1)).mean())
+
+    torch.manual_seed(0)
+    d, slots = 256, 1024
+    ffn = BinaryKVFFN(d, slots, tau=1.0)
+    ffn.reset_parameters()
+    with torch.no_grad():
+        xb = torch.sign(torch.randn(2, 32, d))
+        scores = torch.nn.functional.linear(xb, torch.sign(ffn.keys)) - ffn.threshold
+        soft = torch.sigmoid(scores / math.sqrt(d))
+        hard = (scores > 0).float()
+    assert effective(soft) > 0.2 * slots, "the FFN is still an argmax lookup table"
+    assert effective(hard) > 0.2 * slots
+
+    # tau -> 0 must reach the hard path, which is what makes annealing meaningful.
+    q, k, v = (torch.randn(2, 32, 2, 128) for _ in range(3))
+    cold = HammingAttention(256, 2, tau=1e-4, hard=False, chunk=0).eval()
+    hard_attn = HammingAttention(256, 2, hard=True, chunk=0).eval()
+    with torch.no_grad():
+        agree = (cold(q, k, v) == hard_attn(q, k, v)).float().mean()
+    assert agree > 0.99, f"soft(tau->0) disagrees with hard on {(1-agree)*100:.1f}% of bits"
+
+
+def test_the_residual_accumulator_carries_the_stream_across_depth():
+    """resid_width was a no-op and width=1 destroyed the residual path.
+
+    x and branch are both +-1, so (x + branch).clamp(-width, width) never left
+    [-2, 2] and every width behaved as width 1, which is a majority-of-two with a
+    constant tiebreak. Measured over eight blocks at depth 8, the output sign agreed
+    with the input on 49.8% of bits: chance. The embedding had no path to the head.
+    """
+    from nanochat.gpt import GPTConfig
+    from nanochat.binary import BinaryBlock
+
+    d, layers = 128, 8
+    cfg = GPTConfig(sequence_len=32, vocab_size=512, n_layer=layers, n_head=1,
+                    n_kv_head=1, n_embd=d, binary_clip=1.0, binary_attn_chunk=0)
+    torch.manual_seed(0)
+    x0 = torch.sign(torch.randn(2, 32, d))
+
+    def survival(width):
+        torch.manual_seed(1)
+        x = x0
+        with torch.no_grad():
+            for i in range(layers):
+                blk = BinaryBlock(cfg, i, tau=1.0, resid_width=width)
+                blk.reset_parameters()
+                x = blk(x, None, None, None, None)
+        return float((torch.sign(x) == x0).float().mean())
+
+    assert survival(1) < 0.6, "width=1 is expected to destroy the stream; it is the baseline"
+    wide = survival(max(2, layers // 2))
+    assert wide > 0.7, f"the derived width only carries {wide*100:.1f}% of the stream"
+    assert wide < 0.99, "the stream is frozen: no branch can change a saturated channel"

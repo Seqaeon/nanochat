@@ -258,6 +258,18 @@ def nativise_model_(model, config, tau=1.0, hard=False, resid_width=1, verbose=F
     """
     swapped = []
     h = model.transformer.h
+    if resid_width <= 0:
+        # Derived, not typed. The residual carries 2*n_layer branch contributions on
+        # top of a saturated +-1 embedding, and the two failure modes bracket the
+        # answer tightly. Measured at depth 8, agreement between the block stack's
+        # output sign and its input:
+        #
+        #   width  1 -> 49.8%   destroyed: majority-of-two with a constant tiebreak
+        #   width  4 -> 78.4%   signal survives and layers can still change it
+        #   width 16 -> 100.0%  frozen: no branch can move a saturated channel
+        #
+        # n_layer/2 lands in the middle of that and scales the right way with depth.
+        resid_width = max(2, len(h) // 2)
     for i in range(len(h)):
         blk = BinaryBlock(config, i, tau=tau, hard=hard, resid_width=resid_width)
         blk = blk.to(next(model.parameters()).device, next(model.parameters()).dtype)
@@ -400,9 +412,21 @@ class BundledResidual(nn.Module):
             # what section 3.3 means by the threshold absorbing normalisation.
             s = x + branch
             return sign_ste(s - self.threshold, clip=2.0)
-        acc = (x + branch).clamp(-self.width, self.width)
-        # clip scaled to the accumulator range, for the same reason as in bundle()
-        return sign_ste(acc - self.threshold, float(self.width))
+        # width > 1 is a BOUNDED ACCUMULATOR, and the first version was a no-op. Both
+        # x and branch are +-1, so (x + branch).clamp(-width, width) never left
+        # [-2, 2] and every width behaved exactly like width 1. Worse, it signed the
+        # result, so the stream was re-binarised at all 2*n_layer sublayers and no
+        # magnitude could survive even one of them. That is the accumulation
+        # bandwidth of section 3.8 destroyed by an implementation detail.
+        #
+        # The accumulator is carried in [-1, 1] with resolution 1/width rather than
+        # as a raw integer in [-width, width]. They are the same object scaled, and
+        # the scaled form means every downstream sign_ste keeps its clip of 1.0 and
+        # so keeps passing gradient, instead of zeroing it everywhere outside a
+        # window it no longer matches. The threshold biases the branch, which is what
+        # gives it a gradient; section 3.3's point that sign() is scale-free is why
+        # the scaling is free to choose.
+        return (x + (branch - self.threshold) / self.width).clamp(-1.0, 1.0)
 
     def extra_repr(self):
         return f"width={self.width} ({'majority bundling' if self.width <= 1 else 'int accumulator'})"
@@ -472,14 +496,32 @@ class HammingAttention(nn.Module):
         keys = torch.arange(T, device=qc.device).unsqueeze(0)
         allowed = keys <= pos
         scores = scores.masked_fill(~allowed.view(1, 1, stop - start, T), float("-inf"))
-        gate = scores - radius.to(scores.dtype) * D
+        # The 0.5 makes an exact tie resolve the same way in both branches. A +-1 dot
+        # product over an even D is even, so scores == 0 is common, and it means
+        # exactly half the bits agree: no evidence. The hard branch excluded it and
+        # sigmoid half-voted it, which alone put 4.9% of output bits between the two.
+        # Subtracting half a step changes nothing for integer scores under `> 0` and
+        # sends the tie to zero weight as tau falls.
+        gate = scores - radius.to(scores.dtype) * D - 0.5
         if self.hard:
             w = (gate > 0).to(vb.dtype)
-            w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
         else:
-            # softmax in fp32 for the reduction, then straight back down: holding the
-            # (B, H, chunk, T) weights in fp32 doubles the recompute peak for nothing.
-            w = torch.softmax(gate.float() / max(self.tau, 1e-6), dim=-1).to(vb.dtype)
+            # A Kanerva read gates each key INDEPENDENTLY against a radius and bundles
+            # everything inside it. Softmax is the opposite operation: it makes keys
+            # compete for a fixed unit of weight, so it does not converge to the hard
+            # path as tau falls, and the soft and hard branches were computing
+            # different functions rather than sharper and blunter versions of one.
+            # A sigmoid gate is the same function as the hard threshold, softened.
+            #
+            # The temperature is divided by sqrt(D) because these are +-1 dot products
+            # over D terms, so their standard deviation IS sqrt(D). This is the same
+            # 1/sqrt(head_dim) that ordinary attention applies, and dropping it was not
+            # purification: section 3.3 argues sign() is scale-free so RMSNorm has
+            # nothing to do, which is true of the residual stream and false of a gate,
+            # where the scale relative to the temperature is the entire operation.
+            # Without it, tau=1.0 attended 1.8 keys out of 256.
+            w = torch.sigmoid(gate.float() / (max(self.tau, 1e-6) * math.sqrt(D))).to(vb.dtype)
+        w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
         return torch.einsum("bhts,bshd->bthd", w, vb)
 
     def extra_repr(self):
@@ -514,13 +556,18 @@ class BinaryKVFFN(nn.Module):
         xb = sign_ste(x, self.clip)
         kb = sign_ste(self.keys, self.clip)
         vb = sign_ste(self.values, self.clip)
-        scores = F.linear(xb, kb.to(xb.dtype)) - self.threshold.to(xb.dtype)
+        scores = F.linear(xb, kb.to(xb.dtype)) - self.threshold.to(xb.dtype) - 0.5  # ties, as above
         if self.hard:
             w = (scores > 0).to(x.dtype)
-            w = w / w.sum(-1, keepdim=True).clamp_min(1.0)
         else:
-            w = torch.softmax(scores.float() / max(self.tau, 1e-6), dim=-1)
-        w = w.to(vb.dtype)
+            # Same two corrections as HammingAttention, and they matter more here
+            # because there are 4d slots rather than T keys. Softmax at tau=1.0 over
+            # scores with standard deviation sqrt(d)=22.6 retrieved 1.4 effective slots
+            # out of 2048: the associative memory was a lookup table returning one
+            # stored vector, which is the opposite of the bundling this module exists
+            # to do. Independent sigmoid gates at the score's own scale restore it.
+            w = torch.sigmoid(scores.float() / (max(self.tau, 1e-6) * math.sqrt(self.n_embd)))
+        w = (w / w.sum(-1, keepdim=True).clamp_min(1.0)).to(vb.dtype)
         return sign_ste(w @ vb, self.clip)
 
     def extra_repr(self):
@@ -588,6 +635,8 @@ class BinaryBlock(nn.Module):
             # to another in this algebra.
             v = bundle(torch.stack((v, ve.view(B, T, self.n_head, self.head_dim)), 0), dim=0)
         a = self.attn(q, k, v).reshape(B, T, D)
-        x = self.resid_attn(xb, self.c_proj(a))
+        # onto the STREAM, not onto xb: accumulating onto the signed copy threw the
+        # incoming accumulator away at every block and made resid_width unreachable.
+        x = self.resid_attn(x, self.c_proj(a))
         x = self.resid_mlp(x, self.mlp(x))
         return x

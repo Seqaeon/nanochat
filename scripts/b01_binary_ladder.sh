@@ -94,7 +94,7 @@ MODEL_DIM="${MODEL_DIM:-0}"
 # and is separate from MODEL_DIM, which is the WIDTH change. Report them separately.
 BINARY_NATIVE="${BINARY_NATIVE:-0}"
 BINARY_TAU="${BINARY_TAU:-1.0}"
-BINARY_RESID_WIDTH="${BINARY_RESID_WIDTH:-1}"
+BINARY_RESID_WIDTH="${BINARY_RESID_WIDTH:-0}"   # 0 = derive from depth; 1 destroys the stream
 WINDOW_PATTERN="${WINDOW_PATTERN:-SSSL}"
 # These were being silently ignored: base_train's --log-every DEFAULTS TO 1, so an
 # unwired LOG_EVERY prints a line per step, and an unwired MAX_SHARDS scans every
