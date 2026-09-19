@@ -427,19 +427,30 @@ nvidia-smi || true
 # ── Environment setup ─────────────────────────────────────────────────────────
 SKIP_ENV_SETUP="${NANOCHAT_SKIP_ENV_SETUP:-0}"
 
-if [[ "$SKIP_ENV_SETUP" == "1" ]]; then
+export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
+
+if [[ -n "${VIRTUAL_ENV:-}" && -d "${VIRTUAL_ENV}" ]]; then
+    export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+    echo "Using active virtual environment: ${VIRTUAL_ENV}"
+    if command -v uv &> /dev/null; then
+        uv pip install --no-deps -e . --active &> /dev/null || pip install --no-deps -e . &> /dev/null || true
+    else
+        pip install --no-deps -e . &> /dev/null || true
+    fi
+elif [[ "$SKIP_ENV_SETUP" == "1" ]]; then
     echo "Skipping env setup (NANOCHAT_SKIP_ENV_SETUP=1)"
-    if [[ ! -d ".venv" ]]; then
-        echo "Error: .venv not found. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
+    if [[ -d ".venv" ]]; then
+        source .venv/bin/activate
+    else
+        echo "Error: Neither active VIRTUAL_ENV nor .venv found. Unset NANOCHAT_SKIP_ENV_SETUP or create a venv first."
         exit 1
     fi
 else
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
     [ -d ".venv" ] || uv venv
     uv sync --extra gpu
+    source .venv/bin/activate
 fi
-
-source .venv/bin/activate
 
 echo "Starting Actual-LR Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"

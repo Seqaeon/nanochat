@@ -435,20 +435,36 @@ echo "Starting Research Sweep. Output directory: ${ROOT_OUT_DIR}"
 mkdir -p "${ROOT_OUT_DIR}"
 
 # ── 1. Install / sync environment ─────────────────────────────────────────────
-# UV_SYSTEM_PYTHON=1  → use the calling shell's Python / site-packages as-is.
-# NANOCHAT_SKIP_ENV_SETUP=1 → skip all uv setup (venv must already exist).
+# 1. Active virtualenv (e.g. VIRTUAL_ENV=/home/ubuntu/venv or /home/seqaeon/Downloads/venv):
+#    Use calling environment as-is; do not override with .venv or run uv sync.
+# 2. UV_SYSTEM_PYTHON=1: use the calling shell's Python / site-packages as-is.
+# 3. NANOCHAT_SKIP_ENV_SETUP=1: skip all setup (requires active venv or .venv).
+# 4. Default: create .venv if missing and sync via uv.
 
-if [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
+export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
+
+if [[ -n "${VIRTUAL_ENV:-}" && -d "${VIRTUAL_ENV}" ]]; then
+    export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+    echo "Using active virtual environment: ${VIRTUAL_ENV}"
+    if command -v uv &> /dev/null; then
+        uv pip install --no-deps -e . --active &> /dev/null || pip install --no-deps -e . &> /dev/null || true
+    else
+        pip install --no-deps -e . &> /dev/null || true
+    fi
+elif [[ "${UV_SYSTEM_PYTHON:-0}" == "1" ]]; then
     echo "UV_SYSTEM_PYTHON=1: using system Python, skipping venv creation."
     echo "Validating system environment dependencies via uv..."
     uv pip install -e .[gpu] --system
 elif [[ "${NANOCHAT_SKIP_ENV_SETUP:-0}" == "1" ]]; then
     echo "Skipping environment setup (NANOCHAT_SKIP_ENV_SETUP=1)."
-    if [[ ! -d ".venv" ]]; then
-        echo "Error: .venv not found. Unset NANOCHAT_SKIP_ENV_SETUP or create .venv first."
+    if [[ -n "${VIRTUAL_ENV:-}" && -d "${VIRTUAL_ENV}" ]]; then
+        export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+    elif [[ -d ".venv" ]]; then
+        source .venv/bin/activate
+    else
+        echo "Error: Neither active VIRTUAL_ENV nor .venv found. Unset NANOCHAT_SKIP_ENV_SETUP or create a venv first."
         exit 1
     fi
-    source .venv/bin/activate
 else
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
     [ -d ".venv" ] || uv venv

@@ -28,6 +28,10 @@
 # ============================================================================
 set -o pipefail
 
+if [[ -n "${VIRTUAL_ENV:-}" && -d "${VIRTUAL_ENV}" ]]; then
+    export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+fi
+
 FORCE=0; SEEDS=1; ARMS=all; CLI_DEPTHS=(); TIMER=0
 usage() {
     echo "usage: $0 [--force] [--seeds N] [--arms mst|shared_d|sandwiched|grouped_shared|swiglu|new_arms|dense|all] [--new-arms-only] [--timer-only] [depth ...]"
