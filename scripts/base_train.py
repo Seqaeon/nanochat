@@ -720,6 +720,7 @@ parser.add_argument("--eval-tokens", type=int, default=80*524288, help="number o
 parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluate CORE metric every N steps (-1 = only at end, 0 = disable)")
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
+parser.add_argument("--save-final-optimizer", type=int, default=0, choices=[0, 1], help="keep optimizer shards in the FINAL checkpoint. They are 2-3x the weights and are only needed to resume, which a finished run cannot do, so the default drops them. Set 1 if you intend to continue training from the end of this run")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True, help="enable/disable torch.compile")
 parser.add_argument("--timing-probe-steps", type=int, default=0, help="stop after this many steps, but compute num_iterations, the LR schedule and the batch size from the real budget first. Used by the profile scripts' --timer-only to cost a sweep without running it: startup, per-step and final-validation time are all real, and the full run is projected from the measured dt (0 = disabled, run to completion)")
@@ -2439,7 +2440,14 @@ while True:
             checkpoint_dir,
             step,
             orig_model.state_dict(), # model parameters
-            optimizer.state_dict(), # optimizer state
+            # Optimizer state exists only so a preempted run can resume. The FINAL
+            # checkpoint has nothing to resume into, and its optimizer shards are the
+            # largest single artifact a run leaves behind: AdamW keeps exp_avg and
+            # exp_avg_sq and Muon a momentum buffer, so they run 2-3x the size of the
+            # weights themselves. Downstream consumers (CORE eval, paper_probe's stream
+            # diagnostics, any inference benchmark) load model_*.pt and never touch them.
+            (None if (last_step and not args.save_final_optimizer)
+             else optimizer.state_dict()),
             { # metadata saved as json
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
@@ -2461,7 +2469,12 @@ while True:
         )
         # Rolling checkpoints: after a periodic save, delete the previous periodic checkpoint
         # to avoid disk bloat. The final checkpoint (last_step) is always kept.
-        if is_periodic_save and master_process and last_periodic_ckpt_step >= 0:
+        # Also clean up on the FINAL save, not just periodic ones. Without this a run
+        # whose last step is 1680 with --save-every 200 leaves BOTH 1600 and 1680 on
+        # disk, weights and optimizer shards, because the rolling delete below was
+        # gated on is_periodic_save alone.
+        if (is_periodic_save or last_step) and master_process and last_periodic_ckpt_step >= 0 \
+                and last_periodic_ckpt_step != step:
             prev = last_periodic_ckpt_step
             for pattern in [
                 os.path.join(checkpoint_dir, f"model_{prev:06d}.pt"),

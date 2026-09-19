@@ -77,49 +77,53 @@ case "$ARMS" in
     *) echo "--arms must be one of: dense, mst, mol, all (got '$ARMS')"; exit 1 ;;
 esac
 
-# C is set by the CORPUS, not by affordability. One shard of the 300-shard set holds
-# ~252.8M characters, so MAX_SHARDS=300 is roughly 18B tokens, and the protocol is single
-# epoch. Each arm consumes C / (active FLOPs per token), so the cheapest-per-token arm
-# fixes the ceiling:
-#   dense [16,18,20,24] -> C_max 2.79e19      MST [16,24,28,32] -> C_max 1.03e19
-#   dense [12,16,18,24] -> C_max 1.33e19      MST [12,16,24,32] -> C_max 5.73e18
-# 9.0e18 sits at 87% of the binding MST ceiling, leaving margin for the +/-10% in that
-# token estimate. Raise MAX_SHARDS to lift it: 600 shards would roughly double the ceiling.
+# C is pinned by two constraints that leave almost no freedom.
 #
-# It also buys the scale the paper needs. At the previous 4.823e18, dense L=24 ran at
-# 7.45x its own compute-optimal budget, i.e. a 1.38B model on 13% of its Chinchilla
-# tokens, which is not citable as 1B-scale evidence. At 9.0e18:
-#   dense  L=16 0.42x  L=18 0.81x  L=20 1.44x  L=24 3.99x   (537M .. 1.38B active)
-#   MST    L=16 0.07x  L=24 0.54x  L=28 1.20x  L=32 2.46x   (388M .. 1.62B active)
-# Both arms straddle their vertex, dense between L=18 and L=20, MST between L=24 and L=28.
-# Cost: 8 arms x 9.0e18 = 7.2e19. Run --timer-only before committing.
-FLOPS="${FLOPS:-9.0e18}"
+# 1. STRADDLING. A depth set brackets its optimum when C falls between the own-budgets of
+#    its 2nd and 3rd points. That gives MST 24/28/32/36 the window [7.69e18, 1.56e19] and
+#    dense 18/20/22/24 the window [1.29e19, 2.21e19]; the overlap is [1.29e19, 1.56e19]
+#    and 1.42e19 is its geometric centre. Outside that window one arm sits entirely on one
+#    side of its parabola and its vertex becomes an extrapolation.
+#
+# 2. THE CORPUS. One shard holds ~252.8M characters, so MAX_SHARDS=300 is roughly 18B
+#    tokens and the protocol is single-epoch. The cheapest-per-token arm fixes the ceiling:
+#    at 1.42e19 the binding arm is MST L=24 at 9.6B tokens, 0.53 epochs, comfortable.
+#    (The previous 9.0e18 was capped by MST L=16 at 0.87 epochs. Dropping L=16 is what
+#    made a larger budget possible at all: it lifted the MST ceiling from 1.03e19 to
+#    2.68e19.)
+#
+# own budget / C at 1.42e19:
+#   dense  L=18 0.51x  L=20 0.91x  L=22 1.56x  L=24 2.53x   (702M .. 1.38B params)
+#   MST    L=24 0.25x  L=28 0.54x  L=32 1.10x  L=36 2.08x   (879M .. 2.09B params)
+# Both straddle, dense between L=20 and L=22, MST between L=28 and L=32.
+# Cost: 8 arms x 1.42e19 = 1.14e20. Run --timer-only before committing.
+FLOPS="${FLOPS:-1.42e19}"
 N_SUBS="${N_SUBS:-4}"
 ASPECT_RATIO="${ASPECT_RATIO:-64}"
-# Dense L=16/18/20/24 spans 537M to 1.38B active and straddles a vertex between L=18 and
-# L=20. L=12 was dropped when C rose: it is the cheapest-per-token dense arm, so it would
-# have pulled the corpus ceiling down to 1.33e19 for no gain at a scale nobody asks about.
-DENSE_DEPTHS="${DENSE_DEPTHS-16 18 20 24}"
+# Dense L=18/20/22/24 spans 702M to 1.38B and straddles a vertex between L=20 and L=22.
+# L=16 was dropped when C rose to 1.42e19: at 0.27x its own budget it is heavily
+# overtrained and adds nothing the other three do not already cover.
+DENSE_DEPTHS="${DENSE_DEPTHS-18 20 22 24}"
 # MST needs mst_sub_head_dim (64) to divide sub_dim = D/N, i.e. D a multiple of 256.
-# L=16,24,28,32 give D=1024,1536,1792,2048 -> d=256,384,448,512, all divisible by 64.
-# L=14,18,22,26,30 do NOT and have no MST arm at all.
+# L=24,28,32,36 give D=1536,1792,2048,2304 -> d=384,448,512,576, all divisible by 64.
+# L=18,22,26,30,34 do NOT and have no MST arm at all.
 #
-# L=20 is EXCLUDED as MST's known off-trend ladder point: 1.126x on FLOPs/token against
-# 1.223x at L=16 and 1.284x at L=24. No mechanism has been identified. The two candidates
-# were both checked and both are dead: multi-scale windows are assigned PER STREAM
-# (_sub_window_sizes, N=4), so the head count never touches the window schedule; and
-# sub_dim = 64 mod 128 does break tensor-core alignment for MST in a way it never does for
-# dense, but that is a speed effect and the anomaly is in bpb per FLOP. L=12 shares L=20's
-# geometry (3 heads, sub_dim 192) and has never shown the effect, so a single bad run is
-# the likelier explanation than anything structural. Rerunning L=20 on another seed would
-# settle it for the cost of one arm.
+# L=16 is dropped: it is the cheapest-per-token MST arm and capped the whole profile at
+# C=1.03e19, and at 1.42e19 it would need 24.7B tokens, past a single epoch of the corpus.
+# L=20 stays excluded as MST's known off-trend ladder point.
 #
-# L=28 (7 heads, sub_dim 448) is in the same geometric class as L=20 and is kept
-# deliberately: with four points its residual is visible, so this profile TESTS the
-# hypothesis rather than assuming it. If L=28 lands off the curve the way L=20 did, drop
-# it and fit 16/24/32, which is clean end to end (4/6/8 heads, all sub_dim a multiple of
-# 128). It is also the 1.22B-active arm, the closest to the scale reviewers name.
-MST_DEPTHS="${MST_DEPTHS-16 24 28 32}"
+# ALIGNMENT. sub_dim is a multiple of 128 only at L=8,16,24,32,40; L=28 (448) and L=36
+# (576) are 64 mod 128 and miss tensor-core alignment, which cost L=28 an off-trend MFU of
+# 18.7% against 21.7% at the smaller L=24. There is no four-point aligned set in this
+# range: 24/32/40 is aligned but L=40's own budget is 5.3e19, far outside any affordable C,
+# and 16/24/32/40 reintroduces the corpus cap. So two of four MST points are misaligned by
+# necessity. Check their residuals before trusting the fitted vertex, and if either lands
+# off the curve, fit 24/32 plus whichever of 28/36 is clean.
+#
+# Note the shared-FFN headline does NOT remove this: the shared FFN is only 16% of MST's
+# matrix parameters at L=32, and the other 84% (attention qkv, output projection, the
+# transition) is still block-diagonal at K = sub_dim.
+MST_DEPTHS="${MST_DEPTHS-24 28 32 36}"
 # MoL (Ternovtsii & Bilak 2026) as its own arm, in the 1+3of15 topology at d_thin = D/4
 # that reproduces their published parameter counts exactly. Its thin blocks are wrapped in
 # per-block W_down/W_up, so it costs far more per token than MST at equal depth (8.09e8
@@ -351,6 +355,37 @@ mol_config() {                            # mol_config <depth>
 }
 
 mst_config() {                            # mst_config <depth>
+    # The headline is now the SHARED-FFN variant (p16's shared_d arm), not the top-1
+    # gated one. Measured against the gated version at matched depth, on meta device:
+    #   active FLOPs/token  0.999x   active params 0.9999x   matrix params 0.672x
+    # so it reaches the same compute and the same active footprint with a third fewer
+    # matrices, and it does so with no router, no load-balance auxiliary, no
+    # straight-through estimator and no gating multiply. Its total/active matrix ratio is
+    # 1.00 against the gated version's 1.48 and MoL's 3.74.
+    #
+    # FFN_INNER_DIM defaults to sub_dim, which is what makes the FLOPs match: a shared
+    # D -> d -> D FFN costs the same per token as four gated d -> 4d -> d ones at top-1.
+    # Set --mst-stream-topk 0 with it; there is nothing left to gate.
+    local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
+    local SD=$(( D / N_SUBS ))
+    local INNER="${FFN_INNER_DIM:-$SD}"
+    echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
+      --mst-head-dim 0 --mst-input-mode learned_proj \
+      --mst-routing-mode soft_weighted --mst-routing-topk 0 \
+      --mst-ffn-mode shared_dense --mst-ffn-inner-dim $INNER \
+      --mst-transition-mode aggregate_distribute \
+      --mst-final-mode concat_proj --mst-final-topk 0 \
+      --mst-routing-aux-weight 0.01 --mst-diversity-weight 0.0 \
+      --mst-grad-equalize 1 --mst-block-diagonal-muon 1 \
+      --mst-transition-width-mult ${N_SUBS}.0 --mst-sub-lr-scale 2.0 \
+      --mst-multi-scale-windows 1 \
+      --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
+      --mst-wo-mode dense --mst-stream-topk 0"
+}
+
+# The previous headline, kept so the two can be run against each other on one budget:
+#   MST_GATED=1 bash scripts/p12_isoflop.sh --mst-only
+mst_gated_config() {                      # mst_gated_config <depth>
     local D=$(( (($1 * ASPECT_RATIO + 127) / 128) * 128 ))
     local SD=$(( D / N_SUBS ))
     echo "--use-mst 1 --models base --mst-n-subs $N_SUBS --mst-sub-dim $SD \
@@ -365,6 +400,7 @@ mst_config() {                            # mst_config <depth>
       --mst-sub-head-dim 64 --mst-per-stream-ve 1 --mst-compose-windows 1 \
       --mst-wo-mode dense --mst-stream-topk 1 --mst-stream-router-noise 1.0"
 }
+
 
 echo "============================================================"
 echo "  P12 isoFLOP profile   C = ${FLOPS} active FLOPs"
@@ -382,7 +418,11 @@ for d in $MST_DEPTHS; do
         echo "SKIP MST d${d}: sub_dim ${SD} not divisible by mst_sub_head_dim 64"
         continue
     fi
-    run "ISOF_mst_d${d}" "$d" $(mst_config "$d")
+    if [ "${MST_GATED:-0}" -eq 1 ]; then
+        run "ISOF_mstgated_d${d}" "$d" $(mst_gated_config "$d")
+    else
+        run "ISOF_mst_d${d}" "$d" $(mst_config "$d")
+    fi
 done
 for d in $MOL_DEPTHS; do
     TD=$(( (((d * ASPECT_RATIO + 127) / 128) * 128) / 4 ))
