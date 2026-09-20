@@ -49,6 +49,26 @@ def save_sweep_state(run_dir_path: Path, state: dict) -> None:
         json.dump(state, f, indent=2)
 
 
+def _last_resumable_step(ckpt_dir):
+    """Latest step that can actually be resumed INTO, not merely the latest weights.
+
+    find_last_step globs model_*.pt alone. base_train drops the optimizer from the FINAL
+    checkpoint (--save-final-optimizer 0, the default) because a finished run has nothing
+    to resume into and the shards are 2-3x the weights. So the newest model_*.pt may have
+    no optim_*.pt beside it, and load_checkpoint(load_optimizer=True) would raise on it.
+    A completed arm should never be retried, but the sweep scripts do retry an arm whose
+    results row is missing, and that path would otherwise crash instead of starting fresh.
+    """
+    models = glob.glob(os.path.join(ckpt_dir, "model_*.pt"))
+    steps = sorted({int(os.path.basename(f).split("_")[-1].split(".")[0]) for f in models},
+                   reverse=True)
+    for st in steps:
+        if glob.glob(os.path.join(ckpt_dir, f"optim_{st:06d}_rank*.pt")):
+            return st
+    raise FileNotFoundError(
+        f"no checkpoint in {ckpt_dir} carries optimizer state, so none can be resumed")
+
+
 def _iso_flops(args):
     """True when the horizon comes from a FLOPs budget rather than a token budget."""
     return (getattr(args, 'target_flops', 0) or 0) > 0 or (getattr(args, 'target_active_flops', 0) or 0) > 0
@@ -741,7 +761,7 @@ def run_training_sweep(args):
 
         # Check for resumption
         try:
-            last_step = find_last_step(str(actual_model_ckpt_dir))
+            last_step = _last_resumable_step(str(actual_model_ckpt_dir))
             print(f"\n  ┌─────────────────────────────────────────────────────┐")
             print(f"  │  ⏩  RESUMING [{model_name}] from step {last_step:,}")
             print(f"  │     {str(actual_model_ckpt_dir)}")
