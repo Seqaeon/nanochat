@@ -1228,10 +1228,16 @@ Plus two ingredients, offset temperature and backward heads. S16-E (checkerboard
 - M0 is void: its 4x models were read against dense-1x.
 - Gates now read recovery on the lookahead band.
 
+**Settled 2026-10-06.**
+- S16-C settlement: two-seed mean bpb is -0.34% (real, both seeds lower: -0.51% and -0.18%).
+- Lookahead band gain is +0.305 nats (free add-on, not headline mechanism).
+- Attribution: roles-collapsed control `S16lrbd` retains 78.4% of the bpb gain, showing the benefit is primarily a generic relative offset distance bias, not a lane routing mechanism.
+- M0 token1x run completed (-0.189 band at L=64; -0.722 at L=32).
+
 **Decides next.**
-- S16-C settlement: seed 2 of the lane bias and of the baseline, plus the roles-collapsed control (`lrbd`). The readings are pre-registered in §6.
-- M0 again, token-matched (eval only).
-- Then S16-F, one-stream bridged lanes. S16-G (conversion) stays the user's call; d16 waits.
+- S16-F, one-stream bridged lanes: the single structural idea with large headroom remaining (0.86% total tax at 101 steps in the 8B oracle).
+- S16-G (pretrained conversion) remains the user's call; hold off on d16 until a mechanism survives.
+
 
 **Frank status.** No mechanism closes recovery yet. The best closes about 12% of what a ≤ 3% tax at L = 64 needs. A* odds are about 10 to 15%.
 

@@ -284,10 +284,36 @@ modal run modal_sap.py::s11_ladder --depth 8 --name s16_c2 --specs lrb:64:1:2,ln
   - if it keeps ≤ 50%, the lane roles carry the gain.
 - Decoder support (bias rows and offset embeddings in `lane_step`, plus a decoder-matches-training test) comes only if S16-C survives this.
 
+**S16-C Settlement Results (2026-10-06):**
+- Data: `scratch/s16/s16_score_d8_s16_c2_full.json`, scored on H100 SXM5 over 256 rows against `S11dense_x1_s1` (0.9346).
+- Measured runs:
+  - `S11ln64x1_s1`: Block BPB 1.0076, extra nats/lane 7.562, deficit 11.652, recovery -4.090, lookahead band -1.118
+  - `S11ln64x1_s2`: Block BPB 1.0029, extra nats/lane 7.046, deficit 11.393, recovery -4.347, lookahead band -1.666
+  - `S16lrbL64x1_s1`: Block BPB 1.0025, extra nats/lane 7.018, deficit 11.333, recovery -4.314, lookahead band -1.684
+  - `S16lrbL64x1_s2`: Block BPB 1.0011, extra nats/lane 6.877, deficit 11.345, recovery -4.469, lookahead band -1.710
+  - `S16lrbdL64x1_s1`: Block BPB 1.0036, extra nats/lane 7.155, deficit 11.436, recovery -4.280, lookahead band -1.543
+- **Verdicts against Pre-Registered Gates:**
+  1. **Real: PASSED.**
+     - Two-seed baseline mean BPB: $(1.0076 + 1.0029)/2 = 1.00525$.
+     - Two-seed S16-C mean BPB: $(1.0025 + 1.0011)/2 = 1.00180$.
+     - Mean gain: $-0.343\%$ ($\ge 0.3\%$ threshold met).
+     - Both seeds lower: Seed 1 ($1.0025 < 1.0076$, $-0.51\%$), Seed 2 ($1.0011 < 1.0029$, $-0.18\%$).
+  2. **Recovery mechanism: Free add-on, not headline.**
+     - Baseline two-seed mean band: $-1.392$ nats.
+     - S16-C two-seed mean band: $-1.697$ nats.
+     - Two-seed mean band gain: **$+0.305$ nats** (Seed 1: $+0.566$, Seed 2: $+0.044$).
+     - Lands squarely in $[0.3, 0.7]$: a modest free add-on (0 extra FLOPs), not an architectural headline.
+  3. **Attribution: Primarily generic relative offset bias.**
+     - Seed 1 full gain: $1.0076 - 1.0025 = 0.0051$ BPB.
+     - Seed 1 roles-collapsed gain: $1.0076 - 1.0036 = 0.0040$ BPB.
+     - Gain retained by roles-collapsed model: **78.4%** of BPB gain, **75.1%** of lookahead band gain.
+     - The lane role partition carries only $\sim 22\%$ of the gain; the remainder is a generic relative distance bias and offset embedding.
+
 **Paper status (frank).**
 - No mechanism closes recovery yet. S16-C cuts the d8 L = 64 tax from 7.8% to 7.3%, about 12% of the roughly 4.7 nats per lane that a ≤ 3% tax needs.
 - **Remaining levers:**
   - S16-F, one-stream bridged lanes: the oracle's most efficient order, 0.86% total at 101 steps, about 19 tokens per pass. It is to be coded after the settlement runs; its gate is unchanged;
   - S16-G, converting a pretrained model: the user's call;
-  - scale: d16 costs about 9 of the roughly 12.7 H100-hours left.
+  - scale: d16 costs about 9 of the roughly 12.0 H100-hours left.
 - **Not now:** d16, the R3 samples sweep, S16-D.
+

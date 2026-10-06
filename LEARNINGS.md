@@ -4,6 +4,27 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
+## 2026-10-06: S16-C settled: real bpb gain (-0.34%), modest lookahead (+0.30), 78% of gain is generic relative bias
+
+Data: `scratch/s16/s16_score_d8_s16_c2_full.json` (d8 models at 1x tokens, evaluated over 256 rows on H100).
+
+- **Real: passed.**
+  - Baseline two-seed mean (`S11ln64x1_s1/_s2`): 1.00525 block bpb.
+  - S16-C two-seed mean (`S16lrbL64x1_s1/_s2`): 1.00180 block bpb.
+  - Mean bpb gain: -0.343% (passes the pre-registered >= 0.3% bar).
+  - Both seeds lower: Seed 1 (1.0025 vs 1.0076, -0.51%), Seed 2 (1.0011 vs 1.0029, -0.18%).
+- **Recovery mechanism: free add-on, not headline.**
+  - Baseline two-seed mean lookahead band: -1.392 nats.
+  - S16-C two-seed mean lookahead band: -1.697 nats.
+  - Two-seed mean band gain: +0.305 nats (Seed 1: +0.566, Seed 2: +0.044).
+  - Pre-registered reading: 0.3 to 0.7 makes it a free add-on, not an architectural headline.
+- **Attribution: generic relative offset bias carries ~78% of the benefit.**
+  - Roles-collapsed model `S16lrbdL64x1_s1` (only offset-gap buckets, no lane roles) achieved 1.0036 bpb (retains 78.4% of seed 1's 0.0051 bpb gain).
+  - On the lookahead band, `S16lrbd` achieves -1.543 nats (retains 75.1% of seed 1's +0.566 band gain).
+  - Pre-registered verdict: the gain is primarily a generic relative offset distance bias, not a specialized cross-lane addressing scheme.
+
+---
+
 ## 2026-10-06: S16 Stage M1: read lookahead on a band, match references to token budgets, state the signs
 
 Data: `scratch/s16/`. Details in `s16_lanes_recovery_brainstorm.md` §6.
