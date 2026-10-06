@@ -4,24 +4,21 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
-## 2026-10-06: S16-C settled: real bpb gain (-0.34%), modest lookahead (+0.30), 78% of gain is generic relative bias
+## 2026-10-06: S16-C settlement: d8 lanes noise is 0.3-0.5%, so decide nothing at that size on two seeds
 
-Data: `scratch/s16/s16_score_d8_s16_c2_full.json` (d8 models at 1x tokens, evaluated over 256 rows on H100).
+Data: `scratch/s16/s16_score_d8_s16_c2_full.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.
 
-- **Real: passed.**
-  - Baseline two-seed mean (`S11ln64x1_s1/_s2`): 1.00525 block bpb.
-  - S16-C two-seed mean (`S16lrbL64x1_s1/_s2`): 1.00180 block bpb.
-  - Mean bpb gain: -0.343% (passes the pre-registered >= 0.3% bar).
-  - Both seeds lower: Seed 1 (1.0025 vs 1.0076, -0.51%), Seed 2 (1.0011 vs 1.0029, -0.18%).
-- **Recovery mechanism: free add-on, not headline.**
-  - Baseline two-seed mean lookahead band: -1.392 nats.
-  - S16-C two-seed mean lookahead band: -1.697 nats.
-  - Two-seed mean band gain: +0.305 nats (Seed 1: +0.566, Seed 2: +0.044).
-  - Pre-registered reading: 0.3 to 0.7 makes it a free add-on, not an architectural headline.
-- **Attribution: generic relative offset bias carries ~78% of the benefit.**
-  - Roles-collapsed model `S16lrbdL64x1_s1` (only offset-gap buckets, no lane roles) achieved 1.0036 bpb (retains 78.4% of seed 1's 0.0051 bpb gain).
-  - On the lookahead band, `S16lrbd` achieves -1.543 nats (retains 75.1% of seed 1's +0.566 band gain).
-  - Pre-registered verdict: the gain is primarily a generic relative offset distance bias, not a specialized cross-lane addressing scheme.
+- **Measure the noise before setting a bar.**
+  - The two seeds of the d8 L = 64 baseline differ by 0.47% bpb and by 0.55 nats per lane on the lookahead band. That is as large as every S16 effect.
+  - I had set the S16 bars assuming 0.04-0.1% (a d4 dense seed pair). A two-seed rule cannot resolve 0.3% at this noise (S16-C: Welch t ≈ 1.4).
+  - From now on, a gate below 1% needs a measured noise floor, or four or more seeds per arm.
+- **Never read new-code arms against a baseline trained on old code.**
+  - `S11ln64x1_s1` was trained before the Oct 5 code (its saved config lacks that day's fields). It is the worst of the five plain-lanes and S16-C models on every metric, including the plain causal prefix bucket.
+  - Against the same-code seed (`s2`), S16-C's gain shrinks from 0.51% to 0.04-0.18%.
+  - Train the baseline in the same call as the arms. The noise control (`--tag-suffix _cur`) tells whether the code shifted.
+- **A "pass by the letter" is not evidence when the letter was set without a noise model.** Report the letter's verdict, and next to it the same-code reading and the noise.
+- **An attribution between the pre-registered bars is no verdict.** The bundled report rounded 78% into "generic" (bar: ≥ 80%).
+- **M0 was confirmed void by its own file.** Against dense-1x, the 4x models' net extra cost is negative (−0.51, −0.56 nats per lane), and their "recovery" grew by 5.66 nats per lane: the general token gain, split by sign.
 
 ---
 
