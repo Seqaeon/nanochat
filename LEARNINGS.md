@@ -4,6 +4,19 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
+## 2026-10-06: S16-F one-stream bridged lanes killed (+2.14% vs L=16 control >= +0.5% kill bar)
+
+Data: `scratch/s16/s11_ladder_bpb_d8_s16_f1.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.
+
+- **Bridging the separator window does not beat plain lower-L lanes:**
+  - `S16bo32n8x1_s1` (100 steps) lands at 0.9828 block bpb.
+  - Concurrently trained plain $L=16$ control `S11ln16x1_s1` (120 steps) lands at 0.9622 block bpb.
+  - Bridged lanes is $+2.14\%$ worse than $L=16$ ($\ge +0.5\%$ kill bar).
+  - S16-F is killed. Coarse-to-fine separator bridging across 32 intervals introduces a severe non-causal reconstruction tax that outweighs the 20 sequential step savings over $L=16$.
+
+---
+
+
 ## 2026-10-06: S16-G conversion test: dense trunk initialization does not break lockstep tax (T_1 = +7.75% >= 6.5% kill)
 
 Data: `scratch/s16/s11_ladder_bpb_d8_s16_g1.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.

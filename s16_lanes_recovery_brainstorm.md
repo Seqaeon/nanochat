@@ -400,3 +400,11 @@ How to read it: nats per lane over lanes 1..63; band = `lookahead_band`; "traine
    - **Kill:** ≥ +0.5% against it.
    - **In between:** a second seed of both.
 
+   **Results (2026-10-06, `scratch/s16/s11_ladder_bpb_d8_s16_f1.json`):**
+   - Reference `S11dense_x1_s1`: 0.9346 BPB.
+   - `S11ln16x1_s1` (plain lanes L = 16, 120 steps): 0.9622 BPB.
+   - `S16bo32n8x1_s1` (bridged lanes L = 32, N = 8, 100 steps): 0.9828 BPB.
+   - Delta vs L = 16: $\frac{0.9828}{0.9622} - 1 = \mathbf{+2.14\%}$ ($+0.0206$ BPB).
+   - **Verdict: KILLED.** $+2.14\% \ge +0.5\%$. Bridged lanes fails to match the lower-L plain lanes control despite running 20 fewer sequential steps.
+
+
