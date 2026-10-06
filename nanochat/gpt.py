@@ -11010,6 +11010,10 @@ class GPT(nn.Module):
         wte_numel = sum(p.numel() for p in self.transformer.wte.parameters())
         nparams_exclude = (wte_numel + wpe_numel + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        if getattr(self, 'lane_offset_embed', None) is not None:
+            nparams_exclude += sum(p.numel() for p in self.lane_offset_embed.parameters())
+        if getattr(self, 'lane_rel_bias', None) is not None:
+            nparams_exclude += self.lane_rel_bias.numel()
         # Binary per-channel scales (log_alpha / theta / log_g) are elementwise
         # rescales of the output, not matmul weights, so the 6N proxy overcharges
         # them. Tiny in absolute terms (512 floats against 3.1M matrix params per
@@ -11217,6 +11221,10 @@ class GPT(nn.Module):
             research += sum(p.numel() for p in self.sap_head.parameters())
         if getattr(self, 'splice', None) is not None:     # S13 splice code table and head
             research += sum(p.numel() for p in self.splice.parameters())
+        if getattr(self, 'lane_offset_embed', None) is not None:
+            research += sum(p.numel() for p in self.lane_offset_embed.parameters())
+        if getattr(self, 'lane_rel_bias', None) is not None:
+            research += self.lane_rel_bias.numel()
         # AG-CCL: ctx_from_attn and ctx_ema_gate live inside transformer.h (RemixedBlock)
         # and are already counted in transformer_matrices above.
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
