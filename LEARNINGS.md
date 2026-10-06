@@ -4,61 +4,25 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
-## 2026-10-06: S16-C (LRB + Input Offset Embeddings): 0.51% Block BPB Drop with 0 Extra FLOPs
+## 2026-10-06: S16 Stage M1: read lookahead on a band, match references to token budgets, state the signs
 
-Data: `scratch/s16_score_d8_m1_lrb.json` and `scratch/s11_ladder_bpb_d8_s16_m1_lrb.json` (d8 model `S16lrbL64x1_s1`, 440.4M tokens, evaluated on 256 rows on H100).
+Data: `scratch/s16/`. Details in `s16_lanes_recovery_brainstorm.md` §6.
 
-- **Performance & Gate Evaluation:**
-  - **Block BPB:** Drops from $1.0076$ (`S11ln64x1_s1`) to **$1.0025$** (**-0.51% BPB reduction**), comfortably beating the pre-registered $\ge 0.3\%$ threshold ($\le 1.0045$).
-  - **Extra nats / lane:** Drops from $7.562$ to **$7.018$** (**-0.544 nats**, a **7.2% reduction in extra lane penalty**).
-  - **Deficit nats / lane:** Drops from $11.652$ to **$11.333$** (**-0.319 nats** reduction in blindness deficit).
-  - **Recovery nats / lane:** Improves from $-4.090$ to **$-4.314$** (**+0.224 nats**).
-  - **FLOPs added:** **0.00%** (additive relative bias in SDPA, embedding lookup in residual stream).
-  - **Sequential steps:** **30 steps** (exact match to $L=64$ lockstep decoding).
-- **Offset Convergence Acceleration:**
-  - The relative bias helped across the middle and late offsets: offsets 8–15 ratio dropped from $1.056$ to $1.044$ (-0.012), offsets 16–28 ratio dropped from $0.937$ to $0.931$ (-0.006).
-  - Offset 0 share rose from $57.8\%$ to $62.1\%$ because the rest of the lane became substantially more efficient while offset 0 blindness remained the persistent structural ceiling ($2.339\times$).
-- **Learned Weight Interpretability:**
-  - **Heads 0 & 3:** Strongly learned to suppress same-lane self-attention (Bucket 0 weights are **$-18.52$** and **$-16.38$**), pushing queries to attend outward to prefix tokens and earlier lanes.
-  - **Head 3:** Discovered an exponential distance decay prior within the lane without supervision: $+8.41 \to +7.23 \to +6.61 \to +6.25 \to +5.89 \to +5.23$ from distance 1 to 6.
-  - **Offset Embeddings:** Norms scale monotonically from offset 1 (191.0) to offset 9 (209.0), with offset 0 having a distinctive norm (220.0) distinguishing stream initialization.
-
----
-
-## 2026-10-06: S16 Stage M1: PPI killed; Any-L matches single-L without raising recovery
-
-Data: `scratch/sync_d8/s16_score_d8_m1_cross.json` and `s11_ladder_bpb_d8_s16_m1.json` (d8 models at 1x tokens, evaluated across 256 rows on H100).
-
-- **Control baselines across L (Plain Lanes L=32, 64, 128 against Dense 0.9346 BPB):**
-  - L=32: Block BPB 0.9806 (+4.92% tax), extra nats/lane 10.434, deficit 15.756, recovery -5.322, offset-0 share 41.9%.
-  - L=64: Block BPB 1.0076 (+7.82% tax), extra nats/lane 7.562, deficit 11.652, recovery -4.090, offset-0 share 57.8%.
-  - L=128: Block BPB 1.0457 (+11.89% tax), extra nats/lane 5.663, deficit 8.872, recovery -3.209, offset-0 share 78.0%.
-  - **Key Scaling Trend:** As parallelism increases (shorter lane length per stream $N/L$), offset-0 error skyrockets to 78% of the total lane penalty. Streams are blind to one another at start.
-- **S16-A (PPI, Position-Preserving Infill Rows, f=0.25): KILLED BY PRE-REGISTERED CRITERION.**
-  - Pre-registered kill bar: Recovery gain < 0.4 nats/lane vs S11 baseline at L=64, or Block BPB not lower than baseline.
-  - Measured: Block BPB 1.0105 (+8.12% tax; +0.29% worse than 1.0076 baseline). Extra nats/lane 7.823 (+0.26 higher). Deficit 11.811 (+0.16 higher). Recovery -3.989 (baseline -4.090, gain +0.10 nats, well below 0.4 bar).
-  - **Mechanism Failure Diagnosis:** Random middle-span infill rows teach the model arbitrary prefix-suffix dependencies, but fail to teach stride-regular lookahead across lockstep parallel streams. The distribution shift diluted causal capacity without aiding recovery.
-- **S16-B (Any-L mixture across {16, 32, 64, 128}): PASSES "no-worse" gate, but does NOT raise recovery.**
-  - At L=64: Block BPB 1.0081 (+7.86% tax; only +0.05% vs dedicated single-L 1.0076, well inside <=0.5% gate). Extra nats/lane 7.563 vs 7.562 (identical to 0.001 nats). Recovery -4.023 vs -4.090 (+0.07 nats).
-  - At L=32: Block BPB 0.9834 (+5.23% tax; only +0.28% vs dedicated single-L 0.9806, within <=0.5% gate). Recovery -5.412 vs -5.322.
-  - At L=128: Block BPB 1.0571 (+13.11% tax vs dedicated 1.0457, +1.09% gap). Recovery -2.817 vs -3.209.
-  - **Engineering Value:** Confirms that a single model can natively support multiple inference parallelisms (e.g. L=32 and L=64) without retraining.
-  - **Architectural Value:** Any-L does not solve the recovery bottleneck. Training signal variation across L does not give the attention heads an explicit cross-lane bias.
-
----
-
-## 2026-10-06: S16 Stage M0: lanes' recovery is sample/signal-limited, not capacity-limited
-
-Data: `out/s03_sap/s16_score_d4_tokens.json` (d4 plain lanes L=64 scored at 1x vs 4x tokens against d4 dense reference).
-
-- **Recovery grows dramatically with training tokens (+5.65 nats/lane from 1x to 4x).**
-  - At 1x tokens (`S11ln64x1_s1`): deficit is +9.338 nats/lane, recovery is -1.930 nats/lane, net extra nats +7.408 (block bpb 1.1946 vs dense 1.1232, +6.36% tax).
-  - At 4x tokens (`S11ln64x4_s1` and `s2`): deficit falls to +7.083 / +7.013 nats/lane, and recovery surges to -7.593 / -7.578 nats/lane (mean -7.585).
-  - Net extra nats per lane becomes negative (-0.510 / -0.564 nats/lane), and block bpb drops to 1.1162 / 1.1155 (0.9938x / 0.9931x of dense-1x, beating dense-1x).
-  - Late offset ratios (reading the next lane's start) drop from 0.975 (offsets 16-28) to 0.891, and offset 29 drops from 0.853 to 0.625.
-  - Recovery growth is +5.655 nats/lane (+2.83 nats per doubling of tokens), far exceeding the pre-registered bar of ≥ 2.0 nats.
-  - **Verdict on S16 mechanisms:** Recovery is bottlenecked by the training signal showing lookahead tokens, not model capacity.
-  - Per pre-registered protocol, **training-signal mechanisms (S16-A PPI infill rows and S16-B Any-L lanes) receive top priority.**
+- **Read a lookahead mechanism on the band it targets, not on the sign of the excess.**
+  - The deficit/recovery split sums the per-offset excess by sign. Mid-lane offsets (8-15 at S = 30) still cost more than dense, yet they already read the next lane's first tokens.
+  - S16-C's gain sat entirely at offsets 8-28 (−0.30 at 8-15, −0.27 at 16-28). The split called it "deficit −0.32, recovery +0.22", and its pre-registered recovery bar killed it.
+  - The band metric (`lookahead_band`: offsets ⌈S/4⌉..S−2) gives +0.57. It is the gate metric from now on; my pre-registered metric was the error.
+- **A reference must match the token budget of the model read against it.**
+  - M0 scored 4x-token lanes against dense-1x. The general gain from 4x tokens (net −8.2 nats per lane) then shows up by sign as "recovery +5.655".
+  - Token-matched, the net tax is flat. The "training-signal limited" conclusion is void.
+- **State the sign convention of every delta.** The bundled report gave S16-A's and S16-B's recovery changes as gains (+0.10, +0.07); both were losses. Write Δ with its definition next to every table.
+- **Quote a gate whole.** S16-C was reported as passing "the ≥ 0.3% bpb gate". Its card also required recovery ≥ +0.7, and killed it below +0.3.
+- **"0 extra FLOPs" is not "free".** The lane bias materialises a float (T, T) bias per head in every layer, and training wall-clock rose 32%.
+- **Every scored mechanism needs a decoder path before speed or sample claims.** The KV-cache lane decoder passes no lane mask, so an LRB model decodes without its bias and offset embeddings.
+- **Results.**
+  - Infill rows: killed. Recovery fell 0.10 and bpb rose 0.29%.
+  - Any-L: within 0.3% of single-L at L ≤ 64 and +1.09% at 128, with no recovery gain.
+  - Lane bias: −0.51% bpb on one seed, +0.57 on the band. It is between kill and go, and its settlement runs are pre-registered.
 
 ---
 

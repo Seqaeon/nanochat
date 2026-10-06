@@ -870,6 +870,8 @@ parser.add_argument("--lane-infill-span", type=str, default="2,64", help="S16-A:
 parser.add_argument("--lane-infill-gap", type=int, default=128, help="S16-A: one middle per this many slots")
 parser.add_argument("--lane-rel-bias", type=int, default=0, choices=[0, 1],
                     help="S16-C: learned per-head relative attention bias across lane roles and offset gaps")
+parser.add_argument("--lane-rel-bias-roles", type=int, default=1, choices=[0, 1],
+                    help="S16-C control: 0 collapses the lane roles, so the bias keeps only offset-gap buckets")
 parser.add_argument("--lane-offset-embed", type=int, default=0, choices=[0, 1],
                     help="S16-C: learned input embedding of a token's offset within its lane")
 parser.add_argument("--class-map", type=str, default="",
@@ -1123,6 +1125,7 @@ def build_model_meta(depth, apply_dim_override=True):
         moe_use_abs_pos_embed=bool(args.moe_use_abs_pos_embed),
         lane_rel_bias=bool(getattr(args, 'lane_rel_bias', 0)),
         lane_offset_embed=bool(getattr(args, 'lane_offset_embed', 0)),
+        lane_rel_bias_roles=bool(getattr(args, 'lane_rel_bias_roles', 1)),
         remixed_linear_kwargs=dict(
             use_basis_gate=bool(args.remix_use_basis_gate),
             use_output_gate=bool(args.remix_use_output_gate),

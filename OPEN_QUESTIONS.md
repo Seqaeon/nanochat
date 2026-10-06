@@ -1221,15 +1221,19 @@ Details in `s16_lanes_recovery_brainstorm.md`.
 
 Plus two ingredients, offset temperature and backward heads. S16-E (checkerboard lanes) was plain lanes relabelled and is killed.
 
-**Decided (2026-10-06).**
-- M0: Recovery is training-signal limited (+5.655 nats from 1x to 4x tokens at d4).
-- M1: S16-A (PPI) is KILLED by pre-registered criteria (recovery gain +0.10 nats < 0.4 bar; Block BPB +0.29% worse). Random span infill does not induce stride-aligned lookahead.
-- M1: S16-B (Any-L) PASSES "no-worse" gate (matches single-L within 0.05% at L=64 and 0.28% at L=32), validating a single model for variable inference parallelism, but yields 0.0 recovery gain.
+**Stage M1 (2026-10-06).** Details in §6 of the S16 doc; data in `scratch/s16/`.
+- S16-A (infill rows) is killed.
+- S16-B (any-L) is no worse at L ≤ 64 (+1.09% at 128), with no recovery gain.
+- S16-C (lane bias plus offset embedding, built by the user's agent) is −0.51% bpb on one seed and +0.57 nats per lane on the lookahead band. It is between kill and go.
+- M0 is void: its 4x models were read against dense-1x.
+- Gates now read recovery on the lookahead band.
 
-**Open next mechanisms for S16:**
-- S16-C: Lane-relative attention bias (LRB). Can learned per-head biases for lane roles (same/next/prev) and offset-distance address the cross-lane recovery deficit directly at 0 FLOPs?
-- S16-F: One-stream bridged lanes (BL1). Eliminates the 2-stream penalty of S11 while preserving the bisection/bridged lookahead structure that achieved 0.07% TC in the oracle.
-- S16-D: Offset-routed recovery capacity (ORC) at offsets >= S/2.
+**Decides next.**
+- S16-C settlement: seed 2 of the lane bias and of the baseline, plus the roles-collapsed control (`lrbd`). The readings are pre-registered in §6.
+- M0 again, token-matched (eval only).
+- Then S16-F, one-stream bridged lanes. S16-G (conversion) stays the user's call; d16 waits.
+
+**Frank status.** No mechanism closes recovery yet. The best closes about 12% of what a ≤ 3% tax at L = 64 needs. A* odds are about 10 to 15%.
 
 **Option for the user.** S16-G, converting a pretrained model to lanes, changes the paper's claim and is the user's call.
 

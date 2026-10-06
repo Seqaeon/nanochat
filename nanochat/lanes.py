@@ -332,8 +332,10 @@ def deduce_lane_layout(m):
     return P, max(1, L)
 
 
-def compute_lrb_buckets(N, P, L, device=None):
-    """S16-C: Lane-Relative Attention Bias (LRB) bucket mapping and offset layout.
+def compute_lrb_buckets(N, P, L, device=None, roles=True):
+    """S16-C: Lane-Relative Attention Bias (LRB) bucket mapping and offset layout. roles=False is
+    the attribution control: the five lane roles collapse into one, so lane-to-lane pairs keep only
+    their offset-gap bucket (0..6) and the bias can no longer tell the next lane from its own.
     Returns:
         vis: (N, N) bool, visibility mask under lockstep lanes.
         buckets: (N, N) int64, bucket index in [0, 43] for visible pairs, -1 where masked.
@@ -376,6 +378,8 @@ def compute_lrb_buckets(N, P, L, device=None):
     lane_role = torch.where(dl == -1, 2, lane_role)
     lane_role = torch.where(dl >= 2, 3, lane_role)
     lane_role = torch.where(dl <= -2, 4, lane_role)
+    if not roles:
+        lane_role = torch.zeros_like(dl)
 
     bucket_lane_lane = lane_role * 7 + db
 
@@ -400,10 +404,10 @@ def compute_lrb_buckets(N, P, L, device=None):
     return vis, buckets, offset
 
 
-def get_lrb_cache(N, P, L, device=None):
+def get_lrb_cache(N, P, L, device=None, roles=True):
     """Cached retrieve for LRB tensors to avoid repeated allocations."""
-    key = (N, P, L, str(device))
+    key = (N, P, L, str(device), roles)
     if key not in _LRB_CACHE:
-        _LRB_CACHE[key] = compute_lrb_buckets(N, P, L, device=device)
+        _LRB_CACHE[key] = compute_lrb_buckets(N, P, L, device=device, roles=roles)
     return _LRB_CACHE[key]
 

@@ -47,6 +47,7 @@ class GPTConfig:
     lane_rel_bias: bool = False
     lane_offset_embed: bool = False
     lane_max_offsets: int = 256
+    lane_rel_bias_roles: bool = True    # False: the roles-collapsed control (offset-gap buckets only)
 
     # Research branches
     use_moe: bool = False
@@ -11818,7 +11819,8 @@ class GPT(nn.Module):
         if lane_mask is not None and getattr(self.config, 'lane_offset_embed', False) and getattr(self, 'lane_offset_embed', None) is not None:
             from nanochat.lanes import deduce_lane_layout, get_lrb_cache
             _lp_P, _lp_L = lane_params if lane_params is not None else deduce_lane_layout(lane_mask)
-            _, _, _offsets = get_lrb_cache(x.size(1), _lp_P, _lp_L, device=x.device)
+            _, _, _offsets = get_lrb_cache(x.size(1), _lp_P, _lp_L, device=x.device,
+                                           roles=getattr(self.config, 'lane_rel_bias_roles', True))
             _max_o = getattr(self.config, 'lane_max_offsets', 256)
             x = x + self.lane_offset_embed(_offsets.clamp(max=_max_o - 1))
         if "wpe" in self.transformer:
@@ -11882,7 +11884,8 @@ class GPT(nn.Module):
             if lane_mask is not None and getattr(self.config, 'lane_rel_bias', False) and getattr(self, 'lane_rel_bias', None) is not None:
                 from nanochat.lanes import deduce_lane_layout, get_lrb_cache
                 _lp_P, _lp_L = lane_params if lane_params is not None else deduce_lane_layout(lane_mask)
-                _vis, _buckets, _ = get_lrb_cache(x.size(1), _lp_P, _lp_L, device=x.device)
+                _vis, _buckets, _ = get_lrb_cache(x.size(1), _lp_P, _lp_L, device=x.device,
+                                                  roles=getattr(self.config, 'lane_rel_bias_roles', True))
                 _dt = torch.bfloat16 if x.is_cuda else x.dtype
                 _bias = self.lane_rel_bias[:, _buckets.clamp(min=0)][None].to(_dt)
                 _lrb_mask = torch.where(_vis[None, None], _bias, torch.tensor(float('-inf'), device=x.device, dtype=_dt))

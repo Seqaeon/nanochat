@@ -257,3 +257,34 @@ def test_lrb_normalized_distribution_and_gradients():
     assert model.lane_rel_bias.grad.norm().item() > 0.0
     assert model.lane_offset_embed.weight.grad.norm().item() > 0.0
 
+
+def test_lrb_roles_collapsed_control_keeps_only_offset_gap_buckets():
+    """S16-C control: with the lane roles collapsed, every visible lane-to-lane pair falls in its
+    offset-gap bucket (0..6), the prefix buckets and offsets are unchanged, and the lane order
+    stays a normalised distribution."""
+    from nanochat.lanes import compute_lrb_buckets
+    N, P, L = 32, 8, 4
+    vis, full, off = compute_lrb_buckets(N, P, L)
+    _, col, off2 = compute_lrb_buckets(N, P, L, roles=False)
+    lanes = torch.arange(N) >= P
+    ll = vis & lanes[:, None] & lanes[None, :]
+    assert full[ll].max() >= 7 and col[ll].max() < 7               # roles were in use, and now are not
+    assert torch.equal(col[ll], full[ll] % 7)                      # the offset-gap bucket is kept
+    assert torch.equal(col[~ll], full[~ll]) and torch.equal(off, off2)
+    cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=64, vocab_size=4, sequence_len=16,
+                    window_pattern="L", lane_rel_bias=True, lane_offset_embed=True, lane_rel_bias_roles=False)
+    torch.manual_seed(42)
+    model = GPT(cfg)
+    model.init_weights(verify=True)
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(torch.randn_like(p) * 0.1)
+    assert _lane_total(model, lane_mask(8, 2, 2), V=4, P=2, L=2, N=8) == pytest.approx(0.0, abs=1e-3)
+
+
+def test_lookahead_band_runs_from_a_quarter_of_the_lane_to_before_the_junction():
+    from scripts.sap_position_bpb import lookahead_band
+    assert lookahead_band(list(range(30))) == sum(range(8, 29))      # L = 64: offsets 8-28
+    assert lookahead_band(list(range(15))) == sum(range(4, 14))      # L = 128: offsets 4-13
+    assert lookahead_band(list(range(60))) == sum(range(15, 59))     # L = 32: offsets 15-58
+
