@@ -4,21 +4,6 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
-## 2026-10-06: S16 Noise Control: dense is exact (0.9346), lanes seed 1 lands at 1.0061 (no code shift)
-
-Data: `scratch/s16/s11_ladder_bpb_d8_s16_noise.json` (d8 models at 1x tokens, evaluated over 256 rows on H100).
-
-- **Dense baseline replicated identically to 4 decimal places:**
-  - `S11dense_x1_s1_cur` block bpb: 0.9346 (original `S11dense_x1_s1`: 0.9346).
-  - The dense baseline is rock solid across runs.
-- **Lanes baseline confirms seed noise, not systematic code shift:**
-  - `S11ln64x1_s1_cur` block bpb: 1.0061 (original `S11ln64x1_s1`: 1.0076, difference -0.15%).
-  - It did NOT land <= 1.0046 (and nowhere near seed 2's 1.0029).
-  - Verdict: the training code did not shift to systematically improve lanes. The 0.47% spread between seed 1 (1.0061-1.0076) and seed 2 (1.0029) is genuine run-to-run seed variance in plain lanes at d8.
-  - S16-C's 0.1-0.3% delta is entirely within this noise floor.
-
----
-
 ## 2026-10-06: S16-C settlement: d8 lanes noise is 0.3-0.5%, so decide nothing at that size on two seeds
 
 Data: `scratch/s16/s16_score_d8_s16_c2_full.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.
