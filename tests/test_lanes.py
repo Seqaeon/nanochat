@@ -217,3 +217,43 @@ def test_infill_rows_are_a_normalised_distribution():
     assert cold.numel() == 1 and perm.tolist() != list(range(8))
     assert _infill_total(model, perm, cold) == pytest.approx(0.0, abs=1e-3)      # measured ~1e-8
     assert abs(_infill_total(model, perm, cold[:0])) > 5e-3                       # measured ~0.1
+
+
+def test_lrb_normalized_distribution_and_gradients():
+    """S16-C: With learned lane-relative attention bias and input offset embeddings,
+    the model remains an exact normalized probability distribution (logsumexp == 0.0),
+    and loss gradients cleanly backpropagate into both LRB and offset parameters."""
+    from nanochat.lanes import compute_lrb_buckets, deduce_lane_layout
+
+    # 1. Bucket and layout deduction checks
+    m = lane_mask(32, 8, 4)
+    P, L = deduce_lane_layout(m)
+    assert (P, L) == (8, 4)
+    vis, buckets, offsets = compute_lrb_buckets(32, 8, 4)
+    assert vis.shape == (32, 32)
+    assert buckets[vis].min().item() >= 0 and buckets[vis].max().item() <= 43
+
+    # 2. Probability normalization check
+    cfg = GPTConfig(n_layer=2, n_head=2, n_kv_head=2, n_embd=64, vocab_size=4, sequence_len=16,
+                    window_pattern="L", lane_rel_bias=True, lane_offset_embed=True)
+    torch.manual_seed(42)
+    model = GPT(cfg)
+    model.init_weights(verify=True)
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(torch.randn_like(p) * 0.1)
+
+    assert _lane_total(model, lane_mask(8, 2, 2), V=4, P=2, L=2, N=8) == pytest.approx(0.0, abs=1e-3)
+
+    # 3. Gradient check
+    model.train()
+    x = torch.randint(0, 4, (2, 16))
+    y = torch.randint(0, 4, (2, 16))
+    x_in = lane_inputs(x, 4, 2, 3)
+    loss = model(x_in, y, lane_mask=lane_mask(16, 4, 2), lane_params=(4, 2))
+    loss.backward()
+    assert model.lane_rel_bias.grad is not None
+    assert model.lane_offset_embed.weight.grad is not None
+    assert model.lane_rel_bias.grad.norm().item() > 0.0
+    assert model.lane_offset_embed.weight.grad.norm().item() > 0.0
+
