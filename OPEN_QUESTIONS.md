@@ -1221,9 +1221,15 @@ Details in `s16_lanes_recovery_brainstorm.md`.
 
 Plus two ingredients, offset temperature and backward heads. S16-E (checkerboard lanes) was plain lanes relabelled and is killed.
 
-**Decides next.**
-- M0, eval-only: does recovery grow with training tokens (d4, 1x against 4x)? That picks training signal (A, B) or capacity (D).
-- M1, d8 gates: S16-A at f = 0.25 and S16-B, read in deficit and recovery nats per lane against `S11ln64x1_s1`. Pre-registered bars and kills are in each card.
+**Decided (2026-10-06).**
+- M0: Recovery is training-signal limited (+5.655 nats from 1x to 4x tokens at d4).
+- M1: S16-A (PPI) is KILLED by pre-registered criteria (recovery gain +0.10 nats < 0.4 bar; Block BPB +0.29% worse). Random span infill does not induce stride-aligned lookahead.
+- M1: S16-B (Any-L) PASSES "no-worse" gate (matches single-L within 0.05% at L=64 and 0.28% at L=32), validating a single model for variable inference parallelism, but yields 0.0 recovery gain.
+
+**Open next mechanisms for S16:**
+- S16-C: Lane-relative attention bias (LRB). Can learned per-head biases for lane roles (same/next/prev) and offset-distance address the cross-lane recovery deficit directly at 0 FLOPs?
+- S16-F: One-stream bridged lanes (BL1). Eliminates the 2-stream penalty of S11 while preserving the bisection/bridged lookahead structure that achieved 0.07% TC in the oracle.
+- S16-D: Offset-routed recovery capacity (ORC) at offsets >= S/2.
 
 **Option for the user.** S16-G, converting a pretrained model to lanes, changes the paper's claim and is the user's call.
 

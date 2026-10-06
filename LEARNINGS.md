@@ -4,6 +4,43 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
+## 2026-10-06: S16 Stage M1: PPI killed; Any-L matches single-L without raising recovery
+
+Data: `scratch/sync_d8/s16_score_d8_m1_cross.json` and `s11_ladder_bpb_d8_s16_m1.json` (d8 models at 1x tokens, evaluated across 256 rows on H100).
+
+- **Control baselines across L (Plain Lanes L=32, 64, 128 against Dense 0.9346 BPB):**
+  - L=32: Block BPB 0.9806 (+4.92% tax), extra nats/lane 10.434, deficit 15.756, recovery -5.322, offset-0 share 41.9%.
+  - L=64: Block BPB 1.0076 (+7.82% tax), extra nats/lane 7.562, deficit 11.652, recovery -4.090, offset-0 share 57.8%.
+  - L=128: Block BPB 1.0457 (+11.89% tax), extra nats/lane 5.663, deficit 8.872, recovery -3.209, offset-0 share 78.0%.
+  - **Key Scaling Trend:** As parallelism increases (shorter lane length per stream $N/L$), offset-0 error skyrockets to 78% of the total lane penalty. Streams are blind to one another at start.
+- **S16-A (PPI, Position-Preserving Infill Rows, f=0.25): KILLED BY PRE-REGISTERED CRITERION.**
+  - Pre-registered kill bar: Recovery gain < 0.4 nats/lane vs S11 baseline at L=64, or Block BPB not lower than baseline.
+  - Measured: Block BPB 1.0105 (+8.12% tax; +0.29% worse than 1.0076 baseline). Extra nats/lane 7.823 (+0.26 higher). Deficit 11.811 (+0.16 higher). Recovery -3.989 (baseline -4.090, gain +0.10 nats, well below 0.4 bar).
+  - **Mechanism Failure Diagnosis:** Random middle-span infill rows teach the model arbitrary prefix-suffix dependencies, but fail to teach stride-regular lookahead across lockstep parallel streams. The distribution shift diluted causal capacity without aiding recovery.
+- **S16-B (Any-L mixture across {16, 32, 64, 128}): PASSES "no-worse" gate, but does NOT raise recovery.**
+  - At L=64: Block BPB 1.0081 (+7.86% tax; only +0.05% vs dedicated single-L 1.0076, well inside <=0.5% gate). Extra nats/lane 7.563 vs 7.562 (identical to 0.001 nats). Recovery -4.023 vs -4.090 (+0.07 nats).
+  - At L=32: Block BPB 0.9834 (+5.23% tax; only +0.28% vs dedicated single-L 0.9806, within <=0.5% gate). Recovery -5.412 vs -5.322.
+  - At L=128: Block BPB 1.0571 (+13.11% tax vs dedicated 1.0457, +1.09% gap). Recovery -2.817 vs -3.209.
+  - **Engineering Value:** Confirms that a single model can natively support multiple inference parallelisms (e.g. L=32 and L=64) without retraining.
+  - **Architectural Value:** Any-L does not solve the recovery bottleneck. Training signal variation across L does not give the attention heads an explicit cross-lane bias.
+
+---
+
+## 2026-10-06: S16 Stage M0: lanes' recovery is sample/signal-limited, not capacity-limited
+
+Data: `out/s03_sap/s16_score_d4_tokens.json` (d4 plain lanes L=64 scored at 1x vs 4x tokens against d4 dense reference).
+
+- **Recovery grows dramatically with training tokens (+5.65 nats/lane from 1x to 4x).**
+  - At 1x tokens (`S11ln64x1_s1`): deficit is +9.338 nats/lane, recovery is -1.930 nats/lane, net extra nats +7.408 (block bpb 1.1946 vs dense 1.1232, +6.36% tax).
+  - At 4x tokens (`S11ln64x4_s1` and `s2`): deficit falls to +7.083 / +7.013 nats/lane, and recovery surges to -7.593 / -7.578 nats/lane (mean -7.585).
+  - Net extra nats per lane becomes negative (-0.510 / -0.564 nats/lane), and block bpb drops to 1.1162 / 1.1155 (0.9938x / 0.9931x of dense-1x, beating dense-1x).
+  - Late offset ratios (reading the next lane's start) drop from 0.975 (offsets 16-28) to 0.891, and offset 29 drops from 0.853 to 0.625.
+  - Recovery growth is +5.655 nats/lane (+2.83 nats per doubling of tokens), far exceeding the pre-registered bar of ≥ 2.0 nats.
+  - **Verdict on S16 mechanisms:** Recovery is bottlenecked by the training signal showing lookahead tokens, not model capacity.
+  - Per pre-registered protocol, **training-signal mechanisms (S16-A PPI infill rows and S16-B Any-L lanes) receive top priority.**
+
+---
+
 ## 2026-10-06: S16 coding: an order is its step table; check a proposed order against the plain ones
 
 - **An order is fully defined by the step at which each position is drawn.**
