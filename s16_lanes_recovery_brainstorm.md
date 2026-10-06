@@ -379,6 +379,15 @@ How to read it: nats per lane over lanes 1..63; band = `lookahead_band`; "traine
    - **Go:** T_0.25 ≤ 3.0%. A public pretrained model then becomes the paper's core, and the claim changes to conversion.
    - **Promising:** T_1 ≤ 4.5%, one more probe.
    - **Dead:** T_1 ≥ 6.5%. Then run S16-F.
+
+   **Results (2026-10-06, `scratch/s16/s11_ladder_bpb_d8_s16_g1.json`):**
+   - Reference `S11dense_x1_s1`: 0.9346 BPB.
+   - `S16dcx0.25_s1`: 0.9476 BPB (schedule restart degraded loss vs initial checkpoint).
+   - `S16dcx1_s1`: 0.9158 BPB.
+   - `S16cv64x0.25_s1`: 1.0241 BPB ($+8.07\%$ vs continued dense, $+9.58\%$ vs initial dense, lookahead band $-0.203$).
+   - `S16cv64x1_s1`: 0.9867 BPB ($T_1 = +7.75\%$ vs continued dense, $+5.58\%$ vs initial dense, lookahead band $-3.050$, offset 0 share $79.9\%$).
+   - **Verdict: DEAD.** $T_1 = +7.75\% \ge 6.5\%$. Initializing from a dense trunk leaves the offset-0 blindness and parallel lockstep tax intact ($7.75\%$ matches the from-scratch $7.3\text{--}7.8\%$ tax). Per pre-registered protocol, proceed directly to S16-F.
+
 3. **S16-F, one-stream bridged lanes (coded):**
    - `nanochat/lanes.py::bridged_slot_steps`, `step_inputs`, `step_mask`; `scripts/base_train.py --lane-bridge N`; scoring spec `boL_N`.
    - Each slot runs at its target's step, and a slot whose input is drawn later holds the lane token.

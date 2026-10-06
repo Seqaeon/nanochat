@@ -4,6 +4,24 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
+## 2026-10-06: S16-G conversion test: dense trunk initialization does not break lockstep tax (T_1 = +7.75% >= 6.5% kill)
+
+Data: `scratch/s16/s11_ladder_bpb_d8_s16_g1.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.
+
+- **Conversion inherits the trunk representations but not inter-stream coordination:**
+  - `S16cv64x1_s1` (L = 64 converted from `S11dense_x1_s1`) lands at 0.9867 block bpb. Against token-matched continued dense `S16dcx1_s1` (0.9158), tax is $T_1 = +7.75\%$. Against initial dense (0.9346), tax is $+5.58\%$.
+  - At 0.25x tokens, `S16cv64x0.25_s1` lands at 1.0241 (+8.07% tax vs continued dense 0.9476).
+  - Both exceed the pre-registered kill threshold ($T_1 \ge 6.5\%$). Pretrained conversion is dead.
+- **Offset-0 blindness is structural, not a pretraining deficiency:**
+  - Even initialized from a fully converged dense trunk, offset 0 accounts for 79.9% of the extra nats in `cv64x1` (nats ratio 2.340x).
+  - Lookahead band is −3.05 nats per lane.
+  - Causal parallel lockstep streams fail because offset 0 is fundamentally blind to intra-pass tokens; pretraining features cannot bridge this architectural bottleneck.
+- **Continuation schedule requires LR floor, not fresh warmup:**
+  - `S16dcx0.25_s1` (0.9476) degraded relative to initial checkpoint (0.9346) because standard warmup reset the learning rate too high for fine-tuning. Full 1.0x continuation recovered to 0.9158.
+
+---
+
+
 ## 2026-10-06: S16-C settlement: d8 lanes noise is 0.3-0.5%, so decide nothing at that size on two seeds
 
 Data: `scratch/s16/s16_score_d8_s16_c2_full.json`. Details in `s16_lanes_recovery_brainstorm.md` §7.
