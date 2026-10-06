@@ -4,6 +4,27 @@ Durable concepts learned and misunderstandings corrected during this project.
 
 ---
 
+## 2026-10-06: S16-C (LRB + Input Offset Embeddings): 0.51% Block BPB Drop with 0 Extra FLOPs
+
+Data: `scratch/s16_score_d8_m1_lrb.json` and `scratch/s11_ladder_bpb_d8_s16_m1_lrb.json` (d8 model `S16lrbL64x1_s1`, 440.4M tokens, evaluated on 256 rows on H100).
+
+- **Performance & Gate Evaluation:**
+  - **Block BPB:** Drops from $1.0076$ (`S11ln64x1_s1`) to **$1.0025$** (**-0.51% BPB reduction**), comfortably beating the pre-registered $\ge 0.3\%$ threshold ($\le 1.0045$).
+  - **Extra nats / lane:** Drops from $7.562$ to **$7.018$** (**-0.544 nats**, a **7.2% reduction in extra lane penalty**).
+  - **Deficit nats / lane:** Drops from $11.652$ to **$11.333$** (**-0.319 nats** reduction in blindness deficit).
+  - **Recovery nats / lane:** Improves from $-4.090$ to **$-4.314$** (**+0.224 nats**).
+  - **FLOPs added:** **0.00%** (additive relative bias in SDPA, embedding lookup in residual stream).
+  - **Sequential steps:** **30 steps** (exact match to $L=64$ lockstep decoding).
+- **Offset Convergence Acceleration:**
+  - The relative bias helped across the middle and late offsets: offsets 8–15 ratio dropped from $1.056$ to $1.044$ (-0.012), offsets 16–28 ratio dropped from $0.937$ to $0.931$ (-0.006).
+  - Offset 0 share rose from $57.8\%$ to $62.1\%$ because the rest of the lane became substantially more efficient while offset 0 blindness remained the persistent structural ceiling ($2.339\times$).
+- **Learned Weight Interpretability:**
+  - **Heads 0 & 3:** Strongly learned to suppress same-lane self-attention (Bucket 0 weights are **$-18.52$** and **$-16.38$**), pushing queries to attend outward to prefix tokens and earlier lanes.
+  - **Head 3:** Discovered an exponential distance decay prior within the lane without supervision: $+8.41 \to +7.23 \to +6.61 \to +6.25 \to +5.89 \to +5.23$ from distance 1 to 6.
+  - **Offset Embeddings:** Norms scale monotonically from offset 1 (191.0) to offset 9 (209.0), with offset 0 having a distinctive norm (220.0) distinguishing stream initialization.
+
+---
+
 ## 2026-10-06: S16 Stage M1: PPI killed; Any-L matches single-L without raising recovery
 
 Data: `scratch/sync_d8/s16_score_d8_m1_cross.json` and `s11_ladder_bpb_d8_s16_m1.json` (d8 models at 1x tokens, evaluated across 256 rows on H100).
