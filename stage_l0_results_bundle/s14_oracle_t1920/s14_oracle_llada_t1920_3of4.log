@@ -1,0 +1,3 @@
+oracle GSAI-ML/LLaDA-8B-Base: mask 126336, shift 0 (probe {0: 0.39145782849514527, 1: 12.587584703226122}), right-context probe {'both_sides': 0.26041772961616516, 'left_only': 1.5026503056287766, 'ratio': 0.1733056111862265}; shard 3/4: 4 of 16 rows of 128 + 1921 tokens, row hash 6bcd550836218394, 61,832 oracle passes (exact chain)
+resuming: 3 of 4 rows already scored
+row 15 (1/1, 1200s): nats over the l2r chain: lanes32=-7.2 lanes64=+30.2 lanes128=+101.4 bl32_8=+13.4 random30=+350.9 conf30=+3743.7 conf60=+3296.2

@@ -1,0 +1,9 @@
+oracle GSAI-ML/LLaDA-8B-Base: mask 126336, shift 0 (probe {0: 0.39145782849514527, 1: 12.587584703226122}), right-context probe {'both_sides': 0.26041772961616516, 'left_only': 1.5026503056287766, 'ratio': 0.1733056111862265}; shard 1/4: 4 of 16 rows of 128 + 1921 tokens, row hash 6bcd550836218394, 61,832 oracle passes (exact chain)
+row 1 (1/4, 1166s): nats over the l2r chain: lanes32=+119.6 lanes64=+164.2 lanes128=+350.7 bl32_8=+96.9 random30=+543.1 conf30=+4183.6 conf60=+3518.6
+row 5 (2/4, 1166s): nats over the l2r chain: lanes32=+14.0 lanes64=+90.2 lanes128=+178.8 bl32_8=+75.0 random30=+385.7 conf30=+3276.2 conf60=+2640.1
+row 9 (3/4, 1166s): nats over the l2r chain: lanes32=+55.2 lanes64=+104.9 lanes128=+158.2 bl32_8=+1.2 random30=+293.8 conf30=+3775.8 conf60=+3164.3
+row 13 (4/4, 1166s): nats over the l2r chain: lanes32=+24.8 lanes64=+101.0 lanes128=+272.0 bl32_8=-5.1 random30=+367.8 conf30=+3594.5 conf60=+3077.7
+oracle GSAI-ML/LLaDA-8B-Base: mask 126336, shift 0 (probe {0: 0.39145782849514527, 1: 12.587584703226122}), right-context probe {'both_sides': 0.26041772961616516, 'left_only': 1.5026503056287766, 'ratio': 0.1733056111862265}; shard 1/4: 4 of 16 rows of 128 + 1921 tokens, row hash 6bcd550836218394, 61,832 oracle passes (exact chain)
+resuming: 4 of 4 rows already scored
+oracle GSAI-ML/LLaDA-8B-Base: mask 126336, shift 0 (probe {0: 0.39145782849514527, 1: 12.587584703226122}), right-context probe {'both_sides': 0.26041772961616516, 'left_only': 1.5026503056287766, 'ratio': 0.1733056111862265}; shard 1/4: 4 of 16 rows of 128 + 1921 tokens, row hash 6bcd550836218394, 61,832 oracle passes (exact chain)
+resuming: 4 of 4 rows already scored

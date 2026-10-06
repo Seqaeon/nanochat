@@ -1,0 +1,678 @@
+2026-10-05 21:09:26,779 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/agent-harnesses "HTTP/1.1 200 OK"
+2026-10-05 21:09:26,858 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/main/kernel-status.toml "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-10-05 21:09:26,858 - huggingface_hub.utils._http - [33m[1mWARNING[0m - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-10-05 21:09:26,935 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/main/build?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,016 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/revision/main "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,109 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/tree/de87b9b5af06dd9984df595bef90b2eba44b181a?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,195 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/__init__.py "HTTP/1.1 307 Temporary Redirect"
+2026-10-05 21:09:27,231 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py=&etag=%226c880f44203ba43b62b3465d6de77eb20f1e03e[1m8%[0m22 "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,252 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_interface.py "HTTP/1.1 307 Temporary Redirect"
+2026-10-05 21:09:27,253 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/varunneal/flash-attention-3/resolve/de87b9b5af06dd9984df595bef90b2eba44b181a/build/torch29-cxx11-cu128-x86_64-linux/flash_attention_3/flash_attn_config.py "HTTP/1.1 307 Temporary Redirect"
+2026-10-05 21:09:27,269 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2F__init__.py=&etag=%226c880f44203ba43b62b3465d6de77eb20f1e03e[1m8%[0m22 "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,279 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/models/varunneal/flash-attention-3/xet-read-token/de87b9b5af06dd9984df595bef90b2eba44b181a "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,285 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py=&etag=%2248f62eb48ad4005c223687f3c7e7be[1m0115633829%[0m22 "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,286 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py=&etag=%22d66ad504a8025d7e7e632f7e84d4543d66a0a68e%22 "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,324 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_interface.py=&etag=%22d66ad504a8025d7e7e632f7e84d4543d66a0a68e%22 "HTTP/1.1 200 OK"
+2026-10-05 21:09:27,325 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/resolve-cache/models/varunneal/flash-attention-3/de87b9b5af06dd9984df595bef90b2eba44b181a/build%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py?%2Fvarunneal%2Fflash-attention-[1m3%[0m2Fresolve%2Fde87b9b5af06dd9984df595bef90b2eba44b181a%2Fbuild%2Ftorch29-cxx11-cu128-x86_64-linux%2Fflash_attention_[1m3%[0m2Fflash_attn_config.py=&etag=%2248f62eb48ad4005c223687f3c7e7be[1m0115633829%[0m22 "HTTP/1.1 200 OK"
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cuda
+2026-10-05 21:09:33,777 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+Device: cuda (ddp=False, world_size=1)
+GPU: NVIDIA H200 | Peak FLOPS (BF16): 9.89e+14
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+✓ Using Flash Attention 3 (Hopper GPU detected) — efficient and fast.
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 2048,
+  "vocab_size": 32768,
+  "n_layer": 12,
+  "n_head": 6,
+  "n_kv_head": 6,
+  "n_embd": 768,
+  "use_moe": false,
+  "use_perm": false,
+  "moe_num_experts": 8,
+  "moe_router_dim": 64,
+  "moe_embed_dim": 64,
+  "dropout": 0.0,
+  "use_remix_linear": false,
+  "remix_context_dim": 64,
+  "remix_context_dim_ratio": 6,
+  "remix_basis_size": 64,
+  "remix_output_gate_rank": 16,
+  "remixed_linear_kwargs": {
+    "use_basis_gate": true,
+    "use_output_gate": true,
+    "use_context": true,
+    "basis_gate_mode": "mlp",
+    "sparse_gate_k": 0,
+    "gate_temperature": 1.0,
+    "basis_scale_factor": 4,
+    "n_templates": 1,
+    "template_routing_learned": false,
+    "template_topk": 0,
+    "tiny_expert": false,
+    "tiny_expert_topk": 16,
+    "lokr_expert": false,
+    "lokr_n_experts": 64,
+    "lokr_topk": 16,
+    "lokr_rank": 4,
+    "lokr_learned": false,
+    "basis_gate_rank": 8,
+    "disable_ln_basis": false,
+    "chunk_route_impl": "compose",
+    "top1_gate": "ones",
+    "template_delta_rank": 0,
+    "route_side": "output",
+    "drop_basis_proj": false,
+    "basis_side_templates": 0,
+    "grad_equalize": false,
+    "output_gate_rank": 16,
+    "operator_modulation": "none",
+    "lie_generators": 4,
+    "poly_order": 2,
+    "grassmann_bank_size": 4
+  },
+  "use_pos_embed": false,
+  "moe_use_abs_pos_embed": false,
+  "use_layer_context": true,
+  "scale_basis_size": true,
+  "remix_use_dual_gate": false,
+  "remix_use_fused": false,
+  "p26_output_gated_linear": 0,
+  "p28_shared_basis": 0,
+  "p28_chunk_routing_size": 0,
+  "p28_global_template_bank": "none",
+  "p28_attn_proj_templates": 0,
+  "p28_attn_qk_templates": 0,
+  "p29_template_block_diag": 0,
+  "p29_template_lr_scale": 1.0,
+  "p29_grad_equalize": 0,
+  "p34_ffn_mult": 4.0,
+  "p34_ffn_single": 0,
+  "p34_dense_attn": 0,
+  "legacy_init_fallback": 0,
+  "p35_template_diversity_lambda": 0.0,
+  "p22_route_affine": 0,
+  "p34_ffn_schedule": "",
+  "p34_ffn_no_ffn_replacement": "none",
+  "p34_ffn_last_depth": 1,
+  "p36_swiglu_ffn": 0,
+  "p36_swiglu_mult": 2.6666666666666665,
+  "cond_sites": "both",
+  "cond_rank": 256,
+  "cond_mult_steps": 0,
+  "cond_gate_source": "router",
+  "cond_coeff_act": "centered",
+  "cond_router_rank": 0,
+  "cond_live_init": 0.0,
+  "cond_router_act": "none",
+  "cond_chunk_size": 0,
+  "cond_mult_scale": -1.0,
+  "cond_mult_impl": "wy",
+  "cond_attn_projs": "qkvo",
+  "cond_layer_frac": 1.0,
+  "perm_expert_mode": "low_rank",
+  "perm_rank": 16,
+  "router_context_window": -1,
+  "router_causal": true,
+  "router_num_heads": 4,
+  "router_num_queries": 16,
+  "router_n_layers": 2,
+  "router_use_vocab_prior": false,
+  "window_pattern": "L",
+  "cclblock_modulation": "weight",
+  "cclblock_orth_lambda": 0.0,
+  "cclblock_context_stream": "local",
+  "cclblock_ema_factor": 0.99,
+  "cclblock_stale_ctx_lag": 0,
+  "cclblock_sparse_gate_k": 0,
+  "cclblock_gate_temperature": 1.0,
+  "cclblock_context_bank_size": 0,
+  "cclblock_per_head_ctx": false,
+  "cclblock_context_source": "norm_x",
+  "cclblock_chunk_size": 0,
+  "cclblock_aux_objective": "none",
+  "cclblock_aux_lambda": 0.1,
+  "cclblock_boundary_token_id": 198,
+  "use_ral": false,
+  "ral_rank": 32,
+  "cclblock_film_gate": false,
+  "cclblock_attn_shadow_dim": 0,
+  "cclblock_dynamic_ratio": 0.25,
+  "cclblock_gate_rank": 8,
+  "cclblock_num_regimes": 8,
+  "cclblock_regime_temperature": 1.0,
+  "cclblock_poly_order": 2,
+  "cclblock_lie_generators": 4,
+  "cclblock_grassmann_bank_size": 4,
+  "cclblock_tucker_rank": 32,
+  "cclblock_tucker_modes": 8,
+  "cclblock_svs_rank": 64,
+  "cclblock_svs_eps": 0.1,
+  "cclblock_vq_codes": 8,
+  "cclblock_vq_temperature": 1.0,
+  "cclblock_dcu_warmup_steps": 0,
+  "cclblock_fsi_rotations": 8,
+  "cclblock_fsi_selector_dim": 64,
+  "cclblock_aesp_strata": 4,
+  "cclblock_aesp_delta_rank": 4,
+  "cclblock_ckr_branches": 4,
+  "cclblock_ckr_kernel_size": 64,
+  "cclblock_ckr_pos_channels": 1,
+  "cclblock_ckr_dual_optim": 0,
+  "cclblock_ckr_content_bias": 0.0,
+  "cclblock_giad_rank": 32,
+  "cclblock_psg_kernel_size": 64,
+  "cclblock_ss_dynamic_ratio": 0.25,
+  "cclblock_ss_branches": 2,
+  "cclblock_ss_kernel_size": 64,
+  "cclblock_lokr_branches": 8,
+  "cclblock_lokr_rank": 16,
+  "cclblock_ckr_temp_start": 2.0,
+  "cclblock_ckr_temp_end": 0.3,
+  "cclblock_com_kernel_size": 32,
+  "cclblock_ckr_ortho_init": 0,
+  "cclblock_ckr_branch_dropout": 0.0,
+  "cclblock_ckr_diversity_lambda": 0.0,
+  "cclblock_ckr_layer_selective": 0,
+  "cclblock_pgr_kernel_size": 64,
+  "cclblock_cil_kernel_size": 64,
+  "cclblock_prb_kernel_size": 64,
+  "p18_layer_drop": 0.0,
+  "p18_dynamic_activation": 0,
+  "p18_mixture_norm": 0,
+  "p18_causal_attn_bias": 0,
+  "p18_aux_sim_lambda": 0.0,
+  "p18_gradient_penalty": 0.0,
+  "p18_per_channel_scale": 0,
+  "p19_residual_gate": 0,
+  "p19_head_importance": 0,
+  "p19_residual_mix_groups": 0,
+  "p19_attn_logit_bias": 0,
+  "p19_residual_decay": 0,
+  "p19_grad_equilibrium": 0.0,
+  "p19_spectral_reparam": 0,
+  "p19_weight_anticollapse": 0.0,
+  "p19_ve_bias": 0,
+  "p19_weight_noise": 0.0,
+  "p20_hrcs_scale": 0,
+  "p20_lswr_scale": 0,
+  "p20_lswr_planes": 8,
+  "p20_lrcfb_branches": 0,
+  "p20_lrcfb_narrow": 0,
+  "p20_lrcfb_learned": 0,
+  "p20_lrcfb_topk": 0,
+  "p20_dgcr_branches": 0,
+  "p20_dgcr_aux_weight": 0.01,
+  "p20_mone_experts": 0,
+  "p20_mone_topk": 0,
+  "p20_mone_narrow": 1,
+  "p20_mone_frozen": 0,
+  "p20_ncea_branches": 0,
+  "p20_ncea_eps": 0.1,
+  "p20_adwi": 0,
+  "p20_pwu_branches": 0,
+  "p20_pwu_phase": 1,
+  "p20_fsvd_gate": 0,
+  "p20_wbfc_clusters": 0,
+  "p20_wbfc_active": 0,
+  "p21_per_experts": 0,
+  "p21_per_topk": 0,
+  "p21_per_learned": 0,
+  "p21_per_attn": 0,
+  "p22_attn_moe_route": "none",
+  "p23_tiny_expert": 0,
+  "p23_n_experts": 64,
+  "p23_topk": 16,
+  "p23_learned_route": 0,
+  "p23_std_moe_experts": 0,
+  "p23_std_moe_topk": -1,
+  "p23_std_moe_aux_weight": 0.01,
+  "p23_lokr": 0,
+  "p23_lokr_rank": 4,
+  "p23_use_shared_block_router": 0,
+  "p23_linear_moe_experts": 0,
+  "p23_linear_moe_topk": 0,
+  "p23_quantile_route": 0,
+  "remix_shared_context_gates": 0,
+  "p24_use_sliced_weight": 0,
+  "p24_sliced_weight_reduction_scale": 8,
+  "p24_sliced_weight_min_select": 128,
+  "p24_sliced_weight_scope": "per_token",
+  "p24_sliced_weight_balance_coeff": 0.01,
+  "p24_quantile_route": 0,
+  "p24_use_folded_mod": 0,
+  "p24_folded_mod_reduction_scale": 8,
+  "p24_folded_mod_min_dim": 128,
+  "p24_folded_mod_scope": "per_layer",
+  "p24_folded_mod_gate_act": "tanh_centered",
+  "p24_use_sequence_gated_linear": 0,
+  "p24_sequence_gated_scope": "per_layer",
+  "p24_sequence_gated_act": "tanh_centered",
+  "remix_disable_ln_basis": 0,
+  "dense_intermediate_ln": 0,
+  "use_mol": false,
+  "mol_n_blocks": 5,
+  "mol_n_shared": 1,
+  "mol_topk": 3,
+  "mol_thin_dim": 256,
+  "mol_head_dim": 64,
+  "mol_ffn_mult": 4.0,
+  "mol_router_aux": 0.05,
+  "mol_routed_attn": "softmax",
+  "mol_dispatch": 1,
+  "mol_capacity_factor": 1.0,
+  "mol_block_lr_scale": 1.0,
+  "mol_per_block_ve": 0,
+  "use_binary": false,
+  "binary_acts": true,
+  "binary_weight_scale": "row",
+  "binary_act_scale": "token",
+  "binary_clip": 1.0,
+  "binary_linear": true,
+  "binary_embeddings": true,
+  "binary_skip": "",
+  "binary_native": false,
+  "binary_tau": 1.0,
+  "binary_hard": false,
+  "binary_resid_width": 0,
+  "binary_attn_chunk": 256,
+  "use_mst": false,
+  "mst_n_subs": 8,
+  "mst_sub_dim": 64,
+  "mst_head_dim": 0,
+  "mst_input_mode": "fixed_slice",
+  "mst_rotated_slice_learned": false,
+  "mst_routing_mode": "soft_weighted",
+  "mst_routing_topk": 4,
+  "mst_routing_aux_weight": 0.01,
+  "mst_diversity_weight": 0.0,
+  "mst_ffn_mode": "standard",
+  "mst_ffn_every": 1,
+  "mst_transition_mode": "parallel",
+  "mst_final_mode": "aggregate_proj",
+  "mst_final_topk": -1,
+  "mst_ffn_shared_up": 0,
+  "mst_ffn_inner_dim": 0,
+  "mst_sub_dropout": 0.0,
+  "mst_transition_every": 1,
+  "mst_ffa_temperature": 1.0,
+  "mst_global_residual": 0,
+  "mst_hybrid_dense": 0,
+  "mst_cross_sub_kv": 0,
+  "mst_sub_aux_weight": 0.0,
+  "mst_progressive_merge": 0,
+  "mst_multi_scale_windows": 0,
+  "mst_delta_residual": 0,
+  "mst_sub_layers": 1,
+  "mst_grad_equalize": 0,
+  "mst_block_diagonal_muon": 0,
+  "mst_transition_width_mult": 1.0,
+  "mst_sub_lr_scale": 1.0,
+  "mst_shared_expert": 0,
+  "mst_router_entropy_weight": 0.0,
+  "mst_shared_kv_attn": 0,
+  "mst_contrastive_diversity_weight": 0.0,
+  "mst_transition_nonlinear": 0,
+  "mst_transition_gated": 0,
+  "mst_transition_mlp": 0,
+  "mst_cross_sub_gate": 0,
+  "mst_hyper_connect": 0,
+  "mst_cross_kv_inject": 0,
+  "mst_slice_transition": 0,
+  "mst_lookback_layers": 0,
+  "mst_bilinear_transition": 0,
+  "mst_cross_sub_qmod": 0,
+  "mst_feature_cycle": 0,
+  "mst_mean_transition": 0,
+  "mst_sub_head_dim": 0,
+  "mst_final_norm": 0,
+  "mst_per_stream_ve": 0,
+  "mst_ve_map": 0,
+  "mst_ve_map_rank": 0,
+  "mst_lm_head_dim": 0,
+  "mst_compose_windows": 0,
+  "mst_channel_mix": "none",
+  "mst_channel_mix_site": "layer",
+  "mst_distribute_block_muon": 0,
+  "mst_trans_spectral_lr": 0,
+  "mst_talking_heads": 0,
+  "mst_wo_mode": "block",
+  "mst_stream_topk": 0,
+  "mst_stream_shared": 0,
+  "mst_stream_router_aux": 0.01,
+  "mst_stream_router_noise": 0.0,
+  "mst_stream_dispatch": 0,
+  "mst_stream_capacity_factor": 1.0,
+  "mst_stream_gate_attn": 0,
+  "mst_ffn_monarch": "none",
+  "mst_shampoo": 0,
+  "mst_precond_every": 10,
+  "mst_shampoo_beta": 0.95,
+  "use_eet": false,
+  "eet_frozen_kv": true,
+  "eet_reenter_final": false,
+  "eet_router_type": "mlp2",
+  "eet_router_hidden": 0,
+  "eet_freq_prior_alpha": 0.0,
+  "eet_pos_prior_beta": 0.0,
+  "eet_domain_prior": false,
+  "eet_warmup_frac": 0.02,
+  "eet_explore_frac": 0.15,
+  "eet_reconstruct_lambda": 1.0,
+  "eet_efficiency_lambda_start": 0.01,
+  "eet_efficiency_lambda_end": 0.1,
+  "eet_translator_rank": 0,
+  "eet_max_frozen_kv_frac": 0.75,
+  "eet_exit_threshold": 0.5,
+  "eet_min_exit_layer": 1,
+  "eet_loss_variant": "reconstruct",
+  "eet_topk_vocab": 512,
+  "eet_entropy_lambda": 0.3,
+  "eet_surprise_lambda": 0.1,
+  "eet_adv_lambda": 1.0,
+  "eet_adv_entropy_lambda": 0.2,
+  "eet_quality_lambda": 1.0,
+  "eet_quality_entropy_bonus": 0.1,
+  "eet_gumbel_temp_start": 0.0,
+  "eet_gumbel_temp_end": 0.1,
+  "eet_gumbel_hard": true,
+  "eet_commitment_beta": 0.1,
+  "eet_global_router": false,
+  "eet_freq_efficiency_alpha": 0.0,
+  "eet_diversity_lambda": 0.0,
+  "eet_ce_guided_lambda": 1.0,
+  "eet_router_lr_mult": 5.0,
+  "eet_model_lr_mult": 1.0,
+  "eet_depth_weight_type": "none",
+  "eet_depth_weight_max": 2.5,
+  "eet_use_override": 0,
+  "eet_override_prob_start": 0.5,
+  "eet_override_prob_end": 0.1,
+  "eet_compute_skip": false,
+  "eet_target_active_frac": 0.125,
+  "eet_capacity_schedule": "bell",
+  "eet_exit_fracs": null,
+  "eet_capacity_alignment_lambda": 0.0,
+  "eet_kv_mode": "none",
+  "eet_route_noise": 0.0,
+  "eet_route_noise_end": -1.0,
+  "eet_coverage_diag": false,
+  "deep_supervision_lambda": 0.0,
+  "deep_supervision_frac": 0.125,
+  "eet_width_power": 0.0,
+  "eet_width_cap": 16.0,
+  "eet_kv_eager": false,
+  "eet_router_task_grad": true,
+  "eet_reinforce_interval": 0,
+  "eet_reinforce_lambda": 0.1,
+  "eet_exit_adapter_rank": 0,
+  "eet_router_after_block": 0,
+  "eet_ffn_skip": false,
+  "eet_ffn_target_frac": 0.5,
+  "eet_ffn_full_attn": true,
+  "eet_depth_affine": false,
+  "eet_capacity_anneal_frac": 0.0,
+  "eet_learned_schedule": false,
+  "eet_departure_summary": false,
+  "eet_route_consistency_lambda": 0.0,
+  "eet_dense_distill_interval": 0,
+  "eet_dense_distill_lambda": 0.5,
+  "eet_depth_lr_scale": false,
+  "eet_depth_grad_scale": false,
+  "eet_detach_aux_from_backbone": false,
+  "eet_detach_exit_from_backbone": false,
+  "use_code_head": false,
+  "sch_head_type": "code",
+  "sch_bits": 0,
+  "sch_order": 2,
+  "sch_max_m": 0,
+  "sch_phi_mode": "monomial",
+  "sch_code_mode": "binary",
+  "sch_code_path": "",
+  "sch_code_ecc_bits": 0,
+  "sch_code_seed": 1234,
+  "sch_phi_density": 0.0,
+  "sch_phi_dtype": "bf16",
+  "sch_phi_normalize": 1,
+  "sch_phi_center": 0,
+  "sch_g_type": "linear",
+  "sch_g_hidden": 0,
+  "sch_g_layers": 2,
+  "sch_g_out_std": 0.001,
+  "sch_mixture": 1,
+  "sch_residual_rank": 0,
+  "sch_logit_act": "none",
+  "sch_bias": 0,
+  "sch_input_mode": "table",
+  "sch_input_hidden": 0,
+  "sch_product_groups": 8,
+  "sch_product_codebook": 256,
+  "sch_product_source": "hash",
+  "sch_product_impl": "dense",
+  "sch_phi_whiten": 0,
+  "sch_mixture_per_phi": 0,
+  "sch_mixture_topk": 0,
+  "sch_mixture_aux": 0.01,
+  "sch_monarch_m1": 0,
+  "sch_monarch_perm": "none",
+  "sch_monarch_perm_path": "",
+  "sch_tier_bounds": "",
+  "sch_tier_caps": "",
+  "sch_tier_order": "freq",
+  "sch_tier_perm_path": "",
+  "sch_proposal_rank": 32,
+  "sch_proposal_topk": 16384,
+  "sch_proposal_samples": 4096,
+  "sch_proposal_warmup": 0,
+  "sch_proposal_chunk": 2048,
+  "sch_proposal_aux": 1.0,
+  "sch_nfh_mode": "cp",
+  "sch_nfh_rank": 32,
+  "sch_nfh_dims": "",
+  "sch_nfh_groups": 3,
+  "sch_nfh_views": 1,
+  "sch_nfh_perm": "none",
+  "sch_nfh_perm_path": "",
+  "sch_nfh_g_type": "linear",
+  "sch_nfh_g_hidden": 0,
+  "sch_rerank_mode": "topk",
+  "sch_rerank_k": 64,
+  "sch_rerank_rank": 32,
+  "sch_nfh_smooth": 0,
+  "sch_nfh_chunk": 256,
+  "sap_block_T": 0,
+  "sap_block_mode": "indep",
+  "sap_block_frac": 0.125,
+  "sap_lambda": 1.0,
+  "sap_head_layers": 2,
+  "sap_head_heads": 0,
+  "sap_head_mlp_mult": 2,
+  "sap_enc_layers": 1,
+  "sap_ctx_window": 16,
+  "sap_latent_groups": 4,
+  "sap_latent_codes": 16,
+  "sap_latent_dim": 64,
+  "sap_free_bits": 0.25,
+  "sap_kl_anneal_steps": 2000,
+  "sap_gumbel_tau": 1.0,
+  "sap_cp_components": 8,
+  "sap_field_rank": 8,
+  "sap_field_samples": 4,
+  "sap_field_energy_weight": 0.25,
+  "sap_field_topk": 16,
+  "sap_wta_k": 4,
+  "sap_u_freqs": 24,
+  "sap_u_interior": 0.8,
+  "sap_logit_chunk": 8192,
+  "sap_jacobi_sweeps": 2,
+  "sap_sir_topk": 16,
+  "sap_sir_rank": 32,
+  "sap_sir_anchor_stride": 16,
+  "sap_sir_fine_stride": 4,
+  "sap_sir_refine_frac": 0.25,
+  "sap_sir_tree_levels": 0,
+  "sap_sir_train_samples": 4,
+  "sap_sir_policy_weight": 1.0,
+  "sap_sir_posterior_mix": 0.5,
+  "sap_sir_draft_weight": 1.0,
+  "sap_sir_context_weight": 0.25,
+  "sap_sir_energy_weight": 0.25,
+  "sap_trunk_grad": 1.0,
+  "sap_lattice_k": 64,
+  "sap_pair_rank": 32,
+  "sap_tt_rank": 32,
+  "sap_cp_codes": 256,
+  "sap_nce_props": 0,
+  "sap_nce_neg": 4,
+  "sap_nce_weight": 1.0,
+  "sap_table_path": "",
+  "sap_supp_min_count": 0,
+  "sap_supp_penalty": 20.0,
+  "sap_soft_eps": 0.0,
+  "sap_code_classes": 128,
+  "sap_cut_pre_layers": 1,
+  "sap_depth_layers": 2,
+  "sap_depth_share": 0,
+  "sap_depth_bottom": 0,
+  "splice_k": 0
+}
+Seeded weight init with --seed 1
+Checkpoints directory: /vol/out/s03_sap/d12/S11dense_x2_s1
+Parameter counts:
+wte                     : 25,165,824
+wpe                     : 0
+value_embeds            : 150,994,944
+lm_head                 : 25,165,824
+transformer_matrices    : 84,935,808
+research                : 0
+scalars                 : 24
+total                   : 286,262,424
+Estimated FLOPs per token (total):  8.871022e+08
+COST_AXES precision=W16A16E16H16 bops_arith=1.1355e+11 energy_pj_per_token=7.1006e+08 inference_MiB=546.00 training_state_MiB=1887.12
+Estimated FLOPs per token (active): 8.871022e+08
+Estimated active params:            286,262,424
+Auto-computed optimal batch size: 524,288 tokens
+Scaling the LR for the AdamW parameters ∝1/√(768/768) = 1.000000
+Calculated number of iterations from target FLOPs: 4,410
+Total number of training tokens: 2,312,110,080
+Tokens : Scaling params ratio: 21.00
+Total training FLOPs estimate: 2.051078e+18
+Total training FLOPs (active):  2.051078e+18
+Total active training FLOPs estimate: 2.051078e+18
+Using base scheduler: linear warmup/flat/linear warmdown
+Tokens / micro-batch / rank: 16 x 2048 = 32,768
+Tokens / micro-batch: 32,768
+Total batch size 524,288 => gradient accumulation steps: 16
+Running pre-compilation warmup (1 dummy forward+backward to init lazy allocations)...
+Warmup complete. Steady-state VRAM: 3.3 GB allocated
+step 00000/04410 (0.00%) | loss: 10.397228 | lrm: 0.05 | lr(adamw:1.895e-02, muon:9.091e-04) | dt: 1013.16ms | tok/sec: 517,479 | bf16_mfu: 46.42 | epoch: 1 pq: 0 rg: 1 | total time: 0.00m
+step 00050/04410 (1.13%) | loss: 5.614016 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.55ms | tok/sec: 534,686 | bf16_mfu: 47.96 | epoch: 1 pq: 0 rg: 52 | total time: 0.67m | eta: 72.8m
+step 00100/04410 (2.27%) | loss: 4.552380 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 981.62ms | tok/sec: 534,104 | bf16_mfu: 47.91 | epoch: 1 pq: 1 rg: 17 | total time: 1.51m | eta: 72.5m
+step 00150/04410 (3.40%) | loss: 3.975248 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 979.17ms | tok/sec: 535,439 | bf16_mfu: 48.03 | epoch: 1 pq: 1 rg: 65 | total time: 2.35m | eta: 71.6m
+step 00200/04410 (4.54%) | loss: 3.768475 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 983.61ms | tok/sec: 533,022 | bf16_mfu: 47.81 | epoch: 1 pq: 2 rg: 30 | total time: 3.20m | eta: 70.8m
+step 00250/04410 (5.67%) | loss: 3.594943 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 997.17ms | tok/sec: 525,777 | bf16_mfu: 47.16 | epoch: 1 pq: 2 rg: 78 | total time: 4.03m | eta: 69.9m
+step 00300/04410 (6.80%) | loss: 3.454130 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 1104.27ms | tok/sec: 474,782 | bf16_mfu: 42.59 | epoch: 1 pq: 3 rg: 44 | total time: 4.88m | eta: 69.1m
+step 00350/04410 (7.94%) | loss: 3.457050 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 981.09ms | tok/sec: 534,394 | bf16_mfu: 47.93 | epoch: 1 pq: 4 rg: 10 | total time: 5.72m | eta: 68.3m
+step 00400/04410 (9.07%) | loss: 3.378839 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 992.14ms | tok/sec: 528,441 | bf16_mfu: 47.40 | epoch: 1 pq: 4 rg: 58 | total time: 6.56m | eta: 67.4m
+step 00450/04410 (10.20%) | loss: 3.355848 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 970.21ms | tok/sec: 540,385 | bf16_mfu: 48.47 | epoch: 1 pq: 5 rg: 24 | total time: 7.39m | eta: 66.5m
+step 00500/04410 (11.34%) | loss: 3.321408 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.55ms | tok/sec: 534,690 | bf16_mfu: 47.96 | epoch: 1 pq: 5 rg: 73 | total time: 8.23m | eta: 65.7m
+step 00550/04410 (12.47%) | loss: 3.315166 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.15ms | tok/sec: 534,904 | bf16_mfu: 47.98 | epoch: 1 pq: 6 rg: 38 | total time: 9.05m | eta: 64.7m
+step 00600/04410 (13.61%) | loss: 3.261359 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.30ms | tok/sec: 534,823 | bf16_mfu: 47.97 | epoch: 1 pq: 7 rg: 4 | total time: 9.87m | eta: 63.7m
+step 00650/04410 (14.74%) | loss: 3.197153 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 982.98ms | tok/sec: 533,363 | bf16_mfu: 47.84 | epoch: 1 pq: 7 rg: 53 | total time: 10.70m | eta: 62.9m
+step 00700/04410 (15.87%) | loss: 3.223647 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 1005.87ms | tok/sec: 521,227 | bf16_mfu: 46.75 | epoch: 1 pq: 8 rg: 19 | total time: 11.54m | eta: 62.1m
+step 00750/04410 (17.01%) | loss: 3.167336 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 971.19ms | tok/sec: 539,838 | bf16_mfu: 48.42 | epoch: 1 pq: 8 rg: 68 | total time: 12.38m | eta: 61.2m
+step 00800/04410 (18.14%) | loss: 3.162031 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 979.64ms | tok/sec: 535,183 | bf16_mfu: 48.00 | epoch: 1 pq: 9 rg: 34 | total time: 13.22m | eta: 60.4m
+step 00850/04410 (19.27%) | loss: 3.126151 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 1041.62ms | tok/sec: 503,339 | bf16_mfu: 45.15 | epoch: 1 pq: 10 rg: 0 | total time: 14.06m | eta: 59.6m
+step 00900/04410 (20.41%) | loss: 3.159821 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 968.22ms | tok/sec: 541,495 | bf16_mfu: 48.57 | epoch: 1 pq: 10 rg: 48 | total time: 14.89m | eta: 58.7m
+step 00950/04410 (21.54%) | loss: 3.182968 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.06ms | tok/sec: 534,952 | bf16_mfu: 47.98 | epoch: 1 pq: 11 rg: 13 | total time: 15.73m | eta: 57.9m
+step 01000/04410 (22.68%) | loss: 3.139050 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 981.67ms | tok/sec: 534,080 | bf16_mfu: 47.91 | epoch: 1 pq: 11 rg: 62 | total time: 16.57m | eta: 57.1m
+step 01050/04410 (23.81%) | loss: 3.154491 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 975.38ms | tok/sec: 537,522 | bf16_mfu: 48.21 | epoch: 1 pq: 12 rg: 28 | total time: 17.41m | eta: 56.3m
+step 01100/04410 (24.94%) | loss: 3.056774 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 981.50ms | tok/sec: 534,167 | bf16_mfu: 47.91 | epoch: 1 pq: 12 rg: 77 | total time: 18.25m | eta: 55.4m
+step 01150/04410 (26.08%) | loss: 3.093375 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.30ms | tok/sec: 534,826 | bf16_mfu: 47.97 | epoch: 1 pq: 13 rg: 43 | total time: 19.09m | eta: 54.6m
+step 01200/04410 (27.21%) | loss: 3.091627 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 979.79ms | tok/sec: 535,103 | bf16_mfu: 48.00 | epoch: 1 pq: 14 rg: 9 | total time: 19.93m | eta: 53.8m
+step 01250/04410 (28.34%) | loss: 3.089983 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 985.41ms | tok/sec: 532,049 | bf16_mfu: 47.72 | epoch: 1 pq: 14 rg: 58 | total time: 20.77m | eta: 52.9m
+step 01300/04410 (29.48%) | loss: 3.087481 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 1130.51ms | tok/sec: 463,763 | bf16_mfu: 41.60 | epoch: 1 pq: 15 rg: 23 | total time: 21.61m | eta: 52.1m
+step 01350/04410 (30.61%) | loss: 3.054562 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 970.87ms | tok/sec: 540,021 | bf16_mfu: 48.44 | epoch: 1 pq: 15 rg: 72 | total time: 22.44m | eta: 51.3m
+step 01400/04410 (31.75%) | loss: 3.091191 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 978.60ms | tok/sec: 535,751 | bf16_mfu: 48.06 | epoch: 1 pq: 16 rg: 38 | total time: 23.29m | eta: 50.4m
+step 01450/04410 (32.88%) | loss: 3.038829 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 980.91ms | tok/sec: 534,489 | bf16_mfu: 47.94 | epoch: 1 pq: 17 rg: 3 | total time: 24.13m | eta: 49.6m
+step 01500/04410 (34.01%) | loss: 3.059456 | lrm: 1.00 | lr(adamw:4.169e-01, muon:2.000e-02) | dt: 979.60ms | tok/sec: 535,205 | bf16_mfu: 48.01 | epoch: 1 pq: 17 rg: 51 | total time: 24.97m | eta: 48.8m
+step 01550/04410 (35.15%) | loss: 3.068381 | lrm: 1.00 | lr(adamw:4.160e-01, muon:1.996e-02) | dt: 980.11ms | tok/sec: 534,927 | bf16_mfu: 47.98 | epoch: 1 pq: 18 rg: 17 | total time: 25.81m | eta: 47.9m
+step 01600/04410 (36.28%) | loss: 3.083156 | lrm: 0.98 | lr(adamw:4.091e-01, muon:1.963e-02) | dt: 979.65ms | tok/sec: 535,181 | bf16_mfu: 48.00 | epoch: 1 pq: 18 rg: 65 | total time: 26.65m | eta: 47.1m
+step 01650/04410 (37.41%) | loss: 3.014858 | lrm: 0.96 | lr(adamw:4.022e-01, muon:1.930e-02) | dt: 978.11ms | tok/sec: 536,023 | bf16_mfu: 48.08 | epoch: 1 pq: 19 rg: 31 | total time: 27.49m | eta: 46.3m
+step 01700/04410 (38.55%) | loss: 3.031497 | lrm: 0.95 | lr(adamw:3.953e-01, muon:1.897e-02) | dt: 970.66ms | tok/sec: 540,135 | bf16_mfu: 48.45 | epoch: 1 pq: 19 rg: 79 | total time: 28.32m | eta: 45.4m
+step 01750/04410 (39.68%) | loss: 3.025812 | lrm: 0.93 | lr(adamw:3.884e-01, muon:1.863e-02) | dt: 979.61ms | tok/sec: 535,201 | bf16_mfu: 48.01 | epoch: 1 pq: 20 rg: 46 | total time: 29.16m | eta: 44.6m
+step 01800/04410 (40.82%) | loss: 3.035006 | lrm: 0.92 | lr(adamw:3.815e-01, muon:1.830e-02) | dt: 1004.89ms | tok/sec: 521,737 | bf16_mfu: 46.80 | epoch: 1 pq: 21 rg: 10 | total time: 30.00m | eta: 43.7m
+step 01850/04410 (41.95%) | loss: 3.043451 | lrm: 0.90 | lr(adamw:3.746e-01, muon:1.797e-02) | dt: 1133.32ms | tok/sec: 462,614 | bf16_mfu: 41.50 | epoch: 1 pq: 21 rg: 59 | total time: 30.84m | eta: 42.9m
+step 01900/04410 (43.08%) | loss: 2.965225 | lrm: 0.88 | lr(adamw:3.677e-01, muon:1.764e-02) | dt: 979.66ms | tok/sec: 535,171 | bf16_mfu: 48.00 | epoch: 1 pq: 22 rg: 24 | total time: 31.68m | eta: 42.1m
+step 01950/04410 (44.22%) | loss: 3.003858 | lrm: 0.87 | lr(adamw:3.608e-01, muon:1.731e-02) | dt: 989.21ms | tok/sec: 530,005 | bf16_mfu: 47.54 | epoch: 1 pq: 22 rg: 73 | total time: 32.52m | eta: 41.2m
+step 02000/04410 (45.35%) | loss: 2.968472 | lrm: 0.85 | lr(adamw:3.538e-01, muon:1.698e-02) | dt: 980.28ms | tok/sec: 534,837 | bf16_mfu: 47.97 | epoch: 1 pq: 23 rg: 38 | total time: 33.36m | eta: 40.4m
+step 02050/04410 (46.49%) | loss: 3.015849 | lrm: 0.83 | lr(adamw:3.469e-01, muon:1.665e-02) | dt: 981.46ms | tok/sec: 534,192 | bf16_mfu: 47.92 | epoch: 1 pq: 24 rg: 3 | total time: 34.20m | eta: 39.6m
+step 02100/04410 (47.62%) | loss: 2.984933 | lrm: 0.82 | lr(adamw:3.400e-01, muon:1.631e-02) | dt: 1110.91ms | tok/sec: 471,943 | bf16_mfu: 42.33 | epoch: 1 pq: 24 rg: 51 | total time: 35.05m | eta: 38.7m
+step 02150/04410 (48.75%) | loss: 2.969707 | lrm: 0.80 | lr(adamw:3.331e-01, muon:1.598e-02) | dt: 979.71ms | tok/sec: 535,148 | bf16_mfu: 48.00 | epoch: 1 pq: 25 rg: 17 | total time: 35.89m | eta: 37.9m
+step 02200/04410 (49.89%) | loss: 2.975725 | lrm: 0.78 | lr(adamw:3.262e-01, muon:1.565e-02) | dt: 981.15ms | tok/sec: 534,361 | bf16_mfu: 47.93 | epoch: 1 pq: 25 rg: 65 | total time: 36.73m | eta: 37.1m
+step 02250/04410 (51.02%) | loss: 2.929186 | lrm: 0.77 | lr(adamw:3.193e-01, muon:1.532e-02) | dt: 980.72ms | tok/sec: 534,596 | bf16_mfu: 47.95 | epoch: 1 pq: 26 rg: 30 | total time: 37.57m | eta: 36.2m
+step 02300/04410 (52.15%) | loss: 2.905296 | lrm: 0.75 | lr(adamw:3.124e-01, muon:1.499e-02) | dt: 1180.45ms | tok/sec: 444,140 | bf16_mfu: 39.84 | epoch: 1 pq: 26 rg: 79 | total time: 38.41m | eta: 35.4m
+step 02350/04410 (53.29%) | loss: 2.898149 | lrm: 0.73 | lr(adamw:3.055e-01, muon:1.466e-02) | dt: 979.40ms | tok/sec: 535,316 | bf16_mfu: 48.02 | epoch: 1 pq: 27 rg: 44 | total time: 39.25m | eta: 34.6m
+step 02400/04410 (54.42%) | loss: 2.908117 | lrm: 0.72 | lr(adamw:2.986e-01, muon:1.433e-02) | dt: 975.94ms | tok/sec: 537,213 | bf16_mfu: 48.19 | epoch: 1 pq: 28 rg: 11 | total time: 40.09m | eta: 33.7m
+step 02450/04410 (55.56%) | loss: 2.885926 | lrm: 0.70 | lr(adamw:2.917e-01, muon:1.399e-02) | dt: 980.12ms | tok/sec: 534,920 | bf16_mfu: 47.98 | epoch: 1 pq: 28 rg: 59 | total time: 40.92m | eta: 32.9m
+step 02500/04410 (56.69%) | loss: 2.895215 | lrm: 0.68 | lr(adamw:2.848e-01, muon:1.366e-02) | dt: 976.81ms | tok/sec: 536,733 | bf16_mfu: 48.14 | epoch: 1 pq: 29 rg: 25 | total time: 41.74m | eta: 32.0m
+step 02550/04410 (57.82%) | loss: 2.917214 | lrm: 0.67 | lr(adamw:2.779e-01, muon:1.333e-02) | dt: 997.34ms | tok/sec: 525,684 | bf16_mfu: 47.15 | epoch: 1 pq: 29 rg: 73 | total time: 42.56m | eta: 31.2m
+step 02600/04410 (58.96%) | loss: 2.913913 | lrm: 0.65 | lr(adamw:2.709e-01, muon:1.300e-02) | dt: 982.76ms | tok/sec: 533,484 | bf16_mfu: 47.85 | epoch: 1 pq: 30 rg: 40 | total time: 43.40m | eta: 30.3m
+step 02650/04410 (60.09%) | loss: 2.905950 | lrm: 0.63 | lr(adamw:2.640e-01, muon:1.267e-02) | dt: 981.61ms | tok/sec: 534,109 | bf16_mfu: 47.91 | epoch: 1 pq: 31 rg: 5 | total time: 44.24m | eta: 29.5m
+step 02700/04410 (61.22%) | loss: 2.941330 | lrm: 0.62 | lr(adamw:2.571e-01, muon:1.234e-02) | dt: 977.73ms | tok/sec: 536,228 | bf16_mfu: 48.10 | epoch: 1 pq: 31 rg: 54 | total time: 45.08m | eta: 28.7m
+step 02750/04410 (62.36%) | loss: 2.932736 | lrm: 0.60 | lr(adamw:2.502e-01, muon:1.200e-02) | dt: 976.64ms | tok/sec: 536,828 | bf16_mfu: 48.15 | epoch: 1 pq: 32 rg: 20 | total time: 45.92m | eta: 27.8m
+step 02800/04410 (63.49%) | loss: 2.893423 | lrm: 0.58 | lr(adamw:2.433e-01, muon:1.167e-02) | dt: 1175.97ms | tok/sec: 445,833 | bf16_mfu: 39.99 | epoch: 1 pq: 32 rg: 68 | total time: 46.75m | eta: 27.0m
+step 02850/04410 (64.63%) | loss: 2.928465 | lrm: 0.57 | lr(adamw:2.364e-01, muon:1.134e-02) | dt: 979.56ms | tok/sec: 535,230 | bf16_mfu: 48.01 | epoch: 1 pq: 33 rg: 34 | total time: 47.57m | eta: 26.1m
+step 02900/04410 (65.76%) | loss: 2.886535 | lrm: 0.55 | lr(adamw:2.295e-01, muon:1.101e-02) | dt: 982.36ms | tok/sec: 533,703 | bf16_mfu: 47.87 | epoch: 1 pq: 33 rg: 82 | total time: 48.40m | eta: 25.3m
+step 02950/04410 (66.89%) | loss: 2.897692 | lrm: 0.53 | lr(adamw:2.226e-01, muon:1.068e-02) | dt: 979.77ms | tok/sec: 535,112 | bf16_mfu: 48.00 | epoch: 1 pq: 34 rg: 48 | total time: 49.24m | eta: 24.5m
+step 03000/04410 (68.03%) | loss: 2.841915 | lrm: 0.52 | lr(adamw:2.157e-01, muon:1.035e-02) | dt: 979.03ms | tok/sec: 535,520 | bf16_mfu: 48.03 | epoch: 1 pq: 35 rg: 12 | total time: 50.07m | eta: 23.6m
+step 03050/04410 (69.16%) | loss: 2.841250 | lrm: 0.50 | lr(adamw:2.088e-01, muon:1.002e-02) | dt: 981.64ms | tok/sec: 534,093 | bf16_mfu: 47.91 | epoch: 1 pq: 35 rg: 61 | total time: 50.89m | eta: 22.8m
+step 03100/04410 (70.29%) | loss: 2.850049 | lrm: 0.48 | lr(adamw:2.019e-01, muon:9.685e-03) | dt: 980.65ms | tok/sec: 534,635 | bf16_mfu: 47.96 | epoch: 1 pq: 36 rg: 27 | total time: 51.71m | eta: 21.9m
+step 03150/04410 (71.43%) | loss: 2.842694 | lrm: 0.47 | lr(adamw:1.949e-01, muon:9.353e-03) | dt: 979.25ms | tok/sec: 535,399 | bf16_mfu: 48.02 | epoch: 1 pq: 36 rg: 76 | total time: 52.52m | eta: 21.1m
+step 03200/04410 (72.56%) | loss: 2.844758 | lrm: 0.45 | lr(adamw:1.880e-01, muon:9.022e-03) | dt: 981.09ms | tok/sec: 534,390 | bf16_mfu: 47.93 | epoch: 1 pq: 37 rg: 42 | total time: 53.35m | eta: 20.2m
+step 03250/04410 (73.70%) | loss: 2.841862 | lrm: 0.43 | lr(adamw:1.811e-01, muon:8.690e-03) | dt: 979.91ms | tok/sec: 535,038 | bf16_mfu: 47.99 | epoch: 1 pq: 38 rg: 8 | total time: 54.19m | eta: 19.4m
+step 03300/04410 (74.83%) | loss: 2.865455 | lrm: 0.42 | lr(adamw:1.742e-01, muon:8.359e-03) | dt: 984.85ms | tok/sec: 532,355 | bf16_mfu: 47.75 | epoch: 1 pq: 38 rg: 57 | total time: 55.03m | eta: 18.6m
+step 03350/04410 (75.96%) | loss: 2.843106 | lrm: 0.40 | lr(adamw:1.673e-01, muon:8.027e-03) | dt: 981.92ms | tok/sec: 533,942 | bf16_mfu: 47.89 | epoch: 1 pq: 39 rg: 23 | total time: 55.87m | eta: 17.7m
+step 03400/04410 (77.10%) | loss: 2.833642 | lrm: 0.38 | lr(adamw:1.604e-01, muon:7.696e-03) | dt: 980.98ms | tok/sec: 534,452 | bf16_mfu: 47.94 | epoch: 1 pq: 39 rg: 71 | total time: 56.71m | eta: 16.9m
+step 03450/04410 (78.23%) | loss: 2.800746 | lrm: 0.37 | lr(adamw:1.535e-01, muon:7.364e-03) | dt: 984.93ms | tok/sec: 532,309 | bf16_mfu: 47.75 | epoch: 1 pq: 40 rg: 37 | total time: 57.56m | eta: 16.1m
+step 03500/04410 (79.37%) | loss: 2.823452 | lrm: 0.35 | lr(adamw:1.466e-01, muon:7.033e-03) | dt: 979.89ms | tok/sec: 535,047 | bf16_mfu: 47.99 | epoch: 1 pq: 41 rg: 3 | total time: 58.39m | eta: 15.2m
+step 03550/04410 (80.50%) | loss: 2.779504 | lrm: 0.34 | lr(adamw:1.397e-01, muon:6.701e-03) | dt: 980.00ms | tok/sec: 534,990 | bf16_mfu: 47.99 | epoch: 1 pq: 41 rg: 51 | total time: 59.21m | eta: 14.4m
+step 03600/04410 (81.63%) | loss: 2.813798 | lrm: 0.32 | lr(adamw:1.328e-01, muon:6.370e-03) | dt: 980.34ms | tok/sec: 534,802 | bf16_mfu: 47.97 | epoch: 1 pq: 42 rg: 17 | total time: 60.04m | eta: 13.5m
+step 03650/04410 (82.77%) | loss: 2.846783 | lrm: 0.30 | lr(adamw:1.259e-01, muon:6.038e-03) | dt: 1013.25ms | tok/sec: 517,430 | bf16_mfu: 46.41 | epoch: 1 pq: 42 rg: 65 | total time: 60.86m | eta: 12.7m
+step 03700/04410 (83.90%) | loss: 2.810464 | lrm: 0.29 | lr(adamw:1.189e-01, muon:5.707e-03) | dt: 979.72ms | tok/sec: 535,142 | bf16_mfu: 48.00 | epoch: 1 pq: 43 rg: 32 | total time: 61.68m | eta: 11.9m
+step 03750/04410 (85.03%) | loss: 2.789657 | lrm: 0.27 | lr(adamw:1.120e-01, muon:5.375e-03) | dt: 978.93ms | tok/sec: 535,571 | bf16_mfu: 48.04 | epoch: 1 pq: 43 rg: 80 | total time: 62.50m | eta: 11.0m
+step 03800/04410 (86.17%) | loss: 2.778397 | lrm: 0.25 | lr(adamw:1.051e-01, muon:5.044e-03) | dt: 980.65ms | tok/sec: 534,634 | bf16_mfu: 47.96 | epoch: 1 pq: 44 rg: 47 | total time: 63.32m | eta: 10.2m
+step 03850/04410 (87.30%) | loss: 2.733716 | lrm: 0.24 | lr(adamw:9.822e-02, muon:4.712e-03) | dt: 978.04ms | tok/sec: 536,062 | bf16_mfu: 48.08 | epoch: 1 pq: 45 rg: 12 | total time: 64.15m | eta: 9.4m
+step 03900/04410 (88.44%) | loss: 2.789481 | lrm: 0.22 | lr(adamw:9.131e-02, muon:4.381e-03) | dt: 979.83ms | tok/sec: 535,082 | bf16_mfu: 48.00 | epoch: 1 pq: 45 rg: 61 | total time: 64.97m | eta: 8.5m
+step 03950/04410 (89.57%) | loss: 2.769236 | lrm: 0.20 | lr(adamw:8.440e-02, muon:4.050e-03) | dt: 982.62ms | tok/sec: 533,563 | bf16_mfu: 47.86 | epoch: 1 pq: 46 rg: 28 | total time: 65.80m | eta: 7.7m
+step 04000/04410 (90.70%) | loss: 2.785567 | lrm: 0.19 | lr(adamw:7.750e-02, muon:3.718e-03) | dt: 982.64ms | tok/sec: 533,552 | bf16_mfu: 47.86 | epoch: 1 pq: 46 rg: 76 | total time: 66.61m | eta: 6.8m
+step 04050/04410 (91.84%) | loss: 2.776651 | lrm: 0.17 | lr(adamw:7.059e-02, muon:3.387e-03) | dt: 978.91ms | tok/sec: 535,585 | bf16_mfu: 48.04 | epoch: 1 pq: 47 rg: 42 | total time: 67.44m | eta: 6.0m
+step 04100/04410 (92.97%) | loss: 2.752283 | lrm: 0.15 | lr(adamw:6.368e-02, muon:3.055e-03) | dt: 981.44ms | tok/sec: 534,204 | bf16_mfu: 47.92 | epoch: 1 pq: 48 rg: 8 | total time: 68.26m | eta: 5.2m
+step 04150/04410 (94.10%) | loss: 2.749172 | lrm: 0.14 | lr(adamw:5.677e-02, muon:2.724e-03) | dt: 979.90ms | tok/sec: 535,041 | bf16_mfu: 47.99 | epoch: 1 pq: 48 rg: 56 | total time: 69.08m | eta: 4.3m
+step 04200/04410 (95.24%) | loss: 2.769355 | lrm: 0.12 | lr(adamw:4.986e-02, muon:2.392e-03) | dt: 1051.17ms | tok/sec: 498,765 | bf16_mfu: 44.74 | epoch: 1 pq: 49 rg: 22 | total time: 69.91m | eta: 3.5m
+step 04250/04410 (96.37%) | loss: 2.737766 | lrm: 0.10 | lr(adamw:4.295e-02, muon:2.061e-03) | dt: 979.99ms | tok/sec: 534,995 | bf16_mfu: 47.99 | epoch: 1 pq: 49 rg: 70 | total time: 70.73m | eta: 2.7m
+step 04300/04410 (97.51%) | loss: 2.799910 | lrm: 0.09 | lr(adamw:3.604e-02, muon:1.729e-03) | dt: 980.70ms | tok/sec: 534,605 | bf16_mfu: 47.95 | epoch: 1 pq: 50 rg: 36 | total time: 71.56m | eta: 1.8m
+step 04350/04410 (98.64%) | loss: 2.715873 | lrm: 0.07 | lr(adamw:2.913e-02, muon:1.398e-03) | dt: 980.67ms | tok/sec: 534,624 | bf16_mfu: 47.95 | epoch: 1 pq: 51 rg: 3 | total time: 72.38m | eta: 1.0m
+step 04400/04410 (99.77%) | loss: 2.727975 | lrm: 0.05 | lr(adamw:2.222e-02, muon:1.066e-03) | dt: 979.97ms | tok/sec: 535,005 | bf16_mfu: 47.99 | epoch: 1 pq: 51 rg: 51 | total time: 73.20m | eta: 0.2m
+step 04409/04410 (99.98%) | loss: 2.709753 | lrm: 0.05 | lr(adamw:2.098e-02, muon:1.007e-03) | dt: 979.14ms | tok/sec: 535,458 | bf16_mfu: 48.03 | epoch: 1 pq: 51 rg: 60 | total time: 73.35m | eta: 0.0m
+Step 04410 | Validation bpb: 0.833630 | val_loss: 2.735267
+2026-10-05 22:24:52,559 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /vol/out/s03_sap/d12/S11dense_x2_s1/model_004410.pt
+2026-10-05 22:24:52,563 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /vol/out/s03_sap/d12/S11dense_x2_s1/meta_004410.json
+step 04410/04410 (final) | loss: 2.709753 | early_stop: 0
+Peak memory usage: 17566.32MiB
+Total training time: 73.35m
+Minimum validation bpb: 0.833630
+Minimum validation loss (nats/byte): 2.735267
